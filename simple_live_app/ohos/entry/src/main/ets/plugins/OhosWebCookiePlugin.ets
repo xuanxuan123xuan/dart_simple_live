@@ -38,6 +38,9 @@ export default class OhosWebCookiePlugin implements FlutterPlugin, MethodCallHan
       return;
     }
     try {
+      // Persist the latest ArkWeb cookie jar before Flutter reads it. Login on
+      // live.kuaishou.com is an SPA flow and may not cause a page navigation.
+      web_webview.WebCookieManager.saveCookieSync();
       result.success(web_webview.WebCookieManager.fetchCookieSync(url));
     } catch (error) {
       result.error('cookie_read_failed', `${error}`, null);

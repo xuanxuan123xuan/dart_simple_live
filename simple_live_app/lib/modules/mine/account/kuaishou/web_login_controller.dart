@@ -29,6 +29,9 @@ class KuaishouWebLoginController extends BaseController {
   final errorMessage = "".obs;
   static const _ohosWebCookieChannel =
       MethodChannel('simple_live/ohos_web_cookie');
+  Timer? _sessionPollTimer;
+  bool _loginPageReady = false;
+  bool _autoChecking = false;
 
   @override
   void onInit() {
@@ -36,6 +39,20 @@ class KuaishouWebLoginController extends BaseController {
     if (Utils.isOhos) {
       _initializeOhosWebView();
     }
+    _sessionPollTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) {
+        if (_loginPageReady) {
+          unawaited(_tryAutoCompleteLogin());
+        }
+      },
+    );
+  }
+
+  @override
+  void onClose() {
+    _sessionPollTimer?.cancel();
+    super.onClose();
   }
 
   void _initializeOhosWebView() {
@@ -46,12 +63,20 @@ class KuaishouWebLoginController extends BaseController {
         ohos_webview.NavigationDelegate(
           onProgress: (value) => progress.value = value / 100,
           onPageStarted: (_) {
+            _loginPageReady = false;
             progress.value = 0;
             errorMessage.value = '';
           },
           onPageFinished: (_) {
+            _loginPageReady = true;
             progress.value = 1;
+            unawaited(_prepareOhosLoginPage());
             unawaited(_tryAutoCompleteLogin());
+          },
+          onUrlChange: (_) {
+            if (_loginPageReady) {
+              unawaited(_tryAutoCompleteLogin());
+            }
           },
           onWebResourceError: (error) {
             if (error.isForMainFrame == true) {
@@ -75,11 +100,13 @@ class KuaishouWebLoginController extends BaseController {
   }
 
   void onLoadStart(InAppWebViewController controller, Uri? uri) {
+    _loginPageReady = false;
     progress.value = 0;
     errorMessage.value = "";
   }
 
   void onLoadStop(InAppWebViewController controller, Uri? uri) {
+    _loginPageReady = true;
     progress.value = 1;
     unawaited(_tryAutoCompleteLogin());
   }
@@ -139,6 +166,12 @@ class KuaishouWebLoginController extends BaseController {
       if (cookie.isEmpty) {
         if (!silent) {
           SmartDialog.showToast("未读取到快手 Cookie");
+        }
+        return;
+      }
+      if (!hasKuaishouAuthenticatedSession(cookie)) {
+        if (!silent) {
+          SmartDialog.showToast("尚未检测到快手登录状态，请先完成扫码或手机号登录");
         }
         return;
       }
@@ -213,35 +246,48 @@ class KuaishouWebLoginController extends BaseController {
   }
 
   Future<void> _tryAutoCompleteLogin() async {
-    if (checking.value) {
+    if (checking.value || _autoChecking) {
       return;
     }
+    _autoChecking = true;
     try {
       final snapshot = await _readCookie();
-      if (!_hasAuthenticatedSession(snapshot.cookie)) {
+      if (!hasKuaishouAuthenticatedSession(snapshot.cookie)) {
         return;
       }
       await saveCookie(silent: true, autoClose: true);
     } catch (e) {
       Log.d("自动读取快手登录状态失败：$e");
+    } finally {
+      _autoChecking = false;
     }
   }
 
-  bool _hasAuthenticatedSession(String cookie) {
-    const loginCookieNames = {
-      'kuaishou.live.web_st',
-      'kuaishou.server.web_st',
-      'kuaishou.live.web_at',
-      'passToken',
-    };
-    for (final part in cookie.split(';')) {
-      final item = part.trim();
-      final index = item.indexOf('=');
-      if (index > 0 && loginCookieNames.contains(item.substring(0, index))) {
-        return true;
-      }
+  Future<void> _prepareOhosLoginPage() async {
+    try {
+      // The current OHOS WebView implementation disables multiple windows.
+      // Keep links and window.open based flows inside the login WebView.
+      await ohosWebViewController?.runJavaScript('''
+        (() => {
+          if (!window.__simpleLiveLoginPatched) {
+            window.__simpleLiveLoginPatched = true;
+            const nativeOpen = window.open;
+            window.open = (url, ...args) => {
+              if (typeof url === 'string' && url.length > 0) {
+                window.location.href = url;
+                return window;
+              }
+              return nativeOpen.call(window, url, ...args);
+            };
+          }
+          document.querySelectorAll('a[target="_blank"]').forEach((item) => {
+            item.setAttribute('target', '_self');
+          });
+        })();
+      ''');
+    } catch (e) {
+      Log.d("准备鸿蒙快手登录页面失败：$e");
     }
-    return false;
   }
 
   Future<_KuaishouCookieSnapshot> _readOhosCookie() async {
@@ -310,6 +356,23 @@ class KuaishouWebLoginController extends BaseController {
     }
     return '';
   }
+}
+
+bool hasKuaishouAuthenticatedSession(String cookie) {
+  const loginCookieNames = {
+    'kuaishou.live.web_st',
+    'kuaishou.server.web_st',
+    'kuaishou.live.web_at',
+    'passToken',
+  };
+  for (final part in cookie.split(';')) {
+    final item = part.trim();
+    final index = item.indexOf('=');
+    if (index > 0 && loginCookieNames.contains(item.substring(0, index))) {
+      return item.substring(index + 1).trim().isNotEmpty;
+    }
+  }
+  return false;
 }
 
 class _KuaishouCookieSnapshot {
