@@ -134,6 +134,9 @@ class LiveRoomController extends PlayerController
 
   Map<String, String>? playHeaders;
 
+  /// Rebuilds the native HarmonyOS player when the URL or line changes.
+  final RxInt ohosPlayerRevision = 0.obs;
+
   /// 当前播放线路索引
   var currentLineIndex = -1;
   var currentLineInfo = "".obs;
@@ -220,9 +223,11 @@ class LiveRoomController extends PlayerController
     scrollController.addListener(scrollListener);
 
     super.onInit();
-    _positionSubscription = player.stream.position.listen((event) {
-      _lastKnownPlayerPosition = event;
-    });
+    if (!Utils.isOhos) {
+      _positionSubscription = player.stream.position.listen((event) {
+        _lastKnownPlayerPosition = event;
+      });
+    }
   }
 
   void scrollListener() {
@@ -1096,8 +1101,12 @@ class LiveRoomController extends PlayerController
       await cancelAutoPipOnLeave();
       await stopBackgroundPlaybackService();
       await liveDanmaku.stop();
-      await player.stop();
-      await WakelockPlus.disable();
+      if (!Utils.isOhos) {
+        await player.stop();
+      }
+      if (!Utils.isOhos) {
+        await WakelockPlus.disable();
+      }
       if (Platform.isIOS) {
         if (fullScreenState.value || smallWindowState.value) {
           await exitPlayerWindowMode();
@@ -1193,7 +1202,7 @@ class LiveRoomController extends PlayerController
     unawaited(
       AppSettingsController.instance.setLastLiveRoomResumePending(false),
     );
-    if (!isPlayerClosing) {
+    if (!Utils.isOhos && !isPlayerClosing) {
       await player.stop();
     }
     await liveDanmaku.stop();
@@ -1485,7 +1494,7 @@ class LiveRoomController extends PlayerController
     var qualityLevel = AppSettingsController.instance.qualityLevel.value;
     try {
       var connectivityResult = await (Connectivity().checkConnectivity());
-      if (connectivityResult.first == ConnectivityResult.mobile) {
+      if (connectivityResult == ConnectivityResult.mobile) {
         qualityLevel =
             AppSettingsController.instance.qualityLevelCellular.value;
       }
@@ -1560,6 +1569,12 @@ class LiveRoomController extends PlayerController
         currentLineIndex >= playUrls.length) {
       return;
     }
+    if (Utils.isOhos) {
+      currentLineInfo.value = "线路${currentLineIndex + 1}";
+      errorMsg.value = "";
+      ohosPlayerRevision.value += 1;
+      return;
+    }
     _playerReopening = true;
     try {
       currentLineInfo.value = "线路${currentLineIndex + 1}";
@@ -1599,7 +1614,9 @@ class LiveRoomController extends PlayerController
         ),
       );
       if (!_isCurrentLoad(loadGeneration)) {
-        await player.stop();
+        if (!Utils.isOhos) {
+          await player.stop();
+        }
         return;
       }
       openStopwatch.stop();
@@ -1859,7 +1876,12 @@ class LiveRoomController extends PlayerController
     if (detail.value == null) {
       return;
     }
-    SharePlus.instance.share(ShareParams(uri: Uri.parse(detail.value!.url)));
+    if (Utils.isOhos) {
+      Utils.copyToClipboard(detail.value!.url);
+      SmartDialog.showToast("直播间链接已复制");
+      return;
+    }
+    Share.shareUri(Uri.parse(detail.value!.url));
   }
 
   void copyUrl() {
@@ -2014,23 +2036,21 @@ class LiveRoomController extends PlayerController
   void showQualitySheet() {
     Utils.showBottomSheet(
       title: "切换清晰度",
-      child: RadioGroup(
-        groupValue: currentQuality,
-        onChanged: (e) {
-          Get.back();
-          currentQuality = e ?? 0;
-          getPlayUrl();
+      child: ListView.builder(
+        itemCount: qualites.length,
+        itemBuilder: (_, i) {
+          var item = qualites[i];
+          return RadioListTile(
+            value: i,
+            groupValue: currentQuality,
+            onChanged: (e) {
+              Get.back();
+              currentQuality = e ?? 0;
+              getPlayUrl();
+            },
+            title: Text(item.quality),
+          );
         },
-        child: ListView.builder(
-          itemCount: qualites.length,
-          itemBuilder: (_, i) {
-            var item = qualites[i];
-            return RadioListTile(
-              value: i,
-              title: Text(item.quality),
-            );
-          },
-        ),
       ),
     );
   }
@@ -2038,26 +2058,22 @@ class LiveRoomController extends PlayerController
   void showPlayUrlsSheet() {
     Utils.showBottomSheet(
       title: "线路选择",
-      child: RadioGroup(
-        groupValue: currentLineIndex,
-        onChanged: (e) {
-          Get.back();
-          //currentLineIndex = i;
-          //setPlayer();
-          changePlayLine(e ?? 0);
+      child: ListView.builder(
+        itemCount: playUrls.length,
+        itemBuilder: (_, i) {
+          return RadioListTile(
+            value: i,
+            groupValue: currentLineIndex,
+            onChanged: (e) {
+              Get.back();
+              changePlayLine(e ?? 0);
+            },
+            title: Text("线路${i + 1}"),
+            secondary: Text(
+              playUrls[i].contains(".flv") ? "FLV" : "HLS",
+            ),
+          );
         },
-        child: ListView.builder(
-          itemCount: playUrls.length,
-          itemBuilder: (_, i) {
-            return RadioListTile(
-              value: i,
-              title: Text("线路${i + 1}"),
-              secondary: Text(
-                playUrls[i].contains(".flv") ? "FLV" : "HLS",
-              ),
-            );
-          },
-        ),
       ),
     );
   }
@@ -2066,45 +2082,53 @@ class LiveRoomController extends PlayerController
     Utils.showBottomSheet(
       title: "画面尺寸",
       child: Obx(
-        () => RadioGroup(
-          groupValue: AppSettingsController.instance.scaleMode.value,
-          onChanged: (e) {
-            AppSettingsController.instance.setScaleMode(e ?? 0);
-            updateScaleMode();
-          },
-          child: ListView(
-            padding: AppStyle.edgeInsetsV12,
-            children: const [
-              RadioListTile(
-                value: 0,
-                title: Text("适应"),
-                visualDensity: VisualDensity.compact,
-              ),
-              RadioListTile(
-                value: 1,
-                title: Text("拉伸"),
-                visualDensity: VisualDensity.compact,
-              ),
-              RadioListTile(
-                value: 2,
-                title: Text("铺满"),
-                visualDensity: VisualDensity.compact,
-              ),
-              RadioListTile(
-                value: 3,
-                title: Text("16:9"),
-                visualDensity: VisualDensity.compact,
-              ),
-              RadioListTile(
-                value: 4,
-                title: Text("4:3"),
-                visualDensity: VisualDensity.compact,
-              ),
-            ],
-          ),
+        () => ListView(
+          padding: AppStyle.edgeInsetsV12,
+          children: [
+            RadioListTile(
+              value: 0,
+              groupValue: AppSettingsController.instance.scaleMode.value,
+              onChanged: _onScaleModeChanged,
+              title: const Text("适应"),
+              visualDensity: VisualDensity.compact,
+            ),
+            RadioListTile(
+              value: 1,
+              groupValue: AppSettingsController.instance.scaleMode.value,
+              onChanged: _onScaleModeChanged,
+              title: const Text("拉伸"),
+              visualDensity: VisualDensity.compact,
+            ),
+            RadioListTile(
+              value: 2,
+              groupValue: AppSettingsController.instance.scaleMode.value,
+              onChanged: _onScaleModeChanged,
+              title: const Text("铺满"),
+              visualDensity: VisualDensity.compact,
+            ),
+            RadioListTile(
+              value: 3,
+              groupValue: AppSettingsController.instance.scaleMode.value,
+              onChanged: _onScaleModeChanged,
+              title: const Text("16:9"),
+              visualDensity: VisualDensity.compact,
+            ),
+            RadioListTile(
+              value: 4,
+              groupValue: AppSettingsController.instance.scaleMode.value,
+              onChanged: _onScaleModeChanged,
+              title: const Text("4:3"),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  void _onScaleModeChanged(int? value) {
+    AppSettingsController.instance.setScaleMode(value ?? 0);
+    updateScaleMode();
   }
 
   void showDanmuShield() {
@@ -2866,7 +2890,9 @@ class LiveRoomController extends PlayerController
 
         // 停止当前播放
         await stopBackgroundPlaybackService();
-        await player.stop();
+        if (!Utils.isOhos) {
+          await player.stop();
+        }
 
         // 重新拉取房间信息
         loadData();
@@ -2945,7 +2971,8 @@ ${errorStackTrace ?? ""}''');
     required DateTime? since,
     required Duration? previousPosition,
   }) async {
-    if (since == null ||
+    if (Utils.isOhos ||
+        since == null ||
         previousPosition == null ||
         !liveStatus.value ||
         currentLineIndex < 0 ||

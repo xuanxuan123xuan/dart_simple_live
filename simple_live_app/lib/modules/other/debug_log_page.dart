@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/app/utils.dart';
 
 class DebugLogPage extends StatelessWidget {
   const DebugLogPage({Key? key}) : super(key: key);
@@ -26,9 +27,11 @@ class DebugLogPage extends StatelessWidget {
                   '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.log');
               await logFile.writeAsString(msg);
 
-              SharePlus.instance.share(ShareParams(
-                files: [XFile(logFile.path)],
-              ));
+              if (Utils.isOhos) {
+                Utils.copyToClipboard(msg);
+              } else {
+                Share.shareXFiles([XFile(logFile.path)]);
+              }
             },
             icon: const Icon(Icons.save),
           ),

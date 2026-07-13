@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -46,9 +47,26 @@ import 'package:dynamic_color/dynamic_color.dart';
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   DesktopStartupArgs.initialize(args);
+
+  if (Utils.isOhos) {
+    runApp(OhosBootstrapApp(args: args));
+    return;
+  }
+
+  await initializeApplication(args);
+  runApp(const MyApp());
+  unawaited(setupDesktopWindowLifecycle());
+}
+
+Future<void> initializeApplication(List<String> args) async {
+  if (Utils.isOhos) {
+    FilePickerOhos.registerWith();
+  }
   await migrateData();
   await initWindow();
-  MediaKit.ensureInitialized();
+  if (!Utils.isOhos) {
+    MediaKit.ensureInitialized();
+  }
   await Hive.initFlutter(await resolveHivePath(args));
   //初始化服务
   await initServices();
@@ -60,12 +78,59 @@ void main(List<String> args) async {
     systemNavigationBarColor: Colors.transparent,
   );
   SystemChrome.setSystemUIOverlayStyle(systemUiOverlayStyle);
-  runApp(const MyApp());
-  unawaited(setupDesktopWindowLifecycle());
+}
+
+class OhosBootstrapApp extends StatefulWidget {
+  const OhosBootstrapApp({super.key, required this.args});
+
+  final List<String> args;
+
+  @override
+  State<OhosBootstrapApp> createState() => _OhosBootstrapAppState();
+}
+
+class _OhosBootstrapAppState extends State<OhosBootstrapApp> {
+  late final Future<void> initialization = initializeApplication(widget.args);
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<void>(
+      future: initialization,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done &&
+            !snapshot.hasError) {
+          return const MyApp();
+        }
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          home: Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: snapshot.hasError
+                    ? SelectableText(
+                        '应用初始化失败\n\n${snapshot.error}',
+                        textAlign: TextAlign.center,
+                      )
+                    : const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(),
+                          SizedBox(height: 20),
+                          Text('Simple Live 正在初始化'),
+                        ],
+                      ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 Future<String?> resolveHivePath(List<String> args) async {
-  if (Platform.isAndroid || Platform.isIOS) {
+  if (Platform.isAndroid || Platform.isIOS || Utils.isOhos) {
     return null;
   }
   final appSupportDir = await getApplicationSupportDirectory();
@@ -141,7 +206,7 @@ Future<void> cleanupOldSecondaryHiveDirectories(
 
 /// 将Hive数据迁移到Application Support
 Future migrateData() async {
-  if (Platform.isAndroid || Platform.isIOS) {
+  if (Platform.isAndroid || Platform.isIOS || Utils.isOhos) {
     return;
   }
   var hiveFileList = [
@@ -433,7 +498,14 @@ Future initServices() async {
   Hive.registerAdapter(FollowUserTagAdapter());
 
   //包信息
-  Utils.packageInfo = await PackageInfo.fromPlatform();
+  Utils.packageInfo = Utils.isOhos
+      ? PackageInfo(
+          appName: 'Simple Live',
+          packageName: 'com.xycz.simple_live_app',
+          version: '1.12.7',
+          buildNumber: '11207',
+        )
+      : await PackageInfo.fromPlatform();
   //本地存储
   Log.d("Init LocalStorage Service");
   await Get.put(LocalStorageService()).init();

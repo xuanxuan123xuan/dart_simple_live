@@ -17,6 +17,8 @@ import 'package:simple_live_app/app/log.dart';
 typedef TextValidate = bool Function(String text);
 
 class Utils {
+  static bool get isOhos => Platform.operatingSystem == 'ohos';
+
   static late PackageInfo packageInfo;
   static DateFormat dateFormat = DateFormat("MM-dd HH:mm");
   static DateFormat dateFormatWithYear = DateFormat("yyyy-MM-dd HH:mm");
@@ -312,22 +314,18 @@ class Utils {
     String title = '',
   }) async {
     var result = await Get.dialog(
-      RadioGroup(
-        groupValue: value,
-        onChanged: (e) {
-          Get.back(result: e);
-        },
-        child: SimpleDialog(
-          title: Text(title),
-          children: contents
-              .map(
-                (e) => RadioListTile<T>(
-                  title: Text(e.toString()),
-                  value: e,
-                ),
-              )
-              .toList(),
-        ),
+      SimpleDialog(
+        title: Text(title),
+        children: contents
+            .map(
+              (e) => RadioListTile<T>(
+                title: Text(e.toString()),
+                value: e,
+                groupValue: value,
+                onChanged: (selected) => Get.back(result: selected),
+              ),
+            )
+            .toList(),
       ),
     );
     return result;
@@ -380,22 +378,18 @@ class Utils {
     String title = '',
   }) async {
     var result = await Get.dialog(
-      RadioGroup(
-        groupValue: value,
-        onChanged: (e) {
-          Get.back(result: e);
-        },
-        child: SimpleDialog(
-          title: Text(title),
-          children: contents.keys
-              .map(
-                (e) => RadioListTile<T>(
-                  title: Text((contents[e] ?? '-').tr),
-                  value: e,
-                ),
-              )
-              .toList(),
-        ),
+      SimpleDialog(
+        title: Text(title),
+        children: contents.keys
+            .map(
+              (e) => RadioListTile<T>(
+                title: Text((contents[e] ?? '-').tr),
+                value: e,
+                groupValue: value,
+                onChanged: (selected) => Get.back(result: selected),
+              ),
+            )
+            .toList(),
       ),
     );
     return result;

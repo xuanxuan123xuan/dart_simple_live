@@ -23,7 +23,6 @@ class IndexedPage extends GetView<IndexedController> {
                       onDestinationSelected: controller.setIndex,
                       labelType: NavigationRailLabelType.none,
                       groupAlignment: -1,
-                      scrollable: true,
                       destinations: controller.items
                           .map(
                             (item) => NavigationRailDestination(

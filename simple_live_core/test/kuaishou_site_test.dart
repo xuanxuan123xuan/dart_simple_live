@@ -65,6 +65,25 @@ void main() {
       );
     });
 
+    test('accepts the flat room-list stream shape used by the live API', () {
+      expect(
+        KuaishouSite.resolveLiveStatus({
+          'id': 'stream-id',
+          'living': false,
+          'playUrls': [
+            {
+              'adaptationSet': {
+                'representation': [
+                  {'url': 'https://example.com/live.flv'},
+                ],
+              },
+            },
+          ],
+        }),
+        isTrue,
+      );
+    });
+
     test('does not mark an empty stream as live', () {
       expect(
         KuaishouSite.resolveLiveStatus({
@@ -74,5 +93,71 @@ void main() {
         isFalse,
       );
     });
+  });
+
+  test('parses qualities from the flat room-list playUrls payload', () async {
+    final detail = LiveRoomDetail(
+      roomId: 'author-id',
+      title: '直播间',
+      cover: '',
+      userName: '主播',
+      userAvatar: '',
+      online: 1,
+      status: true,
+      url: 'stream-id',
+      data: [
+        {
+          'type': 'dynamic',
+          'adaptationSet': {
+            'representation': [
+              {
+                'name': '高清',
+                'level': 30,
+                'url': 'https://example.com/sd.flv',
+              },
+              {
+                'name': '蓝光',
+                'level': 70,
+                'url': 'https://example.com/hd.flv',
+              },
+            ],
+          },
+        },
+      ],
+    );
+
+    final qualities = await KuaishouSite().getPlayQualites(detail: detail);
+
+    expect(qualities.map((item) => item.quality), ['蓝光', '高清']);
+    expect(qualities.first.data, ['https://example.com/hd.flv']);
+  });
+
+  test('falls back when advertised h264 group has no stream', () async {
+    final detail = LiveRoomDetail(
+      roomId: 'room-id',
+      title: '直播间',
+      cover: '',
+      userName: '主播',
+      userAvatar: '',
+      online: 1,
+      status: true,
+      url: 'stream-id',
+      data: {
+        'h264': const [],
+        'hevc': [
+          {
+            'name': '蓝光',
+            'level': 70,
+            'url': 'https://example.com/hevc.flv',
+          },
+        ],
+      },
+    );
+
+    final qualities = await KuaishouSite().getPlayQualites(detail: detail);
+
+    expect(qualities, hasLength(1));
+    expect(qualities.first.quality, '蓝光');
+    expect(qualities.first.data, ['https://example.com/hevc.flv']);
   });
 }

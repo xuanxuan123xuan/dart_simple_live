@@ -226,7 +226,7 @@ class RemoteSyncWebDAVController extends BaseController {
         {'data': LocalStorageService.instance.settingsBox.toMap()},
       );
       final zipEncoder = ZipEncoder();
-      zipBytes = zipEncoder.encode(archive);
+      zipBytes = zipEncoder.encode(archive) ?? <int>[];
     } catch (e) {
       Log.logPrint(e);
       SmartDialog.showToast("备份失败：$e");

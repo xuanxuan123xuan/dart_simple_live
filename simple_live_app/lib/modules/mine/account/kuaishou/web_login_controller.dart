@@ -1,11 +1,16 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
+import 'package:webview_flutter/webview_flutter.dart' as ohos_webview;
 
 class KuaishouWebLoginController extends BaseController {
   static const _loginUrl = "https://live.kuaishou.com/";
@@ -17,10 +22,48 @@ class KuaishouWebLoginController extends BaseController {
       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
   InAppWebViewController? webViewController;
+  ohos_webview.WebViewController? ohosWebViewController;
   final CookieManager cookieManager = CookieManager.instance();
   final progress = 0.0.obs;
   final checking = false.obs;
   final errorMessage = "".obs;
+  static const _ohosWebCookieChannel =
+      MethodChannel('simple_live/ohos_web_cookie');
+
+  @override
+  void onInit() {
+    super.onInit();
+    if (Utils.isOhos) {
+      _initializeOhosWebView();
+    }
+  }
+
+  void _initializeOhosWebView() {
+    final controller = ohos_webview.WebViewController()
+      ..setJavaScriptMode(ohos_webview.JavaScriptMode.unrestricted)
+      ..setUserAgent(userAgent)
+      ..setNavigationDelegate(
+        ohos_webview.NavigationDelegate(
+          onProgress: (value) => progress.value = value / 100,
+          onPageStarted: (_) {
+            progress.value = 0;
+            errorMessage.value = '';
+          },
+          onPageFinished: (_) {
+            progress.value = 1;
+            unawaited(_tryAutoCompleteLogin());
+          },
+          onWebResourceError: (error) {
+            if (error.isForMainFrame == true) {
+              progress.value = 1;
+              errorMessage.value = error.description;
+            }
+          },
+        ),
+      );
+    ohosWebViewController = controller;
+    controller.loadRequest(Uri.parse(_loginUrl));
+  }
 
   void onWebViewCreated(InAppWebViewController controller) {
     webViewController = controller;
@@ -38,6 +81,7 @@ class KuaishouWebLoginController extends BaseController {
 
   void onLoadStop(InAppWebViewController controller, Uri? uri) {
     progress.value = 1;
+    unawaited(_tryAutoCompleteLogin());
   }
 
   void onReceivedError(
@@ -64,7 +108,11 @@ class KuaishouWebLoginController extends BaseController {
 
   Future<void> reload() async {
     errorMessage.value = "";
-    await webViewController?.reload();
+    if (Utils.isOhos) {
+      await ohosWebViewController?.reload();
+    } else {
+      await webViewController?.reload();
+    }
   }
 
   Future<void> saveCookie({
@@ -122,6 +170,9 @@ class KuaishouWebLoginController extends BaseController {
   }
 
   Future<_KuaishouCookieSnapshot> _readCookie() async {
+    if (Utils.isOhos) {
+      return _readOhosCookie();
+    }
     const expiryCookieNames = [
       "kuaishou.live.web_st",
       "kuaishou.server.web_st",
@@ -161,11 +212,90 @@ class KuaishouWebLoginController extends BaseController {
     );
   }
 
+  Future<void> _tryAutoCompleteLogin() async {
+    if (checking.value) {
+      return;
+    }
+    try {
+      final snapshot = await _readCookie();
+      if (!_hasAuthenticatedSession(snapshot.cookie)) {
+        return;
+      }
+      await saveCookie(silent: true, autoClose: true);
+    } catch (e) {
+      Log.d("自动读取快手登录状态失败：$e");
+    }
+  }
+
+  bool _hasAuthenticatedSession(String cookie) {
+    const loginCookieNames = {
+      'kuaishou.live.web_st',
+      'kuaishou.server.web_st',
+      'kuaishou.live.web_at',
+      'passToken',
+    };
+    for (final part in cookie.split(';')) {
+      final item = part.trim();
+      final index = item.indexOf('=');
+      if (index > 0 && loginCookieNames.contains(item.substring(0, index))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<_KuaishouCookieSnapshot> _readOhosCookie() async {
+    final values = <String, String>{};
+    for (final url in const [
+      "https://live.kuaishou.com",
+      "https://kuaishou.com",
+      "https://www.kuaishou.com",
+    ]) {
+      final cookie = await _ohosWebCookieChannel.invokeMethod<String>(
+            'getCookie',
+            {'url': url},
+          ) ??
+          '';
+      for (final part in cookie.split(';')) {
+        final item = part.trim();
+        final index = item.indexOf('=');
+        if (index <= 0) {
+          continue;
+        }
+        final name = item.substring(0, index).trim();
+        final value = item.substring(index + 1).trim();
+        if (name.isNotEmpty && value.isNotEmpty) {
+          values.putIfAbsent(name, () => value);
+        }
+      }
+    }
+    return _KuaishouCookieSnapshot(
+      cookie: values.entries.map((e) => "${e.key}=${e.value}").join("; "),
+      expiresAt: null,
+    );
+  }
+
   Future<String> _readKww() async {
+    if (Utils.isOhos) {
+      final value = await ohosWebViewController?.runJavaScriptReturningResult(
+        "window.localStorage.getItem('kwfv1') || ''",
+      );
+      return _normalizeJavascriptResult(value);
+    }
     final value = await webViewController?.evaluateJavascript(
       source: "window.localStorage.getItem('kwfv1') || ''",
     );
-    return value?.toString().trim() ?? '';
+    return _normalizeJavascriptResult(value);
+  }
+
+  String _normalizeJavascriptResult(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+      try {
+        return jsonDecode(text)?.toString().trim() ?? '';
+      } catch (_) {}
+    }
+    return text == 'null' ? '' : text;
   }
 
   String get userAgent =>

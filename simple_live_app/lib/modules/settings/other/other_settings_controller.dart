@@ -142,10 +142,13 @@ class OtherSettingsController extends BaseController {
     loadLogFiles();
   }
 
-  void shareLogFile(LogFileModel item) {
-    SharePlus.instance.share(ShareParams(
-      files: [XFile(item.path)],
-    ));
+  void shareLogFile(LogFileModel item) async {
+    if (Utils.isOhos) {
+      Utils.copyToClipboard(await File(item.path).readAsString());
+      SmartDialog.showToast("日志已复制到剪贴板");
+      return;
+    }
+    Share.shareXFiles([XFile(item.path)]);
   }
 
   void saveLogFile(LogFileModel item) async {

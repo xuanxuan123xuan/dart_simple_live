@@ -19,6 +19,11 @@ class ProfileBackupController extends BaseController {
         return;
       }
       final content = ProfileBackupService.instance.exportProfileJson();
+      if (Utils.isOhos) {
+        Utils.copyToClipboard(content);
+        SmartDialog.showToast("配置包已复制到剪贴板");
+        return;
+      }
       final fileName =
           "SimpleLive_Profile_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json";
       final inlineSave = Platform.isAndroid || Platform.isIOS || kIsWeb;
@@ -54,6 +59,25 @@ class ProfileBackupController extends BaseController {
         confirm: "覆盖",
         cancel: "不覆盖",
       );
+      if (Utils.isOhos) {
+        final content = await Utils.showEditTextDialog(
+          "",
+          title: "粘贴配置包",
+          hintText: "粘贴完整的 Simple Live 配置 JSON",
+        );
+        if (content == null || content.trim().isEmpty) {
+          return;
+        }
+        SyncProgressDialog.show(const SyncProgress(stage: "正在导入配置包"));
+        final summary = await ProfileBackupService.instance.importProfileJson(
+          content,
+          overwrite: overwrite,
+          onProgress: SyncProgressDialog.update,
+        );
+        SyncProgressDialog.dismiss();
+        SmartDialog.showToast("导入完成：${summary.message}");
+        return;
+      }
       final picked = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ["json"],

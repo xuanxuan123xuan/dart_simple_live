@@ -3,8 +3,8 @@ version: 1.0.3
 description: "聚合直播核心库"
 repository: https://github.com/xiaoyaocz/dart_simple_live
 publish_to: "none"
-environment: 
-  sdk: '>=3.10.0'
+environment:
+  sdk: '>=3.0.5 <4.0.0'
 
 dependencies: 
   dio: ^5.5.0+1
@@ -18,12 +18,14 @@ dependencies:
     path: ./packages/tars_dart
   fixnum: ^1.1.0
   dart_quickjs:
-    git:
-      url: https://github.com/xiaoyaocz/dart_quickjs
+    path: ../third_party/dart_quickjs_compat
   cookie_jar: ^4.0.8
-  dio_cookie_manager: ^3.3.0
+  dio_cookie_manager: ^3.1.1
 
 dev_dependencies: 
   lints: ^2.0.0
-  test: ^1.21.0
+  test: 1.25.8
+
+dependency_overrides:
+  meta: 1.14.0
 

@@ -51,3 +51,12 @@ pubspec.lock
 .fvm/
 
 /android/app/.cxx
+
+# Local HarmonyOS signing material must never be committed.
+/ohos/signing/
+
+# Generated content from vendored HarmonyOS compatibility plugins.
+/third_party/**/.dart_tool/
+/third_party/**/build/
+/third_party/**/oh_modules/
+/third_party/**/example/

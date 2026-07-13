@@ -39,6 +39,9 @@ Widget playerControls(
 
 EdgeInsets _fullScreenControlPadding(BuildContext context) {
   final mediaQuery = MediaQuery.of(context);
+  if (Utils.isOhos) {
+    return mediaQuery.viewPadding;
+  }
   if (Platform.isIOS && mediaQuery.orientation == Orientation.landscape) {
     final padding = mediaQuery.viewPadding;
     return EdgeInsets.only(left: padding.left, right: padding.right);
@@ -58,14 +61,14 @@ Widget buildFullControls(
     child: Stack(
       children: [
         const SizedBox.expand(),
-        buildDanmuView(videoState, controller),
-        _buildPlayerSuperChatOverlay(controller),
+        buildDanmuView(videoState.context, controller),
+        buildPlayerSuperChatOverlay(controller),
         _buildBufferingIndicator(videoState),
-        _buildGestureLayer(
+        buildPlayerGestureLayer(
           controller,
           enableQuickAccessLongPress: true,
         ),
-        _buildLiveSubtitleOverlay(videoState.context, controller),
+        buildLiveSubtitleOverlay(videoState.context, controller),
         _buildFullTopBar(
           controller,
           padding: padding,
@@ -85,7 +88,7 @@ Widget buildFullControls(
           padding: padding,
           alignLeft: true,
         ),
-        _buildGestureTip(controller),
+        buildGestureTip(controller),
       ],
     ),
   );
@@ -135,17 +138,17 @@ Widget buildControls(
     child: Stack(
       children: [
         const SizedBox.expand(),
-        buildDanmuView(videoState, controller),
-        _buildPlayerSuperChatOverlay(controller),
+        buildDanmuView(videoState.context, controller),
+        buildPlayerSuperChatOverlay(controller),
         _buildBufferingIndicator(videoState),
-        _buildGestureLayer(controller),
-        _buildLiveSubtitleOverlay(videoState.context, controller),
+        buildPlayerGestureLayer(controller),
+        buildLiveSubtitleOverlay(videoState.context, controller),
         _buildNormalBottomBar(
           controller,
           isPortrait: isPortrait,
           volumeButtonKey: volumeButtonKey,
         ),
-        _buildGestureTip(controller),
+        buildGestureTip(controller),
       ],
     ),
   );
@@ -173,7 +176,7 @@ Widget _buildPlayerMouseRegion({
   );
 }
 
-Widget _buildPlayerSuperChatOverlay(LiveRoomController controller) {
+Widget buildPlayerSuperChatOverlay(LiveRoomController controller) {
   return Obx(() {
     if (!AppSettingsController.instance.playershowSuperChat.value) {
       return const SizedBox.shrink();
@@ -186,7 +189,7 @@ Widget _buildPlayerSuperChatOverlay(LiveRoomController controller) {
   });
 }
 
-Widget _buildLiveSubtitleOverlay(
+Widget buildLiveSubtitleOverlay(
   BuildContext _,
   LiveRoomController controller,
 ) =>
@@ -354,60 +357,70 @@ Widget _buildBufferingIndicator(VideoState videoState) {
   );
 }
 
-Widget _buildGestureLayer(
+Widget buildPlayerGestureLayer(
   LiveRoomController controller, {
   bool enableQuickAccessLongPress = false,
 }) {
+  final useDesktopPan = Platform.isWindows || Platform.isLinux;
   return Positioned.fill(
     child: GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: controller.onTap,
       onDoubleTapDown: controller.onDoubleTap,
-      onPanStart: (details) {
-        if (!_canUseDesktopVolumeDrag(controller, details.localPosition)) {
-          controller.desktopVolumeDragging = false;
-          return;
-        }
-        controller.desktopVolumeDragging = true;
-        controller.onVerticalDragStart(
-          DragStartDetails(
-            globalPosition: details.globalPosition,
-            localPosition: details.localPosition,
-          ),
-        );
-      },
-      onPanUpdate: (details) {
-        if (!controller.desktopVolumeDragging) {
-          return;
-        }
-        controller.onVerticalDragUpdate(
-          DragUpdateDetails(
-            globalPosition: details.globalPosition,
-            localPosition: details.localPosition,
-            delta: details.delta,
-            primaryDelta: details.delta.dy,
-          ),
-        );
-      },
-      onPanEnd: (details) {
-        if (!controller.desktopVolumeDragging) {
-          return;
-        }
-        controller.desktopVolumeDragging = false;
-        controller.onVerticalDragEnd(
-          DragEndDetails(
-            primaryVelocity: details.velocity.pixelsPerSecond.dy,
-            velocity: details.velocity,
-          ),
-        );
-      },
-      onPanCancel: () {
-        if (!controller.desktopVolumeDragging) {
-          return;
-        }
-        controller.desktopVolumeDragging = false;
-        controller.onVerticalDragEnd(DragEndDetails());
-      },
+      onPanStart: !useDesktopPan
+          ? null
+          : (details) {
+              if (!_canUseDesktopVolumeDrag(
+                  controller, details.localPosition)) {
+                controller.desktopVolumeDragging = false;
+                return;
+              }
+              controller.desktopVolumeDragging = true;
+              controller.onVerticalDragStart(
+                DragStartDetails(
+                  globalPosition: details.globalPosition,
+                  localPosition: details.localPosition,
+                ),
+              );
+            },
+      onPanUpdate: !useDesktopPan
+          ? null
+          : (details) {
+              if (!controller.desktopVolumeDragging) {
+                return;
+              }
+              controller.onVerticalDragUpdate(
+                DragUpdateDetails(
+                  globalPosition: details.globalPosition,
+                  localPosition: details.localPosition,
+                  delta: details.delta,
+                  primaryDelta: details.delta.dy,
+                ),
+              );
+            },
+      onPanEnd: !useDesktopPan
+          ? null
+          : (details) {
+              if (!controller.desktopVolumeDragging) {
+                return;
+              }
+              controller.desktopVolumeDragging = false;
+              controller.onVerticalDragEnd(
+                DragEndDetails(
+                  primaryVelocity: details.velocity.pixelsPerSecond.dy,
+                  velocity: details.velocity,
+                ),
+              );
+            },
+      onPanCancel: !useDesktopPan
+          ? null
+          : () {
+              if (!controller.desktopVolumeDragging) {
+                return;
+              }
+              controller.desktopVolumeDragging = false;
+              controller.onVerticalDragEnd(DragEndDetails());
+            },
       onLongPress: !enableQuickAccessLongPress
           ? null
           : () {
@@ -416,9 +429,11 @@ Widget _buildGestureLayer(
               }
               showQuickAccess(controller);
             },
-      onVerticalDragStart: controller.onVerticalDragStart,
-      onVerticalDragUpdate: controller.onVerticalDragUpdate,
-      onVerticalDragEnd: controller.onVerticalDragEnd,
+      onVerticalDragStart:
+          useDesktopPan ? null : controller.onVerticalDragStart,
+      onVerticalDragUpdate:
+          useDesktopPan ? null : controller.onVerticalDragUpdate,
+      onVerticalDragEnd: useDesktopPan ? null : controller.onVerticalDragEnd,
       child: const SizedBox.expand(),
     ),
   );
@@ -841,7 +856,7 @@ Widget _buildSideLockButton(
   });
 }
 
-Widget _buildGestureTip(LiveRoomController controller) {
+Widget buildGestureTip(LiveRoomController controller) {
   return Obx(() {
     if (!controller.showGestureTip.value) {
       return const SizedBox.shrink();
@@ -862,10 +877,13 @@ Widget _buildGestureTip(LiveRoomController controller) {
   });
 }
 
-Widget buildDanmuView(VideoState videoState, LiveRoomController controller) {
-  var padding = controller.fullScreenState.value
-      ? _fullScreenControlPadding(videoState.context)
-      : MediaQuery.of(videoState.context).padding;
+Widget buildDanmuView(BuildContext context, LiveRoomController controller) {
+  var padding =
+      controller.showOhosFullscreenSurface || controller.fullScreenState.value
+          ? _fullScreenControlPadding(context)
+          : Utils.isOhos
+              ? EdgeInsets.zero
+              : MediaQuery.of(context).padding;
   return Positioned.fill(
     top: padding.top,
     bottom: padding.bottom,
@@ -1047,54 +1065,72 @@ void showPlayerSettings(LiveRoomController controller) {
     width: 320,
     useSystem: true,
     child: Obx(
-      () => RadioGroup(
-        groupValue: AppSettingsController.instance.scaleMode.value,
-        onChanged: (e) {
-          AppSettingsController.instance.setScaleMode(e ?? 0);
-          controller.updateScaleMode();
-        },
-        child: ListView(
-          padding: AppStyle.edgeInsetsV12,
-          children: [
-            Padding(
-              padding: AppStyle.edgeInsetsH16,
-              child: Text(
-                "画面尺寸",
-                style: Get.textTheme.titleMedium,
-              ),
+      () => ListView(
+        padding: AppStyle.edgeInsetsV12,
+        children: [
+          Padding(
+            padding: AppStyle.edgeInsetsH16,
+            child: Text(
+              "画面尺寸",
+              style: Get.textTheme.titleMedium,
             ),
-            const RadioListTile(
-              value: 0,
-              contentPadding: AppStyle.edgeInsetsH4,
-              title: Text("适应"),
-              visualDensity: VisualDensity.compact,
-            ),
-            const RadioListTile(
-              value: 1,
-              contentPadding: AppStyle.edgeInsetsH4,
-              title: Text("拉伸"),
-              visualDensity: VisualDensity.compact,
-            ),
-            const RadioListTile(
-              value: 2,
-              contentPadding: AppStyle.edgeInsetsH4,
-              title: Text("铺满"),
-              visualDensity: VisualDensity.compact,
-            ),
-            const RadioListTile(
-              value: 3,
-              contentPadding: AppStyle.edgeInsetsH4,
-              title: Text("16:9"),
-              visualDensity: VisualDensity.compact,
-            ),
-            const RadioListTile(
-              value: 4,
-              contentPadding: AppStyle.edgeInsetsH4,
-              title: Text("4:3"),
-              visualDensity: VisualDensity.compact,
-            ),
-          ],
-        ),
+          ),
+          RadioListTile(
+            value: 0,
+            groupValue: AppSettingsController.instance.scaleMode.value,
+            onChanged: (e) {
+              AppSettingsController.instance.setScaleMode(e ?? 0);
+              controller.updateScaleMode();
+            },
+            contentPadding: AppStyle.edgeInsetsH4,
+            title: const Text("适应"),
+            visualDensity: VisualDensity.compact,
+          ),
+          RadioListTile(
+            value: 1,
+            groupValue: AppSettingsController.instance.scaleMode.value,
+            onChanged: (e) {
+              AppSettingsController.instance.setScaleMode(e ?? 0);
+              controller.updateScaleMode();
+            },
+            contentPadding: AppStyle.edgeInsetsH4,
+            title: const Text("拉伸"),
+            visualDensity: VisualDensity.compact,
+          ),
+          RadioListTile(
+            value: 2,
+            groupValue: AppSettingsController.instance.scaleMode.value,
+            onChanged: (e) {
+              AppSettingsController.instance.setScaleMode(e ?? 0);
+              controller.updateScaleMode();
+            },
+            contentPadding: AppStyle.edgeInsetsH4,
+            title: const Text("铺满"),
+            visualDensity: VisualDensity.compact,
+          ),
+          RadioListTile(
+            value: 3,
+            groupValue: AppSettingsController.instance.scaleMode.value,
+            onChanged: (e) {
+              AppSettingsController.instance.setScaleMode(e ?? 0);
+              controller.updateScaleMode();
+            },
+            contentPadding: AppStyle.edgeInsetsH4,
+            title: const Text("16:9"),
+            visualDensity: VisualDensity.compact,
+          ),
+          RadioListTile(
+            value: 4,
+            groupValue: AppSettingsController.instance.scaleMode.value,
+            onChanged: (e) {
+              AppSettingsController.instance.setScaleMode(e ?? 0);
+              controller.updateScaleMode();
+            },
+            contentPadding: AppStyle.edgeInsetsH4,
+            title: const Text("4:3"),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
       ),
     ),
   );

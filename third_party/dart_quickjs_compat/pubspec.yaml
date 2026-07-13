@@ -1,0 +1,11 @@
+name: dart_quickjs
+description: Dart 3.4 compatible QuickJS adapter for the HarmonyOS build.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.5 <4.0.0"
+
+dependencies:
+  flutter_js:
+    path: ../../simple_live_app/third_party/flutter_js

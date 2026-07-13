@@ -12,9 +12,11 @@ import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
+import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
@@ -32,6 +34,7 @@ import 'package:url_launcher/url_launcher_string.dart';
 class LiveRoomPage extends GetView<LiveRoomController> {
   static const double _desktopSidePanelWidth = 300.0;
   static const double _desktopSidePanelCollapsedWidth = 48.0;
+  static const double _ohosFullscreenHorizontalInset = 28.0;
 
   const LiveRoomPage({Key? key}) : super(key: key);
 
@@ -307,10 +310,11 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           ),
         );
       }
-      if (controller.fullScreenState.value) {
+      if (controller.showOhosFullscreenSurface ||
+          controller.fullScreenState.value) {
         return PopScope(
           canPop: false,
-          onPopInvokedWithResult: (didPop, result) {
+          onPopInvoked: (didPop) {
             controller.exitPlayerWindowMode();
           },
           child: Scaffold(
@@ -328,7 +332,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       builder: (context, orientation) {
         final shortestSide = MediaQuery.sizeOf(context).shortestSide;
         final isCompactMobile = shortestSide < 600;
-        final usePortraitLayout = (Platform.isAndroid || Platform.isIOS) &&
+        final usePortraitLayout = PlatformUtils.isMobileApp &&
             isCompactMobile &&
             !controller.fullScreenState.value &&
             !controller.smallWindowState.value;
@@ -342,7 +346,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               : buildTabletUI(context);
           return PopScope(
             canPop: _allowsNativePopGesture(),
-            onPopInvokedWithResult: (didPop, result) async {
+            onPopInvoked: (didPop) async {
               if (didPop) {
                 await controller.cancelAutoPipOnLeave();
                 return;
@@ -377,7 +381,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         );
         return PopScope(
           canPop: _allowsNativePopGesture(),
-          onPopInvokedWithResult: (didPop, result) async {
+          onPopInvoked: (didPop) async {
             if (didPop) {
               await controller.cancelAutoPipOnLeave();
               return;
@@ -595,6 +599,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   }
 
   Widget buildMediaPlayer() {
+    if (Utils.isOhos) {
+      return _buildOhosMediaPlayer();
+    }
     final playerContent = _buildMediaPlayerContent();
     if (!Platform.isAndroid) {
       return playerContent;
@@ -603,6 +610,381 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       floating: controller.pip,
       childWhenDisabled: playerContent,
       childWhenEnabled: playerContent,
+    );
+  }
+
+  Widget _buildOhosMediaPlayer() {
+    return Builder(
+      builder: (context) => ColoredBox(
+        color: Colors.black,
+        child: Obx(() {
+          final revision = controller.ohosPlayerRevision.value;
+          controller.ohosScaleRevision.value;
+          if (!controller.liveStatus.value) {
+            return const Center(
+              child: Text("未开播", style: TextStyle(color: Colors.white)),
+            );
+          }
+          if (controller.currentLineIndex < 0 || controller.playUrls.isEmpty) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          var url = controller.playUrls[controller.currentLineIndex];
+          if (AppSettingsController.instance.playerForceHttps.value) {
+            url = url.replaceAll("http://", "https://");
+          }
+          var fit = BoxFit.contain;
+          double? forcedAspectRatio;
+          switch (AppSettingsController.instance.scaleMode.value) {
+            case 1:
+              fit = BoxFit.fill;
+              break;
+            case 2:
+              fit = BoxFit.cover;
+              break;
+            case 3:
+              forcedAspectRatio = 16 / 9;
+              break;
+            case 4:
+              forcedAspectRatio = 4 / 3;
+              break;
+          }
+          final controlsVisible = controller.showControlsState.value &&
+              !controller.lockControlsState.value;
+          final fullScreen = controller.showOhosFullscreenSurface;
+          final mediaQuery = MediaQuery.of(context);
+          final safePadding = EdgeInsets.fromLTRB(
+            mediaQuery.viewPadding.left,
+            mediaQuery.viewPadding.top,
+            mediaQuery.viewPadding.right,
+            mediaQuery.viewPadding.bottom,
+          );
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              OhosVideoPlayer(
+                key: controller.ohosPlayerWidgetKey,
+                url: url,
+                revision: revision,
+                headers: controller.playHeaders,
+                onError: controller.mediaError,
+                onControllerReady: controller.attachOhosVideoController,
+                onControllerDisposed: controller.detachOhosVideoController,
+                onValueChanged: controller.updateOhosVideoState,
+                initialVolume: controller.ohosVolume.value,
+                fit: fit,
+                forcedAspectRatio: forcedAspectRatio,
+              ),
+              buildDanmuView(context, controller),
+              buildPlayerSuperChatOverlay(controller),
+              buildPlayerGestureLayer(
+                controller,
+                enableQuickAccessLongPress: fullScreen,
+              ),
+              buildLiveSubtitleOverlay(context, controller),
+              if (controller.ohosBuffering.value)
+                const Center(child: CircularProgressIndicator()),
+              if (!controller.ohosPlaying.value &&
+                  !controller.ohosBuffering.value)
+                Center(
+                  child: IconButton(
+                    tooltip: "播放",
+                    onPressed: controller.toggleOhosPlayback,
+                    iconSize: 72,
+                    icon: const Icon(
+                      Icons.play_circle_fill,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ),
+              if (fullScreen)
+                AnimatedPositioned(
+                  left: 0,
+                  right: 0,
+                  top: controlsVisible ? 0 : -(48 + safePadding.top),
+                  duration: const Duration(milliseconds: 200),
+                  child: _buildOhosTopBar(context),
+                ),
+              AnimatedPositioned(
+                left: 0,
+                right: 0,
+                bottom: controlsVisible
+                    ? 0
+                    : -(fullScreen ? 80 : 48) - safePadding.bottom,
+                duration: const Duration(milliseconds: 200),
+                child: _buildOhosBottomBar(context),
+              ),
+              if (fullScreen)
+                AnimatedPositioned(
+                  left: controller.lockControlsState.value || controlsVisible
+                      ? safePadding.left + _ohosFullscreenHorizontalInset
+                      : -(64 + safePadding.left),
+                  top: 0,
+                  bottom: 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: buildLockButton(controller),
+                ),
+              buildGestureTip(controller),
+            ],
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildOhosTopBar(BuildContext context) {
+    final padding = MediaQuery.viewPaddingOf(context);
+    final detail = controller.detail.value;
+    final title = detail?.title ?? "直播间";
+    final userName = detail?.userName ?? "";
+    return Container(
+      height: 48 + padding.top,
+      padding: EdgeInsets.only(
+        left: padding.left + _ohosFullscreenHorizontalInset,
+        right: padding.right + _ohosFullscreenHorizontalInset,
+        top: padding.top,
+      ),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [Colors.transparent, Colors.black87],
+        ),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: "退出全屏",
+            onPressed: controller.exitFull,
+            icon: const Icon(
+              Icons.arrow_back,
+              color: Colors.white,
+              size: 24,
+            ),
+          ),
+          AppStyle.hGap12,
+          Expanded(
+            child: Text(
+              userName.isEmpty ? title : "$title - $userName",
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+          ),
+          AppStyle.hGap12,
+          IconButton(
+            tooltip: "快捷入口",
+            onPressed: () => showQuickAccess(controller),
+            icon: const Icon(
+              Remix.play_list_2_line,
+              color: Colors.white,
+              size: 24,
+            ),
+          ),
+          IconButton(
+            tooltip: "播放器设置",
+            onPressed: () => showPlayerSettings(controller),
+            icon: const Icon(Icons.more_horiz, color: Colors.white),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOhosBottomBar(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fullScreen = controller.showOhosFullscreenSurface;
+        final padding = fullScreen ? mediaQuery.viewPadding : EdgeInsets.zero;
+        final compact = !fullScreen && constraints.maxWidth < 520;
+        return Container(
+          height: 48 + padding.bottom,
+          padding: EdgeInsets.only(
+            left:
+                fullScreen ? padding.left + _ohosFullscreenHorizontalInset : 0,
+            right:
+                fullScreen ? padding.right + _ohosFullscreenHorizontalInset : 0,
+            bottom: padding.bottom,
+          ),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.transparent, Colors.black87],
+            ),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: "刷新直播间",
+                onPressed: controller.refreshRoom,
+                icon: const Icon(Remix.refresh_line, color: Colors.white),
+              ),
+              IconButton(
+                tooltip: "弹幕开关",
+                onPressed: controller.toggleDanmakuByShortcut,
+                icon: ImageIcon(
+                  AssetImage(
+                    controller.showDanmakuState.value
+                        ? 'assets/icons/icon_danmaku_close.png'
+                        : 'assets/icons/icon_danmaku_open.png',
+                  ),
+                  size: 24,
+                  color: Colors.white,
+                ),
+              ),
+              if (!compact || fullScreen)
+                IconButton(
+                  tooltip: "弹幕设置",
+                  onPressed: () => showDanmakuSettings(controller),
+                  icon: const ImageIcon(
+                    AssetImage('assets/icons/icon_danmaku_setting.png'),
+                    size: 24,
+                    color: Colors.white,
+                  ),
+                ),
+              if (!compact || fullScreen)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Text(
+                    controller.liveDuration.value,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              const Spacer(),
+              if (!compact || fullScreen)
+                IconButton(
+                  tooltip: controller.mutedState.value ? "恢复声音" : "静音",
+                  onPressed: controller.toggleMute,
+                  icon: Icon(
+                    controller.mutedState.value
+                        ? Icons.volume_off
+                        : Icons.volume_up,
+                    color: Colors.white,
+                  ),
+                ),
+              if (fullScreen && controller.qualites.isNotEmpty)
+                TextButton(
+                  onPressed: () => showQualitesInfo(controller),
+                  child: Text(
+                    controller.currentQualityInfo.value,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              if (fullScreen && controller.playUrls.isNotEmpty)
+                TextButton(
+                  onPressed: () => showLinesInfo(controller),
+                  child: Text(
+                    controller.currentLineInfo.value,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              if (compact)
+                IconButton(
+                  tooltip: "更多功能",
+                  onPressed: _showOhosPlayerMenu,
+                  icon: const Icon(Icons.more_vert, color: Colors.white),
+                ),
+              IconButton(
+                tooltip: fullScreen ? "退出全屏" : "全屏",
+                onPressed: fullScreen
+                    ? controller.exitFull
+                    : controller.enterFullScreen,
+                icon: Icon(
+                  fullScreen
+                      ? Remix.fullscreen_exit_fill
+                      : Remix.fullscreen_line,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showOhosPlayerMenu() {
+    Utils.showBottomSheet(
+      title: "播放器功能",
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          ListTile(
+            leading: Icon(
+              controller.mutedState.value ? Icons.volume_off : Icons.volume_up,
+            ),
+            title: Text(controller.mutedState.value ? "恢复声音" : "静音"),
+            onTap: () {
+              Get.back();
+              controller.toggleMute();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.subtitles_outlined),
+            title: const Text("弹幕设置"),
+            onTap: () {
+              Get.back();
+              showDanmakuSettings(controller);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.aspect_ratio),
+            title: const Text("画面尺寸"),
+            onTap: () {
+              Get.back();
+              showPlayerSettings(controller);
+            },
+          ),
+          if (controller.qualites.isNotEmpty)
+            ListTile(
+              leading: const Icon(Icons.high_quality_outlined),
+              title: const Text("画质"),
+              subtitle: Text(controller.currentQualityInfo.value),
+              onTap: () {
+                Get.back();
+                showQualitesInfo(controller);
+              },
+            ),
+          if (controller.playUrls.isNotEmpty)
+            ListTile(
+              leading: const Icon(Icons.route),
+              title: const Text("播放线路"),
+              subtitle: Text(controller.currentLineInfo.value),
+              onTap: () {
+                Get.back();
+                showLinesInfo(controller);
+              },
+            ),
+          ListTile(
+            leading: const Icon(Icons.playlist_play),
+            title: const Text("快捷入口"),
+            onTap: () {
+              Get.back();
+              showQuickAccess(controller);
+            },
+          ),
+          if (controller.fullScreenState.value)
+            ListTile(
+              leading: const Icon(Icons.lock_outline),
+              title: const Text("锁定控制"),
+              onTap: () {
+                Get.back();
+                controller.setLockState();
+              },
+            ),
+        ],
+      ),
     );
   }
 

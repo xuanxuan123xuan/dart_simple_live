@@ -120,7 +120,7 @@ class AccountController extends GetxController {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (!Platform.isAndroid && !Platform.isIOS)
+          if (!Platform.isAndroid && !Platform.isIOS && !Utils.isOhos)
             ListTile(
               leading: const Icon(Icons.open_in_browser),
               title: const Text("浏览器登录后粘贴 Cookie"),
@@ -163,7 +163,7 @@ class AccountController extends GetxController {
                 exportDouyinCookieToClipboard();
               },
             ),
-          if (Platform.isAndroid || Platform.isIOS)
+          if (Platform.isAndroid || Platform.isIOS || Utils.isOhos)
             ListTile(
               leading: const Icon(Icons.file_open_outlined),
               title: const Text("从文件导入 Cookie"),
@@ -209,7 +209,7 @@ class AccountController extends GetxController {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (Platform.isAndroid || Platform.isIOS)
+          if (Platform.isAndroid || Platform.isIOS || Utils.isOhos)
             ListTile(
               leading: const Icon(Icons.account_circle_outlined),
               title: const Text("Web登录"),
@@ -220,7 +220,7 @@ class AccountController extends GetxController {
                 kuaishouWebLogin();
               },
             ),
-          if (!Platform.isAndroid && !Platform.isIOS)
+          if (!Platform.isAndroid && !Platform.isIOS && !Utils.isOhos)
             ListTile(
               leading: const Icon(Icons.open_in_browser),
               title: const Text("浏览器登录后粘贴 Cookie"),
@@ -263,7 +263,7 @@ class AccountController extends GetxController {
                 exportKuaishouCookieToClipboard();
               },
             ),
-          if (Platform.isAndroid || Platform.isIOS)
+          if (Platform.isAndroid || Platform.isIOS || Utils.isOhos)
             ListTile(
               leading: const Icon(Icons.file_open_outlined),
               title: const Text("从文件导入 Cookie"),
@@ -290,7 +290,8 @@ class AccountController extends GetxController {
     );
   }
 
-  bool get canUseKuaishouWebLogin => Platform.isAndroid || Platform.isIOS;
+  bool get canUseKuaishouWebLogin =>
+      Platform.isAndroid || Platform.isIOS || Utils.isOhos;
 
   void kuaishouWebLogin() {
     Get.toNamed(RoutePath.kKuaishouWebLogin);

@@ -65,26 +65,24 @@ class SettingsMenu<T> extends StatelessWidget {
       useSafeArea: true, //useSafeArea似乎无效
       builder: (_) => Utils.bottomSheetSafeArea(
         child: SingleChildScrollView(
-          child: RadioGroup(
-            groupValue: value,
-            onChanged: (e) {
-              Get.back();
-              onChanged?.call(e as T);
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: valueMap.keys
-                  .map(
-                    (e) => RadioListTile(
-                      value: e,
-                      title: Text(
-                        (valueMap[e]?.tr) ?? "???",
-                        style: Get.textTheme.bodyMedium,
-                      ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: valueMap.keys
+                .map(
+                  (e) => RadioListTile(
+                    value: e,
+                    groupValue: value,
+                    onChanged: (selected) {
+                      Get.back();
+                      if (selected != null) onChanged?.call(selected as T);
+                    },
+                    title: Text(
+                      (valueMap[e]?.tr) ?? "???",
+                      style: Get.textTheme.bodyMedium,
                     ),
-                  )
-                  .toList(),
-            ),
+                  ),
+                )
+                .toList(),
           ),
         ),
       ),

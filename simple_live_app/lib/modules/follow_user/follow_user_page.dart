@@ -724,32 +724,30 @@ class FollowUserPage extends GetView<FollowUserController> {
                 return SizedBox(
                   height: 300,
                   width: 300,
-                  child: RadioGroup(
-                    groupValue: checkTag.value,
-                    onChanged: (value) {
-                      checkTag.value = value!;
-                    },
-                    child: ListView.builder(
-                      controller: scrollController,
-                      itemCount: copiedList.length,
-                      itemBuilder: (context, index) {
-                        var tagItem = copiedList[index];
-                        return Container(
-                          decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(
-                                color: Colors.grey.shade300,
-                                width: 1.0,
-                              ),
+                  child: ListView.builder(
+                    controller: scrollController,
+                    itemCount: copiedList.length,
+                    itemBuilder: (context, index) {
+                      var tagItem = copiedList[index];
+                      return Container(
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(
+                              color: Colors.grey.shade300,
+                              width: 1.0,
                             ),
                           ),
-                          child: RadioListTile<FollowUserTag>(
-                            title: Text(tagItem.tag),
-                            value: tagItem,
-                          ),
-                        );
-                      },
-                    ),
+                        ),
+                        child: RadioListTile<FollowUserTag>(
+                          title: Text(tagItem.tag),
+                          value: tagItem,
+                          groupValue: checkTag.value,
+                          onChanged: (value) {
+                            if (value != null) checkTag.value = value;
+                          },
+                        ),
+                      );
+                    },
                   ),
                 );
               },
@@ -902,4 +900,3 @@ class _FollowLayoutSpec {
     required this.mainAxisSpacing,
   });
 }
-

@@ -24,6 +24,7 @@ import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:video_player/video_player.dart';
 
 const _windowsChromeChannel = MethodChannel('simple_live/windows_chrome');
 
@@ -94,6 +95,51 @@ mixin PlayerMixin {
     player,
     configuration: MpvOptionsService.videoControllerConfiguration(),
   );
+
+  VideoPlayerController? _ohosVideoController;
+  final GlobalKey ohosPlayerWidgetKey =
+      GlobalKey(debugLabel: 'ohos-native-player');
+  final RxBool ohosPlaying = false.obs;
+  final RxBool ohosBuffering = true.obs;
+  final RxDouble ohosVolume = 1.0.obs;
+  final RxDouble ohosAspectRatio = (16 / 9).obs;
+  final RxInt ohosScaleRevision = 0.obs;
+
+  VideoPlayerController? get ohosVideoController => _ohosVideoController;
+
+  void attachOhosVideoController(VideoPlayerController controller) {
+    _ohosVideoController = controller;
+    updateOhosVideoState(controller.value);
+  }
+
+  void detachOhosVideoController(VideoPlayerController controller) {
+    if (identical(_ohosVideoController, controller)) {
+      _ohosVideoController = null;
+      ohosPlaying.value = false;
+      ohosBuffering.value = false;
+    }
+  }
+
+  void updateOhosVideoState(VideoPlayerValue value) {
+    ohosPlaying.value = value.isPlaying;
+    ohosBuffering.value = value.isBuffering || !value.isInitialized;
+    if (value.aspectRatio > 0) {
+      ohosAspectRatio.value = value.aspectRatio;
+    }
+  }
+
+  Future<void> toggleOhosPlayback() async {
+    final controller = _ohosVideoController;
+    if (controller == null || !controller.value.isInitialized) {
+      return;
+    }
+    if (controller.value.isPlaying) {
+      await controller.pause();
+    } else {
+      await controller.play();
+    }
+    updateOhosVideoState(controller.value);
+  }
 }
 
 mixin PlayerStateMixin on PlayerMixin {
@@ -131,6 +177,10 @@ mixin PlayerStateMixin on PlayerMixin {
 
   /// 是否处于全屏状态
   RxBool fullScreenState = false.obs;
+  RxBool ohosFullscreenTransition = false.obs;
+
+  bool get showOhosFullscreenSurface =>
+      Utils.isOhos && (fullScreenState.value || ohosFullscreenTransition.value);
 
   /// 显示手势Tip
   RxBool showGestureTip = false.obs;
@@ -162,7 +212,8 @@ mixin PlayerStateMixin on PlayerMixin {
   var showLines = false.obs;
 
   bool get useBottomSheetPlayerMenus =>
-      (Platform.isAndroid || Platform.isIOS) && !fullScreenState.value;
+      (Platform.isAndroid || Platform.isIOS || Utils.isOhos) &&
+      !fullScreenState.value;
 
   bool get desktopVolumeDragging => _desktopVolumeDragging;
 
@@ -244,6 +295,10 @@ mixin PlayerStateMixin on PlayerMixin {
   }
 
   void updateScaleMode() {
+    if (Utils.isOhos) {
+      ohosScaleRevision.value += 1;
+      return;
+    }
     var boxFit = BoxFit.contain;
     double? aspectRatio;
     if (player.state.width != null && player.state.height != null) {
@@ -451,8 +506,41 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       await exitSmallWindow();
       return;
     }
-    fullScreenState.value = true;
-    if (Platform.isAndroid || Platform.isIOS) {
+    if (Utils.isOhos) {
+      if (ohosFullscreenTransition.value) {
+        return;
+      }
+      ohosFullscreenTransition.value = true;
+      fullScreenState.value = true;
+      showControls();
+      await WidgetsBinding.instance.endOfFrame;
+      final operations = <Future<void>>[
+        _runOhosSystemUiOperation(
+          SystemChrome.setEnabledSystemUIMode(
+            SystemUiMode.manual,
+            overlays: [],
+          ),
+          "隐藏系统栏",
+        ),
+      ];
+      if (!isVertical.value) {
+        operations.add(
+          _runOhosSystemUiOperation(
+            SystemChrome.setPreferredOrientations([
+              DeviceOrientation.landscapeLeft,
+              DeviceOrientation.landscapeRight,
+            ]),
+            "切换横屏",
+          ),
+        );
+      }
+      await Future.wait(operations);
+      if (!isVertical.value) {
+        await _waitForOhosViewport(portrait: false);
+      }
+      ohosFullscreenTransition.value = false;
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      fullScreenState.value = true;
       //全屏
       await SystemChrome.setEnabledSystemUIMode(
         SystemUiMode.manual,
@@ -463,6 +551,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         await setLandscapeOrientation();
       }
     } else {
+      fullScreenState.value = true;
       _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
       await _applyWindowsFullScreenChrome();
       await windowManager.setFullScreen(true);
@@ -495,6 +584,42 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       await exitSmallWindow();
       return;
     }
+    if (Utils.isOhos) {
+      if (ohosFullscreenTransition.value) {
+        return;
+      }
+      // Keep the fullscreen surface alive until HarmonyOS reports a portrait
+      // viewport. This avoids rebuilding the room in a landscape viewport and
+      // also keeps the native AVPlayer texture attached throughout the move.
+      ohosFullscreenTransition.value = true;
+      lockControlsState.value = false;
+      showLockEdgeState.value = false;
+      await WidgetsBinding.instance.endOfFrame;
+      // Start rotation and system-bar restoration together. The previous
+      // sequential awaits delayed the visible rotation by up to 800 ms.
+      await Future.wait([
+        _runOhosSystemUiOperation(
+          SystemChrome.setPreferredOrientations([
+            DeviceOrientation.portraitUp,
+          ]),
+          "恢复屏幕方向",
+        ),
+        _runOhosSystemUiOperation(
+          SystemChrome.setEnabledSystemUIMode(
+            SystemUiMode.edgeToEdge,
+            overlays: SystemUiOverlay.values,
+          ),
+          "恢复系统栏",
+        ),
+      ]);
+      await _waitForOhosViewport(portrait: true);
+      fullScreenState.value = false;
+      onPlayerWindowModeExited();
+      await WidgetsBinding.instance.endOfFrame;
+      ohosFullscreenTransition.value = false;
+      showControls();
+      return;
+    }
     if (Platform.isAndroid || Platform.isIOS) {
       await SystemChrome.setEnabledSystemUIMode(
         SystemUiMode.edgeToEdge,
@@ -517,6 +642,33 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     onPlayerWindowModeExited();
 
     //danmakuController?.clear();
+  }
+
+  Future<void> _runOhosSystemUiOperation(
+    Future<void> operation,
+    String description,
+  ) async {
+    try {
+      await operation.timeout(const Duration(milliseconds: 650));
+    } catch (e) {
+      Log.logPrint("鸿蒙$description失败: $e");
+    }
+  }
+
+  Future<void> _waitForOhosViewport({required bool portrait}) async {
+    final deadline = DateTime.now().add(const Duration(milliseconds: 450));
+    while (DateTime.now().isBefore(deadline)) {
+      final views = WidgetsBinding.instance.platformDispatcher.views;
+      if (views.isNotEmpty) {
+        final size = views.first.physicalSize;
+        final matches =
+            portrait ? size.height >= size.width : size.width >= size.height;
+        if (matches) {
+          return;
+        }
+      }
+      await Future.delayed(const Duration(milliseconds: 16));
+    }
   }
 
   Size? _lastWindowSize;
@@ -702,6 +854,18 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Future<void> toggleMute() async {
+    if (Utils.isOhos) {
+      if (mutedState.value) {
+        final restoreVolume = _volumeBeforeMute <= 0
+            ? AppSettingsController.instance.playerVolume.value
+            : _volumeBeforeMute;
+        await setSessionPlayerVolume(restoreVolume);
+      } else {
+        _volumeBeforeMute = ohosVolume.value * 100;
+        await setSessionPlayerVolume(0);
+      }
+      return;
+    }
     if (mutedState.value) {
       final restoreVolume =
           _volumeBeforeMute <= 0 ? 100.0 : _volumeBeforeMute.clamp(0.0, 100.0);
@@ -720,6 +884,18 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     bool persist = false,
   }) async {
     final value = volume.clamp(0.0, 100.0).toDouble();
+    if (Utils.isOhos) {
+      mutedState.value = value <= 0;
+      if (value > 0) {
+        _volumeBeforeMute = value;
+      }
+      ohosVolume.value = value / 100;
+      await _ohosVideoController?.setVolume(ohosVolume.value);
+      if (persist) {
+        AppSettingsController.instance.setPlayerVolume(value);
+      }
+      return;
+    }
     if (value <= 0) {
       mutedState.value = true;
       await player.setVolume(0);
@@ -956,6 +1132,9 @@ mixin PlayerGestureControlMixin
     on PlayerStateMixin, PlayerMixin, PlayerSystemMixin {
   /// 单击显示/隐藏控制器
   void onTap() {
+    if (lockControlsState.value && fullScreenState.value) {
+      return;
+    }
     if (showControlsState.value) {
       hideControls();
     } else {
@@ -1062,7 +1241,8 @@ mixin PlayerGestureControlMixin
         Platform.isIOS ||
         Platform.isMacOS ||
         Platform.isWindows ||
-        Platform.isLinux) {
+        Platform.isLinux ||
+        Utils.isOhos) {
       showGestureTip.value = true;
     }
     if (Platform.isWindows || Platform.isLinux) {
@@ -1074,6 +1254,8 @@ mixin PlayerGestureControlMixin
                 .clamp(0.0, 100.0) /
             100;
       }
+    } else if (Utils.isOhos) {
+      _currentVolume = ohosVolume.value;
     } else if (Platform.isAndroid || Platform.isIOS) {
       _currentVolume = await VolumeController.instance.getVolume();
     }
@@ -1081,7 +1263,8 @@ mixin PlayerGestureControlMixin
         Platform.isIOS ||
         Platform.isMacOS ||
         Platform.isWindows ||
-        Platform.isLinux) {
+        Platform.isLinux ||
+        Utils.isOhos) {
       try {
         _currentBrightness = await ScreenBrightness.instance.application;
       } catch (e) {
@@ -1103,7 +1286,8 @@ mixin PlayerGestureControlMixin
     if (!Platform.isAndroid &&
         !Platform.isIOS &&
         !Platform.isWindows &&
-        !Platform.isLinux) {
+        !Platform.isLinux &&
+        !Utils.isOhos) {
       return;
     }
     //String text = "";
@@ -1154,7 +1338,7 @@ mixin PlayerGestureControlMixin
 
   Future _realSetVolume(int volume) async {
     Log.logPrint(volume);
-    if (Platform.isWindows || Platform.isLinux) {
+    if (Platform.isWindows || Platform.isLinux || Utils.isOhos) {
       await setSessionPlayerVolume(volume.toDouble(), persist: true);
       return;
     }
@@ -1212,6 +1396,14 @@ class PlayerController extends BaseController
         PlayerGestureControlMixin {
   @override
   void onInit() {
+    if (Utils.isOhos) {
+      ohosVolume.value =
+          AppSettingsController.instance.playerVolume.value / 100;
+      mutedState.value = ohosVolume.value <= 0;
+      showControls();
+      super.onInit();
+      return;
+    }
     initSystem();
     initStream();
     //设置音量
@@ -1414,12 +1606,16 @@ class PlayerController extends BaseController
   }
 
   void mediaEnd() {
-    WakelockPlus.disable();
+    if (!Utils.isOhos) {
+      WakelockPlus.disable();
+    }
     unawaited(stopBackgroundPlaybackService());
   }
 
   void mediaError(String error) {
-    WakelockPlus.disable();
+    if (!Utils.isOhos) {
+      WakelockPlus.disable();
+    }
     unawaited(stopBackgroundPlaybackService());
   }
 
@@ -1544,6 +1740,16 @@ class PlayerController extends BaseController
       return;
     }
     _playerClosing = true;
+    if (Utils.isOhos) {
+      if (fullScreenState.value) {
+        await exitFull();
+      }
+      hideControlsTimer?.cancel();
+      hideMouseCursorTimer?.cancel();
+      _ohosVideoController = null;
+      disposeDanmakuController();
+      return;
+    }
     await stopBackgroundPlaybackService();
     await player.stop();
     if (smallWindowState.value) {

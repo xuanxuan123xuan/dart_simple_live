@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:get/get.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/mine/account/kuaishou/web_login_controller.dart';
+import 'package:webview_flutter/webview_flutter.dart' as ohos_webview;
 
 class KuaishouWebLoginPage extends GetView<KuaishouWebLoginController> {
   const KuaishouWebLoginPage({super.key});
@@ -41,7 +43,7 @@ class KuaishouWebLoginPage extends GetView<KuaishouWebLoginController> {
             child: const ListTile(
               dense: true,
               leading: Icon(Icons.cookie_outlined),
-              title: Text("登录快手网页后点右上角保存；保存后的 Cookie 会用于快手搜索和弹幕。"),
+              title: Text("完成快手网页登录后会自动保存并返回；右上角保存可用于手动重试。"),
             ),
           ),
           Obx(() {
@@ -63,31 +65,37 @@ class KuaishouWebLoginPage extends GetView<KuaishouWebLoginController> {
             );
           }),
           Expanded(
-            child: InAppWebView(
-              onWebViewCreated: controller.onWebViewCreated,
-              onLoadStart: controller.onLoadStart,
-              onLoadStop: controller.onLoadStop,
-              onProgressChanged: controller.onProgressChanged,
-              onReceivedError: controller.onReceivedError,
-              onReceivedHttpError: controller.onReceivedHttpError,
-              initialSettings: InAppWebViewSettings(
-                userAgent: controller.userAgent,
-                javaScriptEnabled: true,
-                domStorageEnabled: true,
-                databaseEnabled: true,
-                sharedCookiesEnabled: true,
-                thirdPartyCookiesEnabled: true,
-                javaScriptCanOpenWindowsAutomatically: true,
-                supportMultipleWindows: true,
-              ),
-              onCreateWindow: (webController, createWindowAction) async {
-                final url = createWindowAction.request.url;
-                if (url != null) {
-                  await webController.loadUrl(urlRequest: URLRequest(url: url));
-                }
-                return false;
-              },
-            ),
+            child: Utils.isOhos
+                ? ohos_webview.WebViewWidget(
+                    controller: controller.ohosWebViewController!,
+                  )
+                : InAppWebView(
+                    onWebViewCreated: controller.onWebViewCreated,
+                    onLoadStart: controller.onLoadStart,
+                    onLoadStop: controller.onLoadStop,
+                    onProgressChanged: controller.onProgressChanged,
+                    onReceivedError: controller.onReceivedError,
+                    onReceivedHttpError: controller.onReceivedHttpError,
+                    initialSettings: InAppWebViewSettings(
+                      userAgent: controller.userAgent,
+                      javaScriptEnabled: true,
+                      domStorageEnabled: true,
+                      databaseEnabled: true,
+                      sharedCookiesEnabled: true,
+                      thirdPartyCookiesEnabled: true,
+                      javaScriptCanOpenWindowsAutomatically: true,
+                      supportMultipleWindows: true,
+                    ),
+                    onCreateWindow: (webController, createWindowAction) async {
+                      final url = createWindowAction.request.url;
+                      if (url != null) {
+                        await webController.loadUrl(
+                          urlRequest: URLRequest(url: url),
+                        );
+                      }
+                      return false;
+                    },
+                  ),
           ),
         ],
       ),

@@ -34,6 +34,11 @@ class KuaishouSite extends LiveSite {
   String cookie = '';
   Map<String, String> cookieObj = {};
 
+  /// Room list APIs already contain the live stream and playable URLs. Keep
+  /// them because the separate room HTML is frequently replaced by a risk
+  /// control page which incorrectly looks like an offline room.
+  final Map<String, Map<String, dynamic>> _roomSnapshots = {};
+
   static const List<String> _imageExtensions = [
     'svgz',
     'pjp',
@@ -54,26 +59,26 @@ class KuaishouSite extends LiveSite {
   ];
 
   Map<String, dynamic> get _headers => {
-    'User-Agent': userAgent,
-    'accept':
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-    'connection': 'keep-alive',
-    'sec-ch-ua': 'Google Chrome;v=120, Chromium;v=120, Not=A?Brand;v=24',
-    'sec-ch-ua-platform': 'Windows',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'same-origin',
-    'Sec-Fetch-User': '?1',
-  };
+        'User-Agent': userAgent,
+        'accept':
+            'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+        'connection': 'keep-alive',
+        'sec-ch-ua': 'Google Chrome;v=120, Chromium;v=120, Not=A?Brand;v=24',
+        'sec-ch-ua-platform': 'Windows',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
+      };
 
   Map<String, dynamic> _searchHeaders(String keyword) => {
-    ..._headersWithCookie,
-    'accept': 'application/json, text/plain, */*',
-    'referer':
-        'https://live.kuaishou.com/search?keyword=${Uri.encodeComponent(keyword)}',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-  };
+        ..._headersWithCookie,
+        'accept': 'application/json, text/plain, */*',
+        'referer':
+            'https://live.kuaishou.com/search?keyword=${Uri.encodeComponent(keyword)}',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+      };
 
   Map<String, dynamic> get _headersWithCookie {
     final headers = <String, dynamic>{..._headers};
@@ -104,12 +109,10 @@ class KuaishouSite extends LiveSite {
   }
 
   static String resolveRoomTitle(Map room) {
-    final liveStream = room["liveStream"] is Map
-        ? room["liveStream"] as Map
-        : const {};
-    final gameInfo = room["gameInfo"] is Map
-        ? room["gameInfo"] as Map
-        : const {};
+    final liveStream =
+        room["liveStream"] is Map ? room["liveStream"] as Map : const {};
+    final gameInfo =
+        room["gameInfo"] is Map ? room["gameInfo"] as Map : const {};
     final author = room["author"] is Map ? room["author"] as Map : const {};
     for (final value in [
       room["caption"],
@@ -131,12 +134,19 @@ class KuaishouSite extends LiveSite {
     if (_isLiveFlag(room["isLiving"]) || _isLiveFlag(room["living"])) {
       return true;
     }
-    final liveStream = room["liveStream"] is Map
-        ? room["liveStream"] as Map
-        : room;
+    final liveStream =
+        room["liveStream"] is Map ? room["liveStream"] as Map : room;
     final liveStreamId = liveStream["id"]?.toString().trim() ?? '';
     return liveStreamId.isNotEmpty &&
         _containsPlayableUrl(liveStream["playUrls"]);
+  }
+
+  static Map _resolveLiveStream(Map room) {
+    final nested = room["liveStream"];
+    if (nested is Map && nested.isNotEmpty) {
+      return nested;
+    }
+    return room;
   }
 
   static bool _isLiveFlag(dynamic value) {
@@ -159,6 +169,20 @@ class KuaishouSite extends LiveSite {
       return value.any(_containsPlayableUrl);
     }
     return false;
+  }
+
+  void _cacheRoomSnapshot(dynamic value) {
+    if (value is! Map || !resolveLiveStatus(value)) {
+      return;
+    }
+    final author = value["author"] is Map ? value["author"] as Map : const {};
+    final roomId = author["id"]?.toString() ??
+        value["authorId"]?.toString() ??
+        value["userId"]?.toString() ??
+        '';
+    if (roomId.isNotEmpty) {
+      _roomSnapshots[roomId] = Map<String, dynamic>.from(value);
+    }
   }
 
   @override
@@ -252,6 +276,7 @@ class KuaishouSite extends LiveSite {
 
     var items = <LiveRoomItem>[];
     for (var item in result["data"]["list"] ?? []) {
+      _cacheRoomSnapshot(item);
       var cover = item['poster']?.toString() ?? '';
       if (cover.isNotEmpty && !_isImage(cover)) {
         cover = '$cover.jpg';
@@ -285,6 +310,7 @@ class KuaishouSite extends LiveSite {
     for (var item in list) {
       for (var sitem in item["gameLiveInfo"] ?? []) {
         for (var titem in sitem["liveInfo"] ?? []) {
+          _cacheRoomSnapshot(titem);
           var author = titem["author"];
           var gameInfo = titem["gameInfo"];
           var cover = gameInfo['poster']?.toString() ?? '';
@@ -350,6 +376,7 @@ class KuaishouSite extends LiveSite {
     var list = (data["list"] as List?) ?? [];
     var items = <LiveRoomItem>[];
     for (var item in list) {
+      _cacheRoomSnapshot(item);
       var room = _parseSearchLiveRoom(item);
       if (room.roomId.isNotEmpty) {
         items.add(room);
@@ -364,6 +391,7 @@ class KuaishouSite extends LiveSite {
     var liveStreams = _findOverviewSectionList(overview, "liveStreams");
     var items = <LiveRoomItem>[];
     for (var item in liveStreams) {
+      _cacheRoomSnapshot(item);
       var room = _parseSearchLiveRoom(item);
       if (room.roomId.isNotEmpty) {
         items.add(room);
@@ -491,8 +519,7 @@ class KuaishouSite extends LiveSite {
 
     var author = item["author"] is Map ? item["author"] as Map : {};
     var gameInfo = item["gameInfo"] is Map ? item["gameInfo"] as Map : {};
-    var cover =
-        item["poster"]?.toString() ??
+    var cover = item["poster"]?.toString() ??
         item["coverUrl"]?.toString() ??
         gameInfo["poster"]?.toString() ??
         '';
@@ -501,13 +528,11 @@ class KuaishouSite extends LiveSite {
     }
 
     return LiveRoomItem(
-      roomId:
-          author["id"]?.toString() ??
+      roomId: author["id"]?.toString() ??
           item["authorId"]?.toString() ??
           item["userId"]?.toString() ??
           '',
-      title:
-          item["caption"]?.toString() ??
+      title: item["caption"]?.toString() ??
           item["title"]?.toString() ??
           author["name"]?.toString() ??
           '',
@@ -545,6 +570,11 @@ class KuaishouSite extends LiveSite {
     await _getCookie(url);
     await _registerDid();
 
+    final cachedRoom = _roomSnapshots[roomId];
+    if (cachedRoom != null && resolveLiveStatus(cachedRoom)) {
+      return _buildRoomDetailFromSnapshot(cachedRoom, roomId);
+    }
+
     final anonymousDetail = await _loadRoomDetail(
       url: url,
       roomId: roomId,
@@ -566,7 +596,109 @@ class KuaishouSite extends LiveSite {
       }
     }
 
+    final discoveredRoom = await _findRoomSnapshotFromHome(roomId);
+    if (discoveredRoom != null) {
+      return _buildRoomDetailFromSnapshot(discoveredRoom, roomId);
+    }
+
     return anonymousDetail ?? _offlineDetail(roomId);
+  }
+
+  Future<Map<String, dynamic>?> _findRoomSnapshotFromHome(
+    String roomId,
+  ) async {
+    try {
+      final result = await HttpClient.instance.getJson(
+        "https://live.kuaishou.com/live_api/home/list",
+        header: _headersWithCookie,
+      );
+      final found = _findRoomSnapshot(result, roomId);
+      if (found != null) {
+        _cacheRoomSnapshot(found);
+      }
+      return found;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Map<String, dynamic>? _findRoomSnapshot(dynamic value, String roomId) {
+    if (value is Map) {
+      final author = value["author"] is Map ? value["author"] as Map : null;
+      if (author?["id"]?.toString() == roomId && resolveLiveStatus(value)) {
+        return Map<String, dynamic>.from(value);
+      }
+      for (final child in value.values) {
+        final found = _findRoomSnapshot(child, roomId);
+        if (found != null) {
+          return found;
+        }
+      }
+    } else if (value is Iterable) {
+      for (final child in value) {
+        final found = _findRoomSnapshot(child, roomId);
+        if (found != null) {
+          return found;
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<LiveRoomDetail> _buildRoomDetailFromSnapshot(
+    Map room,
+    String fallbackRoomId,
+  ) async {
+    final liveStream = _resolveLiveStream(room);
+    final author = room["author"] is Map ? room["author"] as Map : const {};
+    final gameInfo =
+        room["gameInfo"] is Map ? room["gameInfo"] as Map : const {};
+    final resolvedRoomId = author["id"]?.toString() ?? fallbackRoomId;
+    final liveStreamId = liveStream["id"]?.toString() ?? '';
+    final websocketInfo = liveStreamId.isEmpty
+        ? _KuaishouWebsocketInfo.empty()
+        : await _getWebsocketInfo(
+            roomId: resolvedRoomId,
+            liveStreamId: liveStreamId,
+          ).timeout(
+            const Duration(seconds: 2),
+            onTimeout: _KuaishouWebsocketInfo.empty,
+          );
+
+    var cover =
+        liveStream["poster"]?.toString() ?? room["poster"]?.toString() ?? '';
+    if (cover.isNotEmpty && !_isImage(cover)) {
+      cover = '$cover.jpg';
+    }
+
+    return LiveRoomDetail(
+      roomId: resolvedRoomId,
+      title: resolveRoomTitle(room),
+      cover: cover,
+      userName: author["name"]?.toString() ?? '',
+      userAvatar: author["avatar"]?.toString() ?? '',
+      online: _parseInt(
+        room["watchingCount"] ?? liveStream["watchingCount"],
+      ),
+      introduction: author["description"]?.toString(),
+      notice: author["description"]?.toString(),
+      status: true,
+      url: liveStreamId,
+      data: liveStream["playUrls"],
+      danmakuData: KuaishouDanmakuArgs(
+        roomId: resolvedRoomId,
+        liveStreamId: liveStreamId,
+        token: websocketInfo.token,
+        websocketUrls: websocketInfo.websocketUrls,
+        pageId: _generatePageId(),
+        expTag: liveStream["expTag"]?.toString() ?? '',
+        attach: room["expTag"]?.toString() ?? '',
+        cookie: _currentCookieHeader(),
+        userAgent: userAgent,
+      ),
+      categoryId: gameInfo["id"]?.toString(),
+      categoryName: gameInfo["name"]?.toString(),
+    );
   }
 
   Future<LiveRoomDetail?> _loadRoomDetail({
@@ -607,13 +739,11 @@ class KuaishouSite extends LiveSite {
       }
 
       final first = playList.first as Map;
-      final liveStream = first["liveStream"] is Map
-          ? first["liveStream"] as Map
-          : const {};
+      final liveStream =
+          first["liveStream"] is Map ? first["liveStream"] as Map : const {};
       final author = first["author"] is Map ? first["author"] as Map : const {};
-      final gameInfo = first["gameInfo"] is Map
-          ? first["gameInfo"] as Map
-          : const {};
+      final gameInfo =
+          first["gameInfo"] is Map ? first["gameInfo"] as Map : const {};
       final isLiving = resolveLiveStatus(first);
       final liveStreamId = liveStream["id"]?.toString() ?? '';
       var websocketUrls = <String>[];
@@ -631,10 +761,9 @@ class KuaishouSite extends LiveSite {
         danmakuToken = websocketInfo["token"]?.toString() ?? '';
       }
       if (websocketUrls.isEmpty) {
-        for (final item
-            in websocketInfo["websocketUrls"] ??
-                websocketInfo["webSocketAddresses"] ??
-                const []) {
+        for (final item in websocketInfo["websocketUrls"] ??
+            websocketInfo["webSocketAddresses"] ??
+            const []) {
           final websocketUrl = item?.toString() ?? '';
           if (websocketUrl.isNotEmpty) {
             websocketUrls.add(websocketUrl);
@@ -647,6 +776,9 @@ class KuaishouSite extends LiveSite {
         final info = await _getWebsocketInfo(
           roomId: author["id"]?.toString() ?? roomId,
           liveStreamId: liveStreamId,
+        ).timeout(
+          const Duration(seconds: 2),
+          onTimeout: _KuaishouWebsocketInfo.empty,
         );
         danmakuToken = info.token.isNotEmpty ? info.token : danmakuToken;
         if (websocketUrls.isEmpty) {
@@ -719,21 +851,58 @@ class KuaishouSite extends LiveSite {
   Future<List<LivePlayQuality>> getPlayQualites({
     required LiveRoomDetail detail,
   }) async {
-    List<LivePlayQuality> qualities = [];
+    final qualities = <LivePlayQuality>[];
+    final seenUrls = <String>{};
 
-    try {
-      var qualityList = detail.data["h264"]["adaptationSet"]["representation"];
-
-      for (var quality in qualityList ?? []) {
+    void collect(dynamic value) {
+      if (value is Iterable) {
+        for (final item in value) {
+          collect(item);
+        }
+        return;
+      }
+      if (value is! Map) {
+        return;
+      }
+      final url = value["url"]?.toString() ?? '';
+      if (url.isNotEmpty && seenUrls.add(url)) {
+        final level = value["level"];
         qualities.add(
           LivePlayQuality(
-            quality: quality["name"]?.toString() ?? '',
-            sort: quality["level"] ?? 0,
-            data: <String>[quality["url"]?.toString() ?? ''],
+            quality: value["name"]?.toString() ??
+                value["shortName"]?.toString() ??
+                '默认',
+            sort: level is num ? level.toInt() : int.tryParse('$level') ?? 0,
+            data: <String>[url],
           ),
         );
+        return;
       }
-    } catch (_) {}
+      if (value["representation"] != null) {
+        collect(value["representation"]);
+        return;
+      }
+      if (value["adaptationSet"] != null) {
+        collect(value["adaptationSet"]);
+        return;
+      }
+      for (final child in value.values) {
+        collect(child);
+      }
+    }
+
+    final data = detail.data;
+    if (data is Map && data["h264"] != null) {
+      collect(data["h264"]);
+      // Some rooms advertise an empty H.264 group while usable streams are
+      // only present in another codec group. Do not turn those rooms into an
+      // empty quality list.
+      if (qualities.isEmpty) {
+        collect(data);
+      }
+    } else {
+      collect(data);
+    }
 
     qualities.sort((a, b) => b.sort.compareTo(a.sort));
     return qualities;
@@ -797,8 +966,7 @@ class KuaishouSite extends LiveSite {
         return _KuaishouWebsocketInfo.empty();
       }
       final urls = <String>[];
-      final websocketUrls =
-          data["websocketUrls"] ??
+      final websocketUrls = data["websocketUrls"] ??
           data["webSocketAddresses"] ??
           const <dynamic>[];
       for (final item in websocketUrls) {
