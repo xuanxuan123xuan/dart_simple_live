@@ -23,7 +23,7 @@ class KuaishouWebLoginController extends BaseController {
 
   InAppWebViewController? webViewController;
   ohos_webview.WebViewController? ohosWebViewController;
-  final CookieManager cookieManager = CookieManager.instance();
+  CookieManager? cookieManager;
   final progress = 0.0.obs;
   final checking = false.obs;
   final errorMessage = "".obs;
@@ -206,6 +206,7 @@ class KuaishouWebLoginController extends BaseController {
     if (Utils.isOhos) {
       return _readOhosCookie();
     }
+    final manager = cookieManager ??= CookieManager.instance();
     const expiryCookieNames = [
       "kuaishou.live.web_st",
       "kuaishou.server.web_st",
@@ -219,7 +220,7 @@ class KuaishouWebLoginController extends BaseController {
       "https://kuaishou.com",
       "https://www.kuaishou.com",
     ]) {
-      final cookies = await cookieManager.getCookies(url: WebUri(url));
+      final cookies = await manager.getCookies(url: WebUri(url));
       for (final item in cookies) {
         final name = item.name.trim();
         final value = item.value.trim();
