@@ -207,14 +207,10 @@ class FollowService extends GetxService {
     if (manual > 0) {
       return manual.clamp(1, count).toInt();
     }
-    var concurrency = 2;
-    if (count <= 50) {
-      concurrency = count < 2 ? count : 2;
-    } else if (count <= 200) {
-      concurrency = 3;
-    } else {
-      concurrency = 4;
-    }
+    // Status requests are lightweight and no longer wait for room metadata.
+    // Four workers keep the common 50-item page responsive without creating
+    // the larger bursts allowed by the manual 5-8 settings.
+    final concurrency = count < 4 ? count : 4;
     return concurrency.clamp(1, count).toInt();
   }
 
@@ -307,10 +303,14 @@ class FollowService extends GetxService {
     final uniqueItems = _distinctFollowUsers(items);
     final specials = uniqueItems.where((item) => item.isSpecialFollow).toList();
     final normals = uniqueItems.where((item) => !item.isSpecialFollow).toList();
-    final orderedSpecials = _orderRefreshBucketBySite(specials);
-    final orderedNormals = _orderRefreshBucketBySite(
-      normals,
-      moveCurrentRoomToEnd: true,
+    final orderedSpecials = interleaveByPlatform(
+      _orderRefreshBucketBySite(specials),
+    );
+    final orderedNormals = interleaveByPlatform(
+      _orderRefreshBucketBySite(
+        normals,
+        moveCurrentRoomToEnd: true,
+      ),
     );
     return [...orderedSpecials, ...orderedNormals];
   }
@@ -345,7 +345,8 @@ class FollowService extends GetxService {
         await douyinLimiter.beforeRequest(workerIndex);
       }
       var site = Sites.allSites[item.siteId]!;
-      // 手动/自动关注刷新统一走状态优先，不在主链路同步补详情。
+      // Status is the latency-sensitive path. Metadata is refreshed in a
+      // separate bounded stage after every visible status has been updated.
       var isLiving = await site.liveSite.getLiveStatus(roomId: item.roomId);
       if (generation != null && generation != _updateGeneration) {
         return const _FollowRefreshItemResult(
@@ -355,21 +356,7 @@ class FollowService extends GetxService {
         douyinLimiter.onSuccess();
       }
       item.liveStatus.value = isLiving ? 2 : 1;
-      if (item.siteId == Constant.kDouyin) {
-        await _reconcileDouyinFollowIdentity(
-          item,
-          site.liveSite,
-          isLiving: isLiving,
-          generation: generation,
-        );
-      } else if (item.liveStatus.value == 2) {
-        final detail = await site.liveSite.getRoomDetail(roomId: item.roomId);
-        if (generation != null && generation != _updateGeneration) {
-          return const _FollowRefreshItemResult(
-              _FollowRefreshItemOutcome.deferred);
-        }
-        item.liveStartTime = detail.showTime;
-      } else {
+      if (!isLiving) {
         item.liveStartTime = null;
         _liveNotifySentIds.remove(item.id);
       }
@@ -1151,7 +1138,10 @@ class FollowService extends GetxService {
               deferredCount =
                   filteredTargets.deferredTargets.length + pendingKeys.length;
             }
-            if (scope.includeAllNormals && !isHugeTask) {
+            final shouldCheckpoint = completed % 10 == 0 ||
+                pendingKeys.isEmpty ||
+                result.pauseRemaining;
+            if (scope.includeAllNormals && !isHugeTask && shouldCheckpoint) {
               unawaited(
                 _persistRefreshTask(
                   scope: scope,

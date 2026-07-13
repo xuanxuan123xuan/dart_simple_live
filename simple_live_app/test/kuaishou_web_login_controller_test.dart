@@ -33,4 +33,35 @@ void main() {
       );
     });
   });
+
+  group('resolveKuaishouAuthCookieExpiry', () {
+    test('uses the primary session cookie instead of the latest companion', () {
+      final primary = DateTime(2026, 7, 20).millisecondsSinceEpoch;
+      final companion = DateTime(2026, 8, 20).millisecondsSinceEpoch;
+
+      expect(
+        resolveKuaishouAuthCookieExpiry({
+          'kuaishou.live.web_st': [primary],
+          'passToken': [companion],
+        })?.millisecondsSinceEpoch,
+        primary,
+      );
+    });
+
+    test('uses the earliest copy of the same auth cookie across domains', () {
+      final earlier = DateTime(2026, 7, 18).millisecondsSinceEpoch;
+      final later = DateTime(2026, 7, 19).millisecondsSinceEpoch;
+
+      expect(
+        resolveKuaishouAuthCookieExpiry({
+          'kuaishou.live.web_st': [later, earlier],
+        })?.millisecondsSinceEpoch,
+        earlier,
+      );
+    });
+
+    test('returns null when the browser exposes no expiry attributes', () {
+      expect(resolveKuaishouAuthCookieExpiry(const {}), isNull);
+    });
+  });
 }

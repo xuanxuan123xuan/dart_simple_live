@@ -59,10 +59,6 @@ class LiveRoomController extends PlayerController
     rxRoomId = pRoomId.obs;
     desktopSidePanelCollapsed.value = initialDesktopSidePanelCollapsed;
     liveDanmaku = site.liveSite.getDanmaku();
-    // 抖音直播间默认按竖屏处理。
-    if (site.id == "douyin") {
-      isVertical.value = true;
-    }
   }
 
   late Rx<Site> rxSite;
@@ -1572,6 +1568,9 @@ class LiveRoomController extends PlayerController
     if (Utils.isOhos) {
       currentLineInfo.value = "线路${currentLineIndex + 1}";
       errorMsg.value = "";
+      // A previous room/line may have been a portrait stream. Reset the hint
+      // until AVPlayer reports the dimensions of the newly opened source.
+      isVertical.value = false;
       ohosPlayerRevision.value += 1;
       return;
     }

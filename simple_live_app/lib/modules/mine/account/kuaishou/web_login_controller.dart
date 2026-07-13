@@ -207,14 +207,8 @@ class KuaishouWebLoginController extends BaseController {
       return _readOhosCookie();
     }
     final manager = cookieManager ??= CookieManager.instance();
-    const expiryCookieNames = [
-      "kuaishou.live.web_st",
-      "kuaishou.server.web_st",
-      "kuaishou.live.web_at",
-      "passToken",
-    ];
     final values = <String, String>{};
-    int? latestExpiresDate;
+    final expiryDatesByName = <String, List<int>>{};
     for (final url in const [
       "https://live.kuaishou.com",
       "https://kuaishou.com",
@@ -228,21 +222,16 @@ class KuaishouWebLoginController extends BaseController {
           values.putIfAbsent(name, () => value);
         }
         final expiresDate = item.expiresDate;
-        if (expiryCookieNames.contains(name) &&
+        if (_kuaishouAuthCookiePriority.contains(name) &&
             expiresDate != null &&
             expiresDate > 0) {
-          if (latestExpiresDate == null || expiresDate > latestExpiresDate) {
-            latestExpiresDate = expiresDate;
-          }
+          expiryDatesByName.putIfAbsent(name, () => <int>[]).add(expiresDate);
         }
       }
     }
-    final expiresAt = latestExpiresDate == null
-        ? null
-        : DateTime.fromMillisecondsSinceEpoch(latestExpiresDate);
     return _KuaishouCookieSnapshot(
       cookie: values.entries.map((e) => "${e.key}=${e.value}").join("; "),
-      expiresAt: expiresAt,
+      expiresAt: resolveKuaishouAuthCookieExpiry(expiryDatesByName),
     );
   }
 
@@ -359,21 +348,45 @@ class KuaishouWebLoginController extends BaseController {
   }
 }
 
+const List<String> _kuaishouAuthCookiePriority = [
+  'kuaishou.live.web_st',
+  'kuaishou.server.web_st',
+  'kuaishou.live.web_at',
+  'passToken',
+];
+
 bool hasKuaishouAuthenticatedSession(String cookie) {
-  const loginCookieNames = {
-    'kuaishou.live.web_st',
-    'kuaishou.server.web_st',
-    'kuaishou.live.web_at',
-    'passToken',
-  };
   for (final part in cookie.split(';')) {
     final item = part.trim();
     final index = item.indexOf('=');
-    if (index > 0 && loginCookieNames.contains(item.substring(0, index))) {
+    if (index > 0 &&
+        _kuaishouAuthCookiePriority.contains(item.substring(0, index))) {
       return item.substring(index + 1).trim().isNotEmpty;
     }
   }
   return false;
+}
+
+/// Resolves the expiry of the credential that actually establishes the
+/// Kuaishou session. Lower-priority companion cookies must not extend the
+/// reported lifetime of the primary login token.
+DateTime? resolveKuaishouAuthCookieExpiry(
+  Map<String, Iterable<int>> expiryDatesByName,
+) {
+  for (final name in _kuaishouAuthCookiePriority) {
+    final dates = expiryDatesByName[name]
+        ?.where((value) => value > 0)
+        .toList(growable: false);
+    if (dates == null || dates.isEmpty) {
+      continue;
+    }
+    // The same cookie name can exist on more than one Kuaishou domain. Use
+    // the earliest copy so the UI never overstates the remaining lifetime.
+    final expiresAtMs =
+        dates.reduce((left, right) => left < right ? left : right);
+    return DateTime.fromMillisecondsSinceEpoch(expiresAtMs);
+  }
+  return null;
 }
 
 class _KuaishouCookieSnapshot {

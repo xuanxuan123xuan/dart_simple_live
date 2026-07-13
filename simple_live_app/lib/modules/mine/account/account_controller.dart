@@ -745,6 +745,11 @@ class AccountController extends GetxController {
     if (cookie.isEmpty) {
       return "建议配置 Cookie，用于搜索和弹幕";
     }
+    if (Utils.isOhos) {
+      // HarmonyOS WebCookieManager only exposes the request Cookie header;
+      // Expires/Max-Age attributes are intentionally not part of that header.
+      return "已配置 Cookie（${cookie.length} 字符），有效期由快手服务端控制";
+    }
     final expiry = account.cookieExpiresAt;
     if (expiry == null) {
       return "已配置 Cookie（${cookie.length} 字符），有效期无法判断";

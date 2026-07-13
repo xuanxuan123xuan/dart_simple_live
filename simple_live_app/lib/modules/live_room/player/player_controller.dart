@@ -105,6 +105,9 @@ mixin PlayerMixin {
   final RxDouble ohosAspectRatio = (16 / 9).obs;
   final RxInt ohosScaleRevision = 0.obs;
 
+  /// Whether the current source is actually taller than it is wide.
+  final RxBool isVertical = false.obs;
+
   VideoPlayerController? get ohosVideoController => _ohosVideoController;
 
   void attachOhosVideoController(VideoPlayerController controller) {
@@ -125,6 +128,10 @@ mixin PlayerMixin {
     ohosBuffering.value = value.isBuffering || !value.isInitialized;
     if (value.aspectRatio > 0) {
       ohosAspectRatio.value = value.aspectRatio;
+    }
+    final size = value.size;
+    if (value.isInitialized && size.width > 0 && size.height > 0) {
+      isVertical.value = size.height > size.width;
     }
   }
 
@@ -202,9 +209,6 @@ mixin PlayerStateMixin on PlayerMixin {
 
   /// 自动隐藏提示计时器
   Timer? hideSeekTipTimer;
-
-  /// 是否为竖屏直播间
-  var isVertical = false.obs;
 
   RxInt danmakuViewVersion = 0.obs;
 
@@ -514,7 +518,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       fullScreenState.value = true;
       showControls();
       await WidgetsBinding.instance.endOfFrame;
-      final operations = <Future<void>>[
+      unawaited(
         _runOhosSystemUiOperation(
           SystemChrome.setEnabledSystemUIMode(
             SystemUiMode.manual,
@@ -522,9 +526,11 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           ),
           "隐藏系统栏",
         ),
-      ];
+      );
       if (!isVertical.value) {
-        operations.add(
+        // Observe the viewport directly. The platform method can acknowledge
+        // the request later than the window actually rotates.
+        unawaited(
           _runOhosSystemUiOperation(
             SystemChrome.setPreferredOrientations([
               DeviceOrientation.landscapeLeft,
@@ -533,9 +539,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
             "切换横屏",
           ),
         );
-      }
-      await Future.wait(operations);
-      if (!isVertical.value) {
         await _waitForOhosViewport(portrait: false);
       }
       ohosFullscreenTransition.value = false;
@@ -594,16 +597,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       ohosFullscreenTransition.value = true;
       lockControlsState.value = false;
       showLockEdgeState.value = false;
-      await WidgetsBinding.instance.endOfFrame;
-      // Start rotation and system-bar restoration together. The previous
-      // sequential awaits delayed the visible rotation by up to 800 ms.
-      await Future.wait([
-        _runOhosSystemUiOperation(
-          SystemChrome.setPreferredOrientations([
-            DeviceOrientation.portraitUp,
-          ]),
-          "恢复屏幕方向",
-        ),
+      // System-bar restoration can take hundreds of milliseconds on some
+      // HarmonyOS builds. Do not hold the portrait page behind that operation.
+      unawaited(
         _runOhosSystemUiOperation(
           SystemChrome.setEnabledSystemUIMode(
             SystemUiMode.edgeToEdge,
@@ -611,12 +607,19 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           ),
           "恢复系统栏",
         ),
-      ]);
+      );
+      unawaited(
+        _runOhosSystemUiOperation(
+          SystemChrome.setPreferredOrientations([
+            DeviceOrientation.portraitUp,
+          ]),
+          "恢复屏幕方向",
+        ),
+      );
       await _waitForOhosViewport(portrait: true);
       fullScreenState.value = false;
-      onPlayerWindowModeExited();
-      await WidgetsBinding.instance.endOfFrame;
       ohosFullscreenTransition.value = false;
+      onPlayerWindowModeExited();
       showControls();
       return;
     }
