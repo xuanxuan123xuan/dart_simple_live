@@ -94,6 +94,13 @@ class LiveSite {
     return Future.value(false);
   }
 
+  /// 查询直播三态。未适配的平台继续沿用原有布尔结果。
+  Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
+    return await getLiveStatus(roomId: roomId)
+        ? LiveStatusState.live
+        : LiveStatusState.offline;
+  }
+
   /// 读取指定房间的SC
   Future<List<LiveSuperChatMessage>> getSuperChatMessage({
     required String roomId,

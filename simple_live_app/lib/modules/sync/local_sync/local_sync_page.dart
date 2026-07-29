@@ -6,6 +6,7 @@ import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/modules/sync/local_sync/local_sync_controller.dart';
 import 'package:simple_live_app/services/sync_service.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 
 class LocalSyncPage extends GetView<LocalSyncController> {
@@ -45,7 +46,9 @@ class LocalSyncPage extends GetView<LocalSyncController> {
                       contentPadding: AppStyle.edgeInsetsH12,
                       border: const OutlineInputBorder(),
                       suffixIcon: Visibility(
-                        visible: Platform.isAndroid || Platform.isIOS,
+                        visible: Platform.isAndroid ||
+                            Platform.isIOS ||
+                            Utils.isOhos,
                         child: TextButton.icon(
                           onPressed: controller.toScanQr,
                           icon: const Icon(Remix.qr_scan_line),

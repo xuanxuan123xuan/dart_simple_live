@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/widgets/settings/settings_action.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_menu.dart';
@@ -38,16 +39,17 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Obx(
-                  () => SettingsSwitch(
-                    title: "硬件解码",
-                    value: controller.hardwareDecode.value,
-                    subtitle: "播放失败可尝试关闭此选项",
-                    onChanged: (e) {
-                      controller.setHardwareDecode(e);
-                    },
+                if (!Utils.isOhos)
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "硬件解码",
+                      value: controller.hardwareDecode.value,
+                      subtitle: "播放失败可尝试关闭此选项",
+                      onChanged: (e) {
+                        controller.setHardwareDecode(e);
+                      },
+                    ),
                   ),
-                ),
                 if (Platform.isAndroid) AppStyle.divider,
                 Obx(
                   () => Visibility(
@@ -77,7 +79,7 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                 //     },
                 //   ),
                 // ),
-                AppStyle.divider,
+                if (!Utils.isOhos) AppStyle.divider,
                 Obx(
                   () => SettingsMenu<int>(
                     title: "画面尺寸",

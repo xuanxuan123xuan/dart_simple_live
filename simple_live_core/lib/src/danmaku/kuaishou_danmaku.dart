@@ -1,9 +1,21 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:pointycastle/api.dart';
+import 'package:pointycastle/block/aes.dart';
+import 'package:pointycastle/block/modes/cbc.dart';
+import 'package:pointycastle/padded_block_cipher/padded_block_cipher_impl.dart';
+import 'package:pointycastle/paddings/pkcs7.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/web_socket_util.dart';
+
+const _kuaishouAesKey = 'PPbzKKL7NB15leYy';
+const _kuaishouAesIv = 'JRODKJiolJ9xqso0';
+
+typedef KuaishouDanmakuCredentialResolver = Future<KuaishouDanmakuArgs?>
+    Function();
 
 class KuaishouDanmakuArgs {
   final String roomId;
@@ -15,6 +27,7 @@ class KuaishouDanmakuArgs {
   final String attach;
   final String cookie;
   final String userAgent;
+  final KuaishouDanmakuCredentialResolver? credentialResolver;
 
   KuaishouDanmakuArgs({
     required this.roomId,
@@ -25,10 +38,40 @@ class KuaishouDanmakuArgs {
     this.expTag = '',
     this.attach = '',
     this.cookie = '',
+    this.credentialResolver,
     this.userAgent =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   });
+
+  bool get hasConnectionInfo =>
+      liveStreamId.isNotEmpty && token.isNotEmpty && websocketUrls.isNotEmpty;
+
+  KuaishouDanmakuArgs copyWith({
+    String? roomId,
+    String? liveStreamId,
+    String? token,
+    List<String>? websocketUrls,
+    String? pageId,
+    String? expTag,
+    String? attach,
+    String? cookie,
+    String? userAgent,
+    KuaishouDanmakuCredentialResolver? credentialResolver,
+  }) {
+    return KuaishouDanmakuArgs(
+      roomId: roomId ?? this.roomId,
+      liveStreamId: liveStreamId ?? this.liveStreamId,
+      token: token ?? this.token,
+      websocketUrls: websocketUrls ?? this.websocketUrls,
+      pageId: pageId ?? this.pageId,
+      expTag: expTag ?? this.expTag,
+      attach: attach ?? this.attach,
+      cookie: cookie ?? this.cookie,
+      userAgent: userAgent ?? this.userAgent,
+      credentialResolver: credentialResolver ?? this.credentialResolver,
+    );
+  }
 
   @override
   String toString() {
@@ -47,24 +90,109 @@ class KuaishouDanmakuArgs {
 }
 
 class KuaishouDanmaku extends LiveDanmaku {
-  KuaishouDanmaku() {
+  KuaishouDanmaku({
+    WebSocketConnector? connector,
+    WebSocketRetryTimerFactory? socketRetryTimerFactory,
+    WebSocketRetryTimerFactory? credentialRetryTimerFactory,
+    this.credentialRetryDelay = const Duration(seconds: 5),
+  })  : _connector = connector,
+        _socketRetryTimerFactory = socketRetryTimerFactory,
+        _credentialRetryTimerFactory =
+            credentialRetryTimerFactory ?? _defaultCredentialRetryTimer {
     heartbeatTime = 20 * 1000;
   }
 
+  final WebSocketConnector? _connector;
+  final WebSocketRetryTimerFactory? _socketRetryTimerFactory;
+  final WebSocketRetryTimerFactory _credentialRetryTimerFactory;
+  final Duration credentialRetryDelay;
   WebScoketUtils? webScoketUtils;
   KuaishouDanmakuArgs? danmakuArgs;
+  Timer? _credentialRetryTimer;
+  KuaishouDanmakuCredentialResolver? _credentialResolver;
+  int _startGeneration = 0;
+  bool _credentialRetryNotified = false;
+
+  static Timer _defaultCredentialRetryTimer(
+    Duration delay,
+    void Function() callback,
+  ) {
+    return Timer(delay, callback);
+  }
 
   @override
   Future start(dynamic args) async {
-    if (args is! KuaishouDanmakuArgs ||
-        args.liveStreamId.isEmpty ||
-        args.token.isEmpty ||
-        args.websocketUrls.isEmpty) {
-      onClose?.call("快手弹幕凭证无效，请在账号设置中重新登录并完成验证");
+    final generation = ++_startGeneration;
+    _credentialRetryTimer?.cancel();
+    _credentialRetryTimer = null;
+    _credentialRetryNotified = false;
+    if (args is! KuaishouDanmakuArgs) {
+      onClose?.call("快手弹幕凭证尚未就绪，请稍后刷新直播间重试");
       return;
     }
 
     danmakuArgs = args;
+    _credentialResolver = args.credentialResolver;
+    if (!args.hasConnectionInfo) {
+      await _resolveCredentials(generation);
+      return;
+    }
+    await _connect(args, generation);
+  }
+
+  Future<void> _resolveCredentials(int generation) async {
+    if (generation != _startGeneration) {
+      return;
+    }
+    final resolver = _credentialResolver;
+    if (resolver == null) {
+      onClose?.call("快手弹幕凭证尚未就绪，请稍后刷新直播间重试");
+      return;
+    }
+    try {
+      final resolved = await resolver();
+      if (generation != _startGeneration) {
+        return;
+      }
+      if (resolved != null && resolved.hasConnectionInfo) {
+        danmakuArgs = resolved;
+        await _connect(resolved, generation);
+        return;
+      }
+    } catch (e) {
+      CoreLog.error(e);
+    }
+    _scheduleCredentialRetry(generation);
+  }
+
+  void _scheduleCredentialRetry(int generation) {
+    if (generation != _startGeneration || _credentialRetryTimer != null) {
+      return;
+    }
+    if (!_credentialRetryNotified) {
+      _credentialRetryNotified = true;
+      onClose?.call("快手弹幕凭证尚未就绪，正在自动重试");
+    }
+    _credentialRetryTimer = _credentialRetryTimerFactory(
+      credentialRetryDelay,
+      () {
+        _credentialRetryTimer = null;
+        if (generation != _startGeneration) {
+          return;
+        }
+        unawaited(_resolveCredentials(generation));
+      },
+    );
+  }
+
+  Future<void> _connect(
+    KuaishouDanmakuArgs args,
+    int generation,
+  ) async {
+    if (generation != _startGeneration) {
+      return;
+    }
+    webScoketUtils?.close();
     webScoketUtils = WebScoketUtils(
       url: args.websocketUrls.first,
       backupUrls: args.websocketUrls.skip(1).toList(),
@@ -87,12 +215,19 @@ class KuaishouDanmaku extends LiveDanmaku {
       onClose: (e) {
         onClose?.call("服务器连接失败$e");
       },
+      connector: _connector,
+      retryTimerFactory: _socketRetryTimerFactory,
     );
-    webScoketUtils?.connect();
+    await webScoketUtils?.connect();
   }
 
   @override
   Future stop() async {
+    _startGeneration += 1;
+    _credentialRetryTimer?.cancel();
+    _credentialRetryTimer = null;
+    _credentialResolver = null;
+    _credentialRetryNotified = false;
     onMessage = null;
     onClose = null;
     onReady = null;
@@ -141,8 +276,7 @@ class KuaishouDanmaku extends LiveDanmaku {
       if (socketMessage.compressionType == 2) {
         payload = gzip.decode(payload);
       } else if (socketMessage.compressionType == 3) {
-        CoreLog.i("[KuaishouDanmaku] 暂不支持 AES 压缩弹幕包");
-        return;
+        payload = decryptAesPayload(payload);
       }
 
       switch (socketMessage.payloadType) {
@@ -159,6 +293,29 @@ class KuaishouDanmaku extends LiveDanmaku {
     } catch (e) {
       CoreLog.error(e);
     }
+  }
+
+  static Uint8List decryptAesPayload(List<int> payload) {
+    if (payload.isEmpty || payload.length % 16 != 0) {
+      throw const FormatException(
+        'Invalid Kuaishou AES payload block length',
+      );
+    }
+    final cipher = PaddedBlockCipherImpl(
+      PKCS7Padding(),
+      CBCBlockCipher(AESEngine()),
+    )..init(
+        false,
+        PaddedBlockCipherParameters<ParametersWithIV<KeyParameter>,
+            CipherParameters?>(
+          ParametersWithIV<KeyParameter>(
+            KeyParameter(Uint8List.fromList(utf8.encode(_kuaishouAesKey))),
+            Uint8List.fromList(utf8.encode(_kuaishouAesIv)),
+          ),
+          null,
+        ),
+      );
+    return cipher.process(Uint8List.fromList(payload));
   }
 
   Uint8List _encodeSocketMessage(int payloadType, List<int> payload) {

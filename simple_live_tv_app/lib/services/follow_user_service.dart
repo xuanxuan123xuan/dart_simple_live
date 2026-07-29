@@ -17,6 +17,14 @@ import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
 import 'package:simple_live_tv_app/services/local_storage_service.dart';
 
+int? followStatusForLiveState(LiveStatusState state) {
+  return switch (state) {
+    LiveStatusState.live => 2,
+    LiveStatusState.offline => 1,
+    LiveStatusState.unknown => null,
+  };
+}
+
 class FollowUserService extends BasePageController<FollowUser> {
   static const Duration updateStatusCooldown = Duration(seconds: 10);
   static const Duration refreshProgressCompletionHold = Duration(seconds: 2);
@@ -1077,7 +1085,15 @@ class FollowUserService extends BasePageController<FollowUser> {
         await douyinLimiter.beforeRequest(workerIndex);
       }
       final site = Sites.allSites[item.siteId]!;
-      final isLiving = await site.liveSite.getLiveStatus(roomId: item.roomId);
+      final liveState =
+          await site.liveSite.getLiveStatusState(roomId: item.roomId);
+      final nextStatus = followStatusForLiveState(liveState);
+      if (nextStatus == null) {
+        return const _FollowRefreshItemResult(
+          _FollowRefreshItemOutcome.deferred,
+        );
+      }
+      final isLiving = nextStatus == 2;
       if (generation != null && generation != _updateGeneration) {
         return const _FollowRefreshItemResult(
             _FollowRefreshItemOutcome.deferred);
@@ -1085,7 +1101,7 @@ class FollowUserService extends BasePageController<FollowUser> {
       if (item.siteId == Constant.kDouyin && douyinLimiter != null) {
         douyinLimiter.onSuccess();
       }
-      item.liveStatus.value = isLiving ? 2 : 1;
+      item.liveStatus.value = nextStatus;
       await DBService.instance.addFollow(item);
       return const _FollowRefreshItemResult(_FollowRefreshItemOutcome.success);
     } catch (e) {

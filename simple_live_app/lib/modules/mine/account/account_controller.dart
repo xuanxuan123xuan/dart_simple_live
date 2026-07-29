@@ -55,7 +55,7 @@ class AccountController extends GetxController {
         mainAxisSize: MainAxisSize.min,
         children: [
           Visibility(
-            visible: Platform.isAndroid || Platform.isIOS,
+            visible: Platform.isAndroid || Platform.isIOS || Utils.isOhos,
             child: ListTile(
               leading: const Icon(Icons.account_circle_outlined),
               title: const Text("Web登录"),
@@ -120,6 +120,17 @@ class AccountController extends GetxController {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (Platform.isAndroid || Platform.isIOS || Utils.isOhos)
+            ListTile(
+              leading: const Icon(Icons.login),
+              title: const Text('网页登录'),
+              subtitle: const Text('在应用内登录抖音并自动保存 Cookie'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async {
+                Get.back();
+                await Get.toNamed(RoutePath.kDouyinWebLogin);
+              },
+            ),
           if (!Platform.isAndroid && !Platform.isIOS && !Utils.isOhos)
             ListTile(
               leading: const Icon(Icons.open_in_browser),
@@ -745,14 +756,11 @@ class AccountController extends GetxController {
     if (cookie.isEmpty) {
       return "建议配置 Cookie，用于搜索和弹幕";
     }
-    if (Utils.isOhos) {
-      // HarmonyOS WebCookieManager only exposes the request Cookie header;
-      // Expires/Max-Age attributes are intentionally not part of that header.
-      return "已配置 Cookie（${cookie.length} 字符），有效期由快手服务端控制";
-    }
     final expiry = account.cookieExpiresAt;
     if (expiry == null) {
-      return "已配置 Cookie（${cookie.length} 字符），有效期无法判断";
+      return Utils.isOhos
+          ? "已配置 Cookie（${cookie.length} 字符），服务端未公开到期时间"
+          : "已配置 Cookie（${cookie.length} 字符），有效期无法判断";
     }
     final remain = expiry.difference(DateTime.now());
     if (remain.isNegative) {

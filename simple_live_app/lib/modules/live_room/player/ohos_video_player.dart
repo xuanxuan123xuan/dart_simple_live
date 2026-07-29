@@ -4,6 +4,72 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+enum OhosPlaybackHealthIssue { bufferingTimeout, playbackStall }
+
+const ohosBufferingTimeout = Duration(seconds: 8);
+const ohosPlaybackStallTimeout = Duration(seconds: 12);
+
+@visibleForTesting
+OhosPlaybackHealthIssue? detectOhosPlaybackHealthIssue({
+  required VideoPlayerValue value,
+  required DateTime now,
+  required DateTime? bufferingSince,
+  required DateTime lastProgressAt,
+  required bool hasObservedProgress,
+}) {
+  if (value.isBuffering &&
+      bufferingSince != null &&
+      (now.difference(bufferingSince) >= ohosBufferingTimeout ||
+          (hasObservedProgress &&
+              now.difference(lastProgressAt) >= ohosPlaybackStallTimeout))) {
+    return OhosPlaybackHealthIssue.bufferingTimeout;
+  }
+  if (!value.isBuffering &&
+      value.isPlaying &&
+      hasObservedProgress &&
+      now.difference(lastProgressAt) >= ohosPlaybackStallTimeout) {
+    return OhosPlaybackHealthIssue.playbackStall;
+  }
+  return null;
+}
+
+bool didOhosPlaybackTimelineProgress({
+  required Duration current,
+  required Duration previous,
+}) {
+  if (current > previous) {
+    return true;
+  }
+  // A live HLS window can restart its timestamp after a discontinuity. Count
+  // a meaningful rewind as progress so the watchdog does not wait for the new
+  // timeline to catch up to the old timestamp.
+  return previous - current >= const Duration(seconds: 2);
+}
+
+@visibleForTesting
+bool looksLikeOhosPlaybackCompleted({
+  required VideoPlayerValue current,
+  required VideoPlayerValue? previous,
+}) {
+  if (previous == null ||
+      !current.isInitialized ||
+      current.hasError ||
+      current.isBuffering) {
+    return false;
+  }
+
+  final duration = current.duration;
+  final stoppedAtEnd = previous.isPlaying &&
+      !current.isPlaying &&
+      duration > Duration.zero &&
+      current.position >= duration - const Duration(seconds: 1);
+
+  // Do not treat a rewind to zero as completion for a live stream. HLS live
+  // windows can reset their timeline during a discontinuity, which used to
+  // trigger the retry limit and incorrectly mark an active room as offline.
+  return stoppedAtEnd;
+}
+
 /// HarmonyOS native AVPlayer texture surface (HLS and HTTP-FLV).
 class OhosVideoPlayer extends StatefulWidget {
   const OhosVideoPlayer({
@@ -15,6 +81,7 @@ class OhosVideoPlayer extends StatefulWidget {
     this.onControllerReady,
     this.onControllerDisposed,
     this.onValueChanged,
+    this.onCompleted,
     this.fit = BoxFit.contain,
     this.forcedAspectRatio,
     this.initialVolume = 1.0,
@@ -27,6 +94,7 @@ class OhosVideoPlayer extends StatefulWidget {
   final ValueChanged<VideoPlayerController>? onControllerReady;
   final ValueChanged<VideoPlayerController>? onControllerDisposed;
   final ValueChanged<VideoPlayerValue>? onValueChanged;
+  final VoidCallback? onCompleted;
   final BoxFit fit;
   final double? forcedAspectRatio;
   final double initialVolume;
@@ -37,6 +105,7 @@ class OhosVideoPlayer extends StatefulWidget {
 
 class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   static const _initializationTimeout = Duration(seconds: 15);
+  static const _watchdogInterval = Duration(seconds: 1);
 
   VideoPlayerController? _controller;
   VoidCallback? _controllerListener;
@@ -44,6 +113,13 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   bool _ready = false;
   bool _errorReported = false;
   String? _error;
+  Timer? _watchdogTimer;
+  DateTime? _bufferingSince;
+  DateTime _lastProgressAt = DateTime.now();
+  Duration _lastPosition = Duration.zero;
+  bool _hasObservedProgress = false;
+  bool _completionReported = false;
+  VideoPlayerValue? _previousValue;
 
   @override
   void initState() {
@@ -77,6 +153,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     _ready = false;
     _errorReported = false;
     _error = null;
+    _resetPlaybackHealth();
     if (mounted) {
       setState(() {});
     }
@@ -84,7 +161,10 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     final controller = VideoPlayerController.networkUrl(
       Uri.parse(widget.url),
       httpHeaders: widget.headers ?? const <String, String>{},
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
+      videoPlayerOptions: VideoPlayerOptions(
+        mixWithOthers: false,
+        allowBackgroundPlayback: true,
+      ),
     );
     _controller = controller;
     _controllerListener = () => _handleValueChanged(controller);
@@ -99,6 +179,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
       await controller.play();
       if (_isCurrent(generation, controller)) {
         setState(() => _ready = true);
+        _startWatchdog();
       }
       _handleValueChanged(controller);
     } catch (e) {
@@ -123,8 +204,97 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     }
     final value = controller.value;
     widget.onValueChanged?.call(value);
+    if (looksLikeOhosPlaybackCompleted(
+          current: value,
+          previous: _previousValue,
+        ) &&
+        !_completionReported) {
+      _completionReported = true;
+      widget.onCompleted?.call();
+    }
+    _previousValue = value;
     if (value.hasError) {
       _reportError(value.errorDescription ?? '播放器发生未知错误');
+    }
+  }
+
+  void _resetPlaybackHealth() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
+    _bufferingSince = null;
+    _lastProgressAt = DateTime.now();
+    _lastPosition = Duration.zero;
+    _hasObservedProgress = false;
+    _completionReported = false;
+    _previousValue = null;
+  }
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer.periodic(
+      _watchdogInterval,
+      (_) => _checkPlaybackHealth(),
+    );
+  }
+
+  void _checkPlaybackHealth() {
+    final controller = _controller;
+    if (!mounted ||
+        !_ready ||
+        controller == null ||
+        !controller.value.isInitialized ||
+        controller.value.hasError ||
+        _completionReported ||
+        _errorReported) {
+      return;
+    }
+
+    final value = controller.value;
+    final now = DateTime.now();
+    if (value.isBuffering) {
+      _bufferingSince ??= now;
+      if (detectOhosPlaybackHealthIssue(
+            value: value,
+            now: now,
+            bufferingSince: _bufferingSince,
+            lastProgressAt: _lastProgressAt,
+            hasObservedProgress: _hasObservedProgress,
+          ) ==
+          OhosPlaybackHealthIssue.bufferingTimeout) {
+        _reportError('播放器持续缓冲超过 ${ohosBufferingTimeout.inSeconds} 秒，正在重试');
+      }
+      return;
+    }
+    _bufferingSince = null;
+
+    // Paused time must not count toward a later playback stall.
+    if (!value.isPlaying) {
+      _lastPosition = value.position;
+      _lastProgressAt = now;
+      return;
+    }
+
+    if (didOhosPlaybackTimelineProgress(
+      current: value.position,
+      previous: _lastPosition,
+    )) {
+      _hasObservedProgress = true;
+      _lastPosition = value.position;
+      _lastProgressAt = now;
+      return;
+    }
+
+    // Some live sources expose no timeline. Only use the progress watchdog
+    // after this source has advanced once; buffering still has its own timer.
+    if (detectOhosPlaybackHealthIssue(
+          value: value,
+          now: now,
+          bufferingSince: _bufferingSince,
+          lastProgressAt: _lastProgressAt,
+          hasObservedProgress: _hasObservedProgress,
+        ) ==
+        OhosPlaybackHealthIssue.playbackStall) {
+      _reportError('播放进度停止超过 ${ohosPlaybackStallTimeout.inSeconds} 秒，正在重试');
     }
   }
 
@@ -142,6 +312,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   @override
   void dispose() {
     _initializationGeneration++;
+    _watchdogTimer?.cancel();
     final controller = _controller;
     final listener = _controllerListener;
     if (controller != null) {

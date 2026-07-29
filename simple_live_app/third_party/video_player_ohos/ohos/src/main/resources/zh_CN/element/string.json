@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "page_show",
+      "value": "page from package"
+    },
+    {
+      "name": "link_check_address_internet",
+      "value": "请检查地址输入正确且网络正常"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "page_show",
+      "value": "page from package"
+    },
+    {
+      "name": "link_check_address_internet",
+      "value": "Ensure that the IP address is correct and the network is normal"
+    }
+  ]
+}

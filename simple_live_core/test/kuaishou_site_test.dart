@@ -160,4 +160,97 @@ void main() {
     expect(qualities.first.quality, '蓝光');
     expect(qualities.first.data, ['https://example.com/hevc.flv']);
   });
+
+  group('KuaishouSite live-state aggregation', () {
+    test('stream id is live even while playback url is delayed', () {
+      expect(
+        KuaishouSite.resolveLiveState({
+          'liveStream': {'id': 'stream-id', 'playUrls': const {}},
+        }),
+        LiveStatusState.live,
+      );
+    });
+
+    test('distinguishes explicit offline and missing evidence', () {
+      expect(
+        KuaishouSite.resolveLiveState({'isLiving': false}),
+        LiveStatusState.offline,
+      );
+      expect(
+        KuaishouSite.resolveLiveState({'caption': '风控或不完整响应'}),
+        LiveStatusState.unknown,
+      );
+    });
+
+    test('scans every playList item and live evidence wins', () {
+      expect(
+        KuaishouSite.resolvePlayListState([
+          {'isLiving': false},
+          {
+            'liveStream': {'id': 'second-live-stream'},
+          },
+        ]),
+        LiveStatusState.live,
+      );
+    });
+
+    test('mixed offline and unknown remains unknown', () {
+      expect(
+        KuaishouSite.resolvePlayListState([
+          {'isLiving': false},
+          {'caption': '字段缺失'},
+        ]),
+        LiveStatusState.unknown,
+      );
+    });
+  });
+
+  test('extracts nested playable urls and rejects non-stream values', () {
+    expect(
+      KuaishouSite.extractPlayableUrls({
+        'url': {
+          'primary': 'https://example.com/live.flv',
+          'backup': [
+            'rtmp://example.com/live',
+            'https://example.com/live.flv',
+            'ftp://example.com/not-supported',
+          ],
+        },
+        'label': '高清',
+      }),
+      [
+        'https://example.com/live.flv',
+        'rtmp://example.com/live',
+      ],
+    );
+  });
+
+  test('does not stringify a nested url object as a playback address',
+      () async {
+    final detail = LiveRoomDetail(
+      roomId: 'room-id',
+      title: '直播间',
+      cover: '',
+      userName: '主播',
+      userAvatar: '',
+      online: 1,
+      status: true,
+      url: 'https://live.kuaishou.com/u/room-id',
+      data: {
+        'h264': [
+          {
+            'name': '蓝光',
+            'level': 70,
+            'url': {
+              'primary': 'https://example.com/live.flv',
+            },
+          },
+        ],
+      },
+    );
+
+    final qualities = await KuaishouSite().getPlayQualites(detail: detail);
+    expect(qualities, hasLength(1));
+    expect(qualities.single.data, ['https://example.com/live.flv']);
+  });
 }

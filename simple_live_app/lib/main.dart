@@ -18,6 +18,7 @@ import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/desktop_startup_args.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/app/utils/listen_fourth_button.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
@@ -25,6 +26,7 @@ import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/other/debug_log_page.dart';
+import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/app_pages.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
@@ -33,6 +35,7 @@ import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
+import 'package:simple_live_app/services/live_notification_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
@@ -563,11 +566,21 @@ class MyApp extends StatelessWidget {
       MethodChannel("simple_live/desktop_shortcuts");
   static bool _desktopShortcutHandlerBound = false;
   static bool? _desktopShortcutCaptureEnabled;
+  static bool _ohosNotificationNavigationBound = false;
 
   const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
+    if (Utils.isOhos && !_ohosNotificationNavigationBound) {
+      _ohosNotificationNavigationBound = true;
+      LiveNotificationService.bindOhosNavigation(
+        _openOhosNotificationTarget,
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(LiveNotificationService.consumePendingOhosTarget());
+      });
+    }
     if (!_desktopShortcutHandlerBound) {
       _desktopShortcutChannel.setMethodCallHandler(
         _handleDesktopShortcutMethod,
@@ -658,7 +671,7 @@ class MyApp extends StatelessWidget {
                         (FourthButtonTapGestureRecognizer instance) {
                           instance.onTapDown = (TapDownDetails details) async {
                             //如果处于全屏状态，退出全屏
-                            if (!Platform.isAndroid && !Platform.isIOS) {
+                            if (_isDesktopPlatform) {
                               if (await windowManager.isFullScreen()) {
                                 await windowManager.setFullScreen(false);
                                 return;
@@ -710,6 +723,22 @@ class MyApp extends StatelessWidget {
     }));
   }
 
+  static Future<void> _openOhosNotificationTarget(
+    LiveNotificationTarget target,
+  ) async {
+    final site = Sites.allSites[target.siteId];
+    if (site == null) {
+      Log.d('忽略未知直播平台的通知跳转: ${target.siteId}');
+      return;
+    }
+    if (Get.currentRoute == RoutePath.kLiveRoomDetail &&
+        Get.isRegistered<LiveRoomController>()) {
+      Get.find<LiveRoomController>().resetRoom(site, target.roomId);
+      return;
+    }
+    AppNavigator.toLiveRoomDetail(site: site, roomId: target.roomId);
+  }
+
   static bool get _isDesktopPlatform =>
       Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
@@ -757,9 +786,7 @@ class MyApp extends StatelessWidget {
         await liveRoomController.exitPlayerWindowMode();
         return;
       }
-      if (!Platform.isAndroid &&
-          !Platform.isIOS &&
-          await windowManager.isFullScreen()) {
+      if (_isDesktopPlatform && await windowManager.isFullScreen()) {
         await windowManager.setFullScreen(false);
       }
       return;

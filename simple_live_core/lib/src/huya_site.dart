@@ -11,6 +11,12 @@ import 'package:simple_live_core/src/model/tars/huya_user_id.dart';
 import 'package:tars_dart/tars/net/base_tars_http.dart';
 
 class HuyaSite implements LiveSite {
+  @override
+  Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
+    return await getLiveStatus(roomId: roomId)
+        ? LiveStatusState.live
+        : LiveStatusState.offline;
+  }
   static const baseUrl = "https://m.huya.com/";
   static const Map<int, String> _bussTypeNames = {
     1: "网游",

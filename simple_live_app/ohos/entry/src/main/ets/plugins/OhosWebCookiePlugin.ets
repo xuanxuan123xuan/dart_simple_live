@@ -28,6 +28,14 @@ export default class OhosWebCookiePlugin implements FlutterPlugin, MethodCallHan
   }
 
   onMethodCall(call: MethodCall, result: MethodResult): void {
+    if (call.method === 'clearCookies') {
+      web_webview.WebCookieManager.clearAllCookies()
+        .then(() => result.success(null))
+        .catch((error: Error) => {
+          result.error('cookie_clear_failed', `${error}`, null);
+        });
+      return;
+    }
     if (call.method !== 'getCookie') {
       result.notImplemented();
       return;

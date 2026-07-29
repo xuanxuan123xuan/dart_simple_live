@@ -959,7 +959,9 @@ class AppSettingsController extends GetxController {
         .setValue(LocalStorageService.kAllowBackgroundPlayback, e);
     LocalStorageService.instance
         .setValue(LocalStorageService.kPlayerAutoPause, !e);
-    if (!e) {
+    if (Platform.operatingSystem == 'ohos') {
+      BackgroundPlaybackService.instance.syncOhosEnabled(e);
+    } else if (!e) {
       BackgroundPlaybackService.instance.stop();
     }
   }
@@ -1803,7 +1805,9 @@ class AppSettingsController extends GetxController {
     );
   }
 
-  Future<Map<String, String>?> consumePendingLastLiveRoom() async {
+  Future<Map<String, String>?> consumePendingLastLiveRoom({
+    bool restore = true,
+  }) async {
     final pending = LocalStorageService.instance.getValue(
       LocalStorageService.kLastLiveRoomResumePending,
       false,
@@ -1812,6 +1816,9 @@ class AppSettingsController extends GetxController {
       return null;
     }
     await setLastLiveRoomResumePending(false);
+    if (!restore) {
+      return null;
+    }
     return getLastLiveRoom();
   }
 

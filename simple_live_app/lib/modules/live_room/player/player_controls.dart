@@ -542,7 +542,7 @@ Widget _buildFullTopBar(
                 size: 24,
               ),
             ),
-            if (Platform.isAndroid)
+            if (Platform.isAndroid || Utils.isOhos)
               IconButton(
                 onPressed: controller.enablePIP,
                 icon: const Icon(
@@ -637,7 +637,7 @@ Widget _buildFullBottomBar(
               ),
             ),
             const Expanded(child: SizedBox()),
-            if (!Platform.isAndroid && !Platform.isIOS)
+            if (!Platform.isAndroid && !Platform.isIOS && !Utils.isOhos)
               IconButton(
                 key: volumeButtonKey,
                 onPressed: () {
@@ -765,7 +765,7 @@ Widget _buildNormalBottomBar(
               ),
             ),
             const Expanded(child: SizedBox()),
-            if (!Platform.isAndroid && !Platform.isIOS)
+            if (!Platform.isAndroid && !Platform.isIOS && !Utils.isOhos)
               IconButton(
                 key: volumeButtonKey,
                 onPressed: () {
@@ -812,7 +812,7 @@ Widget _buildNormalBottomBar(
                   style: const TextStyle(color: Colors.white, fontSize: 15),
                 ),
               ),
-            if (!Platform.isAndroid && !Platform.isIOS)
+            if (!Platform.isAndroid && !Platform.isIOS && !Utils.isOhos)
               IconButton(
                 onPressed: controller.enterSmallWindow,
                 icon: const Icon(

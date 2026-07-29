@@ -21,6 +21,12 @@ import 'package:simple_live_core/src/scripts/douyu_sign.dart';
 
 class DouyuSite implements LiveSite {
   @override
+  Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
+    return await getLiveStatus(roomId: roomId)
+        ? LiveStatusState.live
+        : LiveStatusState.offline;
+  }
+  @override
   String id = "douyu";
 
   @override

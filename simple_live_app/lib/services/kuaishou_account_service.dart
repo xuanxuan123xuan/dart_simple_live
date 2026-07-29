@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/sites.dart';
@@ -57,7 +59,9 @@ class KuaishouAccountService extends GetxService {
       LocalStorageService.kKuaishouKww,
       this.kww,
     );
-    cookieExpiresAtMs.value = expiresAt?.millisecondsSinceEpoch ?? 0;
+    final resolvedExpiry =
+        expiresAt ?? resolveKuaishouEmbeddedTokenExpiry(cookie);
+    cookieExpiresAtMs.value = resolvedExpiry?.millisecondsSinceEpoch ?? 0;
     LocalStorageService.instance.setValue(
       LocalStorageService.kKuaishouCookieExpiresAt,
       cookieExpiresAtMs.value,
@@ -84,5 +88,75 @@ class KuaishouAccountService extends GetxService {
     );
     hasCookie.value = false;
     setSite();
+  }
+}
+
+/// Returns an exact expiry only when an authentication cookie embeds a
+/// standard JWT-style `exp` value. Opaque Kuaishou tokens deliberately return
+/// null rather than inventing a lifetime that the server did not expose.
+DateTime? resolveKuaishouEmbeddedTokenExpiry(String cookie) {
+  final values = <String, String>{};
+  for (final part in cookie.split(';')) {
+    final item = part.trim();
+    final index = item.indexOf('=');
+    if (index <= 0) {
+      continue;
+    }
+    values[item.substring(0, index).trim()] = item.substring(index + 1).trim();
+  }
+  for (final name in const [
+    'kuaishou.live.web_st',
+    'kuaishou.server.web_st',
+    'kuaishou.live.web_at',
+    'passToken',
+  ]) {
+    final expiry = _decodeTokenExpiry(values[name] ?? '');
+    if (expiry != null) {
+      return expiry;
+    }
+  }
+  return null;
+}
+
+DateTime? _decodeTokenExpiry(String rawToken) {
+  if (rawToken.isEmpty) {
+    return null;
+  }
+  String token;
+  try {
+    token = Uri.decodeComponent(rawToken);
+  } catch (_) {
+    token = rawToken;
+  }
+  final parts = token.split('.');
+  if (parts.length < 2) {
+    return null;
+  }
+  try {
+    final normalized = base64Url.normalize(parts[1]);
+    final payload = jsonDecode(utf8.decode(base64Url.decode(normalized)));
+    if (payload is! Map) {
+      return null;
+    }
+    final rawExpiry = payload['exp'] ??
+        payload['expiresAt'] ??
+        payload['expireAt'] ??
+        payload['expiration'];
+    final numericExpiry = rawExpiry is num
+        ? rawExpiry.toInt()
+        : int.tryParse(rawExpiry?.toString() ?? '');
+    if (numericExpiry == null || numericExpiry <= 0) {
+      return null;
+    }
+    final milliseconds =
+        numericExpiry < 100000000000 ? numericExpiry * 1000 : numericExpiry;
+    final expiry = DateTime.fromMillisecondsSinceEpoch(milliseconds);
+    // Reject nonsensical payload values instead of surfacing a bogus date.
+    if (expiry.year < 2020 || expiry.year > 2200) {
+      return null;
+    }
+    return expiry;
+  } catch (_) {
+    return null;
   }
 }

@@ -22,15 +22,19 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
+import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
+import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
+import 'package:simple_live_app/services/ohos_network_service.dart';
+import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/desktop_refresh_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
@@ -40,8 +44,79 @@ import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 import 'package:simple_live_app/widgets/status/app_empty_widget.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
+
+@visibleForTesting
+bool shouldAcceptOfflineRoomRefresh({
+  required bool playbackActive,
+  required int consecutiveOfflineReports,
+  int requiredReports = 3,
+}) {
+  return !playbackActive && consecutiveOfflineReports >= requiredReports;
+}
+
+@immutable
+class RoomLiveRefreshDecision {
+  final LiveStatusState state;
+  final int consecutiveOfflineReports;
+  final bool liveStatus;
+
+  const RoomLiveRefreshDecision({
+    required this.state,
+    required this.consecutiveOfflineReports,
+    required this.liveStatus,
+  });
+}
+
+@visibleForTesting
+RoomLiveRefreshDecision resolveRoomLiveRefresh({
+  required LiveStatusState currentState,
+  required LiveStatusState incomingState,
+  required int consecutiveOfflineReports,
+  required bool currentLiveStatus,
+  required bool playbackActive,
+  int requiredOfflineReports = 3,
+}) {
+  if (incomingState == LiveStatusState.live) {
+    return const RoomLiveRefreshDecision(
+      state: LiveStatusState.live,
+      consecutiveOfflineReports: 0,
+      liveStatus: true,
+    );
+  }
+  if (incomingState == LiveStatusState.unknown) {
+    return RoomLiveRefreshDecision(
+      state: currentState,
+      consecutiveOfflineReports: currentState == LiveStatusState.offline
+          ? consecutiveOfflineReports
+          : 0,
+      liveStatus: currentLiveStatus,
+    );
+  }
+  if (playbackActive) {
+    return RoomLiveRefreshDecision(
+      state: currentState,
+      consecutiveOfflineReports: 0,
+      liveStatus: currentLiveStatus,
+    );
+  }
+
+  final reports = consecutiveOfflineReports + 1;
+  if (reports >= requiredOfflineReports) {
+    return RoomLiveRefreshDecision(
+      state: LiveStatusState.offline,
+      consecutiveOfflineReports: reports,
+      liveStatus: false,
+    );
+  }
+  return RoomLiveRefreshDecision(
+    state: currentState,
+    consecutiveOfflineReports: reports,
+    liveStatus: currentLiveStatus,
+  );
+}
 
 class LiveRoomController extends PlayerController
     with WidgetsBindingObserver, WindowListener {
@@ -70,6 +145,9 @@ class LiveRoomController extends PlayerController
   var online = 0.obs;
   var followed = false.obs;
   var liveStatus = false.obs;
+  final roomLiveState = LiveStatusState.unknown.obs;
+  final offlineConfirmations = 0.obs;
+  final waitingForPlaybackUrl = false.obs;
   RxList<LiveSuperChatMessage> superChats = RxList<LiveSuperChatMessage>();
   RxList<LiveContributionRankItem> contributionRanks =
       RxList<LiveContributionRankItem>();
@@ -174,6 +252,7 @@ class LiveRoomController extends PlayerController
   StreamSubscription<Duration>? _positionSubscription;
   Duration _lastKnownPlayerPosition = Duration.zero;
   Duration? _positionBeforeBackground;
+  bool? _ohosWasPlayingBeforeBackground;
   DateTime? _backgroundedAt;
   Duration? _positionBeforeWindowBlur;
   DateTime? _windowBlurredAt;
@@ -192,6 +271,10 @@ class LiveRoomController extends PlayerController
   Timer? _chatBottomRestoreTimer;
   Timer? _onlineRefreshTimer;
   bool _onlineRefreshInFlight = false;
+  bool _hasActivePlaybackSession = false;
+  bool _playbackBootstrapInFlight = false;
+  DateTime? _ohosHealthyPlaybackSince;
+  Duration _lastOhosPlaybackPosition = Duration.zero;
   bool _autoPipAttempting = false;
 
   @override
@@ -404,6 +487,7 @@ class LiveRoomController extends PlayerController
       introduction: detail.introduction?.trim(),
       notice: detail.notice?.trim(),
       status: detail.status,
+      liveStatusState: detail.liveStatusState,
       data: detail.data,
       danmakuData: detail.danmakuData,
       url: detail.url,
@@ -414,6 +498,25 @@ class LiveRoomController extends PlayerController
       categoryParentId: detail.categoryParentId?.trim(),
       categoryParentName: detail.categoryParentName?.trim(),
       categoryPic: detail.categoryPic?.trim(),
+    );
+  }
+
+  void _syncBackgroundPlaybackMetadata(LiveRoomDetail roomDetail) {
+    final title = roomDetail.title.isNotEmpty
+        ? roomDetail.title
+        : roomDetail.userName.isNotEmpty
+            ? roomDetail.userName
+            : site.name;
+    unawaited(
+      BackgroundPlaybackService.instance.updateMetadata(
+        assetId: '${site.id}:${roomDetail.roomId}',
+        siteId: site.id,
+        roomId: roomDetail.roomId,
+        title: title,
+        artist: roomDetail.userName.isEmpty ? site.name : roomDetail.userName,
+        album: site.name,
+        artwork: roomDetail.cover,
+      ),
     );
   }
 
@@ -879,40 +982,142 @@ class LiveRoomController extends PlayerController
     _superChatRefreshTimer = null;
   }
 
+  bool get showOfflineOverlay =>
+      roomLiveState.value == LiveStatusState.offline &&
+      offlineConfirmations.value >= 3 &&
+      !_hasActivePlaybackSession &&
+      !_hasActivePlaybackForRoomStatus;
+
   void _restartOnlineRefreshTimer() {
     _onlineRefreshTimer?.cancel();
-    _onlineRefreshInFlight = false;
-    if (!liveStatus.value) {
+    _onlineRefreshTimer = null;
+    if (_roomDisposed) {
       return;
     }
-    _onlineRefreshTimer =
-        Timer.periodic(const Duration(seconds: 10), (_) async {
-      if (_onlineRefreshInFlight || _roomDisposed || !liveStatus.value) {
+    final delay = showOfflineOverlay
+        ? const Duration(seconds: 45)
+        : const Duration(seconds: 10);
+    _onlineRefreshTimer = Timer(delay, _refreshRoomStatus);
+  }
+
+  Future<void> _refreshRoomStatus() async {
+    if (_onlineRefreshInFlight || _roomDisposed) {
+      _restartOnlineRefreshTimer();
+      return;
+    }
+    _onlineRefreshInFlight = true;
+    final refreshGeneration = _loadGeneration;
+    try {
+      final roomDetail = _sanitizeRoomDetail(
+        await site.liveSite
+            .getRoomDetail(roomId: roomId)
+            .timeout(const Duration(seconds: 8)),
+      );
+      if (!_isCurrentLoad(refreshGeneration)) {
         return;
       }
-      _onlineRefreshInFlight = true;
-      try {
-        final roomDetail = _sanitizeRoomDetail(
-          await site.liveSite
-              .getRoomDetail(roomId: roomId)
-              .timeout(const Duration(seconds: 8)),
-        );
-        if (_roomDisposed) {
-          return;
-        }
+      final incomingState = roomDetail.resolvedLiveStatus;
+      if (incomingState != LiveStatusState.unknown) {
+        detail.value = roomDetail;
         online.value = roomDetail.online;
-        liveStatus.value = roomDetail.status || roomDetail.isRecord;
-        if (!liveStatus.value) {
-          _onlineRefreshTimer?.cancel();
-          _onlineRefreshTimer = null;
-          _restartSuperChatRefreshTimer();
-        }
-      } catch (e) {
-        Log.d("刷新${site.name}热度失败: $e");
-      } finally {
-        _onlineRefreshInFlight = false;
+        _syncBackgroundPlaybackMetadata(roomDetail);
       }
-    });
+      _applyRoomLiveState(incomingState);
+      if (incomingState == LiveStatusState.live) {
+        await _bootstrapPlaybackIfNeeded();
+      }
+    } catch (e) {
+      Log.d("刷新${site.name}直播状态失败，保留当前状态: $e");
+      _applyRoomLiveState(LiveStatusState.unknown);
+    } finally {
+      _onlineRefreshInFlight = false;
+      if (_isCurrentLoad(refreshGeneration)) {
+        _restartOnlineRefreshTimer();
+      }
+    }
+  }
+
+  void _applyRoomLiveState(LiveStatusState incomingState) {
+    final decision = resolveRoomLiveRefresh(
+      currentState: roomLiveState.value,
+      incomingState: incomingState,
+      consecutiveOfflineReports: offlineConfirmations.value,
+      currentLiveStatus: liveStatus.value,
+      playbackActive:
+          _hasActivePlaybackSession || _hasActivePlaybackForRoomStatus,
+    );
+    roomLiveState.value = decision.state;
+    offlineConfirmations.value = decision.consecutiveOfflineReports;
+    final statusChanged = liveStatus.value != decision.liveStatus;
+    liveStatus.value = decision.liveStatus;
+    if (incomingState == LiveStatusState.live) {
+      loadError.value = false;
+      error = null;
+      errorStackTrace = null;
+    } else if (decision.state == LiveStatusState.offline) {
+      waitingForPlaybackUrl.value = false;
+    }
+    if (statusChanged) {
+      _restartSuperChatRefreshTimer();
+    }
+  }
+
+  Future<void> _bootstrapPlaybackIfNeeded() async {
+    if (_roomDisposed ||
+        _playbackBootstrapInFlight ||
+        roomLiveState.value != LiveStatusState.live ||
+        _hasActivePlaybackSession) {
+      return;
+    }
+    _playbackBootstrapInFlight = true;
+    waitingForPlaybackUrl.value = true;
+    try {
+      await getPlayQualites();
+    } finally {
+      _playbackBootstrapInFlight = false;
+    }
+  }
+
+  bool get _hasActivePlaybackForRoomStatus {
+    if (Utils.isOhos) {
+      final value = ohosVideoController?.value;
+      return value != null &&
+          value.isInitialized &&
+          !value.hasError &&
+          (value.isPlaying || value.isBuffering);
+    }
+    return player.state.playing;
+  }
+
+  @override
+  void updateOhosVideoState(VideoPlayerValue value) {
+    super.updateOhosVideoState(value);
+    if (!Utils.isOhos) {
+      return;
+    }
+    if (!value.isInitialized ||
+        value.hasError ||
+        value.isBuffering ||
+        !value.isPlaying) {
+      _ohosHealthyPlaybackSince = null;
+      _lastOhosPlaybackPosition = value.position;
+      return;
+    }
+    if (!didOhosPlaybackTimelineProgress(
+      current: value.position,
+      previous: _lastOhosPlaybackPosition,
+    )) {
+      return;
+    }
+    _lastOhosPlaybackPosition = value.position;
+    final now = DateTime.now();
+    _ohosHealthyPlaybackSince ??= now;
+    if (mediaErrorRetryCount > 0 &&
+        now.difference(_ohosHealthyPlaybackSince!) >=
+            const Duration(seconds: 20)) {
+      Log.d("鸿蒙播放器已稳定播放，重置错误重试计数");
+      mediaErrorRetryCount = 0;
+    }
   }
 
   void _refreshDanmakuOverlay(String reason) {
@@ -1103,7 +1308,10 @@ class LiveRoomController extends PlayerController
       if (!Utils.isOhos) {
         await WakelockPlus.disable();
       }
-      if (Platform.isIOS) {
+      if (Utils.isOhos) {
+        await closePlayerResources();
+        await SystemNavigator.pop();
+      } else if (Platform.isIOS) {
         if (fullScreenState.value || smallWindowState.value) {
           await exitPlayerWindowMode();
         }
@@ -1132,10 +1340,10 @@ class LiveRoomController extends PlayerController
     if (_autoPipAttempting) {
       return false;
     }
-    if (!Platform.isAndroid ||
+    if (!(Platform.isAndroid || Utils.isOhos) ||
         !AppSettingsController.instance.autoPipOnExit.value ||
         !liveStatus.value) {
-      if (Platform.isAndroid) {
+      if (Platform.isAndroid || Utils.isOhos) {
         await cancelAutoPipOnLeave();
       }
       return false;
@@ -1174,6 +1382,8 @@ class LiveRoomController extends PlayerController
   @override
   void onClose() async {
     _roomDisposed = true;
+    _hasActivePlaybackSession = false;
+    waitingForPlaybackUrl.value = false;
     _loadGeneration += 1;
     WidgetsBinding.instance.removeObserver(this);
     if (Platform.isWindows) {
@@ -1323,6 +1533,13 @@ class LiveRoomController extends PlayerController
       loadError.value = false;
       error = null;
       errorStackTrace = null;
+      _onlineRefreshTimer?.cancel();
+      roomLiveState.value = LiveStatusState.unknown;
+      offlineConfirmations.value = 0;
+      waitingForPlaybackUrl.value = false;
+      _hasActivePlaybackSession = false;
+      _playbackBootstrapInFlight = false;
+      liveStatus.value = false;
       update();
       await liveDanmaku.stop();
       liveDanmaku = site.liveSite.getDanmaku();
@@ -1333,7 +1550,7 @@ class LiveRoomController extends PlayerController
       rebuildDanmakuView();
       addSysMsg("正在读取直播间信息");
       final detailStopwatch = Stopwatch()..start();
-      detail.value = _sanitizeRoomDetail(
+      final roomDetail = _sanitizeRoomDetail(
         await site.liveSite.getRoomDetail(roomId: roomId),
       );
       detailStopwatch.stop();
@@ -1343,6 +1560,9 @@ class LiveRoomController extends PlayerController
       if (!_isCurrentLoad(loadGeneration)) {
         return;
       }
+      detail.value = roomDetail;
+      addSysMsg("直播间信息读取完成");
+      _syncBackgroundPlaybackMetadata(roomDetail);
 
       if (site.id == Constant.kDouyin) {
         // 1.6.0 之前收藏的是 WebRid，中间一版收藏的是 RoomID，
@@ -1389,13 +1609,16 @@ class LiveRoomController extends PlayerController
       addHistory();
       // 刷新关注状态
       followed.value = DBService.instance.getFollowExist("${site.id}_$roomId");
-      online.value = detail.value!.online;
-      liveStatus.value = detail.value!.status || detail.value!.isRecord;
+      final initialLiveState = detail.value!.resolvedLiveStatus;
+      if (initialLiveState != LiveStatusState.unknown) {
+        online.value = detail.value!.online;
+      }
+      _applyRoomLiveState(initialLiveState);
       _restartSuperChatRefreshTimer();
       _restartOnlineRefreshTimer();
       unawaited(syncAutoPipOnLeave());
-      if (liveStatus.value) {
-        getPlayQualites();
+      if (initialLiveState == LiveStatusState.live) {
+        unawaited(_bootstrapPlaybackIfNeeded());
       }
       if (detail.value!.isRecord) {
         addSysMsg("当前主播未开播，正在转播录像");
@@ -1405,7 +1628,7 @@ class LiveRoomController extends PlayerController
         return;
       }
       initDanmau();
-      liveDanmaku.start(detail.value?.danmakuData);
+      unawaited(liveDanmaku.start(detail.value?.danmakuData));
       startLiveDurationTimer();
     } catch (e, stackTrace) {
       Log.logPrint(e);
@@ -1413,9 +1636,16 @@ class LiveRoomController extends PlayerController
       if (!_isCurrentLoad(loadGeneration)) {
         return;
       }
-      loadError.value = true;
-      error = e;
-      errorStackTrace = stackTrace;
+      if (site.id == Constant.kKuaishou) {
+        roomLiveState.value = LiveStatusState.unknown;
+        offlineConfirmations.value = 0;
+        loadError.value = false;
+        _restartOnlineRefreshTimer();
+      } else {
+        loadError.value = true;
+        error = e;
+        errorStackTrace = stackTrace;
+      }
     } finally {
       _dismissLiveRoomLoadingOverlay();
       loadStopwatch.stop();
@@ -1447,6 +1677,12 @@ class LiveRoomController extends PlayerController
       }
 
       if (playQualites.isEmpty) {
+        if (site.id == Constant.kKuaishou &&
+            roomLiveState.value == LiveStatusState.live) {
+          waitingForPlaybackUrl.value = true;
+          Log.d("快手直播已开播，播放地址尚未就绪，等待后续轮询");
+          return;
+        }
         final qualityError = CoreError("无法读取播放清晰度，请稍后重试");
         Log.e(
           "播放清晰度列表为空：${site.id}/$roomId generation=$loadGeneration",
@@ -1480,6 +1716,11 @@ class LiveRoomController extends PlayerController
         "读取播放清晰度失败：${site.id}/$roomId generation=$loadGeneration error=$e",
         stackTrace,
       );
+      if (site.id == Constant.kKuaishou &&
+          roomLiveState.value == LiveStatusState.live) {
+        waitingForPlaybackUrl.value = true;
+        return;
+      }
       loadError.value = true;
       error = e;
       errorStackTrace = stackTrace;
@@ -1489,6 +1730,14 @@ class LiveRoomController extends PlayerController
   Future<int> getQualityLevel() async {
     var qualityLevel = AppSettingsController.instance.qualityLevel.value;
     try {
+      if (Utils.isOhos) {
+        final networkType = await OhosNetworkService.getNetworkType();
+        if (networkType == OhosNetworkType.cellular) {
+          qualityLevel =
+              AppSettingsController.instance.qualityLevelCellular.value;
+        }
+        return qualityLevel;
+      }
       var connectivityResult = await (Connectivity().checkConnectivity());
       if (connectivityResult == ConnectivityResult.mobile) {
         qualityLevel =
@@ -1518,11 +1767,15 @@ class LiveRoomController extends PlayerController
       return false;
     }
     if (playUrl.urls.isEmpty) {
-      if (!silent) {
+      if (site.id == Constant.kKuaishou &&
+          roomLiveState.value == LiveStatusState.live) {
+        waitingForPlaybackUrl.value = true;
+      } else if (!silent) {
         SmartDialog.showToast("无法读取播放地址");
       }
       return false;
     }
+    waitingForPlaybackUrl.value = false;
     playUrls.value = playUrl.urls;
     playHeaders = playUrl.headers;
     if (resetLine || currentLineIndex < 0) {
@@ -1571,7 +1824,11 @@ class LiveRoomController extends PlayerController
       // A previous room/line may have been a portrait stream. Reset the hint
       // until AVPlayer reports the dimensions of the newly opened source.
       isVertical.value = false;
+      _ohosHealthyPlaybackSince = null;
+      _lastOhosPlaybackPosition = Duration.zero;
       ohosPlayerRevision.value += 1;
+      _hasActivePlaybackSession = true;
+      waitingForPlaybackUrl.value = false;
       return;
     }
     _playerReopening = true;
@@ -1618,6 +1875,8 @@ class LiveRoomController extends PlayerController
         }
         return;
       }
+      _hasActivePlaybackSession = true;
+      waitingForPlaybackUrl.value = false;
       openStopwatch.stop();
       Log.i(
         "播放器打开完成：${site.id}/$roomId ${openStopwatch.elapsedMilliseconds}ms "
@@ -1651,18 +1910,31 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  Future<void> setPlayer({bool refreshUrls = false}) async {
+  Future<void> setPlayer({
+    bool refreshUrls = false,
+    bool rotateOhosLine = false,
+  }) async {
     if (refreshUrls) {
+      final previousLineIndex = currentLineIndex;
       var reloaded = await _reloadPlayUrls(silent: true);
       if (!reloaded) {
-        return;
+        // The old source is still worth reopening when the platform API is
+        // temporarily unavailable. Returning here leaves the errored widget
+        // on screen forever and prevents the next watchdog retry.
+        Log.d("刷新播放地址失败，回退为重新打开当前线路");
+      } else if (rotateOhosLine && Utils.isOhos && playUrls.length > 1) {
+        // A fresh URL from the same CDN can still point to the unhealthy edge
+        // node. On the second retry, move to another source before reopening.
+        currentLineIndex = (previousLineIndex + 1) % playUrls.length;
+        currentLineInfo.value = "线路${currentLineIndex + 1}";
+        Log.d("鸿蒙播放恢复切换到线路${currentLineIndex + 1}");
       }
     }
     await initPlaylist();
   }
 
   bool get _shouldRefreshUrlsOnPlaybackRetry =>
-      site.id == Constant.kHuya || site.id == Constant.kDouyu;
+      Utils.isOhos || site.id == Constant.kHuya || site.id == Constant.kDouyu;
 
   @override
   void mediaEnd() async {
@@ -1673,21 +1945,34 @@ class LiveRoomController extends PlayerController
         // 第二次重试前稍等一秒
         await Future.delayed(const Duration(seconds: 1));
       }
+      final rotateOhosLine = Utils.isOhos && mediaErrorRetryCount == 1;
       mediaErrorRetryCount += 1;
-      await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+      await setPlayer(
+        refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
+        rotateOhosLine: rotateOhosLine,
+      );
       return;
     }
 
     Log.d("播放结束");
     // 依次尝试剩余线路，全部失败后再判定为已下播。
     if (playUrls.length - 1 == currentLineIndex) {
+      _hasActivePlaybackSession = false;
+      if (Utils.isOhos) {
+        // AVPlayer completion is not sufficient evidence that a live room is
+        // offline. Keep the room active; the independent room-status polling
+        // will confirm a real stop after consecutive responses.
+        errorMsg.value = "直播流已中断，请稍后重试或切换线路";
+        await _tryAutoSwitchToNextLiveRoom(reason: "playback_failure");
+        return;
+      }
       if (site.id == Constant.kHuya) {
         currentLineIndex = 0;
         mediaErrorRetryCount = 0;
         await setPlayer(refreshUrls: true);
         return;
       }
-      liveStatus.value = false;
+      errorMsg.value = "直播流已中断，正在确认直播状态";
       await _tryAutoSwitchToNextLiveRoom(reason: "live_end");
     } else {
       await changePlayLine(currentLineIndex + 1);
@@ -1706,12 +1991,17 @@ class LiveRoomController extends PlayerController
         // 第二次重试前稍等一秒
         await Future.delayed(const Duration(seconds: 1));
       }
+      final rotateOhosLine = Utils.isOhos && mediaErrorRetryCount == 1;
       mediaErrorRetryCount += 1;
-      await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+      await setPlayer(
+        refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
+        rotateOhosLine: rotateOhosLine,
+      );
       return;
     }
 
     if (playUrls.length - 1 == currentLineIndex) {
+      _hasActivePlaybackSession = false;
       if (site.id == Constant.kHuya) {
         currentLineIndex = 0;
         mediaErrorRetryCount = 0;
@@ -1871,13 +2161,21 @@ class LiveRoomController extends PlayerController
     EventBus.instance.emit(Constant.kUpdateFollow, id);
   }
 
-  void share() {
+  void share() async {
     if (detail.value == null) {
       return;
     }
     if (Utils.isOhos) {
-      Utils.copyToClipboard(detail.value!.url);
-      SmartDialog.showToast("直播间链接已复制");
+      try {
+        await OhosDocumentService.shareText(
+          detail.value!.url,
+          title: detail.value!.title,
+          isUrl: true,
+        );
+      } catch (e) {
+        Log.logPrint(e);
+        SmartDialog.showToast("分享失败：$e");
+      }
       return;
     }
     Share.shareUri(Uri.parse(detail.value!.url));
@@ -1939,14 +2237,15 @@ class LiveRoomController extends PlayerController
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Obx(
-                  () => SettingsSwitch(
-                    title: "硬件解码",
-                    subtitle: "播放失败可尝试关闭此选项",
-                    value: settings.hardwareDecode.value,
-                    onChanged: settings.setHardwareDecode,
+                if (!Utils.isOhos)
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "硬件解码",
+                      subtitle: "播放失败可尝试关闭此选项",
+                      value: settings.hardwareDecode.value,
+                      onChanged: settings.setHardwareDecode,
+                    ),
                   ),
-                ),
                 if (Platform.isAndroid) ...[
                   AppStyle.divider,
                   Obx(
@@ -1958,7 +2257,7 @@ class LiveRoomController extends PlayerController
                     ),
                   ),
                 ],
-                AppStyle.divider,
+                if (!Utils.isOhos) AppStyle.divider,
                 Obx(
                   () => SettingsSwitch(
                     title: "后台播放",
@@ -2181,7 +2480,8 @@ class LiveRoomController extends PlayerController
   }
 
   bool get useFullscreenSidePanelMenus =>
-      fullScreenState.value && (Platform.isAndroid || Platform.isIOS);
+      fullScreenState.value &&
+      (Platform.isAndroid || Platform.isIOS || Utils.isOhos);
 
   List<String> get enabledQuickAccessKeys {
     final settings = AppSettingsController.instance;
@@ -2929,9 +3229,15 @@ ${errorStackTrace ?? ""}''');
         state == AppLifecycleState.hidden) {
       Log.d("进入后台:$state");
       isBackground = true;
-      _backgroundedAt = DateTime.now();
-      _positionBeforeBackground = _lastKnownPlayerPosition;
-      if (!_allowBackgroundPlayback) {
+      _backgroundedAt ??= DateTime.now();
+      _positionBeforeBackground ??= _lastKnownPlayerPosition;
+      if (Utils.isOhos && _ohosWasPlayingBeforeBackground == null) {
+        _ohosWasPlayingBeforeBackground = ohosPlaying.value;
+        if (!_allowBackgroundPlayback && !pipPlaybackActiveOrPrepared) {
+          unawaited(ohosVideoController?.pause());
+        }
+      }
+      if (!_allowBackgroundPlayback && !Utils.isOhos) {
         unawaited(
           AppSettingsController.instance.saveLastLiveRoom(
             siteId: site.id,
@@ -2950,13 +3256,16 @@ ${errorStackTrace ?? ""}''');
       _refreshDanmakuOverlay("返回前台");
       var backgroundedAt = _backgroundedAt;
       var positionBeforeBackground = _positionBeforeBackground;
+      var ohosWasPlayingBeforeBackground = _ohosWasPlayingBeforeBackground;
       _backgroundedAt = null;
       _positionBeforeBackground = null;
+      _ohosWasPlayingBeforeBackground = null;
       unawaited(
         _recoverPlaybackAfterForeground(
           "返回前台",
           since: backgroundedAt,
           previousPosition: positionBeforeBackground,
+          ohosWasPlaying: ohosWasPlayingBeforeBackground,
         ),
       );
     } else if (state == AppLifecycleState.inactive) {
@@ -2969,9 +3278,41 @@ ${errorStackTrace ?? ""}''');
     String reason, {
     required DateTime? since,
     required Duration? previousPosition,
+    required bool? ohosWasPlaying,
   }) async {
-    if (Utils.isOhos ||
-        since == null ||
+    if (Utils.isOhos) {
+      if (ohosWasPlaying != true ||
+          since == null ||
+          !liveStatus.value ||
+          currentLineIndex < 0 ||
+          playUrls.isEmpty ||
+          DateTime.now().difference(since) < const Duration(seconds: 3)) {
+        return;
+      }
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (isBackground) {
+        return;
+      }
+      final controller = ohosVideoController;
+      if (controller != null &&
+          controller.value.isInitialized &&
+          !controller.value.hasError) {
+        if (!controller.value.isPlaying) {
+          try {
+            await controller.play();
+            updateOhosVideoState(controller.value);
+            return;
+          } catch (e) {
+            Log.d("$reason 后恢复鸿蒙播放器失败，准备重新加载: $e");
+          }
+        } else {
+          return;
+        }
+      }
+      await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+      return;
+    }
+    if (since == null ||
         previousPosition == null ||
         !liveStatus.value ||
         currentLineIndex < 0 ||
@@ -3015,6 +3356,7 @@ ${errorStackTrace ?? ""}''');
         "窗口重新聚焦",
         since: windowBlurredAt,
         previousPosition: positionBeforeWindowBlur,
+        ohosWasPlaying: null,
       ),
     );
   }

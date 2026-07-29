@@ -18,7 +18,8 @@ class SyncPage extends StatelessWidget {
         title: const Text("数据同步"),
         actions: [
           Visibility(
-            visible: GetPlatform.isAndroid || GetPlatform.isIOS,
+            visible:
+                GetPlatform.isAndroid || GetPlatform.isIOS || Utils.isOhos,
             child: TextButton.icon(
               onPressed: () async {
                 var result = await Get.toNamed(RoutePath.kSyncScan);

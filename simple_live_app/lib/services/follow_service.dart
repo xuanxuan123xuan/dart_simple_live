@@ -21,7 +21,16 @@ import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/live_notification_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+
+int? followStatusForLiveState(LiveStatusState state) {
+  return switch (state) {
+    LiveStatusState.live => 2,
+    LiveStatusState.offline => 1,
+    LiveStatusState.unknown => null,
+  };
+}
 
 class FollowService extends GetxService {
   static const Duration updateStatusCooldown = Duration(seconds: 30);
@@ -347,7 +356,15 @@ class FollowService extends GetxService {
       var site = Sites.allSites[item.siteId]!;
       // Status is the latency-sensitive path. Metadata is refreshed in a
       // separate bounded stage after every visible status has been updated.
-      var isLiving = await site.liveSite.getLiveStatus(roomId: item.roomId);
+      final liveState =
+          await site.liveSite.getLiveStatusState(roomId: item.roomId);
+      final nextStatus = followStatusForLiveState(liveState);
+      if (nextStatus == null) {
+        return const _FollowRefreshItemResult(
+          _FollowRefreshItemOutcome.deferred,
+        );
+      }
+      final isLiving = nextStatus == 2;
       if (generation != null && generation != _updateGeneration) {
         return const _FollowRefreshItemResult(
             _FollowRefreshItemOutcome.deferred);
@@ -355,7 +372,7 @@ class FollowService extends GetxService {
       if (item.siteId == Constant.kDouyin && douyinLimiter != null) {
         douyinLimiter.onSuccess();
       }
-      item.liveStatus.value = isLiving ? 2 : 1;
+      item.liveStatus.value = nextStatus;
       if (!isLiving) {
         item.liveStartTime = null;
         _liveNotifySentIds.remove(item.id);
@@ -1333,6 +1350,21 @@ class FollowService extends GetxService {
         return;
       }
 
+      final fileName =
+          'SimpleLive_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json';
+      final jsonText = generateJson();
+      if (Utils.isOhos) {
+        final saved = await OhosDocumentService.saveText(
+          fileName: fileName,
+          extension: 'json',
+          content: jsonText,
+        );
+        if (saved) {
+          SmartDialog.showToast("已导出关注列表");
+        }
+        return;
+      }
+
       var dir = "";
       if (Platform.isIOS) {
         dir = (await getApplicationDocumentsDirectory()).path;
@@ -1343,9 +1375,7 @@ class FollowService extends GetxService {
       if (dir.isEmpty) {
         return;
       }
-      var jsonFile = File(
-          '$dir/SimpleLive_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json');
-      var jsonText = generateJson();
+      var jsonFile = File('$dir/$fileName');
       await jsonFile.writeAsString(jsonText);
       SmartDialog.showToast("已导出关注列表");
     } catch (e) {

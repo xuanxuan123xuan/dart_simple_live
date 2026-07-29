@@ -15,6 +15,7 @@
 
 import common from '@ohos.app.ability.common';
 import { FlutterPage } from '@ohos/flutter_ohos'
+import { PipSurfaceRegistry } from 'video_player_ohos'
 
 let storage = LocalStorage.getShared()
 const EVENT_BACK_PRESS = 'EVENT_BACK_PRESS'
@@ -23,12 +24,27 @@ const EVENT_BACK_PRESS = 'EVENT_BACK_PRESS'
 @Component
 struct Index {
   private context = getContext(this) as common.UIAbilityContext
+  private pipSurfaceController: XComponentController = new XComponentController()
   @LocalStorageLink('viewId') viewId: string = "";
 
   build() {
-    Column() {
+    Stack() {
+      XComponent({
+        id: 'simple_live_pip_surface',
+        type: 'surface',
+        controller: this.pipSurfaceController
+      })
+        .width('100%')
+        .height('100%')
+        .onLoad(() => {
+          PipSurfaceRegistry.register(this.pipSurfaceController)
+        })
       FlutterPage({ viewId: this.viewId })
     }
+  }
+
+  aboutToDisappear(): void {
+    PipSurfaceRegistry.unregister(this.pipSurfaceController)
   }
 
   onBackPress(): boolean {

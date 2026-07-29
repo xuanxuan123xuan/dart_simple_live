@@ -1,0 +1,11 @@
+{
+  "module": {
+    "name": "video_player_ohos",
+    "type": "har",
+    "deviceTypes": [
+      "default",
+      "tablet",
+      "2in1"
+    ]
+  }
+}

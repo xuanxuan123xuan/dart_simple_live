@@ -9,6 +9,7 @@ import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/services/ohos_document_service.dart';
 
 class DanmuShieldController extends BaseController {
   final TextEditingController textEditingController = TextEditingController();
@@ -205,6 +206,21 @@ class DanmuShieldController extends BaseController {
         SmartDialog.showToast("没有存储权限");
         return;
       }
+      final fileName =
+          'SimpleLiveShield_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json';
+      final content = settingsController.generateShieldPresetJson();
+      if (Utils.isOhos) {
+        final saved = await OhosDocumentService.saveText(
+          fileName: fileName,
+          extension: 'json',
+          content: content,
+        );
+        if (saved) {
+          SmartDialog.showToast("已导出屏蔽预设");
+        }
+        return;
+      }
+
       var dir = "";
       if (Platform.isIOS) {
         dir = (await getApplicationDocumentsDirectory()).path;
@@ -214,10 +230,8 @@ class DanmuShieldController extends BaseController {
       if (dir.isEmpty) {
         return;
       }
-      final file = File(
-        "$dir/SimpleLiveShield_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json",
-      );
-      await file.writeAsString(settingsController.generateShieldPresetJson());
+      final file = File("$dir/$fileName");
+      await file.writeAsString(content);
       SmartDialog.showToast("已导出屏蔽预设");
     } catch (e) {
       SmartDialog.showToast("导出失败：$e");

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:qr_code_scanner_plus/qr_code_scanner_plus.dart';
 import 'package:simple_live_app/modules/sync/local_sync/scan_qr/sync_scan_qr_controller.dart';
+import 'package:simple_live_app/app/utils.dart';
 
 class SyncScanQRPage extends GetView<SyncScanQRControlelr> {
   const SyncScanQRPage({super.key});
@@ -12,30 +13,62 @@ class SyncScanQRPage extends GetView<SyncScanQRControlelr> {
       appBar: AppBar(
         title: const Text('扫描二维码'),
         actions: [
-          IconButton(
-            onPressed: () {
-              controller.qrController?.toggleFlash();
-            },
-            icon: const Icon(Icons.flash_on),
-          ),
-          // 反转摄像头
-          IconButton(
-            onPressed: () {
-              controller.qrController?.flipCamera();
-            },
-            icon: const Icon(Icons.flip_camera_android),
-          ),
+          if (!Utils.isOhos) ...[
+            IconButton(
+              onPressed: () {
+                controller.qrController?.toggleFlash();
+              },
+              icon: const Icon(Icons.flash_on),
+            ),
+            // 反转摄像头
+            IconButton(
+              onPressed: () {
+                controller.qrController?.flipCamera();
+              },
+              icon: const Icon(Icons.flip_camera_android),
+            ),
+          ],
         ],
       ),
-      body: Stack(
-        children: [
-          QRView(
-            key: controller.qrKey,
-            onQRViewCreated: controller.onQRViewCreated,
-          ),
-          const ScanRectangle(),
-        ],
-      ),
+      body: Utils.isOhos
+          ? Center(
+              child: Obx(() {
+                final error = controller.ohosError.value;
+                if (error.isNotEmpty) {
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.qr_code_scanner, size: 64),
+                      const SizedBox(height: 16),
+                      Text(error, textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: controller.startOhosScan,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('重新扫码'),
+                      ),
+                    ],
+                  );
+                }
+                return const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('正在打开系统扫码…'),
+                  ],
+                );
+              }),
+            )
+          : Stack(
+              children: [
+                QRView(
+                  key: controller.qrKey,
+                  onQRViewCreated: controller.onQRViewCreated,
+                ),
+                const ScanRectangle(),
+              ],
+            ),
     );
   }
 }

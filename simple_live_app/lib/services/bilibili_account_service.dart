@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/constant.dart';
@@ -8,9 +9,12 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/models/account/bilibili_user_info_page.dart';
 import 'package:simple_live_app/requests/http_client.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class BiliBiliAccountService extends GetxService {
+  static const _ohosWebCookieChannel =
+      MethodChannel('simple_live/ohos_web_cookie');
   static BiliBiliAccountService get instance =>
       Get.find<BiliBiliAccountService>();
 
@@ -79,6 +83,8 @@ class BiliBiliAccountService extends GetxService {
     if (Platform.isAndroid || Platform.isIOS) {
       CookieManager cookieManager = CookieManager.instance();
       await cookieManager.deleteAllCookies();
+    } else if (Utils.isOhos) {
+      await _ohosWebCookieChannel.invokeMethod<void>('clearCookies');
     }
   }
 }

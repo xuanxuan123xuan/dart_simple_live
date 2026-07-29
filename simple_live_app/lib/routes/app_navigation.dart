@@ -121,7 +121,7 @@ class AppNavigator {
 
   /// 跳转至哔哩哔哩登录
   static Future toBiliBiliLogin() async {
-    if (Platform.isAndroid || Platform.isIOS) {
+    if (Platform.isAndroid || Platform.isIOS || Utils.isOhos) {
       await Get.toNamed(RoutePath.kBiliBiliWebLogin);
     } else {
       await Get.toNamed(RoutePath.kBiliBiliQRLogin);

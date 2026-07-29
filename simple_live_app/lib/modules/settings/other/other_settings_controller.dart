@@ -17,6 +17,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
+import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/signalr_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
@@ -144,14 +145,34 @@ class OtherSettingsController extends BaseController {
 
   void shareLogFile(LogFileModel item) async {
     if (Utils.isOhos) {
-      Utils.copyToClipboard(await File(item.path).readAsString());
-      SmartDialog.showToast("日志已复制到剪贴板");
+      try {
+        await OhosDocumentService.shareFile(item.path, title: item.name);
+      } catch (e) {
+        Log.logPrint(e);
+        SmartDialog.showToast("分享失败：$e");
+      }
       return;
     }
     Share.shareXFiles([XFile(item.path)]);
   }
 
   void saveLogFile(LogFileModel item) async {
+    if (Utils.isOhos) {
+      try {
+        final saved = await OhosDocumentService.saveBytes(
+          fileName: item.name,
+          extension: 'log',
+          bytes: await File(item.path).readAsBytes(),
+        );
+        if (saved) {
+          SmartDialog.showToast("保存成功");
+        }
+      } catch (e) {
+        Log.logPrint(e);
+        SmartDialog.showToast("保存失败：$e");
+      }
+      return;
+    }
     var filePath = await FilePicker.platform.saveFile(
       allowedExtensions: ['log'],
       type: FileType.custom,
@@ -169,6 +190,18 @@ class OtherSettingsController extends BaseController {
     try {
       var data = ProfileBackupService.instance.exportProfileJson();
       var bytes = Uint8List.fromList(utf8.encode(data));
+
+      if (Utils.isOhos) {
+        final saved = await OhosDocumentService.saveBytes(
+          fileName: "simple_live_profile.json",
+          extension: 'json',
+          bytes: bytes,
+        );
+        if (saved) {
+          SmartDialog.showToast("保存成功");
+        }
+        return;
+      }
 
       // FilePicker 直接写入
       var inlineSave = Platform.isAndroid || Platform.isIOS || kIsWeb;

@@ -14,13 +14,64 @@
 */
 
 import { FlutterAbility, FlutterEngine } from '@ohos/flutter_ohos';
+import { AbilityConstant, Want } from '@kit.AbilityKit';
 import { GeneratedPluginRegistrant } from '../plugins/GeneratedPluginRegistrant';
 import OhosWebCookiePlugin from '../plugins/OhosWebCookiePlugin';
+import OhosMediaPlugin from '../plugins/OhosMediaPlugin';
+import OhosNotificationPlugin, { LiveNotificationTarget } from '../plugins/OhosNotificationPlugin';
+import OhosBackgroundPlaybackPlugin from '../plugins/OhosBackgroundPlaybackPlugin';
+import OhosNetworkPlugin from '../plugins/OhosNetworkPlugin';
+import OhosScanPlugin from '../plugins/OhosScanPlugin';
+import OhosDocumentPlugin from '../plugins/OhosDocumentPlugin';
 
 export default class EntryAbility extends FlutterAbility {
+  private notificationPlugin?: OhosNotificationPlugin;
+  private initialNotificationTarget?: LiveNotificationTarget;
+
+  onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    this.initialNotificationTarget = this.notificationTargetFromWant(want);
+    super.onCreate(want, launchParam);
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    super.onNewWant(want, launchParam);
+    const target = this.notificationTargetFromWant(want);
+    if (target === undefined) return;
+    if (this.notificationPlugin !== undefined) {
+      this.notificationPlugin.setNotificationTarget(target);
+    } else {
+      this.initialNotificationTarget = target;
+    }
+  }
   configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
     GeneratedPluginRegistrant.registerWith(flutterEngine)
     flutterEngine.getPlugins()?.add(new OhosWebCookiePlugin())
+    flutterEngine.getPlugins()?.add(new OhosMediaPlugin())
+    const notificationPlugin = new OhosNotificationPlugin(this.initialNotificationTarget)
+    this.notificationPlugin = notificationPlugin
+    this.initialNotificationTarget = undefined
+    flutterEngine.getPlugins()?.add(notificationPlugin)
+    flutterEngine.getPlugins()?.add(new OhosBackgroundPlaybackPlugin(this.context))
+    flutterEngine.getPlugins()?.add(new OhosNetworkPlugin())
+    flutterEngine.getPlugins()?.add(new OhosScanPlugin(this.context))
+    flutterEngine.getPlugins()?.add(new OhosDocumentPlugin(this.context))
+  }
+
+  private notificationTargetFromWant(want: Want): LiveNotificationTarget | undefined {
+    const parameters = want.parameters;
+    if (parameters === undefined) return undefined;
+    const roomIdValue = parameters['roomId'];
+    const siteIdValue = parameters['siteId'];
+    if (typeof roomIdValue !== 'string' || typeof siteIdValue !== 'string') {
+      return undefined;
+    }
+    const roomId = roomIdValue.trim();
+    const siteId = siteIdValue.trim();
+    if (roomId.length === 0 || siteId.length === 0) return undefined;
+    return {
+      roomId: roomId,
+      siteId: siteId
+    };
   }
 }

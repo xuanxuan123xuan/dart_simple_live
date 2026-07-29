@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:auto_orientation_v2/auto_orientation_v2.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -20,13 +22,16 @@ import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/custom_throttle.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
+import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:video_player/video_player.dart';
 
 const _windowsChromeChannel = MethodChannel('simple_live/windows_chrome');
+const _ohosMediaChannel = MethodChannel('simple_live/ohos_media');
 
 class _DanmakuReplayEntry {
   final String message;
@@ -56,6 +61,7 @@ mixin PlayerMixin {
   bool _playerInitialized = false;
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
   GlobalKey globalDanmuKey = GlobalKey();
+  GlobalKey ohosScreenshotKey = GlobalKey();
 
   /// 播放器实例
   late final player = Player(
@@ -101,6 +107,7 @@ mixin PlayerMixin {
       GlobalKey(debugLabel: 'ohos-native-player');
   final RxBool ohosPlaying = false.obs;
   final RxBool ohosBuffering = true.obs;
+  final RxBool ohosScreenshotInProgress = false.obs;
   final RxDouble ohosVolume = 1.0.obs;
   final RxDouble ohosAspectRatio = (16 / 9).obs;
   final RxInt ohosScaleRevision = 0.obs;
@@ -112,11 +119,13 @@ mixin PlayerMixin {
 
   void attachOhosVideoController(VideoPlayerController controller) {
     _ohosVideoController = controller;
+    BackgroundPlaybackService.instance.attachOhosController(controller);
     updateOhosVideoState(controller.value);
   }
 
   void detachOhosVideoController(VideoPlayerController controller) {
     if (identical(_ohosVideoController, controller)) {
+      BackgroundPlaybackService.instance.detachOhosController(controller);
       _ohosVideoController = null;
       ohosPlaying.value = false;
       ohosBuffering.value = false;
@@ -124,6 +133,7 @@ mixin PlayerMixin {
   }
 
   void updateOhosVideoState(VideoPlayerValue value) {
+    final wasPlaying = ohosPlaying.value;
     ohosPlaying.value = value.isPlaying;
     ohosBuffering.value = value.isBuffering || !value.isInitialized;
     if (value.aspectRatio > 0) {
@@ -132,6 +142,18 @@ mixin PlayerMixin {
     final size = value.size;
     if (value.isInitialized && size.width > 0 && size.height > 0) {
       isVertical.value = size.height > size.width;
+    }
+    if (Utils.isOhos && wasPlaying != value.isPlaying) {
+      unawaited(_syncOhosBackgroundPlayback(value.isPlaying));
+    }
+  }
+
+  Future<void> _syncOhosBackgroundPlayback(bool playing) async {
+    if (playing &&
+        AppSettingsController.instance.allowBackgroundPlayback.value) {
+      await BackgroundPlaybackService.instance.start();
+    } else {
+      await BackgroundPlaybackService.instance.stop();
     }
   }
 
@@ -461,6 +483,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   final pip = Floating();
   StreamSubscription<PiPStatus>? _pipSubscription;
+  StreamSubscription<bool>? _ohosPipSubscription;
 
   //final VolumeController volumeController = VolumeController();
 
@@ -468,6 +491,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   void initSystem() async {
     if (Platform.isAndroid || Platform.isIOS) {
       VolumeController.instance.showSystemUI = false;
+    }
+
+    if (Utils.isOhos) {
+      _ensureOhosPipStatusListener();
     }
 
     // 屏幕常亮
@@ -485,6 +512,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   /// 释放一些系统状态
   Future resetSystem() async {
     _pipSubscription?.cancel();
+    _ohosPipSubscription?.cancel();
     //pip.dispose();
     await SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.edgeToEdge,
@@ -492,7 +520,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     );
 
     await resetPreferredOrientation();
-    if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+    if (Platform.isAndroid ||
+        Platform.isIOS ||
+        Platform.isMacOS ||
+        Utils.isOhos) {
       // 亮度重置,桌面平台可能会报错,暂时不处理桌面平台的亮度
       try {
         await ScreenBrightness.instance.resetApplicationScreenBrightness();
@@ -771,7 +802,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Future<void> enterSmallWindow() async {
-    if (Platform.isAndroid || Platform.isIOS || smallWindowState.value) {
+    if (Platform.isAndroid ||
+        Platform.isIOS ||
+        Utils.isOhos ||
+        smallWindowState.value) {
       return;
     }
 
@@ -811,7 +845,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   ///退出小窗模式()
   Future<void> exitSmallWindow() async {
-    if (Platform.isAndroid || Platform.isIOS || !smallWindowState.value) {
+    if (Platform.isAndroid ||
+        Platform.isIOS ||
+        Utils.isOhos ||
+        !smallWindowState.value) {
       return;
     }
 
@@ -960,25 +997,102 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
   }
 
-  Future saveScreenshot() async {
+  Future<Uint8List?> _captureOhosScreenshot() async {
+    final context = ohosScreenshotKey.currentContext;
+    if (context == null) {
+      return null;
+    }
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) {
+      return null;
+    }
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    ohosScreenshotInProgress.value = true;
     try {
-      SmartDialog.showLoading(msg: "正在保存截图");
+      await WidgetsBinding.instance.endOfFrame;
+      final topLeft = renderObject.localToGlobal(Offset.zero);
+      try {
+        final nativeImage = await _ohosMediaChannel.invokeMethod<Uint8List>(
+          "captureWindowRegion",
+          {
+            "x": (topLeft.dx * pixelRatio).round(),
+            "y": (topLeft.dy * pixelRatio).round(),
+            "width": (renderObject.size.width * pixelRatio).round(),
+            "height": (renderObject.size.height * pixelRatio).round(),
+          },
+        );
+        if (nativeImage != null && nativeImage.isNotEmpty) {
+          return nativeImage;
+        }
+      } catch (e, stackTrace) {
+        Log.e("鸿蒙原生窗口截图失败，回退 Flutter 截图：$e", stackTrace);
+      }
+
+      if (renderObject is! RenderRepaintBoundary) {
+        return null;
+      }
+      final flutterImage = await renderObject.toImage(pixelRatio: pixelRatio);
+      try {
+        final byteData =
+            await flutterImage.toByteData(format: ui.ImageByteFormat.png);
+        return byteData?.buffer.asUint8List();
+      } finally {
+        flutterImage.dispose();
+      }
+    } finally {
+      ohosScreenshotInProgress.value = false;
+    }
+  }
+
+  Future<void> _saveOhosScreenshot(Uint8List imageData) async {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final title = "SimpleLive_$timestamp";
+    final tempDirectory = await getTemporaryDirectory();
+    final tempFile = File("${tempDirectory.path}/$title.png");
+    await tempFile.writeAsBytes(imageData, flush: true);
+    try {
+      final savedUri = await _ohosMediaChannel.invokeMethod<String>(
+        "saveImage",
+        {
+          "path": tempFile.path,
+          "title": title,
+          "extension": "png",
+        },
+      );
+      if (savedUri == null || savedUri.isEmpty) {
+        throw StateError("系统图库未返回保存结果");
+      }
+    } finally {
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+    }
+  }
+
+  Future saveScreenshot() async {
+    var loadingShown = false;
+    try {
       //检查相册权限,仅iOS需要
       var permission = await Utils.checkPhotoPermission();
       if (!permission) {
         SmartDialog.showToast("没有相册权限");
-        SmartDialog.dismiss(status: SmartStatus.loading);
         return;
       }
 
-      var imageData = await player.screenshot();
+      var imageData = Utils.isOhos
+          ? await _captureOhosScreenshot()
+          : await player.screenshot();
+      SmartDialog.showLoading(msg: "正在保存截图");
+      loadingShown = true;
       if (imageData == null) {
         SmartDialog.showToast("截图失败,数据为空");
-        SmartDialog.dismiss(status: SmartStatus.loading);
         return;
       }
 
-      if (Platform.isIOS || Platform.isAndroid) {
+      if (Utils.isOhos) {
+        await _saveOhosScreenshot(imageData);
+        SmartDialog.showToast("已保存截图至图库");
+      } else if (Platform.isIOS || Platform.isAndroid) {
         await ImageGallerySaverPlus.saveImage(
           imageData,
         );
@@ -992,7 +1106,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         );
         if (path == null) {
           SmartDialog.showToast("取消保存");
-          SmartDialog.dismiss(status: SmartStatus.loading);
           return;
         }
         var file = File(path);
@@ -1003,7 +1116,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       Log.logPrint(e);
       SmartDialog.showToast("截图失败");
     } finally {
-      SmartDialog.dismiss(status: SmartStatus.loading);
+      if (loadingShown) {
+        SmartDialog.dismiss(status: SmartStatus.loading);
+      }
     }
   }
 
@@ -1011,6 +1126,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   bool danmakuStateBeforePIP = false;
   bool _pipStateApplied = false;
   bool _autoPipOnLeaveConfigured = false;
+
+  bool get pipPlaybackActiveOrPrepared =>
+      _pipStateApplied || _autoPipOnLeaveConfigured;
 
   Rational _resolvePipAspectRatio() {
     final width = player.state.width ?? 0;
@@ -1051,6 +1169,28 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     });
   }
 
+  Size _resolveOhosPipSize() {
+    final value = ohosVideoController?.value;
+    final size = value?.size ?? Size.zero;
+    if (size.width > 0 && size.height > 0) {
+      return size;
+    }
+    return const Size(16, 9);
+  }
+
+  void _ensureOhosPipStatusListener() {
+    OhosPipService.instance.initialize();
+    _ohosPipSubscription ??=
+        OhosPipService.instance.stateChanges.listen((enabled) {
+      if (enabled) {
+        _applyPipEnteredState();
+      } else {
+        _restorePipExitedState();
+      }
+      Log.w('OHOS PiP enabled=$enabled');
+    });
+  }
+
   void _applyPipEnteredState() {
     if (_pipStateApplied) {
       return;
@@ -1077,6 +1217,15 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Future<void> cancelAutoPipOnLeave() async {
+    if (Utils.isOhos) {
+      _autoPipOnLeaveConfigured = false;
+      try {
+        await OhosPipService.instance.cancelAuto();
+      } catch (e) {
+        Log.d("取消鸿蒙自动小窗失败: $e");
+      }
+      return;
+    }
     if (!Platform.isAndroid) {
       return;
     }
@@ -1089,6 +1238,27 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Future<bool> prepareAutoPipOnLeave() async {
+    if (Utils.isOhos) {
+      if (_autoPipOnLeaveConfigured) {
+        return true;
+      }
+      _ensureOhosPipStatusListener();
+      final size = _resolveOhosPipSize();
+      try {
+        final configured = await OhosPipService.instance.prepareAuto(
+          width: size.width,
+          height: size.height,
+        );
+        _autoPipOnLeaveConfigured = configured;
+        if (configured) {
+          showControlsState.value = false;
+        }
+        return configured;
+      } catch (e) {
+        Log.d("配置鸿蒙退后台自动小窗失败: $e");
+        return false;
+      }
+    }
     if (!Platform.isAndroid || _autoPipOnLeaveConfigured) {
       return _autoPipOnLeaveConfigured;
     }
@@ -1113,6 +1283,25 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Future enablePIP() async {
+    if (Utils.isOhos) {
+      _ensureOhosPipStatusListener();
+      if (!await OhosPipService.instance.isAvailable()) {
+        SmartDialog.showToast("设备不支持小窗播放");
+        return;
+      }
+      await cancelAutoPipOnLeave();
+      final size = _resolveOhosPipSize();
+      try {
+        await OhosPipService.instance.enter(
+          width: size.width,
+          height: size.height,
+        );
+      } catch (e) {
+        Log.d("开启鸿蒙小窗失败: $e");
+        SmartDialog.showToast("开启小窗失败");
+      }
+      return;
+    }
     if (!Platform.isAndroid) {
       SmartDialog.showToast("当前平台暂不支持小窗播放");
       return;
@@ -1402,6 +1591,13 @@ class PlayerController extends BaseController
     if (Utils.isOhos) {
       ohosVolume.value =
           AppSettingsController.instance.playerVolume.value / 100;
+      if (AppSettingsController.instance.autoFullScreen.value) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!isPlayerClosing && !fullScreenState.value) {
+            unawaited(enterFullScreen());
+          }
+        });
+      }
       mutedState.value = ohosVolume.value <= 0;
       showControls();
       super.onInit();
@@ -1507,6 +1703,7 @@ class PlayerController extends BaseController
     _heightSubscription?.cancel();
     _logSubscription?.cancel();
     _pipSubscription?.cancel();
+    _ohosPipSubscription?.cancel();
     _playingSubscription?.cancel();
     _surfaceHealthCheckTimer?.cancel();
   }
@@ -1640,6 +1837,10 @@ class PlayerController extends BaseController
   }
 
   void showDebugInfo() {
+    if (Utils.isOhos) {
+      _showOhosDebugInfo();
+      return;
+    }
     Utils.showBottomSheet(
       title: "播放信息",
       child: ListView(
@@ -1706,7 +1907,7 @@ class PlayerController extends BaseController
             onTap: () {
               Clipboard.setData(
                 ClipboardData(
-                  text: "VideoTrack\n${player.state.track.audio}",
+                  text: "VideoTrack\n${player.state.track.video}",
                 ),
               );
             },
@@ -1738,6 +1939,66 @@ class PlayerController extends BaseController
     );
   }
 
+  void _showOhosDebugInfo() {
+    final controller = _ohosVideoController;
+    final value = controller?.value;
+    final size = value?.size ?? Size.zero;
+    final state = value == null
+        ? "未创建"
+        : value.hasError
+            ? "错误"
+            : !value.isInitialized
+                ? "初始化中"
+                : value.isBuffering
+                    ? "缓冲中"
+                    : value.isPlaying
+                        ? "播放中"
+                        : "已暂停";
+    final rows = <MapEntry<String, String>>[
+      const MapEntry("Backend", "HarmonyOS AVPlayer"),
+      MapEntry("State", state),
+      MapEntry(
+        "Resolution",
+        size.isEmpty ? "未知" : "${size.width.round()}x${size.height.round()}",
+      ),
+      MapEntry(
+        "AspectRatio",
+        value == null || !value.isInitialized
+            ? "未知"
+            : value.aspectRatio.toStringAsFixed(4),
+      ),
+      MapEntry("Position", value?.position.toString() ?? "未知"),
+      MapEntry("Duration", value?.duration.toString() ?? "未知"),
+      MapEntry(
+        "Volume",
+        "${(ohosVolume.value * 100).round()}%",
+      ),
+      MapEntry("PlaybackSpeed", value?.playbackSpeed.toString() ?? "未知"),
+      MapEntry("Media", controller?.dataSource ?? "未创建"),
+      if (value?.errorDescription != null)
+        MapEntry("Error", value!.errorDescription!),
+    ];
+
+    Utils.showBottomSheet(
+      title: "播放信息",
+      child: ListView(
+        children: rows
+            .map(
+              (row) => ListTile(
+                title: Text(row.key),
+                subtitle: Text(row.value),
+                onTap: () {
+                  Clipboard.setData(
+                    ClipboardData(text: "${row.key}\n${row.value}"),
+                  );
+                },
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+
   Future<void> closePlayerResources() async {
     if (_playerClosing) {
       return;
@@ -1748,7 +2009,27 @@ class PlayerController extends BaseController
         await exitFull();
       }
       hideControlsTimer?.cancel();
+      try {
+        await OhosPipService.instance.exit();
+      } catch (e) {
+        Log.logPrint("鸿蒙画中画关闭失败: $e");
+      }
       hideMouseCursorTimer?.cancel();
+      final ohosController = _ohosVideoController;
+      try {
+        await ohosController?.pause();
+      } catch (e) {
+        Log.logPrint("鸿蒙播放器暂停失败: $e");
+      }
+      if (ohosController != null) {
+        BackgroundPlaybackService.instance.detachOhosController(ohosController);
+      }
+      await BackgroundPlaybackService.instance.release();
+      try {
+        await ScreenBrightness.instance.resetApplicationScreenBrightness();
+      } catch (e) {
+        Log.logPrint("鸿蒙应用亮度恢复失败: $e");
+      }
       _ohosVideoController = null;
       disposeDanmakuController();
       return;

@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:simple_live_core/simple_live_core.dart';
+import 'package:simple_live_core/src/common/web_socket_util.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -34,6 +36,182 @@ void main() {
 
     expect(messages.single.message, '测试弹幕');
   });
+
+  test('decrypts and decodes AES-compressed Kuaishou comment feed', () {
+    final messages = <LiveMessage>[];
+    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+
+    danmaku.decodeMessage(
+      _socketMessage(
+        _feedPush(),
+        compressionType: 3,
+        encodedPayload: base64.decode(
+          'o32YdlVhCk9udTvBfNXGJ5VQ19qLbG5TXKUw+Cff99wChoUXLYWVU32TZhBtEoqT',
+        ),
+      ),
+    );
+
+    expect(messages, hasLength(1));
+    expect(messages.single.userName, '测试用户');
+    expect(messages.single.message, '测试弹幕');
+    expect(messages.single.color.toString(), '#ff6600');
+  });
+
+  test('rejects malformed AES payload without emitting a message', () {
+    final messages = <LiveMessage>[];
+    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+
+    danmaku.decodeMessage(
+      _socketMessage(
+        _feedPush(),
+        compressionType: 3,
+        encodedPayload: const [1, 2, 3],
+      ),
+    );
+
+    expect(messages, isEmpty);
+  });
+
+  test('automatically retries delayed Kuaishou danmaku credentials', () async {
+    final connection = _FakeConnection();
+    final timers = <_FakeTimer>[];
+    final closeMessages = <String>[];
+    var resolverCalls = 0;
+    var readyCalls = 0;
+    final danmaku = KuaishouDanmaku(
+      connector: (_, __) => connection,
+      credentialRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    )
+      ..onClose = closeMessages.add
+      ..onReady = () => readyCalls += 1;
+
+    await danmaku.start(
+      _missingCredentials(
+        resolver: () async {
+          resolverCalls += 1;
+          return resolverCalls == 1 ? null : _readyCredentials();
+        },
+      ),
+    );
+
+    expect(resolverCalls, 1);
+    expect(timers, hasLength(1));
+    expect(closeMessages.single, contains('正在自动重试'));
+    expect(connection.sent, isEmpty);
+
+    timers.single.fire();
+    await _flushAsync();
+
+    expect(resolverCalls, 2);
+    expect(readyCalls, 1);
+    expect(connection.sent, hasLength(1));
+    await danmaku.stop();
+  });
+
+  test('stopping Kuaishou danmaku cancels credential retry', () async {
+    final timers = <_FakeTimer>[];
+    var resolverCalls = 0;
+    final danmaku = KuaishouDanmaku(
+      credentialRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    );
+
+    await danmaku.start(
+      _missingCredentials(
+        resolver: () async {
+          resolverCalls += 1;
+          return null;
+        },
+      ),
+    );
+    expect(timers.single.isActive, isTrue);
+
+    await danmaku.stop();
+    expect(timers.single.isActive, isFalse);
+    timers.single.fire();
+    await _flushAsync();
+
+    expect(resolverCalls, 1);
+  });
+}
+
+KuaishouDanmakuArgs _missingCredentials({
+  required KuaishouDanmakuCredentialResolver resolver,
+}) {
+  return KuaishouDanmakuArgs(
+    roomId: 'room',
+    liveStreamId: 'stream',
+    token: '',
+    websocketUrls: const [],
+    pageId: 'page',
+    credentialResolver: resolver,
+  );
+}
+
+KuaishouDanmakuArgs _readyCredentials() {
+  return KuaishouDanmakuArgs(
+    roomId: 'room',
+    liveStreamId: 'stream',
+    token: 'token',
+    websocketUrls: const ['wss://socket.test/ws'],
+    pageId: 'page',
+  );
+}
+
+class _FakeConnection implements WebSocketConnection {
+  final StreamController<dynamic> controller = StreamController<dynamic>();
+  final List<dynamic> sent = <dynamic>[];
+  bool closed = false;
+
+  @override
+  Future<void> get ready => Future<void>.value();
+
+  @override
+  Stream<dynamic> get stream => controller.stream;
+
+  @override
+  void add(dynamic message) => sent.add(message);
+
+  @override
+  Future<void> close() async {
+    closed = true;
+  }
+}
+
+class _FakeTimer implements Timer {
+  final void Function() callback;
+  bool _active = true;
+  int _tick = 0;
+
+  _FakeTimer(this.callback);
+
+  void fire() {
+    if (!_active) return;
+    _active = false;
+    _tick += 1;
+    callback();
+  }
+
+  @override
+  void cancel() => _active = false;
+
+  @override
+  bool get isActive => _active;
+
+  @override
+  int get tick => _tick;
+}
+
+Future<void> _flushAsync() async {
+  await Future<void>.delayed(Duration.zero);
+  await Future<void>.delayed(Duration.zero);
 }
 
 Uint8List _feedPush() {
@@ -45,8 +223,13 @@ Uint8List _feedPush() {
   return (_ProtoWriter()..writeBytes(5, comment.takeBytes())).takeBytes();
 }
 
-Uint8List _socketMessage(Uint8List feedPush, {required int compressionType}) {
-  final payload = compressionType == 2 ? gzip.encode(feedPush) : feedPush;
+Uint8List _socketMessage(
+  Uint8List feedPush, {
+  required int compressionType,
+  List<int>? encodedPayload,
+}) {
+  final payload = encodedPayload ??
+      (compressionType == 2 ? gzip.encode(feedPush) : feedPush);
   final writer = _ProtoWriter()..writeVarint(1, 310);
   if (compressionType != 0) {
     writer.writeVarint(2, compressionType);

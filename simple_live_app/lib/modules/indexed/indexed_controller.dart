@@ -79,8 +79,15 @@ class IndexedController extends GetxController {
   void restorePendingLiveRoom() async {
     final settingsController = Get.find<AppSettingsController>();
     final startupRoom = DesktopStartupArgs.startupRoom;
-    final lastRoom =
-        startupRoom ?? await settingsController.consumePendingLastLiveRoom();
+    Map<String, String>? lastRoom;
+    if (startupRoom != null) {
+      await settingsController.setLastLiveRoomResumePending(false);
+      lastRoom = startupRoom;
+    } else {
+      lastRoom = await settingsController.consumePendingLastLiveRoom(
+        restore: !Utils.isOhos,
+      );
+    }
     if (lastRoom == null) {
       return;
     }

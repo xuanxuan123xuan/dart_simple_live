@@ -7,13 +7,18 @@ import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 
 class ParseController extends GetxController {
-  ParseController({Dio? redirectClient})
-      : _redirectClient = redirectClient ?? Dio();
+  ParseController({
+    Dio? redirectClient,
+    Future<String> Function(String url)? locationResolver,
+  })  : _redirectClient = redirectClient ?? Dio(),
+        _locationResolver = locationResolver;
 
   static const int _maxRedirects = 5;
   final Dio _redirectClient;
+  final Future<String> Function(String url)? _locationResolver;
   final TextEditingController roomJumpToController = TextEditingController();
   final TextEditingController getUrlController = TextEditingController();
 
@@ -117,6 +122,26 @@ class ParseController extends GetxController {
     if (extractedUrl.isNotEmpty) {
       url = extractedUrl;
     }
+    final kuaishouRoomId = KuaishouLiveLink.parseHttpUrl(url);
+    if (kuaishouRoomId != null) {
+      return [kuaishouRoomId, Sites.allSites[Constant.kKuaishou]!];
+    }
+    if (KuaishouLiveLink.isShortLink(url)) {
+      final location = _locationResolver != null
+          ? await _locationResolver!(url)
+          : await getLocation(
+              url,
+              isAllowed: KuaishouLiveLink.isTrustedRedirectTarget,
+            );
+      if (!KuaishouLiveLink.isTrustedRedirectTarget(location)) {
+        return [];
+      }
+      final redirectedRoomId = KuaishouLiveLink.parseHttpUrl(location);
+      return redirectedRoomId == null
+          ? []
+          : [redirectedRoomId, Sites.allSites[Constant.kKuaishou]!];
+    }
+
     if (url.contains("bilibili.com")) {
       var regExp = RegExp(r"bilibili\.com/([\d|\w]+)");
       id = regExp.firstMatch(url)?.group(1) ?? "";
@@ -167,22 +192,21 @@ class ParseController extends GetxController {
       var location = await getLocation(u);
       return await parse(location);
     }
-    if (url.contains("live.kuaishou.com")) {
-      var regExp = RegExp(r"live\.kuaishou\.com/u/([\d\w_-]+)");
-      id = regExp.firstMatch(url)?.group(1) ?? "";
-
-      return [id, Sites.allSites[Constant.kKuaishou]!];
-    }
-
     return [];
   }
 
-  Future<String> getLocation(String url) async {
+  Future<String> getLocation(
+    String url, {
+    bool Function(String url)? isAllowed,
+  }) async {
     final parsed = Uri.tryParse(url);
     if (parsed == null || !parsed.hasScheme) {
       return "";
     }
     var current = parsed;
+    if (isAllowed != null && !isAllowed(current.toString())) {
+      return "";
+    }
     try {
       for (var redirectCount = 0;
           redirectCount < _maxRedirects;
@@ -205,7 +229,11 @@ class ParseController extends GetxController {
         if (location == null || location.trim().isEmpty) {
           return "";
         }
-        current = current.resolve(location.trim());
+        final next = current.resolve(location.trim());
+        if (isAllowed != null && !isAllowed(next.toString())) {
+          return "";
+        }
+        current = next;
       }
     } catch (e) {
       Log.logPrint(e);

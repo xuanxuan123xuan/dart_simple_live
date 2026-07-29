@@ -620,13 +620,36 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         child: Obx(() {
           final revision = controller.ohosPlayerRevision.value;
           controller.ohosScaleRevision.value;
-          if (!controller.liveStatus.value) {
-            return const Center(
-              child: Text("未开播", style: TextStyle(color: Colors.white)),
+          final fullScreen = controller.showOhosFullscreenSurface;
+          if (controller.showOfflineOverlay) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                const Center(
+                  child: Text(
+                    "未开播",
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+                if (fullScreen) _buildOhosTopBar(context),
+              ],
             );
           }
           if (controller.currentLineIndex < 0 || controller.playUrls.isEmpty) {
-            return const Center(child: CircularProgressIndicator());
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(
+                  child: controller.waitingForPlaybackUrl.value
+                      ? const Text(
+                          "正在获取播放地址",
+                          style: TextStyle(color: Colors.white),
+                        )
+                      : const CircularProgressIndicator(),
+                ),
+                if (fullScreen) _buildOhosTopBar(context),
+              ],
+            );
           }
 
           var url = controller.playUrls[controller.currentLineIndex];
@@ -651,7 +674,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           }
           final controlsVisible = controller.showControlsState.value &&
               !controller.lockControlsState.value;
-          final fullScreen = controller.showOhosFullscreenSurface;
           final mediaQuery = MediaQuery.of(context);
           final safePadding = EdgeInsets.fromLTRB(
             mediaQuery.viewPadding.left,
@@ -662,42 +684,37 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           return Stack(
             fit: StackFit.expand,
             children: [
-              OhosVideoPlayer(
-                key: controller.ohosPlayerWidgetKey,
-                url: url,
-                revision: revision,
-                headers: controller.playHeaders,
-                onError: controller.mediaError,
-                onControllerReady: controller.attachOhosVideoController,
-                onControllerDisposed: controller.detachOhosVideoController,
-                onValueChanged: controller.updateOhosVideoState,
-                initialVolume: controller.ohosVolume.value,
-                fit: fit,
-                forcedAspectRatio: forcedAspectRatio,
+              RepaintBoundary(
+                key: controller.ohosScreenshotKey,
+                child: OhosVideoPlayer(
+                  key: controller.ohosPlayerWidgetKey,
+                  url: url,
+                  revision: revision,
+                  headers: controller.playHeaders,
+                  onError: controller.mediaError,
+                  onControllerReady: controller.attachOhosVideoController,
+                  onControllerDisposed: controller.detachOhosVideoController,
+                  onValueChanged: controller.updateOhosVideoState,
+                  onCompleted: controller.mediaEnd,
+                  initialVolume: controller.ohosVolume.value,
+                  fit: fit,
+                  forcedAspectRatio: forcedAspectRatio,
+                ),
               ),
-              buildDanmuView(context, controller),
-              buildPlayerSuperChatOverlay(controller),
+              if (!controller.ohosScreenshotInProgress.value)
+                buildDanmuView(context, controller),
+              if (!controller.ohosScreenshotInProgress.value)
+                buildPlayerSuperChatOverlay(controller),
               buildPlayerGestureLayer(
                 controller,
                 enableQuickAccessLongPress: fullScreen,
               ),
-              buildLiveSubtitleOverlay(context, controller),
-              if (controller.ohosBuffering.value)
+              if (!controller.ohosScreenshotInProgress.value)
+                buildLiveSubtitleOverlay(context, controller),
+              if (controller.ohosBuffering.value &&
+                  !controller.ohosScreenshotInProgress.value)
                 const Center(child: CircularProgressIndicator()),
-              if (!controller.ohosPlaying.value &&
-                  !controller.ohosBuffering.value)
-                Center(
-                  child: IconButton(
-                    tooltip: "播放",
-                    onPressed: controller.toggleOhosPlayback,
-                    iconSize: 72,
-                    icon: const Icon(
-                      Icons.play_circle_fill,
-                      color: Colors.white70,
-                    ),
-                  ),
-                ),
-              if (fullScreen)
+              if (fullScreen && !controller.ohosScreenshotInProgress.value)
                 AnimatedPositioned(
                   left: 0,
                   right: 0,
@@ -705,15 +722,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   duration: const Duration(milliseconds: 200),
                   child: _buildOhosTopBar(context),
                 ),
-              AnimatedPositioned(
-                left: 0,
-                right: 0,
-                bottom: controlsVisible
-                    ? 0
-                    : -(fullScreen ? 80 : 48) - safePadding.bottom,
-                duration: const Duration(milliseconds: 200),
-                child: _buildOhosBottomBar(context),
-              ),
+              if (!controller.ohosScreenshotInProgress.value)
+                AnimatedPositioned(
+                  left: 0,
+                  right: 0,
+                  bottom: controlsVisible
+                      ? 0
+                      : -(fullScreen ? 80 : 48) - safePadding.bottom,
+                  duration: const Duration(milliseconds: 200),
+                  child: _buildOhosBottomBar(context),
+                ),
               if (fullScreen)
                 AnimatedPositioned(
                   left: controller.lockControlsState.value || controlsVisible
@@ -1026,10 +1044,22 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
         Obx(
           () => Visibility(
-            visible: !controller.liveStatus.value,
+            visible: controller.showOfflineOverlay,
             child: const Center(
               child: Text(
                 "未开播",
+                style: TextStyle(fontSize: 16, color: Colors.white),
+              ),
+            ),
+          ),
+        ),
+        Obx(
+          () => Visibility(
+            visible: controller.waitingForPlaybackUrl.value &&
+                !controller.showOfflineOverlay,
+            child: const Center(
+              child: Text(
+                "正在获取播放地址",
                 style: TextStyle(fontSize: 16, color: Colors.white),
               ),
             ),
@@ -1875,11 +1905,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               title: const Text("截图"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
+                Get.back();
                 controller.saveScreenshot();
               },
             ),
             Visibility(
-              visible: Platform.isAndroid,
+              visible: Platform.isAndroid || Utils.isOhos,
               child: ListTile(
                 leading: const Icon(Icons.picture_in_picture),
                 title: const Text("小窗播放"),

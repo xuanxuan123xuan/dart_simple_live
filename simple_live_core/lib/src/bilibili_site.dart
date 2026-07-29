@@ -22,6 +22,12 @@ import 'package:simple_live_core/src/model/live_category_result.dart';
 
 class BiliBiliSite implements LiveSite {
   @override
+  Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
+    return await getLiveStatus(roomId: roomId)
+        ? LiveStatusState.live
+        : LiveStatusState.offline;
+  }
+  @override
   String id = "bilibili";
 
   @override

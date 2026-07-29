@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
@@ -341,7 +339,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                 ? Positioned(
                     left: 16,
                     right: 16,
-                    bottom: Platform.isAndroid || Platform.isIOS ? 12 : 18,
+                    bottom: PlatformUtils.isMobileApp ? 12 : 18,
                     child: _buildFloatingPaginationBar(context),
                   )
                 : const SizedBox.shrink(),
@@ -375,9 +373,12 @@ class FollowUserPage extends GetView<FollowUserController> {
       final availableWidth = width - 16 - (crossAxisCount - 1) * 12;
       final cardWidth = availableWidth / crossAxisCount;
       final coverHeight = cardWidth * 9 / 16;
+      // HarmonyOS uses a larger effective text scale on the tested phone. The
+      // previous 108px body clipped the entire platform/status row below the
+      // card border when the room title occupied two lines.
       final cardExtent = showLiveCover
-          ? coverHeight + (mobile ? 108 : 116)
-          : (mobile ? 178.0 : 190.0);
+          ? coverHeight + (mobile ? 144 : 148)
+          : (mobile ? 220.0 : 228.0);
       return _FollowLayoutSpec(
         itemStyle: FollowUserItemStyle.card,
         crossAxisCount: crossAxisCount,

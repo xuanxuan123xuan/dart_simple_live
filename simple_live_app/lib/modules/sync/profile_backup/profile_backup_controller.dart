@@ -7,6 +7,7 @@ import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
+import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -19,13 +20,19 @@ class ProfileBackupController extends BaseController {
         return;
       }
       final content = ProfileBackupService.instance.exportProfileJson();
-      if (Utils.isOhos) {
-        Utils.copyToClipboard(content);
-        SmartDialog.showToast("配置包已复制到剪贴板");
-        return;
-      }
       final fileName =
           "SimpleLive_Profile_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json";
+      if (Utils.isOhos) {
+        final saved = await OhosDocumentService.saveText(
+          fileName: fileName,
+          extension: 'json',
+          content: content,
+        );
+        if (saved) {
+          SmartDialog.showToast("已导出配置包");
+        }
+        return;
+      }
       final inlineSave = Platform.isAndroid || Platform.isIOS || kIsWeb;
       final path = await FilePicker.platform.saveFile(
         allowedExtensions: ["json"],

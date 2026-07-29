@@ -1,5 +1,11 @@
 import 'dart:convert';
 
+enum LiveStatusState {
+  live,
+  offline,
+  unknown,
+}
+
 class LiveRoomDetail {
   /// 房间ID
   final String roomId;
@@ -27,6 +33,13 @@ class LiveRoomDetail {
 
   /// 状态
   final bool status;
+
+  /// 可区分请求失败/响应不完整和明确下播的直播状态。
+  final LiveStatusState? liveStatusState;
+
+  LiveStatusState get resolvedLiveStatus =>
+      liveStatusState ??
+      (status || isRecord ? LiveStatusState.live : LiveStatusState.offline);
 
   /// 附加信息
   final dynamic data;
@@ -69,6 +82,7 @@ class LiveRoomDetail {
     this.notice,
     required this.status,
     this.data,
+    this.liveStatusState,
     this.danmakuData,
     required this.url,
     this.isRecord = false,
@@ -93,6 +107,7 @@ class LiveRoomDetail {
       "notice": notice,
       "status": status,
       "data": data.toString(),
+      "liveStatusState": liveStatusState?.name,
       "danmakuData": danmakuData.toString(),
       "url": url,
       "isRecord": isRecord,

@@ -80,37 +80,38 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
           Padding(
             padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
             child: Text(
-              "播放器高级设置",
+              Utils.isOhos ? "同步设置" : "播放器高级设置",
               style: Get.textTheme.titleSmall,
             ),
           ),
-          Padding(
-            padding: AppStyle.edgeInsetsA12.copyWith(top: 0),
-            child: Text.rich(
-              TextSpan(
-                text: "请勿随意修改以下设置，除非你知道自己在做什么。\n在修改以下设置前，你应该先查阅",
-                children: [
-                  WidgetSpan(
-                    child: GestureDetector(
-                      onTap: () {
-                        launchUrlString(
-                            "https://mpv.io/manual/stable/#video-output-drivers");
-                      },
-                      child: const Text(
-                        "MPV的文档",
-                        style: TextStyle(
-                          color: Colors.blue,
-                          fontSize: 12,
-                          decoration: TextDecoration.underline,
+          if (!Utils.isOhos)
+            Padding(
+              padding: AppStyle.edgeInsetsA12.copyWith(top: 0),
+              child: Text.rich(
+                TextSpan(
+                  text: "请勿随意修改以下设置，除非你知道自己在做什么。\n在修改以下设置前，你应该先查阅",
+                  children: [
+                    WidgetSpan(
+                      child: GestureDetector(
+                        onTap: () {
+                          launchUrlString(
+                              "https://mpv.io/manual/stable/#video-output-drivers");
+                        },
+                        child: const Text(
+                          "MPV的文档",
+                          style: TextStyle(
+                            color: Colors.blue,
+                            fontSize: 12,
+                            decoration: TextDecoration.underline,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
-          ),
           SettingsCard(
             child: Column(
               children: [
@@ -131,89 +132,92 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                     onTap: controller.editSyncProxyUrl,
                   ),
                 ),
-                AppStyle.divider,
-                Obx(
-                  () => SettingsMenu(
-                    title: "mpv 性能档位",
-                    subtitle: "流畅适合核显/低功耗，均衡为默认，画质适合高性能显卡",
-                    value: AppSettingsController.instance.mpvProfile.value,
-                    valueMap: MpvOptionsService.profileLabels,
-                    onChanged: (e) {
-                      AppSettingsController.instance.setMpvProfile(e);
-                    },
+                if (!Utils.isOhos) ...[
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsMenu(
+                      title: "mpv 性能档位",
+                      subtitle: "流畅适合核显/低功耗，均衡为默认，画质适合高性能显卡",
+                      value: AppSettingsController.instance.mpvProfile.value,
+                      valueMap: MpvOptionsService.profileLabels,
+                      onChanged: (e) {
+                        AppSettingsController.instance.setMpvProfile(e);
+                      },
+                    ),
                   ),
-                ),
-                AppStyle.divider,
-                Obx(
-                  () => SettingsSwitch(
-                    value:
-                        AppSettingsController.instance.customPlayerOutput.value,
-                    title: "自定义输出驱动与硬件加速",
-                    onChanged: (e) {
-                      AppSettingsController.instance.setCustomPlayerOutput(e);
-                    },
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsSwitch(
+                      value: AppSettingsController
+                          .instance.customPlayerOutput.value,
+                      title: "自定义输出驱动与硬件加速",
+                      onChanged: (e) {
+                        AppSettingsController.instance.setCustomPlayerOutput(e);
+                      },
+                    ),
                   ),
-                ),
-                AppStyle.divider,
-                GetBuilder<OtherSettingsController>(
-                  builder: (controller) => SettingsAction(
-                    title: "高级 mpv options",
-                    subtitle: "每行一个 key=value，覆盖内置档位和可视化设置",
-                    value: AppSettingsController
-                            .instance.mpvAdvancedOptions.value.isEmpty
-                        ? "未设置"
-                        : "已设置",
-                    onTap: controller.editMpvAdvancedOptions,
+                  AppStyle.divider,
+                  GetBuilder<OtherSettingsController>(
+                    builder: (controller) => SettingsAction(
+                      title: "高级 mpv options",
+                      subtitle: "每行一个 key=value，覆盖内置档位和可视化设置",
+                      value: AppSettingsController
+                              .instance.mpvAdvancedOptions.value.isEmpty
+                          ? "未设置"
+                          : "已设置",
+                      onTap: controller.editMpvAdvancedOptions,
+                    ),
                   ),
-                ),
-                AppStyle.divider,
-                GetBuilder<OtherSettingsController>(
-                  builder: (controller) => SettingsAction(
-                    title: "导入 mpv.conf",
-                    subtitle: "导入后复制到应用私有目录，覆盖同名 mpv option",
-                    value: AppSettingsController
-                            .instance.importedMpvConfPath.value.isEmpty
-                        ? "未导入"
-                        : "已导入",
-                    onTap: controller.importMpvConf,
+                  AppStyle.divider,
+                  GetBuilder<OtherSettingsController>(
+                    builder: (controller) => SettingsAction(
+                      title: "导入 mpv.conf",
+                      subtitle: "导入后复制到应用私有目录，覆盖同名 mpv option",
+                      value: AppSettingsController
+                              .instance.importedMpvConfPath.value.isEmpty
+                          ? "未导入"
+                          : "已导入",
+                      onTap: controller.importMpvConf,
+                    ),
                   ),
-                ),
-                AppStyle.divider,
-                Obx(
-                  () => SettingsMenu(
-                    title: "视频输出驱动(--vo)",
-                    value:
-                        AppSettingsController.instance.videoOutputDriver.value,
-                    valueMap: controller.videoOutputDrivers,
-                    onChanged: (e) {
-                      AppSettingsController.instance.setVideoOutputDriver(e);
-                    },
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsMenu(
+                      title: "视频输出驱动(--vo)",
+                      value: AppSettingsController
+                          .instance.videoOutputDriver.value,
+                      valueMap: controller.videoOutputDrivers,
+                      onChanged: (e) {
+                        AppSettingsController.instance.setVideoOutputDriver(e);
+                      },
+                    ),
                   ),
-                ),
-                AppStyle.divider,
-                Obx(
-                  () => SettingsMenu(
-                    title: "音频输出驱动(--ao)",
-                    value:
-                        AppSettingsController.instance.audioOutputDriver.value,
-                    valueMap: controller.audioOutputDrivers,
-                    onChanged: (e) {
-                      AppSettingsController.instance.setAudioOutputDriver(e);
-                    },
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsMenu(
+                      title: "音频输出驱动(--ao)",
+                      value: AppSettingsController
+                          .instance.audioOutputDriver.value,
+                      valueMap: controller.audioOutputDrivers,
+                      onChanged: (e) {
+                        AppSettingsController.instance.setAudioOutputDriver(e);
+                      },
+                    ),
                   ),
-                ),
-                AppStyle.divider,
-                Obx(
-                  () => SettingsMenu(
-                    title: "硬件解码器(--hwdec)",
-                    value: AppSettingsController
-                        .instance.videoHardwareDecoder.value,
-                    valueMap: controller.hardwareDecoder,
-                    onChanged: (e) {
-                      AppSettingsController.instance.setVideoHardwareDecoder(e);
-                    },
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsMenu(
+                      title: "硬件解码器(--hwdec)",
+                      value: AppSettingsController
+                          .instance.videoHardwareDecoder.value,
+                      valueMap: controller.hardwareDecoder,
+                      onChanged: (e) {
+                        AppSettingsController.instance
+                            .setVideoHardwareDecoder(e);
+                      },
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),

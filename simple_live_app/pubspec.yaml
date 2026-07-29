@@ -117,10 +117,7 @@ dependency_overrides:
       ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
       path: packages/path_provider/path_provider
   video_player_ohos:
-    git:
-      url: https://gitee.com/openharmony-sig/flutter_packages.git
-      ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
-      path: packages/video_player/video_player_ohos
+    path: third_party/video_player_ohos
   webview_flutter_ohos:
     git:
       url: https://gitee.com/openharmony-sig/flutter_packages.git

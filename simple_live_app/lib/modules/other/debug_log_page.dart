@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/services/ohos_document_service.dart';
 
 class DebugLogPage extends StatelessWidget {
   const DebugLogPage({Key? key}) : super(key: key);
@@ -28,7 +29,14 @@ class DebugLogPage extends StatelessWidget {
               await logFile.writeAsString(msg);
 
               if (Utils.isOhos) {
-                Utils.copyToClipboard(msg);
+                try {
+                  await OhosDocumentService.shareFile(
+                    logFile.path,
+                    title: 'Simple Live 调试日志',
+                  );
+                } catch (e) {
+                  Log.logPrint(e);
+                }
               } else {
                 Share.shareXFiles([XFile(logFile.path)]);
               }

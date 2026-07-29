@@ -5,10 +5,11 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/search/douyin/douyin_search_controller.dart';
-import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/status/app_loadding_widget.dart';
+import 'package:webview_flutter/webview_flutter.dart' as ohos_webview;
 
 class DouyinSearchView extends StatelessWidget {
   const DouyinSearchView({Key? key}) : super(key: key);
@@ -48,7 +49,11 @@ class DouyinSearchView extends StatelessWidget {
               ),
             ),
           ),
-          if (Platform.isAndroid || Platform.isIOS)
+          if (Utils.isOhos)
+            ohos_webview.WebViewWidget(
+              controller: controller.ohosWebViewController!,
+            )
+          else if (Platform.isAndroid || Platform.isIOS)
             InAppWebView(
               onWebViewCreated: controller.onWebViewCreated,
               onLoadStop: controller.onLoadStop,
@@ -67,11 +72,7 @@ class DouyinSearchView extends StatelessWidget {
                   return NavigationActionPolicy.ALLOW;
                 }
                 if (uri.host == "live.douyin.com") {
-                  var regExp = RegExp(r"live\.douyin\.com/([\d|\w]+)");
-                  var id = regExp.firstMatch(uri.toString())?.group(1) ?? "";
-
-                  AppNavigator.toLiveRoomDetail(
-                      site: controller.site, roomId: id);
+                  controller.openDouyinRoom(uri);
                   return NavigationActionPolicy.CANCEL;
                 }
                 return NavigationActionPolicy.ALLOW;
