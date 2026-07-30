@@ -74,7 +74,7 @@ dependencies:
       path: packages/webview_flutter/webview_flutter
   connectivity_plus: 5.0.2 # OpenHarmony-SIG adapter baseline
   qr_code_scanner_plus: ^2.0.14 #二维码扫描
-  volume_controller: 3.4.3 #音量控制 # Flutter 3.22 compatible: 3.4.4 uses FlutterSceneLifeCycleDelegate (3.27+)
+  volume_controller: ^3.4.0 #音量控制
 
   # 网络相关
   shelf: 1.4.1 # Flutter 3.22 collection pin
@@ -111,6 +111,11 @@ dev_dependencies:
 dependency_overrides:
   canvas_danmaku:
     path: ../third_party/canvas_danmaku
+  # volume_controller >= 3.4.3 与 screen_brightness_ios >= 2.1.4 使用
+  # FlutterSceneLifeCycleDelegate / addSceneDelegate，该 API 是 Flutter 3.27
+  # 新增的；本分支钉在 Flutter 3.22，需要钉到不含这些 API 的最后一个版本。
+  volume_controller: 3.4.2
+  screen_brightness_ios: 2.1.3
   path_provider:
     git:
       url: https://gitee.com/openharmony-sig/flutter_packages.git
