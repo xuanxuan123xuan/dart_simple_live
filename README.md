@@ -1,26 +1,86 @@
-> ### Release
->
-> 本仓库提供阶段性 `Release` 安装包与压缩包，见 [GitHub Releases](https://github.com/June6699/dart_simple_live/releases) 页面。
->
-> 私有开发主仓会更频繁更新；公开仓库只在阶段性整理后同步。
-
 <p align="center">
     <img width="128" src="/assets/logo.png" alt="Simple Live logo">
 </p>
-<h2 align="center">Simple Live</h2>
+<h2 align="center">Simple Live — 鸿蒙 / 多开分支</h2>
 
 <p align="center">
-简简单单的看直播
+简简单单的看直播 · <code>feat/ohos-1.12.7</code>
 </p>
 
 ![浅色模式](/assets/screenshot_light.jpg)
 
 ![深色模式](/assets/screenshot_dark.jpg)
 
-## 仓库说明
+> **Release 资产**：本仓库提供阶段性 `Release` 安装包与压缩包，见 [GitHub Releases](https://github.com/xuanxuan123xuan/dart_simple_live/releases) 页面。
 
-- fork 来源：[原作者仓库 xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live)
-- 当前公开仓库：`June6699/dart_simple_live`
+---
+
+## 这个分支是什么
+
+本仓库 fork 自 [xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live)，`feat/ohos-1.12.7` 是一个长期维护的独立分支，主要做两件事：
+
+1. **鸿蒙 NEXT 适配**：完整的 OHOS 端口，包含 ArkTS 原生插件层（播放器、截图、扫码、Cookie、文件管理、PIP、网络信息）、服务卡片（关注主播开播状态）、后台开播检查（WorkScheduler + 用户开关）、以及 QuickJS FFI 签名桥接（抖音）。
+2. **多开同屏**：在同一窗口内并排播放多个直播间，每格独立弹幕，画面等比缩放不裁切，布局自适应。
+
+鸿蒙端口的代价是 **Flutter 版本钉死在 3.22 线**（`pubspec.yaml` 有 7 处依赖与 3.22 对齐），与主线的 Flutter 3.41 互斥，无法直接合并。
+
+---
+
+## 功能亮点
+
+### 多开同屏
+
+从关注页进入：点多开按钮进多选态，选 2 个以上正在直播的关注即可。
+
+- **平板支持**：按屏幕短边 ≥ 600 逻辑像素判定，iPad、安卓平板均可多开，手机不支持。
+- **桌面端**（Windows / macOS）会优先拉起多个独立系统窗口；失败或其他平台则退回单窗口同屏。
+- **排布自适应**：横屏放两个会排成上下两行（画面比左右并排大约 1.18 倍）；三个排成 2×2 空一格。
+- **画面等比缩放不裁切**，比例不符时留黑边。
+- **每格独立弹幕**，只收不发。弹幕行数按格子高度自适应，格子过矮时自动隐藏。
+- 鸿蒙暂不支持多开：该平台不初始化 media_kit，播放走 `video_player_ohos`。
+
+### 鸿蒙 NEXT
+
+| 能力 | 实现方式 |
+|---|---|
+| 直播播放 | `video_player_ohos` / AVPlayer，非 media_kit |
+| 弹幕 | 平台无关，复用 `simple_live_core` WebSocket |
+| 截图 | 原生 `ohos_media` 通道，用户取消正确处理为"取消保存"而非报错 |
+| 扫码 | 原生 `ohos_scan` 通道（`@kit.ScanKit`） |
+| 抖音搜索 | QuickJS FFI 桥接，`.so` 预编译 |
+| 服务卡片 | `FollowFormAbility` + `OhosWidgetPlugin`，关注主播开播状态一目了然 |
+| 后台开播提醒 | `FollowCheckExtension`（WorkScheduler），用户可在设置中开关 |
+| Cookie 管理 | 原生 `ohos_web_cookie` 通道 |
+| PIP 画中画 | 原生 `ohos_pip` 通道 |
+| 文件管理 | 原生 `ohos_documents` 通道 |
+
+### 通用功能
+
+- 虎牙、斗鱼、哔哩哔哩、抖音、快手五大平台直播
+- 弹幕（只收不发）
+- 关注管理、标签分组、分页浏览
+- 播放画质 / 线路选择
+- 远程同步（Cloudflare Workers 临时房间 + 自建地址）
+- 配置导入导出（设置、关注、标签、历史、弹幕屏蔽词）
+- 桌面端小窗 / 画中画
+- 实时字幕（桌面端，需本地 Whisper 模型）
+
+---
+
+## APP 支持平台
+
+| 平台 | 状态 | 说明 |
+|---|---|---|
+| Android | ✅ | 主线 APK |
+| iOS | ✅ | 未签名 IPA 或 AltStore 侧载 |
+| Windows | ✅ | 主线 zip |
+| macOS | ✅ | 主线 dmg / zip |
+| Linux | ✅ | zip / deb |
+| Android TV | ✅ | 拆分 APK（按 ABI） |
+| TV-windows | ✅ | TV 的 UI 在 Windows 上运行，支持多开 |
+| HarmonyOS NEXT | ✅ | 本分支 `feat/ohos-1.12.7`，见下方构建 |
+
+---
 
 ## 用户群
 
@@ -30,19 +90,59 @@
   <img width="360" src="/assets/user_group_wechat.jpg" alt="SimpleLive 用户群二维码">
 </p>
 
-## Release 资产
+---
 
-Release 资产会在 Windows、Android 和 TV 模拟环境完成基础验证后发布。
+## 环境
 
-当前提供这些正式资产：
+| 构建目标 | Flutter 版本 | 说明 |
+|---|---|---|
+| Windows / Android / Android TV | 3.41.9 | 主线 |
+| Linux | 3.38.10 | 主线 WSL |
+| **本分支所有目标** | **3.22.x** | `feat/ohos-1.12.7`，pubspec 钉死 |
+| 鸿蒙 HAP | 3.22 线 OHOS fork | `tool/build_ohos_hap.ps1` 自带 |
+
+本分支的 `pubspec.yaml` 有 7 处依赖按 Flutter 3.22 钉死（`intl`、`archive`、`lottie`、`package_info_plus`、`window_manager`、`shelf`、`dynamic_color`），换用更新的 Flutter 会在 `flutter_localizations` 的 `intl` 传递依赖上解析失败，需连同这些依赖一起升级。
+
+注意：`simple_live_app/.fvmrc` 里写的 `3.38.3` 与本目录 pubspec 并不匹配，所有构建流程均不读取它。
+
+---
+
+## 构建
+
+GitHub Actions 提供这些构建流程，均为手动触发（`workflow_dispatch`）：
+
+| workflow | 产物 | runner | 说明 |
+|---|---|---|---|
+| `build_ios_ipa_ohos_branch.yml` | iOS `ipa` | `macos-14` | 本分支专用；钉 Flutter `3.22.3` + Xcode `15.4` |
+| `build_ohos_hap.yml` | 鸿蒙 `hap`（已签名） | 自建 Windows | 需自建 runner，官方工具约 2.4 GB 且需账号登录 |
+| `publish_app_release_*.yml` | 各平台正式包 | GitHub 托管 | 主线用，本分支不适用 |
+
+### iOS IPA
+
+- 钉 Flutter `3.22.3` + Xcode `15.4`（Flutter 3.22 早于 Xcode 16，用 16.x 会在链接期报错）。
+- runner 用 `macos-14`（该镜像 2026-11-02 后不可用，届时需连同 Flutter 版本一起升级）。
+- 默认产**未签名 IPA**，需 AltStore / Sideloadly 侧载。
+- 配好 `IOS_CERT_P12_BASE64`、`IOS_CERT_PASSWORD`、`IOS_PROVISIONING_PROFILE_BASE64`、`IOS_TEAM_ID` 四个 secrets 后可勾选签名构建，产出 ad-hoc 签名包。
+
+### 鸿蒙 HAP
+
+- 必须用自建 runner：官方命令行工具约 2.4 GB 且需账号登录，GitHub 托管 runner 无法安装。
+- 需配置仓库变量：`FLUTTER_OHOS_ROOT`、`HOS_SDK_HOME`、`JAVA_HOME`。
+- 需配置签名 secrets：`OHOS_KEYSTORE_P12_BASE64`、`OHOS_PROFILE_CERT_PEM_BASE64`、`OHOS_APP_CERT_CHAIN_PEM_BASE64`、`OHOS_PROFILE_JSON_BASE64`、`OHOS_KEYSTORE_PASSWORD`、`OHOS_KEY_PASSWORD`。
+- 本地构建见 `simple_live_app/tool/build_ohos_hap.ps1`。
+
+### Release 资产
+
+当前提供这些正式资产（主线）：
 
 - Android `apk`
-- Android TV 拆分 `apk`
+- Android TV 拆分 `apk`（`arm64-v8a` / `armeabi-v7a` / `x86_64`）
 - Windows `zip`
-- Linux `zip`
-- Linux `deb`
+- Linux `zip` / `deb`
 
-鸿蒙 `hap` 与 iOS `ipa` 目前不随 Release 发布，需自行用对应 workflow 构建，见下方"构建"。
+鸿蒙 `hap` 与 iOS `ipa` 不随 Release 发布，需自行用对应 workflow 构建。
+
+---
 
 ## 远程同步服务
 
@@ -51,125 +151,41 @@ Release 资产会在 Windows、Android 和 TV 模拟环境完成基础验证后�
 - 服务状态页：`https://simple-live-sync.3439394104.workers.dev`
 - App 内 WebSocket 地址：`wss://simple-live-sync.3439394104.workers.dev/sync`
 
-普通用户不需要自己配置服务器；创建房间、扫码或输入房间号即可同步。浏览器直接打开 `/sync` 显示 `websocket upgrade required` 是正常的，因为 `/sync` 只给 App 的 WebSocket 使用。
+普通用户不需要自己配置服务器；创建房间、扫码或输入房间号即可同步。浏览器直接打开 `/sync` 显示 `websocket upgrade required` 是正常的。
 
-已知限制：
+已知限制：房间 600 秒后自动过期；创建者退出后房间销毁；单房间最多 8 个连接；单条消息最大 1 MB；不保存任何用户数据。这不是账号云同步，不会跨天、跨设备持续自动同步。
 
-- 房间 600 秒后自动过期。
-- 创建者退出或断开后，房间会销毁。
-- 单房间最多 8 个连接。
-- 单条同步消息最大 1 MB。
-- 服务只做临时转发，不保存关注、历史、Cookie、屏蔽词等内容。
-- 这不是账号云同步；不会跨天、跨设备持续自动同步。
-- 如果用户所在网络无法访问 `workers.dev` 或拦截 WebSocket，远程同步可能连接失败，可改用局域网同步、WebDAV，或在设置里填写自建同步服务地址。后续建议绑定自定义域名，减少 `workers.dev` 在部分网络下不可达的问题。
+可配置项见 App 内 `其他设置 -> 同步服务地址` 和 `同步代理地址`。如果所在网络无法访问 `workers.dev`，可改用局域网同步、WebDAV，或填写自建地址。
 
-可配置项：
-
-- 主 App：`其他设置 -> 同步服务地址` 可以填写自建 `ws://` 或 `wss://` 地址，留空则使用内置默认服务。
-- 主 App：`其他设置 -> 同步代理地址` 可以填写代理地址，例如 `127.0.0.1:51888` 或 `http://127.0.0.1:51888`；留空会在桌面端自动检测本机 `127.0.0.1:51888`，填写 `direct` 表示强制直连。
-- 代理端口不是固定值，请在自己的代理软件里查看本机 HTTP 代理端口。比如 v2rayN、Clash、Mihomo 等软件一般会在设置或端口页面显示 `HTTP Port` / `Mixed Port`。
-- TV App：设置页“关于”里显示当前同步服务地址；默认使用内置服务。
+---
 
 ## 配置导入
 
-新版配置包会导出设置、关注、标签、历史、弹幕屏蔽词和屏蔽词预设；Cookie、WebDAV 密码等敏感内容默认不会写入配置包。
-
-兼容说明：
+新版配置包导出设置、关注、标签、历史、弹幕屏蔽词和屏蔽词预设；Cookie、WebDAV 密码等敏感内容默认不写入。
 
 - 支持导入新版 `simple_live_profile.json`。
-- 支持导入旧版 `simple_live_config.json`，但旧版“其他设置导出”本身通常只包含设置和弹幕屏蔽词，不一定包含关注列表。
-- 支持兼容旧 WebDAV/同步备份里的关注、标签、历史数组格式。
-- 如果旧备份文件仍然提示格式错误，或关注列表没有恢复，可以提交备份文件样例和报错信息用于补充兼容。
+- 支持导入旧版 `simple_live_config.json`（通常只含设置和弹幕屏蔽词）。
+- 兼容旧 WebDAV/同步备份里的关注、标签、历史数组格式。
 
-TV 版已在 `Android Emulator - Medium_Phone`（`Android 16 / API 36 / x86_64`）完成基础验证，虎牙、斗鱼、抖音直播可正常播放。TV 播放建议保持 `硬件解码` 开启。
-
-TV 下载建议：
-
-- `SimpleLive-TV-arm64-v8a-release.apk`：适合大多数 64 位安卓电视 / 电视盒子，`NVIDIA SHIELD Android TV` 优先下载这个。
-- `SimpleLive-TV-armeabi-v7a-release.apk`：适合较老的 32 位安卓电视设备。
-- `SimpleLive-TV-x86_64-release.apk`：适合 Android Studio / AVD 模拟器等 `x86_64` 环境。
-- 如果不确定设备架构，优先看系统信息里的 `arm64-v8a / armeabi-v7a / x86_64`，不要盲下“最新版”。
-
-## 实时字幕
-
-当前版本暂时下线实时字幕入口，相关开关、样式和模型说明不再对外展示。
+---
 
 ## 抖音搜索 Cookie
 
-抖音播放可以使用内置 `ttwid` 兜底，但房间名 / 主播名搜索经常要求登录态。搜索不可用时，需要在 `账号管理 -> 抖音 -> Cookie登录` 粘贴桌面浏览器登录后的完整 Cookie，不要只粘贴单个 `ttwid`。
+抖音播放可使用内置 `ttwid` 兜底，但房间名 / 主播名搜索经常要求登录态。搜索不可用时，在 `账号管理 -> 抖音 -> Cookie登录` 粘贴桌面浏览器登录后的完整 Cookie。
 
-电脑端获取方式：
+电脑端获取：打开 `www.douyin.com` → `F12` → `Network` → 刷新 → 点任意 `douyin.com` 请求 → `Request Headers` → 复制完整 `cookie`。应用也兼容直接粘贴 `Cookie: xxx` 或整段请求头，会自动提取。
 
-- 在浏览器打开 `www.douyin.com` 或 `live.douyin.com` 并登录。
-- 按 `F12` 打开开发者工具，切到 `Network / 网络`。
-- 刷新页面或随便点一次页面，让浏览器产生一个抖音域名请求。
-- 点开任意 `douyin.com` 请求，在 `Request Headers / 请求标头` 找到 `cookie`。
-- 复制 `cookie` 后面完整的一大串，粘贴到 SimpleLive 的抖音 Cookie 登录框。
+抖音账号页会尝试从 `sid_guard` 解析 Cookie 剩余有效期；只配置 `ttwid` 时无法判断。Cookie 仍可能因退出登录、改密或平台风控提前失效。
 
-应用也兼容直接粘贴 `Cookie: xxx`，或粘贴浏览器复制出来的整段请求头；会自动从其中提取 `cookie` 字段。Android / iOS 端只保留粘贴 Cookie 和文件导入，搜索 Cookie 建议仍从电脑浏览器获取后粘贴或同步。TV 端不内置浏览器，请从主 App 同步完整 Cookie。
+TV 端不内置浏览器，请从主 App 同步完整 Cookie。
 
-抖音账号页会尝试从完整 Cookie 的 `sid_guard` 中解析预计剩余有效期；如果只配置了 `ttwid`，或请求头 Cookie 里没有可解析的过期信息，会提示有效期无法判断。Cookie 仍可能因退出登录、改密或平台风控提前失效。
-
-## 支持直播平台
-
-- 虎牙直播
-- 斗鱼直播
-- 哔哩哔哩直播
-- 抖音直播
-- 快手直播
-
-## APP 支持平台
-
-- [x] Android
-- [x] iOS
-- [x] Windows
-- [x] MacOS
-- [x] Linux
-- [x] Android TV
-- [x] TV-windows（TV的UI在Windows上运行，相较纯TV，此版本支持多开）
-- [x] HarmonyOS NEXT（鸿蒙，见 `feat/ohos-1.12.7` 分支）
-
-## 多开同屏
-
-在同一窗口内并排播放多个直播间，从关注页进入：点多开按钮进多选态，选 2 个以上正在直播的关注即可。
-
-- 桌面端（Windows / macOS）会优先拉起多个独立系统窗口；失败或其他平台则退回单窗口同屏。
-- 平板可用：按屏幕短边判定，短边 ≥ 600 逻辑像素才开放，因此 iPad 与安卓平板支持，手机不支持。
-- 排布按"哪种排法画面最大"自动选择。横屏放两个会排成上下两行，画面比左右并排大约 1.18 倍；三个会排成 2×2 空一格，因为一排三列时每格反而更窄。
-- 画面等比缩放不裁切，比例不符时留黑边。
-- 每格独立弹幕，只收不发。弹幕行数按格子高度自适应，格子过矮时自动隐藏。
-- 鸿蒙暂不支持多开：该平台不初始化 media_kit，播放走 `video_player_ohos`。
-
-## 环境
-
-- Windows / Android / Android TV 本地 Flutter：`3.41.9`
-- Linux 本地 WSL Flutter：`3.38.10`
-- 鸿蒙分支 `feat/ohos-1.12.7`：Flutter `3.38.3`（见 `simple_live_app/.fvmrc`）
-
-鸿蒙分支与主线 Flutter 版本互斥，无法直接合并。该分支的 pubspec 依赖一批 `gitee.com/openharmony-sig` 的 git 包与 `third_party/` 下的本地 OHOS 包，需配套 `3.38` 这条线。
-
-## 构建
-
-GitHub Actions 提供这些构建流程，均为手动触发：
-
-| workflow | 产物 | runner |
-| --- | --- | --- |
-| `publish_app_dev.yaml` | 多平台开发包 | GitHub 托管 |
-| `publish_app_release_*.yml` | 各平台正式包 | GitHub 托管 |
-| `build_ios_ipa_ohos_branch.yml` | 鸿蒙分支的 iOS `ipa` | `macos-latest` |
-| `build_ohos_hap.yml` | 鸿蒙 `hap`（已签名） | 自建 Windows runner |
-
-说明：
-
-- 鸿蒙分支的 iOS 构建单独一个文件，因为主线那个 workflow 钉 Flutter `3.41.x`、`ref` 默认 `master`，在鸿蒙分支上拉不齐依赖。它的 Flutter 版本从 `.fvmrc` 读取。
-- iOS 默认产未签名 `ipa`，需 AltStore / Sideloadly 侧载。配好 `IOS_CERT_P12_BASE64`、`IOS_CERT_PASSWORD`、`IOS_PROVISIONING_PROFILE_BASE64`、`IOS_TEAM_ID` 四个 secrets 后可勾选签名构建，产出 ad-hoc 签名包。
-- 鸿蒙 `hap` 必须用自建 runner：官方命令行工具约 2.4 GB 且需账号登录，GitHub 托管 runner 无法安装。另需配置 `FLUTTER_OHOS_ROOT`、`HOS_SDK_HOME`、`JAVA_HOME` 三个仓库变量与签名相关 secrets。
+---
 
 ## 参考及引用
 
-[AllLive](https://github.com/xiaoyaocz/AllLive) `本项目的 C# 版，有兴趣可以看看`
+[AllLive](https://github.com/xiaoyaocz/AllLive) `本项目的 C# 版`
 
-[xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live) `当前公开仓库的上游 fork 来源`
+[xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live) `上游 fork 来源`
 
 [dart_tars_protocol](https://github.com/xiaoyaocz/dart_tars_protocol.git)
 
@@ -189,6 +205,8 @@ GitHub Actions 提供这些构建流程，均为手动触发：
 
 [EmojiAll 抖音平台表情](https://www.emojiall.com/zh-hans/platform-douyin) `感谢提供抖音平台表情参考，项目内仅作为本地静态表情资源使用`
 
+---
+
 ## 声明
 
 本项目的功能基于互联网上公开资料整理与开发，无任何破解、逆向工程等行为。
@@ -207,7 +225,7 @@ GitHub Actions 提供这些构建流程，均为手动触发：
 - 官方账号维度的关注、取关、拉黑、消息已读、历史同步、收藏同步。
 - 任何充值相关功能：钱包、余额、B币、银瓜子、金瓜子、虎牙币、电池、礼物背包、订单、退款、兑换码、优惠券。
 - 任何付费互动：送礼物、上头条、上舰、续费大航海、开贵族、点亮粉丝牌、付费表情、充电、打赏。
-- 任何“发出去”的直播互动：发送弹幕、评论、点赞、分享任务、投票、PK 助力、上麦申请、连麦申请。
+- 任何"发出去"的直播互动：发送弹幕、评论、点赞、分享任务、投票、PK 助力、上麦申请、连麦申请。
 - 任何社交功能：点赞、私信、群聊、应援团消息、用户聊天、主播私信。
 - 任何治理功能：举报、申诉、房管、禁言、踢人、拉黑官方账号关系。
 - 任何官方活动：抽奖、福袋、红包、竞猜、宝箱、签到、任务中心、经验成长、勋章升级、直播间成就。
@@ -216,5 +234,11 @@ GitHub Actions 提供这些构建流程，均为手动触发：
 - 离线缓存、录播下载、源流下载、批量导出。
 - 完整首页推荐流、热榜、官方消息中心、Push 通知中心。
 - 动态发布、评论发布、社区互动、投稿。
-- 官方账号体系下的“我的”页面复刻，比如钱包、勋章、等级、任务、资产全量展示。
+- 官方账号体系下的"我的"页面复刻，比如钱包、勋章、等级、任务、资产全量展示。
 - 过于完整的录播 / 回放 / 追更体系，尤其是能替代用户回到官方 App 的那种。
+
+---
+
+## Star History
+
+![star-history-202676](./images/README/star-history-202676.png)

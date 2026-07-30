@@ -3,9 +3,21 @@ name: Build iOS IPA (ohos branch)
 # 本分支专用的 iOS 构建。
 #
 # 与 publish_app_release_ios_manual.yml 分开的原因：那个 workflow 钉
-# flutter-version 3.41.x 且 ref 默认 master，服务的是主线；本分支的
-# .fvmrc 锁 3.38.3，且 pubspec 里有 6 处 gitee openharmony-sig 的 git 依赖
-# 与 third_party/ 下一批本地 OHOS 包，是配着 3.38 这条线的，用 3.41 拉不动。
+# flutter-version 3.41.x，服务的是主线；本分支的 pubspec 是围着
+# Flutter 3.22 整体钉死的（intl / archive / lottie / package_info_plus /
+# window_manager / shelf / dynamic_color 共 7 处 "3.22 compatible" 注释），
+# 3.38 与 3.41 都会在 flutter_localizations 的 intl 传递依赖上解析失败：
+#   simple_live_app depends on intl 0.19.0
+#   flutter_localizations from sdk depends on intl 0.20.2
+# 因此这里钉 3.22.3，与 pubspec 保持一致，不动任何依赖版本。
+#
+# 注意：不读 simple_live_app/.fvmrc。那里写的 3.38.3 与本目录 pubspec
+# 对不上（鸿蒙 hap 走 build_ohos_hap.ps1 里自带的 OHOS Flutter fork，
+# 同属 3.22 线，也不读 .fvmrc）。
+#
+# Xcode 必须钉 15.4：Flutter 3.22 早于 Xcode 16，用 16.x 会在链接期报
+# undefined symbols。macos-14 镜像默认即 15.4，这里仍显式指定，避免
+# 镜像默认版本变动后静默走到 16.x。
 #
 # 产物默认是未签名 IPA，需要 AltStore / Sideloadly 之类的工具侧载。
 # 配好证书 secrets 后可勾选 signed 产出可直接安装的已签名 IPA。
@@ -30,9 +42,17 @@ concurrency:
   group: ios-ipa-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # 与 simple_live_app/pubspec.yaml 里那 7 处 "Flutter 3.22 compatible" 对齐。
+  FLUTTER_VERSION: "3.22.3"
+  XCODE_VERSION: "15.4"
+
 jobs:
   build-ios:
-    runs-on: macos-latest
+    # 不用 macos-latest：那是 Xcode 16 镜像，Flutter 3.22 在上面链接会失败。
+    # macos-14 自 2026-07-06 起进入弃用期，2026-11-02 后不可用，届时本
+    # workflow 需连同 Flutter 版本一起升级。
+    runs-on: macos-14
     timeout-minutes: 60
 
     steps:
@@ -41,32 +61,35 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      # Flutter 版本从 .fvmrc 读，避免 workflow 里再钉一个版本号后与仓库脱节。
-      - name: Resolve Flutter version from .fvmrc
-        id: fvm
-        shell: bash
-        run: |
-          fvmrc="simple_live_app/.fvmrc"
-          if [[ ! -f "$fvmrc" ]]; then
-            echo "找不到 $fvmrc" >&2
-            exit 1
-          fi
-          # 用 sed 而非 python3/jq 解析：runner 上两者都在，但这里只要取一个
-          # 字符串值，少一个外部依赖就少一处失败点。
-          version="$(sed -n 's/.*"flutter"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$fvmrc" | head -1)"
-          if [[ -z "$version" ]]; then
-            echo "从 $fvmrc 解析 flutter 版本失败" >&2
-            cat "$fvmrc" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Flutter 版本：$version"
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ steps.fvm.outputs.version }}
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      # pubspec 的 3.22 pin 与所用 Flutter 必须一致，否则 pub get 会在
+      # flutter_localizations 的 intl 传递依赖上失败。这里提前核对，
+      # 让报错指向真正的原因而不是一长串 version solving 输出。
+      - name: Verify toolchain matches pubspec pins
+        shell: bash
+        run: |
+          actual="$(flutter --version | sed -n 's/^Flutter \([0-9.]*\).*/\1/p' | head -1)"
+          echo "Flutter: $actual"
+          echo "Xcode:   $(xcodebuild -version | head -1)"
+          if [[ "$actual" != 3.22.* ]]; then
+            echo "::error::Flutter $actual 与 pubspec 的 3.22 pin 不符。" >&2
+            echo "pubspec.yaml 有 7 处依赖按 Flutter 3.22 钉死，换版本需同时调整这些依赖。" >&2
+            exit 1
+          fi
+          intl_pin="$(sed -n 's/^  intl:[[:space:]]*\([0-9.]*\).*/\1/p' simple_live_app/pubspec.yaml | head -1)"
+          if [[ "$intl_pin" != "0.19.0" ]]; then
+            echo "::warning::pubspec 的 intl 已改为 $intl_pin，不再是 3.22 线的 0.19.0；请确认 FLUTTER_VERSION 是否也该跟着调整。"
+          fi
 
       - name: Resolve dependencies
         working-directory: simple_live_app
@@ -182,7 +205,7 @@ jobs:
         shell: bash
         env:
           APP_VERSION: ${{ steps.appver.outputs.version }}
-          FLUTTER_VERSION: ${{ steps.fvm.outputs.version }}
+          FLUTTER_VERSION: ${{ env.FLUTTER_VERSION }}
           SIGNED: ${{ inputs.signed }}
         run: |
           out="$RUNNER_TEMP/ios-artifact"
