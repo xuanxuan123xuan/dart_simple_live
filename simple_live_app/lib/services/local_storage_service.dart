@@ -110,6 +110,9 @@ class LocalStorageService extends GetxService {
   static const String kMpvAdvancedOptions = "MpvAdvancedOptions";
   static const String kImportedMpvConfPath = "ImportedMpvConfPath";
   static const String kAutoUpdateFollowEnable = "AutoUpdateFollowEnable";
+
+  /// 鸿蒙后台特别关注检查开关（默认关闭，开启会增加耗电）。
+  static const String kOhosBackgroundFollowCheck = "OhosBackgroundFollowCheck";
   static const String kUpdateFollowDuration = "AutoUpdateFollowDuration";
   static const String kUpdateFollowThreadCount = "UpdateFollowThreadCount";
   static const String kFollowPageSize = "FollowPageSize";

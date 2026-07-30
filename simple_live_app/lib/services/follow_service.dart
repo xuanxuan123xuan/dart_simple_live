@@ -22,6 +22,7 @@ import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/live_notification_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
+import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 int? followStatusForLiveState(LiveStatusState state) {
@@ -1256,6 +1257,8 @@ class FollowService extends GetxService {
       if (generation == _updateGeneration) {
         updating.value = false;
         _finishRefreshProgressLifecycle(generation);
+        // 刷新收尾后同步鸿蒙服务卡片快照（非鸿蒙平台内部短路）。
+        unawaited(OhosFollowWidgetService.syncSnapshot(followList));
       }
     }
   }

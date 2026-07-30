@@ -36,6 +36,7 @@ import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/live_notification_service.dart';
+import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
@@ -526,6 +527,17 @@ Future initServices() async {
   Get.put(FollowService());
   Get.put(LiveSubtitleService());
   Get.put(ProfileBackupService());
+
+  if (Utils.isOhos) {
+    // 冷启动先用数据库里的历史状态铺一次卡片，避免关注刷新完成前卡片空白。
+    unawaited(
+      OhosFollowWidgetService.syncSnapshot(DBService.instance.getFollowList()),
+    );
+    // 重启后按设置恢复后台检查任务（isPersisted 不保证跨重装存活）。
+    if (AppSettingsController.instance.ohosBackgroundFollowCheck.value) {
+      unawaited(OhosFollowWidgetService.startBackgroundCheck());
+    }
+  }
 
   if (DesktopStartupArgs.isSecondaryDesktopInstance) {
     Log.i("Skip SyncService for desktop secondary player instance");

@@ -11,6 +11,14 @@
     {
       "name": "EntryAbility_label",
       "value": "simple_live_app"
+    },
+    {
+      "name": "form_FollowCard_display_name",
+      "value": "Live Follows"
+    },
+    {
+      "name": "form_FollowCard_desc",
+      "value": "Shows live status of followed streamers"
     }
   ]
 }

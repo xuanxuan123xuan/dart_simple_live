@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,7 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/models/danmu_shield_preset.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -323,6 +325,9 @@ class AppSettingsController extends GetxController {
 
     autoUpdateFollowEnable.value = LocalStorageService.instance
         .getValue(LocalStorageService.kAutoUpdateFollowEnable, true);
+
+    ohosBackgroundFollowCheck.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kOhosBackgroundFollowCheck, false);
 
     autoUpdateFollowDuration.value = LocalStorageService.instance
         .getValue(LocalStorageService.kUpdateFollowDuration, 10);
@@ -2456,6 +2461,19 @@ class AppSettingsController extends GetxController {
     autoUpdateFollowEnable.value = e;
     LocalStorageService.instance
         .setValue(LocalStorageService.kAutoUpdateFollowEnable, e);
+  }
+
+  /// 鸿蒙后台特别关注检查。默认关闭：系统最小间隔约 2 小时且会增加耗电。
+  var ohosBackgroundFollowCheck = false.obs;
+  void setOhosBackgroundFollowCheck(bool e) {
+    ohosBackgroundFollowCheck.value = e;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kOhosBackgroundFollowCheck, e);
+    if (e) {
+      unawaited(OhosFollowWidgetService.startBackgroundCheck());
+    } else {
+      unawaited(OhosFollowWidgetService.stopBackgroundCheck());
+    }
   }
 
   var autoUpdateFollowDuration = 10.obs;

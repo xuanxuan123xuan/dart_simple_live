@@ -55,6 +55,29 @@
       {"name" :  "ohos.permission.INTERNET"},
       {"name" :  "ohos.permission.GET_NETWORK_INFO"},
       {"name" :  "ohos.permission.KEEP_BACKGROUND_RUNNING"}
+    ],
+    "extensionAbilities": [
+      {
+        "name": "FollowFormAbility",
+        "srcEntry": "./ets/widget/FollowFormAbility.ets",
+        "label": "$string:form_FollowCard_display_name",
+        "description": "$string:form_FollowCard_desc",
+        "type": "form",
+        "exported": true,
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:form_config"
+          }
+        ]
+      },
+      {
+        "name": "FollowCheckExtension",
+        "srcEntry": "./ets/workscheduler/FollowCheckExtension.ets",
+        "label": "$string:EntryAbility_label",
+        "type": "workScheduler",
+        "exported": false
+      }
     ]
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_action.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
@@ -33,6 +34,18 @@ class FollowSettingsPage extends GetView<AppSettingsController> {
                     },
                   ),
                 ),
+                if (Utils.isOhos) ...[
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsSwitch(
+                      value: controller.ohosBackgroundFollowCheck.value,
+                      title: "后台检查特别关注开播",
+                      subtitle:
+                          "应用退到后台或关闭后仍检查开播并推送通知。系统最小间隔约 2 小时，会增加耗电；仅支持虎牙 / 斗鱼 / 哔哩哔哩",
+                      onChanged: controller.setOhosBackgroundFollowCheck,
+                    ),
+                  ),
+                ],
                 Obx(
                   () => Visibility(
                     visible: controller.autoUpdateFollowEnable.value,
