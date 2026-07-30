@@ -60,7 +60,9 @@ dependencies:
   screen_brightness_ohos:
     path: third_party/screen_brightness_ohos
   auto_orientation_v2: ^2.3.6 #屏幕方向
-  wakelock_plus: 1.3.0 # Dart 3.4 compatible; OHOS calls are guarded
+  wakelock_plus: 1.2.10 # Dart 3.4 compatible; OHOS calls are guarded. 1.3.0 改用
+  # SPM 目录布局(ios/wakelock_plus/Sources/.../include),在 Flutter 3.22 的
+  # CocoaPods 构建下找不到 messages.g.h；1.2.10 是最后一个传统 ios/Classes 布局。
   file_picker:
     path: third_party/file_picker_ohos_compat
   window_manager: 0.4.3 # Flutter 3.22 compatible
