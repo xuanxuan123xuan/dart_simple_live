@@ -1,0 +1,239 @@
+name: Build iOS IPA (ohos branch)
+
+# 本分支专用的 iOS 构建。
+#
+# 与 publish_app_release_ios_manual.yml 分开的原因：那个 workflow 钉
+# flutter-version 3.41.x 且 ref 默认 master，服务的是主线；本分支的
+# .fvmrc 锁 3.38.3，且 pubspec 里有 6 处 gitee openharmony-sig 的 git 依赖
+# 与 third_party/ 下一批本地 OHOS 包，是配着 3.38 这条线的，用 3.41 拉不动。
+#
+# 产物默认是未签名 IPA，需要 AltStore / Sideloadly 之类的工具侧载。
+# 配好证书 secrets 后可勾选 signed 产出可直接安装的已签名 IPA。
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要构建的 git ref，默认当前分支"
+        required: false
+        default: "feat/ohos-1.12.7"
+      signed:
+        description: "签名构建（需配好证书 secrets，否则请留空产出未签名 IPA）"
+        type: boolean
+        default: false
+      run_tests:
+        description: "构建前跑一遍 flutter test"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      # Flutter 版本从 .fvmrc 读，避免 workflow 里再钉一个版本号后与仓库脱节。
+      - name: Resolve Flutter version from .fvmrc
+        id: fvm
+        shell: bash
+        run: |
+          fvmrc="simple_live_app/.fvmrc"
+          if [[ ! -f "$fvmrc" ]]; then
+            echo "找不到 $fvmrc" >&2
+            exit 1
+          fi
+          # 用 sed 而非 python3/jq 解析：runner 上两者都在，但这里只要取一个
+          # 字符串值，少一个外部依赖就少一处失败点。
+          version="$(sed -n 's/.*"flutter"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$fvmrc" | head -1)"
+          if [[ -z "$version" ]]; then
+            echo "从 $fvmrc 解析 flutter 版本失败" >&2
+            cat "$fvmrc" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Flutter 版本：$version"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.fvm.outputs.version }}
+          cache: true
+
+      - name: Resolve dependencies
+        working-directory: simple_live_app
+        run: flutter pub get
+
+      - name: Run tests
+        if: ${{ inputs.run_tests }}
+        working-directory: simple_live_app
+        run: flutter test
+
+      - name: Read app version
+        id: appver
+        shell: bash
+        run: |
+          raw="$(grep -m1 '^version:' simple_live_app/pubspec.yaml | sed 's/version:[[:space:]]*//')"
+          echo "version=${raw%%+*}" >> "$GITHUB_OUTPUT"
+
+      # ---------- 未签名路径 ----------
+
+      - name: Build iOS (unsigned)
+        if: ${{ !inputs.signed }}
+        working-directory: simple_live_app
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        if: ${{ !inputs.signed }}
+        working-directory: simple_live_app/build/ios/iphoneos
+        run: |
+          mkdir -p Payload
+          cp -R Runner.app Payload/Runner.app
+          zip -q -r app-unsigned.ipa Payload
+
+      # ---------- 签名路径 ----------
+
+      - name: Import signing certificate and profile
+        if: ${{ inputs.signed }}
+        env:
+          CERT_P12: ${{ secrets.IOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+          PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          for name in CERT_P12 CERT_PASSWORD PROVISIONING_PROFILE; do
+            if [[ -z "${!name}" ]]; then
+              echo "签名构建缺少 secret：$name" >&2
+              echo "需要配置 IOS_CERT_P12_BASE64 / IOS_CERT_PASSWORD /" >&2
+              echo "IOS_PROVISIONING_PROFILE_BASE64 / IOS_TEAM_ID" >&2
+              exit 1
+            fi
+          done
+
+          cert_path="$RUNNER_TEMP/cert.p12"
+          profile_path="$RUNNER_TEMP/profile.mobileprovision"
+          echo "$CERT_P12" | base64 --decode > "$cert_path"
+          echo "$PROVISIONING_PROFILE" | base64 --decode > "$profile_path"
+
+          # 临时钥匙串，随 runner 一起销毁。
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert_path" -P "$CERT_PASSWORD" -A \
+            -t cert -f pkcs12 -k "$keychain"
+          security list-keychain -d user -s "$keychain"
+          # 让 codesign 不弹交互授权。
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$keychain_password" "$keychain" > /dev/null
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          uuid="$(grep -aA1 UUID "$profile_path" \
+            | grep -o '[0-9A-Fa-f-]\{36\}' | head -1)"
+          cp "$profile_path" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/$uuid.mobileprovision"
+          echo "PROFILE_UUID=$uuid" >> "$GITHUB_ENV"
+          rm -f "$cert_path" "$profile_path"
+
+      - name: Build signed IPA
+        if: ${{ inputs.signed }}
+        working-directory: simple_live_app
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          if [[ -z "$TEAM_ID" ]]; then
+            echo "签名构建缺少 secret：IOS_TEAM_ID" >&2
+            exit 1
+          fi
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>ad-hoc</string>
+            <key>teamID</key>
+            <string>$TEAM_ID</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>compileBitcode</key>
+            <false/>
+          </dict>
+          </plist>
+          PLIST
+          flutter build ipa --release \
+            --export-options-plist=ExportOptions.plist
+
+      # ---------- 收尾 ----------
+
+      - name: Stage artifact
+        id: artifact
+        shell: bash
+        env:
+          APP_VERSION: ${{ steps.appver.outputs.version }}
+          FLUTTER_VERSION: ${{ steps.fvm.outputs.version }}
+          SIGNED: ${{ inputs.signed }}
+        run: |
+          out="$RUNNER_TEMP/ios-artifact"
+          mkdir -p "$out"
+          short_sha="${GITHUB_SHA:0:8}"
+
+          if [[ "$SIGNED" == "true" ]]; then
+            src="$(find simple_live_app/build/ios/ipa -name '*.ipa' | head -1)"
+            suffix="signed"
+          else
+            src="simple_live_app/build/ios/iphoneos/app-unsigned.ipa"
+            suffix="unsigned"
+          fi
+
+          if [[ ! -f "$src" ]]; then
+            echo "找不到构建产物：$src" >&2
+            exit 1
+          fi
+
+          target="$out/dart_simple_live-${APP_VERSION}-ios-${suffix}-${short_sha}.ipa"
+          cp "$src" "$target"
+          sha="$(shasum -a 256 "$target" | cut -d' ' -f1)"
+          size="$(du -h "$target" | cut -f1)"
+
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
+          {
+            echo "### iOS IPA (${suffix})"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| 版本 | ${APP_VERSION} |"
+            echo "| Flutter | ${FLUTTER_VERSION} |"
+            echo "| 提交 | \`${short_sha}\` |"
+            echo "| 大小 | ${size} |"
+            echo "| SHA-256 | \`${sha}\` |"
+            if [[ "$suffix" == "unsigned" ]]; then
+              echo ""
+              echo "未签名产物，需用 AltStore / Sideloadly 侧载。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: dart-simple-live-ios-${{ github.sha }}
+          path: ${{ steps.artifact.outputs.dir }}/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Clean up keychain
+        if: ${{ always() && inputs.signed }}
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision" || true
