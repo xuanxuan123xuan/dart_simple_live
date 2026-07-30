@@ -858,7 +858,12 @@ Widget _buildSideLockButton(
 
 Widget buildGestureTip(LiveRoomController controller) {
   return Obx(() {
-    if (!controller.showGestureTip.value) {
+    // 文案为空时不画：竖向手势按下的瞬间 showGestureTip 就为 true，而
+    // gestureTipText 要等第一次 drag update 才有值；音量还有 5 档取整的
+    // lastVolume 早退，落在同一档时整段手势都不会写文案。此时若照画，
+    // 就是一个只有 padding 的深色圆角块悬在画面正中。
+    if (!controller.showGestureTip.value ||
+        controller.gestureTipText.value.isEmpty) {
       return const SizedBox.shrink();
     }
     return Center(

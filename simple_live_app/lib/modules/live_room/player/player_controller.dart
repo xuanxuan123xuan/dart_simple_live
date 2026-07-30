@@ -1613,6 +1613,8 @@ mixin PlayerGestureControlMixin
     verticalDragging = false;
     leftVerticalDrag = false;
     showGestureTip.value = false;
+    // 一并清掉文案，避免下次手势按下时先闪一帧上次的残留值。
+    gestureTipText.value = "";
   }
 }
 
