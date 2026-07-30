@@ -109,8 +109,11 @@ export default class OhosMediaPlugin implements FlutterPlugin, MethodCallHandler
       };
       helper.showAssetsCreationDialog([sourceUri], [config])
         .then((savedUris: Array<string>) => {
+          // Cancelling the system dialog is not a failure. Report null so the
+          // Dart side can tell "user cancelled" from "save failed", matching
+          // OhosDocumentPlugin.saveBytes.
           if (savedUris.length === 0) {
-            result.error('save_cancelled', 'No image was saved', null);
+            result.success(null);
             return;
           }
           result.success(savedUris[0]);

@@ -63,8 +63,12 @@ mixin PlayerMixin {
   GlobalKey globalDanmuKey = GlobalKey();
   GlobalKey ohosScreenshotKey = GlobalKey();
 
-  /// 播放器实例
-  late final player = Player(
+  /// media_kit 播放器实例。
+  ///
+  /// OHOS 上不初始化 media_kit（见 `main.dart` 跳过 `MediaKit.ensureInitialized()`），
+  /// 播放走 [ohosVideoController]。因此这里只在非 OHOS 平台惰性构造，
+  /// 通过 [player] getter 访问以便在缺少平台守卫时给出明确报错。
+  late final Player _mpvPlayer = Player(
     configuration: PlayerConfiguration(
       title: "Simple Live Player",
       logLevel: AppSettingsController.instance.logEnable.value
@@ -73,9 +77,28 @@ mixin PlayerMixin {
     ),
   );
 
+  /// 播放器实例
+  ///
+  /// 在 OHOS 上访问会抛出 [StateError]，提示调用点缺少 `Utils.isOhos` 守卫。
+  /// 这样可以避免在未初始化 media_kit 的情况下构造 mpv 实例导致的原生崩溃。
+  Player get player {
+    if (Utils.isOhos) {
+      throw StateError(
+        'media_kit player 在 OHOS 上不可用：该平台使用 video_player'
+        '（ohosVideoController）播放。此调用点缺少 Utils.isOhos 守卫。',
+      );
+    }
+    return _mpvPlayer;
+  }
+
+  /// 当前平台是否存在可用的 media_kit 播放器。
+  bool get hasMpvPlayer => !Utils.isOhos;
+
   /// 初始化播放器并设置静态 mpv 参数。
+  ///
+  /// OHOS 上没有 media_kit，直接返回；播放由 [ohosVideoController] 负责。
   Future<void> initializePlayer() async {
-    if (_playerInitialized) {
+    if (Utils.isOhos || _playerInitialized) {
       return;
     }
     _playerInitialized = true;
@@ -96,11 +119,23 @@ mixin PlayerMixin {
     }
   }
 
-  /// 视频控制器
-  late final videoController = VideoController(
-    player,
+  late final VideoController _mpvVideoController = VideoController(
+    _mpvPlayer,
     configuration: MpvOptionsService.videoControllerConfiguration(),
   );
+
+  /// 视频控制器
+  ///
+  /// 与 [player] 同理，OHOS 上访问会抛出 [StateError]。
+  VideoController get videoController {
+    if (Utils.isOhos) {
+      throw StateError(
+        'media_kit videoController 在 OHOS 上不可用：该平台使用 video_player'
+        '（ohosVideoController）播放。此调用点缺少 Utils.isOhos 守卫。',
+      );
+    }
+    return _mpvVideoController;
+  }
 
   VideoPlayerController? _ohosVideoController;
   final GlobalKey ohosPlayerWidgetKey =
@@ -1044,7 +1079,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
   }
 
-  Future<void> _saveOhosScreenshot(Uint8List imageData) async {
+  /// 保存截图到鸿蒙图库。
+  ///
+  /// 返回 `false` 表示用户取消了系统保存对话框（不是失败）。
+  Future<bool> _saveOhosScreenshot(Uint8List imageData) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final title = "SimpleLive_$timestamp";
     final tempDirectory = await getTemporaryDirectory();
@@ -1059,9 +1097,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           "extension": "png",
         },
       );
-      if (savedUri == null || savedUri.isEmpty) {
-        throw StateError("系统图库未返回保存结果");
-      }
+      // 原生侧在用户取消对话框时返回 null，与保存失败区分开。
+      return savedUri != null && savedUri.isNotEmpty;
     } finally {
       if (await tempFile.exists()) {
         await tempFile.delete();
@@ -1090,8 +1127,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       }
 
       if (Utils.isOhos) {
-        await _saveOhosScreenshot(imageData);
-        SmartDialog.showToast("已保存截图至图库");
+        final saved = await _saveOhosScreenshot(imageData);
+        SmartDialog.showToast(saved ? "已保存截图至图库" : "取消保存");
       } else if (Platform.isIOS || Platform.isAndroid) {
         await ImageGallerySaverPlus.saveImage(
           imageData,
