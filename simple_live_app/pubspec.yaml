@@ -74,7 +74,7 @@ dependencies:
       path: packages/webview_flutter/webview_flutter
   connectivity_plus: 5.0.2 # OpenHarmony-SIG adapter baseline
   qr_code_scanner_plus: ^2.0.14 #二维码扫描
-  volume_controller: ^3.4.0 #音量控制
+  volume_controller: 3.4.3 #音量控制 # Flutter 3.22 compatible: 3.4.4 uses FlutterSceneLifeCycleDelegate (3.27+)
 
   # 网络相关
   shelf: 1.4.1 # Flutter 3.22 collection pin
