@@ -3,11 +3,15 @@ import Flutter
 import UserNotifications
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+@objc class AppDelegate: FlutterAppDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // Flutter 3.22 的插件注册方式。上游 52318b3 改用的
+    // FlutterImplicitEngineDelegate / didInitializeImplicitFlutterEngine 是
+    // Flutter 3.35+ 才有的 API,本分支钉在 3.22,需用此经典注册方式。
+    GeneratedPluginRegistrant.register(with: self)
     UNUserNotificationCenter.current().delegate = self
     if let controller = window?.rootViewController as? FlutterViewController {
       let channel = FlutterMethodChannel(
@@ -27,10 +31,6 @@ import UserNotifications
       }
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
-
-  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
   }
 
   private func showLiveStartNotification(title: String, body: String) {
