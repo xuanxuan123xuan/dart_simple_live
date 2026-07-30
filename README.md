@@ -22,16 +22,6 @@
 - fork 来源：[原作者仓库 xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live)
 - 当前公开仓库：`June6699/dart_simple_live`
 
-## 支持项目
-
-Simple Live 会继续保持开源和免费使用。赞助费用主要用于同步服务、域名和构建测试等维护开销。
-
-更多社区反馈与赞助鸣谢见 [THANKS.md](/THANKS.md)。
-
-<p align="center">
-  <img width="360" src="/assets/support_wechat.png" alt="微信收款码">
-</p>
-
 ## 用户群
 
 扫码加入 SimpleLive 用户群，交流使用问题和反馈建议。
@@ -228,9 +218,3 @@ GitHub Actions 提供这些构建流程，均为手动触发：
 - 动态发布、评论发布、社区互动、投稿。
 - 官方账号体系下的“我的”页面复刻，比如钱包、勋章、等级、任务、资产全量展示。
 - 过于完整的录播 / 回放 / 追更体系，尤其是能替代用户回到官方 App 的那种。
-
-
-
-## Star History
-
-![star-history-202676](./images/README/star-history-202676.png)
