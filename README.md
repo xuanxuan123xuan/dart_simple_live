@@ -238,7 +238,3 @@ TV 端不内置浏览器，请从主 App 同步完整 Cookie。
 - 过于完整的录播 / 回放 / 追更体系，尤其是能替代用户回到官方 App 的那种。
 
 ---
-
-## Star History
-
-![star-history-202676](./images/README/star-history-202676.png)
