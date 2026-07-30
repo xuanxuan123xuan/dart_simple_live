@@ -52,6 +52,8 @@ Release 资产会在 Windows、Android 和 TV 模拟环境完成基础验证后�
 - Linux `zip`
 - Linux `deb`
 
+鸿蒙 `hap` 与 iOS `ipa` 目前不随 Release 发布，需自行用对应 workflow 构建，见下方"构建"。
+
 ## 远程同步服务
 
 当前远程同步使用自建 Cloudflare Workers 临时房间服务：
@@ -135,11 +137,43 @@ TV 下载建议：
 - [x] Linux
 - [x] Android TV
 - [x] TV-windows（TV的UI在Windows上运行，相较纯TV，此版本支持多开）
+- [x] HarmonyOS NEXT（鸿蒙，见 `feat/ohos-1.12.7` 分支）
+
+## 多开同屏
+
+在同一窗口内并排播放多个直播间，从关注页进入：点多开按钮进多选态，选 2 个以上正在直播的关注即可。
+
+- 桌面端（Windows / macOS）会优先拉起多个独立系统窗口；失败或其他平台则退回单窗口同屏。
+- 平板可用：按屏幕短边判定，短边 ≥ 600 逻辑像素才开放，因此 iPad 与安卓平板支持，手机不支持。
+- 排布按"哪种排法画面最大"自动选择。横屏放两个会排成上下两行，画面比左右并排大约 1.18 倍；三个会排成 2×2 空一格，因为一排三列时每格反而更窄。
+- 画面等比缩放不裁切，比例不符时留黑边。
+- 每格独立弹幕，只收不发。弹幕行数按格子高度自适应，格子过矮时自动隐藏。
+- 鸿蒙暂不支持多开：该平台不初始化 media_kit，播放走 `video_player_ohos`。
 
 ## 环境
 
 - Windows / Android / Android TV 本地 Flutter：`3.41.9`
 - Linux 本地 WSL Flutter：`3.38.10`
+- 鸿蒙分支 `feat/ohos-1.12.7`：Flutter `3.38.3`（见 `simple_live_app/.fvmrc`）
+
+鸿蒙分支与主线 Flutter 版本互斥，无法直接合并。该分支的 pubspec 依赖一批 `gitee.com/openharmony-sig` 的 git 包与 `third_party/` 下的本地 OHOS 包，需配套 `3.38` 这条线。
+
+## 构建
+
+GitHub Actions 提供这些构建流程，均为手动触发：
+
+| workflow | 产物 | runner |
+| --- | --- | --- |
+| `publish_app_dev.yaml` | 多平台开发包 | GitHub 托管 |
+| `publish_app_release_*.yml` | 各平台正式包 | GitHub 托管 |
+| `build_ios_ipa_ohos_branch.yml` | 鸿蒙分支的 iOS `ipa` | `macos-latest` |
+| `build_ohos_hap.yml` | 鸿蒙 `hap`（已签名） | 自建 Windows runner |
+
+说明：
+
+- 鸿蒙分支的 iOS 构建单独一个文件，因为主线那个 workflow 钉 Flutter `3.41.x`、`ref` 默认 `master`，在鸿蒙分支上拉不齐依赖。它的 Flutter 版本从 `.fvmrc` 读取。
+- iOS 默认产未签名 `ipa`，需 AltStore / Sideloadly 侧载。配好 `IOS_CERT_P12_BASE64`、`IOS_CERT_PASSWORD`、`IOS_PROVISIONING_PROFILE_BASE64`、`IOS_TEAM_ID` 四个 secrets 后可勾选签名构建，产出 ad-hoc 签名包。
+- 鸿蒙 `hap` 必须用自建 runner：官方命令行工具约 2.4 GB 且需账号登录，GitHub 托管 runner 无法安装。另需配置 `FLUTTER_OHOS_ROOT`、`HOS_SDK_HOME`、`JAVA_HOME` 三个仓库变量与签名相关 secrets。
 
 ## 参考及引用
 
