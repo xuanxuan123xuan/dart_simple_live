@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -32,28 +35,41 @@ class MultiRoomPage extends GetView<MultiRoomController> {
       body: Obx(
         () => LayoutBuilder(
           builder: (context, constraints) {
-            final count = _gridCount(
-              controller.rooms.length,
+            final rooms = controller.rooms.toList();
+            if (rooms.isEmpty) {
+              return const _CenterText("没有可播放的直播间");
+            }
+            final gap = AppSettingsController.instance
+                .effectiveMultiRoomGap
+                .toDouble();
+            final columns = _bestColumnCount(
+              rooms.length,
               constraints.maxWidth,
+              constraints.maxHeight,
+              gap,
             );
-            final gap = AppSettingsController.instance.effectiveMultiRoomGap;
-            return GridView.builder(
-              padding: EdgeInsets.all(gap.toDouble()),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: count,
-                childAspectRatio: 16 / 9,
-                mainAxisSpacing: gap.toDouble(),
-                crossAxisSpacing: gap.toDouble(),
+            final rows = (rooms.length / columns).ceil();
+            return Padding(
+              padding: EdgeInsets.all(gap),
+              child: Column(
+                children: [
+                  for (var row = 0; row < rows; row += 1) ...[
+                    if (row > 0) SizedBox(height: gap),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          for (var col = 0; col < columns; col += 1) ...[
+                            if (col > 0) SizedBox(width: gap),
+                            Expanded(
+                              child: _tileAt(row * columns + col, rooms),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
               ),
-              itemCount: controller.rooms.length,
-              itemBuilder: (context, index) {
-                final room = controller.rooms[index];
-                return _MultiRoomTile(
-                  item: room,
-                  controller: controller.playerFor(room),
-                  onRemove: () => controller.removeRoom(room),
-                );
-              },
             );
           },
         ),
@@ -61,17 +77,49 @@ class MultiRoomPage extends GetView<MultiRoomController> {
     );
   }
 
-  int _gridCount(int length, double width) {
-    if (length <= 1) {
+  Widget _tileAt(int index, List<MultiRoomItem> rooms) {
+    // 最后一行可能不满，空位留空白占位以保持每格等宽。
+    if (index >= rooms.length) {
+      return const SizedBox.shrink();
+    }
+    final room = rooms[index];
+    return _MultiRoomTile(
+      item: room,
+      controller: controller.playerFor(room),
+      onRemove: () => controller.removeRoom(room),
+    );
+  }
+
+  /// 选出让每格画面最大的列数。
+  ///
+  /// 画面按 16:9 等比缩放（不裁切），格子比例与之不符时会留黑边。因此逐个试列数，
+  /// 算出该排法下画面实际能渲染多大，取最大者 —— 横屏放两个时它会自然选出
+  /// 上下排（1 列），因为上下排每格更宽，画面比左右并排大约 50%。
+  int _bestColumnCount(int length, double width, double height, double gap) {
+    if (length <= 1 || width <= 0 || height <= 0) {
       return 1;
     }
-    if (width >= 1400 && length >= 3) {
-      return 3;
+    var bestColumns = 1;
+    var bestArea = -1.0;
+    for (var columns = 1; columns <= length; columns += 1) {
+      final rows = (length / columns).ceil();
+      final cellWidth = (width - gap * (columns - 1)) / columns;
+      final cellHeight = (height - gap * (rows - 1)) / rows;
+      if (cellWidth <= 0 || cellHeight <= 0) {
+        continue;
+      }
+      // 画面按 contain 缩放后的实际尺寸。
+      final videoWidth = cellWidth / cellHeight > 16 / 9
+          ? cellHeight * 16 / 9
+          : cellWidth;
+      final videoHeight = videoWidth * 9 / 16;
+      final area = videoWidth * videoHeight;
+      if (area > bestArea) {
+        bestArea = area;
+        bestColumns = columns;
+      }
     }
-    if (width >= 760) {
-      return 2;
-    }
-    return 1;
+    return bestColumns;
   }
 }
 
@@ -103,6 +151,14 @@ class _MultiRoomTile extends StatelessWidget {
                 controller: controller.videoController,
                 controls: NoVideoControls,
                 fit: BoxFit.contain,
+              ),
+            ),
+            // 弹幕铺在画面区域上。行数按格子高度自适应，格子太矮时会自动隐藏。
+            Positioned.fill(
+              child: Obx(
+                () => controller.showDanmaku.value
+                    ? _DanmakuLayer(controller: controller)
+                    : const SizedBox.shrink(),
               ),
             ),
             Positioned.fill(
@@ -161,6 +217,15 @@ class _MultiRoomTile extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Obx(
+                    () => _OverlayButton(
+                      tooltip: controller.showDanmaku.value ? "关闭弹幕" : "开启弹幕",
+                      icon: controller.showDanmaku.value
+                          ? Remix.message_3_line
+                          : Remix.message_3_fill,
+                      onPressed: controller.toggleDanmaku,
+                    ),
+                  ),
                   _OverlayButton(
                     tooltip: "刷新",
                     icon: Remix.refresh_line,
@@ -186,6 +251,77 @@ class _MultiRoomTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 单格的弹幕渲染层。
+///
+/// 画面按 16:9 `contain` 缩放后不一定铺满格子，这里把弹幕限制在画面实际区域内，
+/// 免得弹幕跑到黑边上。行数交给 `AppSettingsController` 按视口高度自适应：
+/// 格子矮时行数会被 clamp 变少，太矮时直接隐藏。
+class _DanmakuLayer extends StatelessWidget {
+  final MultiRoomPlayerController controller;
+
+  const _DanmakuLayer({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tileWidth = constraints.maxWidth;
+        final tileHeight = constraints.maxHeight;
+        if (tileWidth <= 0 || tileHeight <= 0) {
+          return const SizedBox.shrink();
+        }
+        // 与 Video 的 BoxFit.contain 保持一致，算出画面实际占据的矩形。
+        final videoWidth = tileWidth / tileHeight > 16 / 9
+            ? tileHeight * 16 / 9
+            : tileWidth;
+        final videoHeight = videoWidth * 9 / 16;
+        final settings = AppSettingsController.instance;
+        final resolvedLineCount = settings.resolveDanmuTargetLineCount(
+          viewportHeight: videoHeight,
+          area: settings.danmuArea.value,
+          fontSize: settings.danmuSize.value,
+          lineCount: settings.danmuLineCount.value,
+        );
+        final hideDanmu = resolvedLineCount <= 0;
+        return Center(
+          child: SizedBox(
+            width: videoWidth,
+            height: videoHeight,
+            child: IgnorePointer(
+              child: DanmakuScreen(
+                createdController: controller.initDanmakuController,
+                option: DanmakuOption(
+                  fontSize: settings.danmuSize.value,
+                  fontFamily: Platform.isWindows ? "Microsoft YaHei" : null,
+                  area: settings.resolveDanmuEffectiveArea(
+                    viewportHeight: videoHeight,
+                    area: settings.danmuArea.value,
+                    fontSize: settings.danmuSize.value,
+                    lineCount: settings.danmuLineCount.value,
+                  ),
+                  lineHeight: settings.resolveDanmuLineHeight(
+                    viewportHeight: videoHeight,
+                    area: settings.danmuArea.value,
+                    fontSize: settings.danmuSize.value,
+                    lineCount: settings.danmuLineCount.value,
+                  ),
+                  duration: settings.danmuSpeed.value.toInt(),
+                  opacity: settings.danmuOpacity.value,
+                  fontWeight: settings.danmuFontWeight.value,
+                  hideTop: hideDanmu,
+                  hideBottom: hideDanmu,
+                  hideScroll: hideDanmu,
+                  hideSpecial: hideDanmu,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

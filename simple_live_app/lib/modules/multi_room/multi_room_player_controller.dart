@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:ui';
 
+import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:media_kit/media_kit.dart';
@@ -36,6 +38,15 @@ class MultiRoomPlayerController extends GetxController {
   final qualityInfo = "".obs;
   final lineInfo = "".obs;
 
+  /// 本格弹幕开关。多开只收不发，不提供发送入口。
+  final showDanmaku = true.obs;
+
+  /// 每格一条独立的弹幕长连接。
+  late LiveDanmaku liveDanmaku = item.site.liveSite.getDanmaku();
+
+  /// 弹幕渲染层的控制器，由 `DanmakuScreen` 在 build 时回传。
+  DanmakuController? danmakuController;
+
   List<LivePlayQuality> _qualities = const [];
   List<String> _playUrls = const [];
   Map<String, String>? _playHeaders;
@@ -64,6 +75,8 @@ class MultiRoomPlayerController extends GetxController {
     liveStatus.value = false;
     try {
       await player.stop();
+      // 重新加载前断开旧连接，避免刷新后同一格挂着两条长连接。
+      await _stopDanmaku();
       final roomDetail =
           await item.site.liveSite.getRoomDetail(roomId: item.roomId);
       if (_disposed) {
@@ -77,6 +90,7 @@ class MultiRoomPlayerController extends GetxController {
       await _loadQualities(roomDetail);
       await _loadPlayUrls(roomDetail);
       await _openCurrentUrl();
+      _startDanmaku(roomDetail);
     } catch (e) {
       Log.e(
         "多开直播间加载失败：${item.site.id}/${item.roomId} $e",
@@ -130,6 +144,65 @@ class MultiRoomPlayerController extends GetxController {
         muted.value ? 0 : AppSettingsController.instance.playerVolume.value);
   }
 
+  /// 由 `DanmakuScreen` 创建后回传渲染控制器。
+  void initDanmakuController(DanmakuController e) {
+    danmakuController = e;
+  }
+
+  void _startDanmaku(LiveRoomDetail roomDetail) {
+    liveDanmaku.onMessage = _onDanmakuMessage;
+    liveDanmaku.onClose = (msg) {
+      Log.d("多开弹幕关闭：${item.site.id}/${item.roomId} $msg");
+    };
+    liveDanmaku.onReady = () {
+      Log.d("多开弹幕已连接：${item.site.id}/${item.roomId}");
+    };
+    unawaited(
+      liveDanmaku.start(roomDetail.danmakuData).catchError((Object e) {
+        // 弹幕连不上不影响看画面，只记日志。
+        Log.e("多开弹幕启动失败：${item.site.id}/${item.roomId} $e", StackTrace.current);
+      }),
+    );
+  }
+
+  void _onDanmakuMessage(LiveMessage msg) {
+    if (_disposed ||
+        msg.type != LiveMessageType.chat ||
+        !showDanmaku.value ||
+        !liveStatus.value) {
+      return;
+    }
+    final settings = AppSettingsController.instance;
+    danmakuController?.addDanmaku(
+      DanmakuContentItem(
+        msg.message,
+        color: Color.fromARGB(255, msg.color.r, msg.color.g, msg.color.b),
+        imageUrls: settings.danmuRenderEmoji.value ? msg.imageUrls : null,
+      ),
+    );
+  }
+
+  Future<void> _stopDanmaku() async {
+    liveDanmaku.onMessage = null;
+    liveDanmaku.onClose = null;
+    liveDanmaku.onReady = null;
+    try {
+      await liveDanmaku.stop();
+    } catch (e) {
+      Log.d("多开弹幕停止异常：${item.site.id}/${item.roomId} $e");
+    }
+    danmakuController?.clear();
+    // stop() 后的实例不可复用，重新取一个干净的。
+    liveDanmaku = item.site.liveSite.getDanmaku();
+  }
+
+  void toggleDanmaku() {
+    showDanmaku.value = !showDanmaku.value;
+    if (!showDanmaku.value) {
+      danmakuController?.clear();
+    }
+  }
+
   Future<void> refreshRoom() async {
     await load();
     SmartDialog.showToast("已刷新 ${item.userName}");
@@ -145,6 +218,12 @@ class MultiRoomPlayerController extends GetxController {
   @override
   void onClose() {
     _disposed = true;
+    // 必须断开弹幕长连接，否则移除格子后连接和心跳会泄漏。
+    liveDanmaku.onMessage = null;
+    liveDanmaku.onClose = null;
+    liveDanmaku.onReady = null;
+    unawaited(liveDanmaku.stop());
+    danmakuController = null;
     unawaited(player.stop());
     unawaited(player.dispose());
     super.onClose();

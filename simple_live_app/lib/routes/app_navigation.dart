@@ -108,8 +108,9 @@ class AppNavigator {
   }
 
   static Future<dynamic> toMultiRoom(List<MultiRoomItem> rooms) {
-    if (!PlatformUtils.supportsInlineMultiRoom) {
-      SmartDialog.showToast("当前移动端版本已关闭多开同屏");
+    final unavailableReason = PlatformUtils.inlineMultiRoomUnavailableReason;
+    if (unavailableReason != null) {
+      SmartDialog.showToast(unavailableReason);
       return Future.value();
     }
     return Get.toNamed(

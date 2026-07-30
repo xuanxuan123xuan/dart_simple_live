@@ -454,7 +454,9 @@ class FollowUserController extends BasePageController<FollowUser> {
   }
 
   void toggleMultiSelectMode() {
-    if (!PlatformUtils.supportsInlineMultiRoom) {
+    // 退出多选始终允许：已进入多选后窗口被缩小（分屏 / 折叠屏）时，
+    // 门禁会转为不支持，此时若一并拦住退出就会卡在多选态里出不来。
+    if (!multiSelectMode.value && !PlatformUtils.supportsInlineMultiRoom) {
       return;
     }
     multiSelectMode.value = !multiSelectMode.value;
@@ -479,8 +481,9 @@ class FollowUserController extends BasePageController<FollowUser> {
   }
 
   void openSelectedMultiRooms() async {
-    if (!PlatformUtils.supportsInlineMultiRoom) {
-      SmartDialog.showToast("当前移动端版本已关闭多开同屏");
+    final unavailableReason = PlatformUtils.inlineMultiRoomUnavailableReason;
+    if (unavailableReason != null) {
+      SmartDialog.showToast(unavailableReason);
       return;
     }
     final selected = list

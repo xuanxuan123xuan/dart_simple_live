@@ -176,7 +176,7 @@ class MinePage extends StatelessWidget {
                     Get.toNamed(RoutePath.kSettingsPlay);
                   },
                 ),
-                if (PlatformUtils.supportsInlineMultiRoom)
+                if (PlatformUtils.supportsInlineMultiRoomOf(context))
                   ListTile(
                     leading: const Icon(Remix.layout_grid_line),
                     title: const Text("多开设置"),

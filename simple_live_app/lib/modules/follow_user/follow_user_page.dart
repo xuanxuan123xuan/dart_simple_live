@@ -77,7 +77,7 @@ class FollowUserPage extends GetView<FollowUserController> {
               ),
             ),
           ),
-          if (PlatformUtils.supportsInlineMultiRoom) ...[
+          if (PlatformUtils.supportsInlineMultiRoomOf(context)) ...[
             Obx(
               () => TextButton.icon(
                 onPressed: controller.multiSelectMode.value
