@@ -50,6 +50,7 @@ class FollowUserController extends BasePageController<FollowUser> {
   var searchKeyword = "".obs;
   var multiSelectMode = false.obs;
   RxSet<String> selectedMultiRoomKeys = <String>{}.obs;
+  var selectedMultiRoomCount = 0.obs;
   var currentDisplayPage = 1.obs;
   var totalDisplayPages = 1.obs;
   var paginationEnabled = false.obs;
@@ -462,6 +463,7 @@ class FollowUserController extends BasePageController<FollowUser> {
     multiSelectMode.value = !multiSelectMode.value;
     if (!multiSelectMode.value) {
       selectedMultiRoomKeys.clear();
+      selectedMultiRoomCount.value = 0;
     }
   }
 
@@ -475,9 +477,11 @@ class FollowUserController extends BasePageController<FollowUser> {
     }
     if (selectedMultiRoomKeys.contains(item.id)) {
       selectedMultiRoomKeys.remove(item.id);
+      selectedMultiRoomCount.value = selectedMultiRoomKeys.length;
       return;
     }
     selectedMultiRoomKeys.add(item.id);
+    selectedMultiRoomCount.value = selectedMultiRoomKeys.length;
   }
 
   void openSelectedMultiRooms() async {

@@ -272,6 +272,8 @@ class FollowUserPage extends GetView<FollowUserController> {
               Expanded(
                 child: Obx(
                   () {
+                    // 建立对多选集合的响应依赖。
+                    final _ = controller.selectedMultiRoomCount.value;
                     final layout = _resolveLayoutSpec(context);
                     return GestureDetector(
                       behavior: HitTestBehavior.translucent,
