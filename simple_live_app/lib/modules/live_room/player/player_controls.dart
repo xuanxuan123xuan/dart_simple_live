@@ -490,8 +490,8 @@ Widget _buildFullTopBar(
       child: Container(
         height: 48 + padding.top,
         padding: EdgeInsets.only(
-          left: padding.left + 12,
-          right: padding.right + 12,
+          left: padding.left + 32,
+          right: padding.right + 32,
           top: padding.top,
         ),
         decoration: const BoxDecoration(
@@ -600,8 +600,8 @@ Widget _buildFullBottomBar(
           ),
         ),
         padding: EdgeInsets.only(
-          left: padding.left + 12,
-          right: padding.right + 12,
+          left: padding.left + 32,
+          right: padding.right + 32,
           bottom: padding.bottom,
         ),
         child: Row(
@@ -855,8 +855,8 @@ Widget _buildSideLockButton(
     return AnimatedPositioned(
       top: 0,
       bottom: 0,
-      left: alignLeft ? (visible ? padding.left + 12 : offset) : null,
-      right: alignLeft ? null : (visible ? padding.right + 12 : offset),
+      left: alignLeft ? (visible ? padding.left + 32 : offset) : null,
+      right: alignLeft ? null : (visible ? padding.right + 32 : offset),
       duration: const Duration(milliseconds: 200),
       child: buildLockButton(controller),
     );

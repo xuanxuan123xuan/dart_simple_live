@@ -66,18 +66,18 @@ class MultiRoomPage extends GetView<MultiRoomController> {
           },
         ),
       ),
-      // 顶部覆盖层：点击画面切换显隐，8 秒自动隐藏
+      // 顶部覆盖层：点击画面切换显隐，8 秒自动隐藏，尺寸与播放器全屏控件一致
       Obx(
         () => AnimatedPositioned(
           left: 0,
           right: 0,
-          top: controller.showOverlay.value ? 0 : -(48 + MediaQuery.of(context).viewPadding.top),
+          top: controller.showOverlay.value ? 0 : -(56 + MediaQuery.of(context).viewPadding.top),
           duration: const Duration(milliseconds: 200),
           child: Container(
-            height: 48 + MediaQuery.of(context).viewPadding.top,
+            height: 56 + MediaQuery.of(context).viewPadding.top,
             padding: EdgeInsets.only(
-              left: 12,
-              right: 12,
+              left: 32,
+              right: 32,
               top: MediaQuery.of(context).viewPadding.top,
             ),
             decoration: const BoxDecoration(
@@ -97,7 +97,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                 const SizedBox(width: 12),
                 Obx(() => Text(
                   "多开同屏（${controller.rooms.length}）",
-                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                  style: const TextStyle(color: Colors.white, fontSize: 18),
                 )),
                 const Spacer(),
                 IconButton(
@@ -223,28 +223,12 @@ class _MultiRoomTile extends StatelessWidget {
               ),
             ),
             Positioned(
-              left: 0,
-              right: 0,
-              top: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                color: Colors.black.withAlpha(150),
-                child: Obx(
-                  () => Text(
-                    "${item.site.name} · ${controller.title}",
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
               left: 6,
               bottom: 6,
               child: Obx(
                 () => Text(
                   [
+                    "${item.site.name} · ${controller.title}",
                     if (controller.qualityInfo.value.isNotEmpty)
                       controller.qualityInfo.value,
                     if (controller.lineInfo.value.isNotEmpty)
