@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
@@ -13,6 +15,7 @@ class MultiRoomSettingsPage extends GetView<AppSettingsController> {
 
   @override
   Widget build(BuildContext context) {
+    final isDesktop = Platform.isWindows || Platform.isMacOS;
     return Scaffold(
       appBar: AppBar(
         title: const Text("多开设置"),
@@ -24,19 +27,22 @@ class MultiRoomSettingsPage extends GetView<AppSettingsController> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Obx(
-                  () => SettingsSwitch(
-                    title: "默认收起聊天区",
-                    subtitle: "从关注页多开时，独立直播窗口默认只保留展开按钮",
-                    value: controller.multiRoomCollapseChat.value,
-                    onChanged: controller.setMultiRoomCollapseChat,
+                if (isDesktop)
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "默认收起聊天区",
+                      subtitle: "从关注页多开时，独立直播窗口默认只保留展开按钮",
+                      value: controller.multiRoomCollapseChat.value,
+                      onChanged: controller.setMultiRoomCollapseChat,
+                    ),
                   ),
-                ),
-                AppStyle.divider,
+                if (isDesktop) AppStyle.divider,
                 Obx(
                   () => SettingsNumber(
                     title: "布局间距",
-                    subtitle: "影响独立窗口铺排、桌面同屏多开和 TV 多屏同播",
+                    subtitle: isDesktop
+                        ? "影响独立窗口铺排、桌面同屏多开和 TV 多屏同播"
+                        : "多开同屏时每格画面之间的间距",
                     value: controller.effectiveMultiRoomGap,
                     min: AppSettingsController.kMultiRoomMinGap,
                     max: AppSettingsController.kMultiRoomMaxGap,
@@ -47,15 +53,17 @@ class MultiRoomSettingsPage extends GetView<AppSettingsController> {
               ],
             ),
           ),
-          AppStyle.vGap12,
-          const SettingsCard(
-            child: SettingsAction(
-              title: "关闭所有多开窗口",
-              subtitle: "关闭本次从关注页多开启动的独立直播窗口",
-              leading: Icon(Icons.close),
-              onTap: DesktopMultiWindowService.closeOpenedRooms,
+          if (isDesktop) ...[
+            AppStyle.vGap12,
+            const SettingsCard(
+              child: SettingsAction(
+                title: "关闭所有多开窗口",
+                subtitle: "关闭本次从关注页多开启动的独立直播窗口",
+                leading: Icon(Icons.close),
+                onTap: DesktopMultiWindowService.closeOpenedRooms,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
