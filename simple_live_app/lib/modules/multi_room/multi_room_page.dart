@@ -350,94 +350,101 @@ class _ChatPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: AppStyle.radius8,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.black,
-          border: Border.all(color: Colors.white24),
-          borderRadius: AppStyle.radius8,
-        ),
-        child: Column(
-          children: [
-            // 顶部直播间选择按钮行
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              color: Colors.black54,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(rooms.length, (i) {
-                  final room = rooms[i];
-                  final selected = i == chatRoomIndex;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: GestureDetector(
-                      onTap: () => onSelect(i),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? Colors.white24
-                              : Colors.white10,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Image.asset(
-                              room.site.logo,
-                              width: 18,
-                              height: 18,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              room.userName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color:
-                                    selected ? Colors.white : Colors.white54,
-                                fontSize: 12,
-                                fontWeight: selected
-                                    ? FontWeight.w600
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                }),
+      child: Column(
+        children: [
+          // 顶部直播间选择按钮行
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.black54, Colors.transparent],
               ),
             ),
-            // 弹幕区域
-            Expanded(
-              child: Obx(() {
-                if (chatController.loading.value) {
-                  return const Center(
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  );
-                }
-                return DanmakuScreen(
-                  createdController: chatController.initDanmakuController,
-                  option: DanmakuOption(
-                    fontSize: AppSettingsController
-                        .instance.danmuSize.value,
-                    fontFamily:
-                        Platform.isWindows ? "Microsoft YaHei" : null,
-                    duration: AppSettingsController
-                        .instance.danmuSpeed.value
-                        .toInt(),
-                    opacity: AppSettingsController
-                        .instance.danmuOpacity.value,
-                    fontWeight: AppSettingsController
-                        .instance.danmuFontWeight.value,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(rooms.length, (i) {
+                final room = rooms[i];
+                final selected = i == chatRoomIndex;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: GestureDetector(
+                    onTap: () => onSelect(i),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: selected
+                              ? Colors.white30
+                              : Colors.transparent,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Image.asset(
+                            room.site.logo,
+                            width: 18,
+                            height: 18,
+                            opacity: selected
+                                ? const AlwaysStoppedAnimation(1)
+                                : const AlwaysStoppedAnimation(0.5),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            room.userName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: selected
+                                  ? Colors.white
+                                  : Colors.white38,
+                              fontSize: 12,
+                              fontWeight: selected
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 );
               }),
             ),
-          ],
-        ),
+          ),
+          // 弹幕区域
+          Expanded(
+            child: Obx(() {
+              if (chatController.loading.value) {
+                return const Center(
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white24),
+                );
+              }
+              return DanmakuScreen(
+                createdController: chatController.initDanmakuController,
+                option: DanmakuOption(
+                  fontSize: AppSettingsController
+                      .instance.danmuSize.value,
+                  fontFamily:
+                      Platform.isWindows ? "Microsoft YaHei" : null,
+                  duration: AppSettingsController
+                      .instance.danmuSpeed.value
+                      .toInt(),
+                  opacity: AppSettingsController
+                      .instance.danmuOpacity.value,
+                  fontWeight: AppSettingsController
+                      .instance.danmuFontWeight.value,
+                ),
+              );
+            }),
+          ),
+        ],
       ),
     );
   }
