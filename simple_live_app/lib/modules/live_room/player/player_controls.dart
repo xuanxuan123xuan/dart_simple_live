@@ -44,7 +44,14 @@ EdgeInsets _fullScreenControlPadding(BuildContext context) {
   }
   if (Platform.isIOS && mediaQuery.orientation == Orientation.landscape) {
     final padding = mediaQuery.viewPadding;
-    return EdgeInsets.only(left: padding.left, right: padding.right);
+    // iOS 横屏时 viewPadding.top 通常为 0（状态栏在侧边），
+    // 但底部需要保留 home indicator 安全区，顶部至少 8pt 呼吸感。
+    return EdgeInsets.only(
+      left: padding.left,
+      right: padding.right,
+      top: padding.top > 0 ? padding.top : 8,
+      bottom: padding.bottom > 0 ? padding.bottom : 8,
+    );
   }
   return mediaQuery.padding;
 }
