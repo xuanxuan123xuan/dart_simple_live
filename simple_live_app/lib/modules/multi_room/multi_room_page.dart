@@ -18,26 +18,15 @@ class MultiRoomPage extends GetView<MultiRoomController> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: Obx(() => Text("多开同屏（${controller.rooms.length}）")),
-        actions: [
-          IconButton(
-            tooltip: "全部刷新",
-            onPressed: () {
-              for (final room in controller.rooms) {
-                controller.playerFor(room).refreshRoom();
-              }
-            },
-            icon: const Icon(Remix.refresh_line),
-          ),
-        ],
-      ),
-      // LayoutBuilder 必须在 Obx 外层：它的 builder 在 layout 阶段才执行，
-      // 若反过来嵌套，Obx 的 build 里读不到任何 Rx，GetX 会抛 ObxError，
-      // release 下整个 body 被替换成空白的 ErrorWidget（表现为白屏）。
-      body: LayoutBuilder(
-        builder: (context, constraints) => Obx(
-          () {
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: controller.toggleOverlay,
+        child: Stack(
+          children: [
+            // 画面网格
+            LayoutBuilder(
+              builder: (context, constraints) => Obx(
+                () {
             final rooms = controller.rooms.toList();
             if (rooms.isEmpty) {
               return const _CenterText("没有可播放的直播间");
@@ -77,7 +66,58 @@ class MultiRoomPage extends GetView<MultiRoomController> {
           },
         ),
       ),
-    );
+      // 顶部覆盖层：点击画面切换显隐，8 秒自动隐藏
+      Obx(
+        () => AnimatedPositioned(
+          left: 0,
+          right: 0,
+          top: controller.showOverlay.value ? 0 : -(48 + MediaQuery.of(context).viewPadding.top),
+          duration: const Duration(milliseconds: 200),
+          child: Container(
+            height: 48 + MediaQuery.of(context).viewPadding.top,
+            padding: EdgeInsets.only(
+              left: 12,
+              right: 12,
+              top: MediaQuery.of(context).viewPadding.top,
+            ),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [Colors.transparent, Colors.black87],
+              ),
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: "返回",
+                  onPressed: () => Get.back(),
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                ),
+                const SizedBox(width: 12),
+                Obx(() => Text(
+                  "多开同屏（${controller.rooms.length}）",
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                )),
+                const Spacer(),
+                IconButton(
+                  tooltip: "全部刷新",
+                  onPressed: () {
+                    for (final room in controller.rooms) {
+                      controller.playerFor(room).refreshRoom();
+                    }
+                  },
+                  icon: const Icon(Remix.refresh_line, color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ],
+  ),
+),
+);
   }
 
   Widget _tileAt(int index, List<MultiRoomItem> rooms) {
