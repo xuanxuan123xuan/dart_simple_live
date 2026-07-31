@@ -111,20 +111,23 @@ class KuaishouSite extends LiveSite {
         room["liveStream"] is Map ? room["liveStream"] as Map : const {};
     final gameInfo =
         room["gameInfo"] is Map ? room["gameInfo"] as Map : const {};
-    final author = room["author"] is Map ? room["author"] as Map : const {};
     for (final value in [
       room["caption"],
       room["title"],
       liveStream["caption"],
       liveStream["title"],
+      if (room["shareInfo"] is Map)
+        (room["shareInfo"] as Map)["title"],
+      if (room["shareInfo"] is Map)
+        (room["shareInfo"] as Map)["caption"],
       gameInfo["name"],
-      author["name"],
     ]) {
       final title = value?.toString().trim() ?? '';
       if (title.isNotEmpty) {
         return title;
       }
     }
+    // 不兜底到 author["name"]——主播名不是直播标题。
     return '';
   }
 
@@ -541,7 +544,6 @@ class KuaishouSite extends LiveSite {
           '',
       title: item["caption"]?.toString() ??
           item["title"]?.toString() ??
-          author["name"]?.toString() ??
           '',
       cover: cover,
       userName:
