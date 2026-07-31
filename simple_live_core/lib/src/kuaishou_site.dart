@@ -109,15 +109,16 @@ class KuaishouSite extends LiveSite {
   static String resolveRoomTitle(Map room) {
     final liveStream =
         room["liveStream"] is Map ? room["liveStream"] as Map : const {};
+    final gameInfo =
+        room["gameInfo"] is Map ? room["gameInfo"] as Map : const {};
+    final author = room["author"] is Map ? room["author"] as Map : const {};
     for (final value in [
       room["caption"],
       room["title"],
       liveStream["caption"],
       liveStream["title"],
-      if (room["shareInfo"] is Map)
-        (room["shareInfo"] as Map)["title"],
-      if (room["shareInfo"] is Map)
-        (room["shareInfo"] as Map)["caption"],
+      gameInfo["name"],
+      author["name"],
     ]) {
       final title = value?.toString().trim() ?? '';
       if (title.isNotEmpty) {
@@ -125,21 +126,6 @@ class KuaishouSite extends LiveSite {
       }
     }
     return '';
-  }
-
-  /// 快手新版 API 的 caption/title 字段经常为空，兜底到 HTML <title> 标签。
-  /// 格式通常为 "主播名正在直播 - 快手直播" 或 "标题 - 快手直播"。
-  static String _parseHtmlTitle(String html) {
-    final match = RegExp(r"<title>(.*?)</title>", dotAll: true).firstMatch(html);
-    if (match == null) return '';
-    var title = match.group(1)?.trim() ?? '';
-    if (title.isEmpty) return '';
-    // 去掉尾部的 " - 快手直播" / " - 快手" 等后缀
-    title = title.replaceFirst(RegExp(r"\s*[-–—|]\s*快手.*$"), '');
-    // 去掉 "的直播间" / "正在直播" 等前缀噪音
-    title = title.replaceFirst(RegExp(r"的直播间\s*$"), '');
-    title = title.replaceFirst(RegExp(r"正在直播\s*$"), '');
-    return title.trim();
   }
 
   static LiveStatusState resolveLiveState(Map room) {
@@ -555,6 +541,7 @@ class KuaishouSite extends LiveSite {
           '',
       title: item["caption"]?.toString() ??
           item["title"]?.toString() ??
+          author["name"]?.toString() ??
           '',
       cover: cover,
       userName:
@@ -744,14 +731,9 @@ class KuaishouSite extends LiveSite {
         credentialResolver: () => _resolveDanmakuCredentials(danmakuArgs),
       );
 
-      String titleText = resolveRoomTitle(selected);
-      if (titleText.isEmpty) {
-        titleText = _parseHtmlTitle(resultText);
-      }
-
       return LiveRoomDetail(
         roomId: resolvedRoomId,
-        title: titleText,
+        title: resolveRoomTitle(selected),
         cover: cover,
         userName: author["name"]?.toString() ?? '',
         userAvatar: author["avatar"]?.toString() ?? '',
