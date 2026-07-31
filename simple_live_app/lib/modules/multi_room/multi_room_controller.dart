@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
+import 'package:simple_live_app/app/sites.dart';
+import 'package:simple_live_app/models/db/follow_user.dart';
+import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
 
@@ -83,5 +86,37 @@ class MultiRoomController extends GetxController {
       SmartDialog.showToast("已关闭全部多开直播间");
       Get.back();
     }
+  }
+
+  /// 从关注的直播中添加房间。已在多开中的忽略。
+  void addRoomFromFollow(FollowUser item) {
+    final room = MultiRoomItem.fromFollow(item);
+    if (rooms.any((r) => r.key == room.key)) {
+      SmartDialog.showToast("${item.userName}已在多开中");
+      return;
+    }
+    rooms.add(room);
+    SmartDialog.showToast("已加入 ${item.userName}");
+  }
+
+  /// 从历史记录中添加房间。
+  void addRoomFromHistory(History item) {
+    final site = Sites.allSites[item.siteId];
+    if (site == null) {
+      SmartDialog.showToast("不支持的平台");
+      return;
+    }
+    final room = MultiRoomItem(
+      site: site,
+      roomId: item.roomId,
+      userName: item.userName,
+      face: item.face,
+    );
+    if (rooms.any((r) => r.key == room.key)) {
+      SmartDialog.showToast("${item.userName}已在多开中");
+      return;
+    }
+    rooms.add(room);
+    SmartDialog.showToast("已加入 ${item.userName}");
   }
 }

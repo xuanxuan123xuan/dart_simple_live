@@ -7,9 +7,14 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/sites.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_controller.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
+import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_app/widgets/follow_user_item.dart';
 
 class MultiRoomPage extends GetView<MultiRoomController> {
   const MultiRoomPage({super.key});
@@ -101,6 +106,11 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                 )),
                 const Spacer(),
                 IconButton(
+                  tooltip: "加入直播间",
+                  onPressed: () => _showAddRoomSheet(context),
+                  icon: const Icon(Remix.play_list_add_line, color: Colors.white),
+                ),
+                IconButton(
                   tooltip: "全部刷新",
                   onPressed: () {
                     for (final room in controller.rooms) {
@@ -163,6 +173,107 @@ class MultiRoomPage extends GetView<MultiRoomController> {
       }
     }
     return bestColumns;
+  }
+
+  void _showAddRoomSheet(BuildContext context) {
+    final tabIndex = 0.obs;
+    final alreadyInRoom = <String>{for (final r in controller.rooms) r.key};
+
+    Utils.showBottomSheet(
+      title: "加入直播间",
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Obx(() => Row(
+              children: [
+                _TabChip("关注(直播中)", tabIndex.value == 0, () => tabIndex.value = 0),
+                const SizedBox(width: 8),
+                _TabChip("历史", tabIndex.value == 1, () => tabIndex.value = 1),
+              ],
+            )),
+          ),
+          Expanded(
+            child: Obx(() {
+              if (tabIndex.value == 1) return _buildHistoryTab(alreadyInRoom);
+              return _buildFollowTab(alreadyInRoom);
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFollowTab(Set<String> alreadyInRoom) {
+    final liveList = FollowService.instance.liveList;
+    if (liveList.isEmpty) {
+      return const Center(
+        child: Text("没有直播中的关注", style: TextStyle(color: Colors.white70)));
+    }
+    return ListView.builder(
+      itemCount: liveList.length,
+      itemBuilder: (_, i) {
+        final item = liveList[i];
+        final added = alreadyInRoom.contains(MultiRoomItem.fromFollow(item).key);
+        return FollowUserItem(item: item, playing: added,
+          onTap: () {
+            if (!added) { Get.back(); controller.addRoomFromFollow(item); }
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildHistoryTab(Set<String> alreadyInRoom) {
+    final histories = DBService.instance.getHistores();
+    if (histories.isEmpty) {
+      return const Center(
+        child: Text("没有历史记录", style: TextStyle(color: Colors.white70)));
+    }
+    return ListView.builder(
+      itemCount: histories.length,
+      itemBuilder: (_, i) {
+        final item = histories[i];
+        final site = Sites.allSites[item.siteId];
+        final added = alreadyInRoom.contains("${item.siteId}_${item.roomId}");
+        return ListTile(
+          leading: site != null
+              ? Image.asset(site.logo, width: 32, height: 32)
+              : const Icon(Icons.live_tv, color: Colors.white54),
+          title: Text(item.userName,
+              style: TextStyle(color: added ? Colors.white38 : Colors.white)),
+          subtitle: Text("${site?.name ?? item.siteId}",
+              style: const TextStyle(color: Colors.white54, fontSize: 12)),
+          enabled: !added,
+          onTap: () {
+            if (!added) { Get.back(); controller.addRoomFromHistory(item); }
+          },
+        );
+      },
+    );
+  }
+}
+
+class _TabChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _TabChip(this.label, this.selected, this.onTap, {super.key});
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white24 : Colors.white10,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(label, style: TextStyle(
+          color: selected ? Colors.white : Colors.white54, fontSize: 14,
+        )),
+      ),
+    );
   }
 }
 
