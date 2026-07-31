@@ -39,6 +39,12 @@ class MultiRoomPage extends GetView<MultiRoomController> {
             final gap = AppSettingsController.instance
                 .effectiveMultiRoomGap
                 .toDouble();
+            final showChat = AppSettingsController.instance
+                    .multiRoomShowChatPanel.value &&
+                (rooms.length == 2 || rooms.length == 3);
+            if (showChat) {
+              return _buildChatPanelLayout(rooms, constraints, gap);
+            }
             final columns = _bestColumnCount(
               rooms.length,
               constraints.maxWidth,
@@ -175,6 +181,79 @@ class MultiRoomPage extends GetView<MultiRoomController> {
     return bestColumns;
   }
 
+  Widget _buildChatPanelLayout(
+    List<MultiRoomItem> rooms,
+    BoxConstraints constraints,
+    double gap,
+  ) {
+    final chatRoomIndex = controller.chatTargetIndex.value
+        .clamp(0, rooms.length - 1);
+    final chatController = controller.playerFor(rooms[chatRoomIndex]);
+
+    if (rooms.length == 2) {
+      return Padding(
+        padding: EdgeInsets.all(gap),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: Column(
+                children: [
+                  Expanded(child: _tileAt(0, rooms)),
+                  SizedBox(height: gap),
+                  Expanded(child: _tileAt(1, rooms)),
+                ],
+              ),
+            ),
+            SizedBox(width: gap),
+            Expanded(
+              flex: 1,
+              child: _ChatPanel(
+                rooms: rooms,
+                chatController: chatController,
+                chatRoomIndex: chatRoomIndex,
+                onSelect: (i) => controller.chatTargetIndex.value = i,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.all(gap),
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _tileAt(0, rooms)),
+                SizedBox(width: gap),
+                Expanded(child: _tileAt(1, rooms)),
+              ],
+            ),
+          ),
+          SizedBox(height: gap),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _tileAt(2, rooms)),
+                SizedBox(width: gap),
+                Expanded(
+                  child: _ChatPanel(
+                    rooms: rooms,
+                    chatController: chatController,
+                    chatRoomIndex: chatRoomIndex,
+                    onSelect: (i) => controller.chatTargetIndex.value = i,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showAddRoomSheet(BuildContext context) {
     final tabIndex = 0.obs;
     final alreadyInRoom = <String>{for (final r in controller.rooms) r.key};
@@ -250,6 +329,116 @@ class MultiRoomPage extends GetView<MultiRoomController> {
           },
         );
       },
+    );
+  }
+}
+
+class _ChatPanel extends StatelessWidget {
+  final List<MultiRoomItem> rooms;
+  final MultiRoomPlayerController chatController;
+  final int chatRoomIndex;
+  final void Function(int) onSelect;
+
+  const _ChatPanel({
+    required this.rooms,
+    required this.chatController,
+    required this.chatRoomIndex,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: AppStyle.radius8,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black,
+          border: Border.all(color: Colors.white24),
+          borderRadius: AppStyle.radius8,
+        ),
+        child: Column(
+          children: [
+            // 顶部直播间选择按钮行
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              color: Colors.black54,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(rooms.length, (i) {
+                  final room = rooms[i];
+                  final selected = i == chatRoomIndex;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: GestureDetector(
+                      onTap: () => onSelect(i),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? Colors.white24
+                              : Colors.white10,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Image.asset(
+                              room.site.logo,
+                              width: 18,
+                              height: 18,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              room.userName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color:
+                                    selected ? Colors.white : Colors.white54,
+                                fontSize: 12,
+                                fontWeight: selected
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ),
+            // 弹幕区域
+            Expanded(
+              child: Obx(() {
+                if (chatController.loading.value) {
+                  return const Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  );
+                }
+                return DanmakuScreen(
+                  createdController: chatController.initDanmakuController,
+                  option: DanmakuOption(
+                    fontSize: AppSettingsController
+                        .instance.danmuSize.value,
+                    fontFamily:
+                        Platform.isWindows ? "Microsoft YaHei" : null,
+                    duration: AppSettingsController
+                        .instance.danmuSpeed.value
+                        .toInt(),
+                    opacity: AppSettingsController
+                        .instance.danmuOpacity.value,
+                    fontWeight: AppSettingsController
+                        .instance.danmuFontWeight.value,
+                  ),
+                );
+              }),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

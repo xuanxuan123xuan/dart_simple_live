@@ -38,6 +38,16 @@ class MultiRoomSettingsPage extends GetView<AppSettingsController> {
                   ),
                 if (isDesktop) AppStyle.divider,
                 Obx(
+                  () => SettingsSwitch(
+                    title: "显示聊天区面板",
+                    subtitle: "2个直播时画面左移，右侧显示聊天区；"
+                        "3个直播时用空白格显示。顶部可切换来源直播间。",
+                    value: controller.multiRoomShowChatPanel.value,
+                    onChanged: controller.setMultiRoomShowChatPanel,
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
                   () => SettingsNumber(
                     title: "布局间距",
                     subtitle: isDesktop

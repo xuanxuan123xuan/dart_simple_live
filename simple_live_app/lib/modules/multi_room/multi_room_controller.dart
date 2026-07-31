@@ -18,6 +18,9 @@ class MultiRoomController extends GetxController {
   /// 顶部工具栏的显示状态。点击画面切换，8 秒自动隐藏。
   var showOverlay = true.obs;
 
+  /// 聊天区面板当前展示的直播间索引（对应 rooms 列表）。
+  var chatTargetIndex = 0.obs;
+
   Timer? _autoHideTimer;
 
   void toggleOverlay() {

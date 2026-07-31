@@ -391,6 +391,10 @@ class AppSettingsController extends GetxController {
       LocalStorageService.kMultiRoomCollapseChat,
       true,
     );
+    multiRoomShowChatPanel.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kMultiRoomShowChatPanel,
+      false,
+    );
 
     initSiteSort();
     initHomeSort();
@@ -2063,6 +2067,15 @@ class AppSettingsController extends GetxController {
     multiRoomCollapseChat.value = value;
     LocalStorageService.instance.setValue(
       LocalStorageService.kMultiRoomCollapseChat,
+      value,
+    );
+  }
+
+  var multiRoomShowChatPanel = false.obs;
+  void setMultiRoomShowChatPanel(bool value) {
+    multiRoomShowChatPanel.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kMultiRoomShowChatPanel,
       value,
     );
   }
