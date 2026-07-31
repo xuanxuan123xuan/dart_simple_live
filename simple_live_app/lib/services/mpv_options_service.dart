@@ -124,6 +124,11 @@ class MpvOptionsService {
     final options = Map<String, String>.from(effectiveOptions())
       ..remove("vo")
       ..remove("hwdec");
+    // iOS 默认 vo=libmpv，profile=gpu-hq/gpu-next 是为 vo=gpu 设计的，
+    // 强行设置会破坏 libmpv 的颜色渲染管线（表现为绿色滤镜）。
+    if (Platform.isIOS) {
+      options.remove("profile");
+    }
     for (final entry in options.entries) {
       try {
         await (player.platform as dynamic).setProperty(entry.key, entry.value);
