@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/sites.dart';
@@ -8,7 +9,8 @@ import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
 
-class MultiRoomController extends GetxController {
+class MultiRoomController extends GetxController
+    with WidgetsBindingObserver {
   final List<MultiRoomItem> initialRooms;
 
   MultiRoomController(this.initialRooms);
@@ -42,12 +44,14 @@ class MultiRoomController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    WidgetsBinding.instance.addObserver(this);
     rooms.assignAll(_distinct(initialRooms));
     _resetAutoHideTimer();
   }
 
   @override
   void onClose() {
+    WidgetsBinding.instance.removeObserver(this);
     _autoHideTimer?.cancel();
     for (final item in rooms) {
       final tag = playerTag(item);
@@ -98,6 +102,18 @@ class MultiRoomController extends GetxController {
     if (newIndex < 0 || newIndex >= rooms.length) return;
     final item = rooms.removeAt(oldIndex);
     rooms.insert(newIndex, item);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      for (final room in rooms) {
+        final c = playerFor(room);
+        if (c.liveStatus.value && !c.player.state.playing) {
+          c.player.play();
+        }
+      }
+    }
   }
 
   /// 从关注的直播中添加房间。已在多开中的忽略。

@@ -399,7 +399,7 @@ class _ChatPanel extends StatelessWidget {
         children: [
           // 顶部直播间选择按钮行
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
@@ -407,85 +407,101 @@ class _ChatPanel extends StatelessWidget {
                 colors: [Colors.black54, Colors.transparent],
               ),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 6,
               children: List.generate(rooms.length, (i) {
                 final room = rooms[i];
                 final selected = i == chatRoomIndex;
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: GestureDetector(
-                    onTap: () => onSelect(i),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: selected
-                              ? Colors.white30
-                              : Colors.transparent,
+                return GestureDetector(
+                  onTap: () => onSelect(i),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: selected
+                            ? Colors.white30
+                            : Colors.transparent,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Image.asset(
+                          room.site.logo,
+                          width: 20,
+                          height: 20,
+                          opacity: selected
+                              ? const AlwaysStoppedAnimation(1)
+                              : const AlwaysStoppedAnimation(0.5),
                         ),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Image.asset(
-                            room.site.logo,
-                            width: 18,
-                            height: 18,
-                            opacity: selected
-                                ? const AlwaysStoppedAnimation(1)
-                                : const AlwaysStoppedAnimation(0.5),
+                        const SizedBox(width: 8),
+                        Text(
+                          room.userName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: selected
+                                ? Colors.white
+                                : Colors.white54,
+                            fontSize: 13,
+                            fontWeight: selected
+                                ? FontWeight.w600
+                                : FontWeight.normal,
                           ),
-                          const SizedBox(width: 6),
-                          Text(
-                            room.userName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: selected
-                                  ? Colors.white
-                                  : Colors.white38,
-                              fontSize: 12,
-                              fontWeight: selected
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 );
               }),
             ),
           ),
-          // 弹幕区域
+          // 竖向弹幕列表
           Expanded(
             child: Obx(() {
-              if (chatController.loading.value) {
+              final msgs = chatController.chatMessages;
+              if (msgs.isEmpty) {
                 return const Center(
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white24),
+                  child: Text("暂无弹幕",
+                      style: TextStyle(color: Colors.white24, fontSize: 12)),
                 );
               }
-              return DanmakuScreen(
-                createdController: chatController.initDanmakuController,
-                option: DanmakuOption(
-                  fontSize: AppSettingsController
-                      .instance.danmuSize.value,
-                  fontFamily:
-                      Platform.isWindows ? "Microsoft YaHei" : null,
-                  duration: AppSettingsController
-                      .instance.danmuSpeed.value
-                      .toInt(),
-                  opacity: AppSettingsController
-                      .instance.danmuOpacity.value,
-                  fontWeight: AppSettingsController
-                      .instance.danmuFontWeight.value,
-                ),
+              return ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                itemCount: msgs.length,
+                itemBuilder: (_, i) {
+                  final msg = msgs[i];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 1),
+                    child: RichText(
+                      text: TextSpan(
+                        children: [
+                          TextSpan(
+                            text: "${msg.userName}: ",
+                            style: TextStyle(
+                              color: Color.fromARGB(
+                                  255, msg.color.r, msg.color.g, msg.color.b),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          TextSpan(
+                            text: msg.message,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
               );
             }),
           ),

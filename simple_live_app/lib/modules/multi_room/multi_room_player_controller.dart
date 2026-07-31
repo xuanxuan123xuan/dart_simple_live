@@ -47,6 +47,10 @@ class MultiRoomPlayerController extends GetxController {
   /// 弹幕渲染层的控制器，由 `DanmakuScreen` 在 build 时回传。
   DanmakuController? danmakuController;
 
+  /// 聊天区竖向弹幕消息列表（独立于画面弹幕，不受弹幕开关控制）。
+  final chatMessages = <LiveMessage>[].obs;
+  static const int _maxChatMessages = 200;
+
   List<LivePlayQuality> _qualities = const [];
   List<String> _playUrls = const [];
   Map<String, String>? _playHeaders;
@@ -77,6 +81,7 @@ class MultiRoomPlayerController extends GetxController {
       await player.stop();
       // 重新加载前断开旧连接，避免刷新后同一格挂着两条长连接。
       await _stopDanmaku();
+      chatMessages.clear();
       final roomDetail =
           await item.site.liveSite.getRoomDetail(roomId: item.roomId);
       if (_disposed) {
@@ -166,12 +171,16 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   void _onDanmakuMessage(LiveMessage msg) {
-    if (_disposed ||
-        msg.type != LiveMessageType.chat ||
-        !showDanmaku.value ||
-        !liveStatus.value) {
+    if (_disposed || msg.type != LiveMessageType.chat || !liveStatus.value) {
       return;
     }
+    // 聊天区消息始终记录（不受弹幕开关控制）。
+    chatMessages.add(msg);
+    while (chatMessages.length > _maxChatMessages) {
+      chatMessages.removeAt(0);
+    }
+    // 画面弹幕由开关控制。
+    if (!showDanmaku.value) return;
     final settings = AppSettingsController.instance;
     danmakuController?.addDanmaku(
       DanmakuContentItem(
