@@ -91,6 +91,15 @@ class MultiRoomController extends GetxController {
     }
   }
 
+  /// 交换两个房间的位置。
+  void swapRooms(int oldIndex, int newIndex) {
+    if (oldIndex == newIndex) return;
+    if (oldIndex < 0 || oldIndex >= rooms.length) return;
+    if (newIndex < 0 || newIndex >= rooms.length) return;
+    final item = rooms.removeAt(oldIndex);
+    rooms.insert(newIndex, item);
+  }
+
   /// 从关注的直播中添加房间。已在多开中的忽略。
   void addRoomFromFollow(FollowUser item) {
     final room = MultiRoomItem.fromFollow(item);

@@ -142,10 +142,50 @@ class MultiRoomPage extends GetView<MultiRoomController> {
       return const SizedBox.shrink();
     }
     final room = rooms[index];
-    return _MultiRoomTile(
+    final tile = _MultiRoomTile(
       item: room,
       controller: controller.playerFor(room),
       onRemove: () => controller.removeRoom(room),
+    );
+    return AnimatedSwitcher(
+      key: ValueKey(room.key),
+      duration: const Duration(milliseconds: 300),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      child: DragTarget<int>(
+        onWillAcceptWithDetails: (details) => details.data != index,
+        onAcceptWithDetails: (details) {
+          controller.swapRooms(details.data, index);
+        },
+        builder: (ctx, candidates, rejected) {
+          return Opacity(
+            opacity: candidates.isNotEmpty ? 0.8 : 1,
+            child: LongPressDraggable<int>(
+              data: index,
+              delay: const Duration(milliseconds: 300),
+              feedback: Opacity(
+                opacity: 0.85,
+                child: Material(
+                  color: Colors.transparent,
+                  child: SizedBox(
+                    width: MediaQuery.of(ctx).size.width * 0.4,
+                    child: _MultiRoomTile(
+                      item: room,
+                      controller: controller.playerFor(room),
+                      onRemove: () => {},
+                    ),
+                  ),
+                ),
+              ),
+              childWhenDragging: Opacity(
+                opacity: 0.4,
+                child: tile,
+              ),
+              child: tile,
+            ),
+          );
+        },
+      ),
     );
   }
 
