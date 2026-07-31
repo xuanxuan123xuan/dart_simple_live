@@ -35,17 +35,19 @@ class JavascriptCoreRuntime extends JavascriptRuntime {
     _sendMessageDartFunc = _sendMessage;
 
     Pointer<Utf8> funcNameCString = 'sendMessage'.toNativeUtf8();
+    final funcNameJSString = jSStringCreateWithUTF8CString(funcNameCString);
     var functionObject = jSObjectMakeFunctionWithCallback(
         _globalContext,
-        jSStringCreateWithUTF8CString(funcNameCString),
+        funcNameJSString,
         Pointer.fromFunction(sendMessageBridgeFunction));
     jSObjectSetProperty(
         _globalContext,
         _globalObject,
-        jSStringCreateWithUTF8CString(funcNameCString),
+        funcNameJSString,
         functionObject,
         jsObject.JSPropertyAttributes.kJSPropertyAttributeNone,
         nullptr);
+    jSStringRelease(funcNameJSString);
     calloc.free(funcNameCString);
 
     init();

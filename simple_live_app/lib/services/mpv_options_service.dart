@@ -118,9 +118,6 @@ class MpvOptionsService {
   }
 
   static Future<void> applyToPlayer(Player player) async {
-    if (Platform.isIOS) {
-      return;
-    }
     if (player.platform is! NativePlayer) {
       return;
     }

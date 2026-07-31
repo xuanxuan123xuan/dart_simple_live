@@ -32,9 +32,12 @@ class MultiRoomPage extends GetView<MultiRoomController> {
           ),
         ],
       ),
-      body: Obx(
-        () => LayoutBuilder(
-          builder: (context, constraints) {
+      // LayoutBuilder 必须在 Obx 外层：它的 builder 在 layout 阶段才执行，
+      // 若反过来嵌套，Obx 的 build 里读不到任何 Rx，GetX 会抛 ObxError，
+      // release 下整个 body 被替换成空白的 ErrorWidget（表现为白屏）。
+      body: LayoutBuilder(
+        builder: (context, constraints) => Obx(
+          () {
             final rooms = controller.rooms.toList();
             if (rooms.isEmpty) {
               return const _CenterText("没有可播放的直播间");
