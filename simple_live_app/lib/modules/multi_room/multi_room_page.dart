@@ -350,7 +350,12 @@ class _ChatPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: AppStyle.radius8,
-      child: Column(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.black.withAlpha(120),
+          borderRadius: AppStyle.radius8,
+        ),
+        child: Column(
         children: [
           // 顶部直播间选择按钮行
           Container(
@@ -445,6 +450,7 @@ class _ChatPanel extends StatelessWidget {
             }),
           ),
         ],
+      ),
       ),
     );
   }
