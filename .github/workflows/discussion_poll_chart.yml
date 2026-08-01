@@ -7,8 +7,8 @@ on:
         description: "Discussion number"
         type: number
         default: 68
-  schedule:
-    - cron: "*/5 * * * *"
+  # 该 Discussion 已关闭，不再设置 schedule 自动触发，
+  # 避免每 5 分钟产生一个被跳过的空 run 刷屏 Actions 列表。
 
 permissions:
   discussions: write
