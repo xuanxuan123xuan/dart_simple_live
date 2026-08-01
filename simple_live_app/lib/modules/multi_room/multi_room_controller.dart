@@ -176,6 +176,25 @@ class MultiRoomController extends GetxController
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _resumeAllPlayers();
+      _restoreDanmakuAll();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      // 后台挂起：断开所有格子弹幕长连接，省心跳与流量，前台恢复。
+      _suspendDanmakuAll();
+    }
+  }
+
+  /// 后台挂起：断开所有格子弹幕连接（含降级中的）。
+  void _suspendDanmakuAll() {
+    for (final room in rooms) {
+      unawaited(playerFor(room).degradeDanmaku());
+    }
+  }
+
+  /// 前台恢复：重建所有格子弹幕连接。
+  void _restoreDanmakuAll() {
+    for (final room in rooms) {
+      unawaited(playerFor(room).restoreDanmaku());
     }
   }
 
