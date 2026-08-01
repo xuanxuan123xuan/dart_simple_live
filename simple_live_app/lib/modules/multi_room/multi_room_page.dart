@@ -305,8 +305,12 @@ class MultiRoomPage extends GetView<MultiRoomController> {
         child: LayoutBuilder(
           builder: (ctx, innerConstraints) {
             final ratio = controller.chatPanelRatio.value;
+            // 用相对比例 clamp（0.2-0.6 倍总宽），避免窄屏时被绝对
+            // 宽度卡住导致拖动看起来没反应。
+            final minChatW = innerConstraints.maxWidth * 0.2;
+            final maxChatW = innerConstraints.maxWidth * 0.6;
             final chatWidth =
-                (innerConstraints.maxWidth * ratio).clamp(200.0, 800.0);
+                (innerConstraints.maxWidth * ratio).clamp(minChatW, maxChatW);
             // 聊天区宽度拖动手柄
             final dragHandle = GestureDetector(
               behavior: HitTestBehavior.translucent,
