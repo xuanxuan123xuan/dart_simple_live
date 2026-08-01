@@ -204,6 +204,29 @@ class MultiRoomPlayerController extends GetxController {
     }
   }
 
+  /// 低内存降级：暂停本格弹幕连接（降级状态由调用方记录）。
+  Future<void> degradeDanmaku() async {
+    await _stopDanmaku();
+    danmakuController?.clear();
+  }
+
+  /// 低内存恢复：重建本格弹幕连接。
+  Future<void> restoreDanmaku() async {
+    final roomDetail = detail.value;
+    if (roomDetail == null || !liveStatus.value) {
+      return;
+    }
+    _startDanmaku(roomDetail);
+  }
+
+  /// 低内存降级：切到最低清晰度（若当前不是最低）。
+  Future<void> degradeQuality() async {
+    if (_qualities.length <= 1 || _qualityIndex == _qualities.length - 1) {
+      return;
+    }
+    await changeQuality(_qualities.length - 1);
+  }
+
   /// 由 `DanmakuScreen` 创建后回传渲染控制器。
   void initDanmakuController(DanmakuController e) {
     danmakuController = e;

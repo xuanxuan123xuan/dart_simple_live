@@ -48,6 +48,16 @@ class MultiRoomSettingsPage extends GetView<AppSettingsController> {
                 ),
                 AppStyle.divider,
                 Obx(
+                  () => SettingsSwitch(
+                    title: "低内存自动降级",
+                    subtitle: "进程内存较高时，自动暂停非活跃格子弹幕"
+                        "（4路及以上时额外降低画质），内存回落自动恢复",
+                    value: controller.multiRoomLowMemoryDegrade.value,
+                    onChanged: controller.setMultiRoomLowMemoryDegrade,
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
                   () => SettingsNumber(
                     title: "布局间距",
                     subtitle: isDesktop

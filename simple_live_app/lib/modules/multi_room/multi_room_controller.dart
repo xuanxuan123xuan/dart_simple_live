@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
+import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
@@ -12,6 +13,7 @@ import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/memory_pressure_monitor.dart';
 
 class MultiRoomController extends GetxController
     with WidgetsBindingObserver {
@@ -37,6 +39,9 @@ class MultiRoomController extends GetxController
   Map<String, double> _pendingVolumes = {};
   Map<String, bool> _pendingDanmaku = {};
   int _pendingChatTarget = 0;
+
+  /// 低内存降级中已暂停弹幕的格子 key。
+  final Set<String> _degradedKeys = {};
 
   void toggleOverlay() {
     showOverlay.value = !showOverlay.value;
@@ -77,6 +82,7 @@ class MultiRoomController extends GetxController
     rooms.assignAll(_distinct(initialRooms));
     _restoreLayout(rooms);
     _resetAutoHideTimer();
+    _setupMemoryMonitor();
     // 多开同屏进入沉浸模式，隐藏 iPad/Android 顶部状态栏。
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
@@ -86,6 +92,7 @@ class MultiRoomController extends GetxController
     WidgetsBinding.instance.removeObserver(this);
     _autoHideTimer?.cancel();
     _resumeTimer?.cancel();
+    _teardownMemoryMonitor();
     _saveLayout();
     // 恢复系统栏。
     SystemChrome.setEnabledSystemUIMode(
@@ -214,6 +221,66 @@ class MultiRoomController extends GetxController
       _resumeTimer = null;
       _resumeAllPlayers();
     });
+  }
+
+  // ==================== 低内存降级 ====================
+
+  void _setupMemoryMonitor() {
+    if (!AppSettingsController.instance.multiRoomLowMemoryDegrade.value) {
+      return;
+    }
+    MemoryPressureMonitor.instance.onDegrade = _onMemoryDegrade;
+    MemoryPressureMonitor.instance.onRecover = _onMemoryRecover;
+    MemoryPressureMonitor.instance.start();
+  }
+
+  void _teardownMemoryMonitor() {
+    MemoryPressureMonitor.instance.onDegrade = null;
+    MemoryPressureMonitor.instance.onRecover = null;
+    MemoryPressureMonitor.instance.stop();
+  }
+
+  /// 判断某格是否"活跃"（用户正在看：被聚焦或聊天区目标）。
+  bool _isActiveRoom(MultiRoomItem room, int index) {
+    return focusedRoomKey.value == room.key || chatTargetIndex.value == index;
+  }
+
+  /// 内存压力大：暂停非活跃格子的弹幕；房间数 ≥ 4 时额外降画质。
+  void _onMemoryDegrade() {
+    if (!AppSettingsController.instance.multiRoomLowMemoryDegrade.value) {
+      return;
+    }
+    _degradedKeys.clear();
+    final heavy = rooms.length >= 4;
+    for (var i = 0; i < rooms.length; i += 1) {
+      final room = rooms[i];
+      if (_isActiveRoom(room, i)) {
+        continue;
+      }
+      final c = playerFor(room);
+      _degradedKeys.add(room.key);
+      unawaited(c.degradeDanmaku());
+      if (heavy) {
+        unawaited(c.degradeQuality());
+      }
+    }
+    if (_degradedKeys.isNotEmpty) {
+      SmartDialog.showToast(
+        "内存占用较高，已暂停 ${_degradedKeys.length} 路非活跃弹幕"
+        "${heavy ? '并降低画质' : ''}",
+      );
+    }
+  }
+
+  /// 内存回落：恢复被降级的格子弹幕。
+  void _onMemoryRecover() {
+    for (final key in _degradedKeys) {
+      final room = rooms.firstWhereOrNull((r) => r.key == key);
+      if (room != null) {
+        unawaited(playerFor(room).restoreDanmaku());
+      }
+    }
+    _degradedKeys.clear();
   }
 
   // ==================== 布局持久化 ====================

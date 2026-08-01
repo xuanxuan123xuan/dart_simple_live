@@ -395,6 +395,10 @@ class AppSettingsController extends GetxController {
       LocalStorageService.kMultiRoomShowChatPanel,
       false,
     );
+    multiRoomLowMemoryDegrade.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kMultiRoomLowMemoryDegrade,
+      true,
+    );
 
     initSiteSort();
     initHomeSort();
@@ -2076,6 +2080,16 @@ class AppSettingsController extends GetxController {
     multiRoomShowChatPanel.value = value;
     LocalStorageService.instance.setValue(
       LocalStorageService.kMultiRoomShowChatPanel,
+      value,
+    );
+  }
+
+  /// 低内存自动降级（多开）：内存压力大时暂停非活跃格子弹幕/降画质。
+  var multiRoomLowMemoryDegrade = true.obs;
+  void setMultiRoomLowMemoryDegrade(bool value) {
+    multiRoomLowMemoryDegrade.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kMultiRoomLowMemoryDegrade,
       value,
     );
   }

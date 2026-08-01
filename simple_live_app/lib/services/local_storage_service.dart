@@ -33,6 +33,7 @@ class LocalStorageService extends GetxService {
   static const String kMultiRoomGap = "MultiRoomGap";
   static const String kMultiRoomCollapseChat = "MultiRoomCollapseChat";
   static const String kMultiRoomShowChatPanel = "MultiRoomShowChatPanel";
+  static const String kMultiRoomLowMemoryDegrade = "MultiRoomLowMemoryDegrade";
   static const String kMultiRoomLayout = "MultiRoomLayout";
   static const String kThemeMode = "ThemeMode";
   static const String kDebugModeKey = "DebugMode";
