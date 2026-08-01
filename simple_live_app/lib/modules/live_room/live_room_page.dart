@@ -1076,6 +1076,29 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             ),
           ),
         ),
+        // 自动网络诊断提示（缓冲 2 次以上触发）
+        Obx(
+          () => controller.networkHint.value.isEmpty
+              ? const SizedBox.shrink()
+              : Positioned(
+                  left: 12,
+                  top: 12,
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 340),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(180),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      controller.networkHint.value,
+                      style: const TextStyle(
+                          fontSize: 12, color: Colors.white70),
+                    ),
+                  ),
+                ),
+        ),
       ],
     );
   }

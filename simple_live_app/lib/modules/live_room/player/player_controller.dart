@@ -25,6 +25,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
+import 'package:simple_live_app/services/network_diagnose_service.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
@@ -1654,11 +1655,19 @@ class PlayerController extends BaseController
   StreamSubscription? _heightSubscription;
   StreamSubscription? _logSubscription;
   StreamSubscription? _playingSubscription;
+  StreamSubscription<bool>? _bufferingSubscription;
 
   // Fix Issue #57: 流错误重试计数器
   int _streamErrorRetryCount = 0;
   DateTime? _lastStreamErrorTime;
   Timer? _surfaceHealthCheckTimer;
+
+  /// 自动网络诊断提示（缓冲 2 次以上触发，显示在画面左上角）。
+  final networkHint = "".obs;
+  int _bufferingCount = 0;
+  DateTime? _lastBufferingTime;
+  bool _autoDiagnoseRunning = false;
+  Timer? _networkHintTimer;
 
   void initStream() {
     _errorSubscription = player.stream.error.listen((event) {
@@ -1732,6 +1741,49 @@ class PlayerController extends BaseController
 
     // Fix Issue #57: 启动Surface健康检查
     _startSurfaceHealthCheck();
+
+    // 缓冲转圈 2 次以上自动触发网络诊断提示。
+    _bufferingSubscription = player.stream.buffering.listen((buffering) {
+      if (!buffering || isPlayerClosing) {
+        return;
+      }
+      final now = DateTime.now();
+      if (_lastBufferingTime != null &&
+          now.difference(_lastBufferingTime!) <
+              const Duration(milliseconds: 300)) {
+        return;
+      }
+      _lastBufferingTime = now;
+      _bufferingCount += 1;
+      if (_bufferingCount >= 2 && networkHint.value.isEmpty) {
+        unawaited(_runAutoNetworkDiagnose());
+      }
+    });
+  }
+
+  /// 自动网络诊断：缓冲 2 次以上时测延迟/丢包，提示显示在画面左上角，
+  /// 8 秒后自动消失。
+  Future<void> _runAutoNetworkDiagnose() async {
+    if (_autoDiagnoseRunning) {
+      return;
+    }
+    _autoDiagnoseRunning = true;
+    networkHint.value = "网络检测中…";
+    final results = await NetworkDiagnoseService.diagnose(
+      NetworkDiagnoseService.defaultTargets,
+      samples: 3,
+    );
+    _autoDiagnoseRunning = false;
+    if (isPlayerClosing) {
+      return;
+    }
+    networkHint.value = NetworkDiagnoseService.summarize(results);
+    _networkHintTimer?.cancel();
+    _networkHintTimer = Timer(const Duration(seconds: 8), () {
+      if (networkHint.value.isNotEmpty) {
+        networkHint.value = "";
+      }
+    });
   }
 
   void disposeStream() {
@@ -1743,6 +1795,8 @@ class PlayerController extends BaseController
     _pipSubscription?.cancel();
     _ohosPipSubscription?.cancel();
     _playingSubscription?.cancel();
+    _bufferingSubscription?.cancel();
+    _networkHintTimer?.cancel();
     _surfaceHealthCheckTimer?.cancel();
   }
 
