@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/sites.dart';
@@ -48,6 +49,8 @@ class MultiRoomController extends GetxController
     WidgetsBinding.instance.addObserver(this);
     rooms.assignAll(_distinct(initialRooms));
     _resetAutoHideTimer();
+    // 多开同屏进入沉浸模式，隐藏 iPad/Android 顶部状态栏。
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   @override
@@ -55,6 +58,11 @@ class MultiRoomController extends GetxController
     WidgetsBinding.instance.removeObserver(this);
     _autoHideTimer?.cancel();
     _resumeTimer?.cancel();
+    // 恢复系统栏。
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+      overlays: SystemUiOverlay.values,
+    );
     for (final item in rooms) {
       final tag = playerTag(item);
       if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {

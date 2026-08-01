@@ -578,7 +578,7 @@ class _TabChip extends StatelessWidget {
   }
 }
 
-class _MultiRoomTile extends StatelessWidget {
+class _MultiRoomTile extends StatefulWidget {
   final MultiRoomItem item;
   final MultiRoomPlayerController controller;
   final VoidCallback onRemove;
@@ -590,7 +590,17 @@ class _MultiRoomTile extends StatelessWidget {
   });
 
   @override
+  State<_MultiRoomTile> createState() => _MultiRoomTileState();
+}
+
+class _MultiRoomTileState extends State<_MultiRoomTile> {
+  bool _showVolumeSlider = false;
+
+  @override
   Widget build(BuildContext context) {
+    final item = widget.item;
+    final controller = widget.controller;
+    final onRemove = widget.onRemove;
     return ClipRRect(
       borderRadius: AppStyle.radius8,
       child: DecoratedBox(
@@ -672,11 +682,18 @@ class _MultiRoomTile extends StatelessWidget {
                   ),
                   Obx(
                     () => _OverlayButton(
-                      tooltip: controller.muted.value ? "取消静音" : "静音",
+                      tooltip: controller.muted.value ? "取消静音" : "调节音量",
                       icon: controller.muted.value
                           ? Remix.volume_mute_line
                           : Remix.volume_up_line,
-                      onPressed: controller.toggleMute,
+                      onPressed: () {
+                        if (controller.muted.value) {
+                          controller.toggleMute();
+                        } else {
+                          setState(() =>
+                              _showVolumeSlider = !_showVolumeSlider);
+                        }
+                      },
                     ),
                   ),
                   _OverlayButton(
@@ -685,6 +702,38 @@ class _MultiRoomTile extends StatelessWidget {
                     onPressed: onRemove,
                   ),
                 ],
+              ),
+            ),
+            // 音量滑条
+            Positioned(
+              right: 4,
+              bottom: 48,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 150),
+                opacity: _showVolumeSlider ? 1 : 0,
+                child: IgnorePointer(
+                  ignoring: !_showVolumeSlider,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(160),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: SizedBox(
+                      width: 140,
+                      child: Obx(
+                        () => Slider(
+                          value: controller.volume.value,
+                          min: 0,
+                          max: 100,
+                          onChanged: (v) {
+                            controller.setVolume(v);
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ],

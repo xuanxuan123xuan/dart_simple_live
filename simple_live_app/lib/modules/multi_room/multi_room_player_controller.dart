@@ -42,6 +42,9 @@ class MultiRoomPlayerController extends GetxController {
   /// 本格弹幕开关。多开只收不发，不提供发送入口。
   final showDanmaku = true.obs;
 
+  /// 本格独立音量（0-100），互不影响。
+  final volume = 100.0.obs;
+
   /// 每格一条独立的弹幕长连接。
   late LiveDanmaku liveDanmaku = item.site.liveSite.getDanmaku();
 
@@ -151,8 +154,7 @@ class MultiRoomPlayerController extends GetxController {
       url = url.replaceAll("http://", "https://");
     }
     await player.open(Media(url, httpHeaders: _playHeaders));
-    await player.setVolume(
-        muted.value ? 0 : AppSettingsController.instance.playerVolume.value);
+    await player.setVolume(muted.value ? 0 : volume.value);
   }
 
   /// 由 `DanmakuScreen` 创建后回传渲染控制器。
@@ -286,9 +288,20 @@ class MultiRoomPlayerController extends GetxController {
 
   Future<void> toggleMute() async {
     muted.value = !muted.value;
-    await player.setVolume(
-      muted.value ? 0 : AppSettingsController.instance.playerVolume.value,
-    );
+    await player.setVolume(muted.value ? 0 : volume.value);
+  }
+
+  /// 设置本格音量（0-100）并取消静音。
+  Future<void> setVolume(double value) async {
+    volume.value = value.clamp(0, 100).toDouble();
+    if (muted.value && value > 0) {
+      muted.value = false;
+    }
+    if (muted.value) {
+      await player.setVolume(0);
+    } else {
+      await player.setVolume(volume.value);
+    }
   }
 
   @override

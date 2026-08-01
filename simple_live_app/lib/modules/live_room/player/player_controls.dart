@@ -487,7 +487,12 @@ Widget _buildFullTopBar(
       right: 0,
       top: visible ? 0 : -(48 + padding.top),
       duration: const Duration(milliseconds: 200),
-      child: Container(
+      // 拦截点击冒泡：避免点按钮时同一次 tap 冒泡到 gesture layer 的
+      // onTap(controller.onTap) 触发控件显隐/rebuild，导致刚打开的弹窗被 pop。
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {},
+        child: Container(
         height: 48 + padding.top,
         padding: EdgeInsets.only(
           left: padding.left + 32,
@@ -568,6 +573,7 @@ Widget _buildFullTopBar(
             ),
           ],
         ),
+        ),
       ),
     );
   });
@@ -588,7 +594,11 @@ Widget _buildFullBottomBar(
       right: 0,
       bottom: visible ? 0 : -(80 + padding.bottom),
       duration: const Duration(milliseconds: 200),
-      child: Container(
+      // 拦截点击冒泡，避免按钮 tap 触发 gesture layer 的 onTap 导致弹窗被 pop。
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {},
+        child: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -704,6 +714,7 @@ Widget _buildFullBottomBar(
             ),
           ],
         ),
+      ),
       ),
     );
   });

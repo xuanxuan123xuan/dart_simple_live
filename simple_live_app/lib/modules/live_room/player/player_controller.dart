@@ -610,10 +610,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       ohosFullscreenTransition.value = false;
     } else if (Platform.isAndroid || Platform.isIOS) {
       fullScreenState.value = true;
-      //全屏
+      //全屏（immersiveSticky 在 iPad 上也能隐藏顶部状态栏）
       await SystemChrome.setEnabledSystemUIMode(
-        SystemUiMode.manual,
-        overlays: [],
+        SystemUiMode.immersiveSticky,
       );
       if (!isVertical.value) {
         //横屏
