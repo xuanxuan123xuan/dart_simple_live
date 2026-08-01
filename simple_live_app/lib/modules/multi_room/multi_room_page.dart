@@ -56,6 +56,31 @@ class MultiRoomPage extends GetView<MultiRoomController> {
             if (showChat) {
               return _buildChatPanelLayout(rooms, constraints, gap);
             }
+            // 4 格 1+3 主次布局：左主格 + 右三小格（小格不加载弹幕）。
+            if (rooms.length == 4 && controller.mainSubLayout.value) {
+              return Padding(
+                padding: EdgeInsets.all(gap),
+                child: Row(
+                  children: [
+                    Expanded(flex: 3, child: _tileAt(0, rooms, loadDanmaku: true)),
+                    SizedBox(width: gap),
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        children: [
+                          for (var i = 1; i < 4; i += 1) ...[
+                            if (i > 1) SizedBox(height: gap),
+                            Expanded(
+                              child: _tileAt(i, rooms, loadDanmaku: false),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
             final columns = _bestColumnCount(
               rooms.length,
               constraints.maxWidth,
@@ -141,6 +166,18 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                   icon: const Icon(Remix.play_list_add_line, color: Colors.white),
                 ),
                 IconButton(
+                  tooltip: "主次布局(1+3)",
+                  onPressed: controller.toggleMainSubLayout,
+                  icon: Obx(() => Icon(
+                    controller.mainSubLayout.value
+                        ? Icons.view_column_outlined
+                        : Icons.grid_view_outlined,
+                    color: controller.mainSubLayout.value
+                        ? Colors.amber
+                        : Colors.white,
+                  )),
+                ),
+                IconButton(
                   tooltip: "全部刷新",
                   onPressed: () {
                     for (final room in controller.rooms) {
@@ -161,7 +198,8 @@ class MultiRoomPage extends GetView<MultiRoomController> {
 );
   }
 
-  Widget _tileAt(int index, List<MultiRoomItem> rooms) {
+  Widget _tileAt(int index, List<MultiRoomItem> rooms,
+      {bool loadDanmaku = true}) {
     // 最后一行可能不满，空位留空白占位以保持每格等宽。
     if (index >= rooms.length) {
       return const SizedBox.shrink();
@@ -171,6 +209,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
       item: room,
       controller: controller.playerFor(room),
       onRemove: () => controller.removeRoom(room),
+      loadDanmaku: loadDanmaku,
     );
     return GestureDetector(
       // 双击聚焦单格，再双击或点返回退出。
@@ -201,6 +240,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                       item: room,
                       controller: controller.playerFor(room),
                       onRemove: () => {},
+                      loadDanmaku: loadDanmaku,
                     ),
                   ),
                 ),
@@ -262,29 +302,60 @@ class MultiRoomPage extends GetView<MultiRoomController> {
     if (rooms.length == 2) {
       return Padding(
         padding: EdgeInsets.all(gap),
-        child: Row(
-          children: [
-            Expanded(
-              flex: 2,
-              child: Column(
-                children: [
-                  Expanded(child: _tileAt(0, rooms)),
-                  SizedBox(height: gap),
-                  Expanded(child: _tileAt(1, rooms)),
-                ],
-              ),
-            ),
-            SizedBox(width: gap),
-            Expanded(
-              flex: 1,
-              child: _ChatPanel(
-                rooms: rooms,
-                chatController: chatController,
-                chatRoomIndex: chatRoomIndex,
-                onSelect: (i) => controller.chatTargetIndex.value = i,
-              ),
-            ),
-          ],
+        child: LayoutBuilder(
+          builder: (ctx, innerConstraints) {
+            final ratio = controller.chatPanelRatio.value;
+            final chatWidth =
+                (innerConstraints.maxWidth * ratio).clamp(200.0, 800.0);
+            return Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    children: [
+                      Expanded(child: _tileAt(0, rooms)),
+                      SizedBox(height: gap),
+                      Expanded(child: _tileAt(1, rooms)),
+                    ],
+                  ),
+                ),
+                SizedBox(width: gap),
+                // 拖动聊天区边框调整宽度
+                GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragUpdate: (details) {
+                    controller.changeChatPanelRatio(
+                      ratio +
+                          details.delta.dx / innerConstraints.maxWidth,
+                    );
+                  },
+                  child: Container(
+                    width: 16,
+                    color: Colors.transparent,
+                    child: Center(
+                      child: Container(
+                        width: 3,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: Colors.white24,
+                          borderRadius: BorderRadius.all(Radius.circular(2)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(width: gap),
+                SizedBox(
+                  width: chatWidth,
+                  child: _ChatPanel(
+                    rooms: rooms,
+                    chatController: chatController,
+                    chatRoomIndex: chatRoomIndex,
+                    onSelect: (i) => controller.chatTargetIndex.value = i,
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       );
     }
@@ -606,10 +677,14 @@ class _MultiRoomTile extends StatefulWidget {
   final MultiRoomPlayerController controller;
   final VoidCallback onRemove;
 
+  /// 是否渲染画面弹幕层（1+3 主次布局的小格传 false）。
+  final bool loadDanmaku;
+
   const _MultiRoomTile({
     required this.item,
     required this.controller,
     required this.onRemove,
+    this.loadDanmaku = true,
   });
 
   @override
@@ -642,13 +717,14 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
               ),
             ),
             // 弹幕铺在画面区域上。行数按格子高度自适应，格子太矮时会自动隐藏。
-            Positioned.fill(
-              child: Obx(
-                () => controller.showDanmaku.value
-                    ? _DanmakuLayer(controller: controller)
-                    : const SizedBox.shrink(),
+            if (widget.loadDanmaku)
+              Positioned.fill(
+                child: Obx(
+                  () => controller.showDanmaku.value
+                      ? _DanmakuLayer(controller: controller)
+                      : const SizedBox.shrink(),
+                ),
               ),
-            ),
             Positioned.fill(
               child: Obx(
                 () {

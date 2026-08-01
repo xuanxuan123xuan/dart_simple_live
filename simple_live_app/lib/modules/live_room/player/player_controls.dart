@@ -1153,6 +1153,18 @@ void showPlayerSettings(LiveRoomController controller) {
             title: const Text("4:3"),
             visualDensity: VisualDensity.compact,
           ),
+          AppStyle.divider,
+          SwitchListTile(
+            value: AppSettingsController
+                .instance.autoSelectFastestLine.value,
+            onChanged: (e) {
+              AppSettingsController.instance.setAutoSelectFastestLine(e);
+            },
+            title: const Text("自动选择最快线路"),
+            subtitle: const Text("多线路时测延迟选最快的播放"),
+            contentPadding: AppStyle.edgeInsetsH16,
+            secondary: const Icon(Icons.speed),
+          ),
         ],
       ),
     ),

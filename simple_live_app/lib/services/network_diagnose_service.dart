@@ -87,6 +87,54 @@ class NetworkDiagnoseService {
     );
   }
 
+  /// 从一组播放线路 URL 中选出 TCP 延迟最低的线路索引。
+  ///
+  /// [urls] 为直播流地址；取各自 host 测延迟。全部失败返回 0。
+  /// 测速本身有超时，不会阻塞播放太久。
+  static Future<int> findFastestLine(
+    List<String> urls, {
+    int samples = 2,
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    if (urls.length <= 1) {
+      return 0;
+    }
+    final hosts = <String>[];
+    final indexByHost = <String, int>{};
+    for (var i = 0; i < urls.length; i += 1) {
+      final host = Uri.tryParse(urls[i])?.host ?? "";
+      if (host.isEmpty) continue;
+      if (!indexByHost.containsKey(host)) {
+        indexByHost[host] = i;
+        hosts.add(host);
+      }
+    }
+    if (hosts.length <= 1) {
+      return 0;
+    }
+    final results = await Future.wait(
+      hosts.map(
+        (host) => diagnoseHost(host, samples: samples, timeout: timeout),
+      ),
+    );
+    var bestIndex = 0;
+    var bestLatency = double.infinity;
+    for (var i = 0; i < results.length; i += 1) {
+      final r = results[i];
+      if (r.lost == r.samples) {
+        continue; // 完全不通，跳过
+      }
+      if (r.avgMs < bestLatency) {
+        bestLatency = r.avgMs;
+        bestIndex = i;
+      }
+    }
+    if (bestLatency == double.infinity) {
+      return 0;
+    }
+    return indexByHost[hosts[bestIndex]] ?? 0;
+  }
+
   /// 汇总判断：网络是否健康。
   static String summarize(List<NetworkDiagnosisResult> results) {
     if (results.isEmpty) return "无诊断数据";

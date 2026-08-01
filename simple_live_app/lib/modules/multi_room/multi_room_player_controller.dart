@@ -11,6 +11,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
+import 'package:simple_live_app/services/network_diagnose_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class MultiRoomPlayerController extends GetxController {
@@ -239,11 +240,16 @@ class MultiRoomPlayerController extends GetxController {
     }
     _playUrls = playUrl.urls;
     _playHeaders = playUrl.headers;
-    // 优先恢复上次会话的线路。
+    // 优先恢复上次会话的线路；否则自动测速选最快的。
     final restore = _restoreLineIndex;
-    _lineIndex = (restore != null && restore >= 0 && restore < _playUrls.length)
-        ? restore
-        : 0;
+    if (restore != null && restore >= 0 && restore < _playUrls.length) {
+      _lineIndex = restore;
+    } else if (AppSettingsController.instance.autoSelectFastestLine.value &&
+        _playUrls.length > 1) {
+      _lineIndex = await NetworkDiagnoseService.findFastestLine(_playUrls);
+    } else {
+      _lineIndex = 0;
+    }
     lineInfo.value = "线路${_lineIndex + 1}";
   }
 

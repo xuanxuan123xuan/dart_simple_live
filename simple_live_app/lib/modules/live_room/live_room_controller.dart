@@ -33,6 +33,7 @@ import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
+import 'package:simple_live_app/services/network_diagnose_service.dart';
 import 'package:simple_live_app/services/ohos_network_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
@@ -1780,6 +1781,16 @@ class LiveRoomController extends PlayerController
     playHeaders = playUrl.headers;
     if (resetLine || currentLineIndex < 0) {
       currentLineIndex = 0;
+      // 多线路时测速选最快的（TCP 延迟，带超时，不影响播放）。
+      if (AppSettingsController.instance.autoSelectFastestLine.value &&
+          playUrls.length > 1) {
+        final fastest = await NetworkDiagnoseService.findFastestLine(
+          playUrls.toList(),
+        );
+        if (_isCurrentLoad(loadGeneration)) {
+          currentLineIndex = fastest;
+        }
+      }
     } else if (currentLineIndex >= playUrls.length) {
       currentLineIndex = playUrls.length - 1;
     }

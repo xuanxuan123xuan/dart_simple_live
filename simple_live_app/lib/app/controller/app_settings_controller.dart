@@ -150,6 +150,8 @@ class AppSettingsController extends GetxController {
 
     playerForceHttps.value = LocalStorageService.instance
         .getValue(LocalStorageService.kPlayerForceHttps, false);
+    autoSelectFastestLine.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kAutoSelectFastestLine, true);
     autoSwitchNextOnLiveEnd.value = LocalStorageService.instance.getValue(
       LocalStorageService.kAutoSwitchNextOnLiveEnd,
       false,
@@ -2545,5 +2547,13 @@ class AppSettingsController extends GetxController {
     playerForceHttps.value = e;
     LocalStorageService.instance
         .setValue(LocalStorageService.kPlayerForceHttps, e);
+  }
+
+  /// 自动选择最快线路：获取多线路后测 TCP 延迟，选最低的播放。
+  var autoSelectFastestLine = true.obs;
+  void setAutoSelectFastestLine(bool e) {
+    autoSelectFastestLine.value = e;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kAutoSelectFastestLine, e);
   }
 }

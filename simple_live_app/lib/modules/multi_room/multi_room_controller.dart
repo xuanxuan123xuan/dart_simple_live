@@ -29,6 +29,24 @@ class MultiRoomController extends GetxController
   /// 聊天区面板当前展示的直播间索引（对应 rooms 列表）。
   var chatTargetIndex = 0.obs;
 
+  /// 聊天区宽度占比（0.2-0.6），可拖动边框调整。
+  var chatPanelRatio = 0.35.obs;
+
+  /// 拖动聊天区边框调整宽度。
+  void changeChatPanelRatio(double ratio) {
+    chatPanelRatio.value = ratio.clamp(0.2, 0.6);
+  }
+
+  /// 4 格 1+3 主次布局开关（左主格 + 右三小格，小格不加载弹幕）。
+  var mainSubLayout = false.obs;
+
+  void toggleMainSubLayout() {
+    mainSubLayout.value = !mainSubLayout.value;
+    if (mainSubLayout.value) {
+      focusedRoomKey.value = null;
+    }
+  }
+
   /// 双击聚焦的单格 key；null = 正常网格。
   final focusedRoomKey = Rxn<String>();
 
@@ -319,6 +337,8 @@ class MultiRoomController extends GetxController
       final data = <String, dynamic>{
         "roomKeys": rooms.map((r) => r.key).toList(),
         "chatTarget": chatTargetIndex.value,
+        "chatRatio": chatPanelRatio.value,
+        "mainSub": mainSubLayout.value,
         "volumes": {
           for (final r in rooms) r.key: playerFor(r).volume.value,
         },
@@ -370,6 +390,14 @@ class MultiRoomController extends GetxController
       }
       _pendingChatTarget = (data["chatTarget"] as int?) ?? 0;
       chatTargetIndex.value = _pendingChatTarget;
+      final chatRatio = data["chatRatio"];
+      if (chatRatio is num) {
+        chatPanelRatio.value = chatRatio.toDouble().clamp(0.2, 0.6);
+      }
+      final mainSub = data["mainSub"];
+      if (mainSub is bool) {
+        mainSubLayout.value = mainSub;
+      }
       final volumes = data["volumes"] as Map? ?? const {};
       _pendingVolumes = {
         for (final e in volumes.entries)
