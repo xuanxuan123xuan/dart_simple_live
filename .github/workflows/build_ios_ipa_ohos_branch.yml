@@ -46,6 +46,11 @@ concurrency:
   group: ios-ipa-${{ github.ref }}
   cancel-in-progress: true
 
+# 发布 Release 附件需要 contents: write；缺了 softprops/action-gh-release
+# 会用只读 GITHUB_TOKEN 创建 release 报 403。
+permissions:
+  contents: write
+
 env:
   # 与 simple_live_app/pubspec.yaml 里那 7 处 "Flutter 3.22 compatible" 对齐。
   FLUTTER_VERSION: "3.22.3"
