@@ -37,6 +37,10 @@ on:
         description: "构建前跑一遍 flutter test"
         type: boolean
         default: true
+      publish_release:
+        description: "构建后发布到 GitHub Release（附件为直接 .ipa，不套 zip）"
+        type: boolean
+        default: false
 
 concurrency:
   group: ios-ipa-${{ github.ref }}
@@ -254,6 +258,26 @@ jobs:
           path: ${{ steps.artifact.outputs.dir }}/*.ipa
           if-no-files-found: error
           retention-days: 14
+
+      # GitHub artifact 下载永远是 zip 打包；需要"直接拿到 .ipa"时，
+      # 发布到 Release 附件（附件不套 zip）。
+      - name: Publish release with .ipa
+        if: ${{ inputs.publish_release }}
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ios-${{ steps.appver.outputs.version }}-${{ inputs.signed && 'signed' || 'unsigned' }}
+          name: Simple Live iOS ${{ steps.appver.outputs.version }} (${{ inputs.signed && '签名' || '未签名' }})
+          body: |
+            iOS IPA 构建产物（${{ inputs.signed && '已签名' || '未签名，需 AltStore / Sideloadly 侧载' }}）。
+
+            - 版本：${{ steps.appver.outputs.version }}
+            - 提交：`${{ github.sha }}`
+            - 下载附件 `*.ipa` 即为可直接安装的包（Release 附件不打包 zip）。
+          files: ${{ steps.artifact.outputs.dir }}/*.ipa
+          allowUpdates: true
+          prerelease: true
 
       - name: Clean up keychain
         if: ${{ always() && inputs.signed }}
