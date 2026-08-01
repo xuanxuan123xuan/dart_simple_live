@@ -45,6 +45,20 @@ class MultiRoomPlayerController extends GetxController {
   /// 本格独立音量（0-100），互不影响。
   final volume = 100.0.obs;
 
+  /// 状态徽标：空=正常；"重试中…"=流错误重试；"弹幕重连…"=弹幕重连。
+  final streamStatus = "".obs;
+
+  // --- 流错误自动重试 ---
+  int _streamErrorRetryCount = 0;
+  DateTime? _lastStreamErrorTime;
+  static const int _maxStreamRetry = 3;
+
+  // --- 弹幕断线自动重连 ---
+  int _danmakuReconnectCount = 0;
+  Timer? _danmakuReconnectTimer;
+  bool _danmakuManuallyStopped = false;
+  static const int _maxDanmakuReconnect = 5;
+
   /// 每格一条独立的弹幕长连接。
   late LiveDanmaku liveDanmaku = item.site.liveSite.getDanmaku();
 
@@ -65,6 +79,20 @@ class MultiRoomPlayerController extends GetxController {
   int _qualityIndex = -1;
   int _lineIndex = 0;
   bool _disposed = false;
+
+  /// 上次会话的画质/线路索引（布局恢复用，load 后应用）。
+  int? _restoreQualityIndex;
+  int? _restoreLineIndex;
+
+  /// 设置要恢复的画质索引（布局持久化）。
+  void restoreQualityIndex(int? index) {
+    _restoreQualityIndex = index;
+  }
+
+  /// 设置要恢复的线路索引（布局持久化）。
+  void restoreLineIndex(int? index) {
+    _restoreLineIndex = index;
+  }
 
   /// 当前格子的可选清晰度列表。
   List<LivePlayQuality> get qualities => _qualities;
@@ -90,7 +118,55 @@ class MultiRoomPlayerController extends GetxController {
   void onInit() {
     super.onInit();
     unawaited(MpvOptionsService.applyToPlayer(player));
+    // 流错误自动重试（对齐单直播间行为）。
+    player.stream.error.listen((event) {
+      if (_disposed || !liveStatus.value) return;
+      if (_isStreamError(event)) {
+        unawaited(_handleStreamError(event));
+      }
+    });
     unawaited(load());
+  }
+
+  static bool _isStreamError(String error) {
+    return error.contains('mbedtls_ssl_read') ||
+        error.contains('Packet corrupt') ||
+        error.contains('Packet corupt') ||
+        error.contains('tls:') ||
+        error.contains('Invalid NAL unit') ||
+        error.contains('missing picture');
+  }
+
+  /// 流错误自动重试：最多 3 次，每次重开当前线路。
+  Future<void> _handleStreamError(String error) async {
+    final now = DateTime.now();
+    if (_lastStreamErrorTime != null &&
+        now.difference(_lastStreamErrorTime!) < const Duration(seconds: 2)) {
+      return;
+    }
+    _lastStreamErrorTime = now;
+    if (_streamErrorRetryCount >= _maxStreamRetry) {
+      Log.e("多开流错误重试次数已达上限：${item.site.id}/${item.roomId} $error",
+          StackTrace.current);
+      streamStatus.value = "";
+      errorText.value = "播放中断，请手动刷新";
+      return;
+    }
+    _streamErrorRetryCount += 1;
+    streamStatus.value = "重试中($_streamErrorRetryCount/$_maxStreamRetry)…";
+    Log.w("多开检测到流错误，自动重试：${item.site.id}/${item.roomId} $error", false);
+    await Future.delayed(const Duration(seconds: 1));
+    if (_disposed) return;
+    try {
+      await player.pause();
+      await Future.delayed(const Duration(milliseconds: 200));
+      await _openCurrentUrl();
+      streamStatus.value = "";
+    } catch (e) {
+      Log.e("多开重启解码器失败：${item.site.id}/${item.roomId} $e",
+          StackTrace.current);
+      streamStatus.value = "";
+    }
   }
 
   Future<void> load() async {
@@ -135,6 +211,13 @@ class MultiRoomPlayerController extends GetxController {
     if (_qualities.isEmpty) {
       throw Exception("无法读取播放清晰度");
     }
+    // 优先恢复上次会话的画质。
+    final restore = _restoreQualityIndex;
+    if (restore != null && restore >= 0 && restore < _qualities.length) {
+      _qualityIndex = restore;
+      qualityInfo.value = _qualities[_qualityIndex].quality;
+      return;
+    }
     final qualityLevel = AppSettingsController.instance.qualityLevel.value;
     if (qualityLevel == 2) {
       _qualityIndex = 0;
@@ -156,7 +239,11 @@ class MultiRoomPlayerController extends GetxController {
     }
     _playUrls = playUrl.urls;
     _playHeaders = playUrl.headers;
-    _lineIndex = 0;
+    // 优先恢复上次会话的线路。
+    final restore = _restoreLineIndex;
+    _lineIndex = (restore != null && restore >= 0 && restore < _playUrls.length)
+        ? restore
+        : 0;
     lineInfo.value = "线路${_lineIndex + 1}";
   }
 
@@ -233,13 +320,18 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   void _startDanmaku(LiveRoomDetail roomDetail) {
+    _danmakuManuallyStopped = false;
     liveDanmaku.onMessage = _onDanmakuMessage;
     liveDanmaku.onClose = (msg) {
       Log.d("多开弹幕关闭：${item.site.id}/${item.roomId} $msg");
       _addSysMessage(msg);
+      _scheduleDanmakuReconnect();
     };
     liveDanmaku.onReady = () {
       Log.d("多开弹幕已连接：${item.site.id}/${item.roomId}");
+      _danmakuReconnectCount = 0;
+      _danmakuReconnectTimer?.cancel();
+      streamStatus.value = "";
     };
     unawaited(
       liveDanmaku.start(roomDetail.danmakuData).catchError((Object e) {
@@ -248,6 +340,30 @@ class MultiRoomPlayerController extends GetxController {
         _addSysMessage("弹幕连接失败");
       }),
     );
+  }
+
+  /// 弹幕意外断开后指数退避自动重连（3s/6s/12s…最多 5 次）。
+  void _scheduleDanmakuReconnect() {
+    if (_disposed || _danmakuManuallyStopped || !liveStatus.value) {
+      return;
+    }
+    if (_danmakuReconnectCount >= _maxDanmakuReconnect) {
+      streamStatus.value = "";
+      return;
+    }
+    _danmakuReconnectCount += 1;
+    streamStatus.value = "弹幕重连($_danmakuReconnectCount/$_maxDanmakuReconnect)…";
+    final delay = Duration(seconds: 3 * (1 << (_danmakuReconnectCount - 1)));
+    _danmakuReconnectTimer?.cancel();
+    _danmakuReconnectTimer = Timer(delay, () {
+      if (_disposed || _danmakuManuallyStopped || !liveStatus.value) {
+        return;
+      }
+      final roomDetail = detail.value;
+      if (roomDetail != null) {
+        _startDanmaku(roomDetail);
+      }
+    });
   }
 
   /// 追加一条系统消息到聊天区（对齐正常直播间 LiveSysMessage 样式）。
@@ -331,6 +447,8 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> _stopDanmaku() async {
+    _danmakuManuallyStopped = true;
+    _danmakuReconnectTimer?.cancel();
     liveDanmaku.onMessage = null;
     liveDanmaku.onClose = null;
     liveDanmaku.onReady = null;
@@ -381,6 +499,7 @@ class MultiRoomPlayerController extends GetxController {
     liveDanmaku.onMessage = null;
     liveDanmaku.onClose = null;
     liveDanmaku.onReady = null;
+    _danmakuReconnectTimer?.cancel();
     unawaited(liveDanmaku.stop());
     danmakuController = null;
     unawaited(player.stop());

@@ -38,6 +38,8 @@ class MultiRoomController extends GetxController
   /// 上次多开的布局（恢复用）。
   Map<String, double> _pendingVolumes = {};
   Map<String, bool> _pendingDanmaku = {};
+  Map<String, int> _pendingQualities = {};
+  Map<String, int> _pendingLines = {};
   int _pendingChatTarget = 0;
 
   /// 低内存降级中已暂停弹幕的格子 key。
@@ -134,6 +136,14 @@ class MultiRoomController extends GetxController
     final danmaku = _pendingDanmaku[item.key];
     if (danmaku != null) {
       controller.showDanmaku.value = danmaku;
+    }
+    final quality = _pendingQualities[item.key];
+    if (quality != null) {
+      controller.restoreQualityIndex(quality);
+    }
+    final line = _pendingLines[item.key];
+    if (line != null) {
+      controller.restoreLineIndex(line);
     }
     return controller;
   }
@@ -315,6 +325,12 @@ class MultiRoomController extends GetxController
         "danmaku": {
           for (final r in rooms) r.key: playerFor(r).showDanmaku.value,
         },
+        "qualities": {
+          for (final r in rooms) r.key: playerFor(r).qualityIndex,
+        },
+        "lines": {
+          for (final r in rooms) r.key: playerFor(r).lineIndex,
+        },
       };
       LocalStorageService.instance.setValue(
         LocalStorageService.kMultiRoomLayout,
@@ -363,6 +379,16 @@ class MultiRoomController extends GetxController
       _pendingDanmaku = {
         for (final e in danmaku.entries)
           if (e.value is bool) e.key.toString(): e.value as bool,
+      };
+      final qualities = data["qualities"] as Map? ?? const {};
+      _pendingQualities = {
+        for (final e in qualities.entries)
+          if (e.value is num) e.key.toString(): (e.value as num).toInt(),
+      };
+      final lines = data["lines"] as Map? ?? const {};
+      _pendingLines = {
+        for (final e in lines.entries)
+          if (e.value is num) e.key.toString(): (e.value as num).toInt(),
       };
     } catch (e) {
       Log.d("多开布局恢复失败: $e");

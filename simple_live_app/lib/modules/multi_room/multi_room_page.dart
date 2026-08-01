@@ -669,6 +669,32 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
             ),
             Positioned(
               left: 6,
+              top: 6,
+              // 状态徽标：断流重试 / 弹幕重连
+              child: Obx(() {
+                final status = controller.streamStatus.value;
+                if (status.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+                final isStream = status.contains("重试中");
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: isStream
+                        ? Colors.red.withAlpha(200)
+                        : Colors.amber.withAlpha(200),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    status,
+                    style: const TextStyle(fontSize: 11, color: Colors.white),
+                  ),
+                );
+              }),
+            ),
+            Positioned(
+              left: 6,
               bottom: 6,
               child: Obx(
                 () => Row(
