@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.xycz.simple_live_app",
     "vendor": "example",
-    "versionCode": 11207,
-    "versionName": "1.12.7",
+    "versionCode": 11300,
+    "versionName": "1.13.0",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }

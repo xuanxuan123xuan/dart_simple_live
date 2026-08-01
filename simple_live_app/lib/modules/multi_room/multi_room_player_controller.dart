@@ -9,10 +9,24 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_adaptive_quality.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
+import 'package:simple_live_app/modules/multi_room/player_mutation_queue.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/network_diagnose_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+
+class MultiRoomRefreshResult {
+  const MultiRoomRefreshResult({
+    required this.roomKey,
+    required this.success,
+    this.error,
+  });
+
+  final String roomKey;
+  final bool success;
+  final String? error;
+}
 
 class MultiRoomPlayerController extends GetxController {
   final MultiRoomItem item;
@@ -25,7 +39,10 @@ class MultiRoomPlayerController extends GetxController {
     bool? initialShowDanmaku,
     int? initialQualityIndex,
     int? initialLineIndex,
-  }) {
+    bool initialPaused = false,
+    PlayerMutationQueue? mutationQueue,
+  })  : _mutationQueue = mutationQueue ?? PlayerMutationQueue(),
+        _ownsMutationQueue = mutationQueue == null {
     if (initialVolume != null) {
       volume.value = initialVolume.clamp(0, 100).toDouble();
     }
@@ -34,6 +51,7 @@ class MultiRoomPlayerController extends GetxController {
     }
     _restoreQualityIndex = initialQualityIndex;
     _restoreLineIndex = initialLineIndex;
+    paused.value = initialPaused;
   }
 
   late final Player player = Player(
@@ -54,6 +72,8 @@ class MultiRoomPlayerController extends GetxController {
   final liveStatus = false.obs;
   final errorText = "".obs;
   final muted = true.obs;
+  final paused = false.obs;
+  final qualityLocked = false.obs;
   final qualityInfo = "".obs;
   final lineInfo = "".obs;
 
@@ -97,11 +117,24 @@ class MultiRoomPlayerController extends GetxController {
   int _qualityIndex = -1;
   int _lineIndex = 0;
   bool _disposed = false;
+  bool _playerDisposed = false;
+  bool _routeTransitionClosed = false;
+  Future<void>? _routeTransitionFuture;
   bool _playbackDesired = false;
   bool _danmakuActive = false;
   Future<void>? _danmakuStopFuture;
   Future<void> _operationChain = Future<void>.value();
   Future<void>? _loadFuture;
+  final PlayerMutationQueue _mutationQueue;
+  final bool _ownsMutationQueue;
+  StreamSubscription<bool>? _bufferingSubscription;
+  bool _isBuffering = false;
+  int _bufferingCount = 0;
+  Duration _bufferingDuration = Duration.zero;
+  DateTime? _bufferingSince;
+  DateTime? _lastOpenedAt;
+  int? _userQualityIndex;
+  int? _memoryPressureQualityIndex;
 
   /// 上次会话的画质/线路索引（布局恢复用，load 后应用）。
   int? _restoreQualityIndex;
@@ -112,6 +145,12 @@ class MultiRoomPlayerController extends GetxController {
 
   /// 当前清晰度索引。
   int get qualityIndex => _qualityIndex;
+
+  int? get userQualityIndex => _userQualityIndex;
+
+  bool get isMemoryQualityDegraded => _memoryPressureQualityIndex != null;
+
+  bool get playbackDesired => _playbackDesired && !paused.value;
 
   /// 当前线路列表。
   List<String> get playUrls => _playUrls;
@@ -133,11 +172,13 @@ class MultiRoomPlayerController extends GetxController {
     unawaited(MpvOptionsService.applyToPlayer(player));
     // 流错误自动重试（对齐单直播间行为）。
     player.stream.error.listen((event) {
-      if (_disposed || !liveStatus.value) return;
+      if (_disposed || paused.value || !liveStatus.value) return;
       if (_isStreamError(event)) {
         unawaited(_handleStreamError(event));
       }
     });
+    _bufferingSubscription =
+        player.stream.buffering.listen(_onBufferingChanged);
     unawaited(load());
   }
 
@@ -151,12 +192,127 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> _enqueue(Future<void> Function() operation) {
-    final result = _operationChain.then((_) async {
-      if (_disposed) return;
+    final result = _mutationQueue.run<void>(() async {
+      if (_disposed || _routeTransitionClosed) return;
       await operation();
     });
     _operationChain = result.catchError((Object _) {});
     return result;
+  }
+
+  void _onBufferingChanged(bool value) {
+    if (_disposed || paused.value) return;
+    final now = DateTime.now();
+    if (value && !_isBuffering) {
+      _isBuffering = true;
+      _bufferingCount += 1;
+      _bufferingSince = now;
+    } else if (!value && _isBuffering) {
+      _finishBuffering(now);
+    }
+  }
+
+  void _finishBuffering(DateTime now) {
+    final since = _bufferingSince;
+    if (since != null) {
+      _bufferingDuration += now.difference(since);
+    }
+    _bufferingSince = null;
+    _isBuffering = false;
+  }
+
+  MultiRoomPlaybackTelemetry telemetrySnapshot({
+    DateTime? sampledAt,
+    double? bandwidthBytesPerSecond,
+    int? width,
+    int? height,
+    double? framesPerSecond,
+    bool isPrimary = false,
+    bool isFocused = false,
+    bool isChatTarget = false,
+  }) {
+    final now = sampledAt ?? DateTime.now();
+    final ongoing = _isBuffering && _bufferingSince != null
+        ? now.difference(_bufferingSince!)
+        : Duration.zero;
+    return MultiRoomPlaybackTelemetry(
+      roomKey: item.key,
+      sampledAt: now,
+      paused: paused.value,
+      isBuffering: _isBuffering,
+      bufferingCount: _bufferingCount,
+      bufferingDuration: _bufferingDuration + ongoing,
+      qualityIndex: _qualityIndex,
+      qualityCount: _qualities.length,
+      userTargetQualityIndex: _userQualityIndex,
+      // Keep this null when the backend cannot expose libmpv's raw-input-rate;
+      // unknown bandwidth must not be interpreted as zero.
+      bandwidthBytesPerSecond: bandwidthBytesPerSecond,
+      width: width,
+      height: height,
+      framesPerSecond: framesPerSecond,
+      lastOpenedAt: _lastOpenedAt,
+      isQualityLocked: qualityLocked.value,
+      isPrimary: isPrimary,
+      isFocused: isFocused,
+      isChatTarget: isChatTarget,
+    );
+  }
+
+  /// Samples properties exposed only by NativePlayer/libmpv. Web and other
+  /// backends safely fall back to the regular snapshot with unknown values.
+  Future<MultiRoomPlaybackTelemetry> sampleTelemetry({
+    DateTime? sampledAt,
+    bool isPrimary = false,
+    bool isFocused = false,
+    bool isChatTarget = false,
+  }) async {
+    final now = sampledAt ?? DateTime.now();
+    final fallback = telemetrySnapshot(
+      sampledAt: now,
+      isPrimary: isPrimary,
+      isFocused: isFocused,
+      isChatTarget: isChatTarget,
+    );
+    if (_disposed || _playerDisposed) return fallback;
+    final platform = player.platform;
+    if (platform is! NativePlayer) return fallback;
+
+    final raw = <String, String?>{};
+    for (final property in const [
+      mpvCacheSpeedProperty,
+      mpvVideoWidthProperty,
+      mpvVideoHeightProperty,
+      mpvEstimatedFpsProperty,
+    ]) {
+      raw[property] = await _readNativeProperty(platform, property);
+    }
+    final native = parseMpvTelemetryProperties(raw);
+    return telemetrySnapshot(
+      sampledAt: now,
+      bandwidthBytesPerSecond: native.bandwidthBytesPerSecond,
+      width: native.width,
+      height: native.height,
+      framesPerSecond: native.framesPerSecond,
+      isPrimary: isPrimary,
+      isFocused: isFocused,
+      isChatTarget: isChatTarget,
+    );
+  }
+
+  Future<String?> _readNativeProperty(
+    NativePlayer nativePlayer,
+    String property,
+  ) async {
+    try {
+      // NativePlayer's web stub intentionally omits getProperty. The runtime
+      // type check above plus a dynamic call keeps web compilation safe.
+      final dynamic native = nativePlayer;
+      final dynamic value = await native.getProperty(property);
+      return value is String ? value : value?.toString();
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 流错误自动重试：最多 3 次，每次重开当前线路。
@@ -182,15 +338,14 @@ class MultiRoomPlayerController extends GetxController {
     streamStatus.value = "重试中($_streamErrorRetryCount/$_maxStreamRetry)…";
     Log.w("多开检测到流错误，自动重试：${item.site.id}/${item.roomId} $error", false);
     await Future.delayed(const Duration(seconds: 1));
-    if (_disposed) return;
+    if (_disposed || paused.value) return;
     try {
       await player.pause();
       await Future.delayed(const Duration(milliseconds: 200));
       await _openCurrentUrl();
       streamStatus.value = "";
     } catch (e) {
-      Log.e("多开重启解码器失败：${item.site.id}/${item.roomId} $e",
-          StackTrace.current);
+      Log.e("多开重启解码器失败：${item.site.id}/${item.roomId} $e", StackTrace.current);
       streamStatus.value = "";
     }
   }
@@ -216,6 +371,12 @@ class MultiRoomPlayerController extends GetxController {
     errorText.value = "";
     liveStatus.value = false;
     _playbackDesired = false;
+    if (_qualityIndex >= 0) {
+      _restoreQualityIndex = _qualityIndex;
+    }
+    if (_lineIndex >= 0) {
+      _restoreLineIndex = _lineIndex;
+    }
     try {
       await player.stop();
       if (_disposed) return;
@@ -264,6 +425,7 @@ class MultiRoomPlayerController extends GetxController {
     if (restore != null && restore >= 0 && restore < _qualities.length) {
       _qualityIndex = restore;
       qualityInfo.value = _qualities[_qualityIndex].quality;
+      _userQualityIndex ??= _qualityIndex;
       return;
     }
     final qualityLevel = AppSettingsController.instance.qualityLevel.value;
@@ -275,6 +437,7 @@ class MultiRoomPlayerController extends GetxController {
       _qualityIndex = (_qualities.length / 2).floor();
     }
     qualityInfo.value = _qualities[_qualityIndex].quality;
+    _userQualityIndex ??= _qualityIndex;
   }
 
   Future<void> _loadPlayUrls(LiveRoomDetail roomDetail) async {
@@ -302,15 +465,22 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> _openCurrentUrl() async {
-    if (_disposed || _playUrls.isEmpty) return;
+    if (_disposed || _routeTransitionClosed || _playUrls.isEmpty) return;
     var url = _playUrls[_lineIndex];
     if (AppSettingsController.instance.playerForceHttps.value) {
       url = url.replaceAll("http://", "https://");
     }
     _playbackDesired = true;
-    await player.open(Media(url, httpHeaders: _playHeaders));
+    _lastOpenedAt = DateTime.now();
+    await player.open(
+      Media(url, httpHeaders: _playHeaders),
+      play: !paused.value,
+    );
     if (_disposed) return;
     await player.setVolume(muted.value ? 0 : volume.value);
+    if (paused.value) {
+      await player.pause();
+    }
     // iOS 上多个 libmpv Player 共享 audio session。任意一格重新 open
     // 都可能中断其他格，由页面级控制器统一恢复仍应播放的播放器。
     if (!_disposed) {
@@ -322,15 +492,51 @@ class MultiRoomPlayerController extends GetxController {
   /// 不读取可能尚未刷新的 player.state.playing。
   Future<void> ensurePlaying() {
     return _enqueue(() async {
-      if (_disposed || !_playbackDesired || !liveStatus.value) return;
+      if (_disposed || paused.value || !_playbackDesired || !liveStatus.value) {
+        return;
+      }
       await player.play();
     });
   }
 
-  /// 切换本格清晰度（独立于其他格）。
-  Future<void> changeQuality(int index) {
+  /// Applies the user's explicit playback intent. Reopens and lifecycle
+  /// recovery never override this state.
+  Future<void> setPaused(bool value) {
+    if (paused.value == value) return Future<void>.value();
+    paused.value = value;
+    if (value && _isBuffering) {
+      _finishBuffering(DateTime.now());
+    }
     return _enqueue(() async {
-      if (index < 0 || index >= _qualities.length || index == _qualityIndex) {
+      if (value) {
+        await player.pause();
+      } else if (_playbackDesired && liveStatus.value) {
+        await player.play();
+      }
+    });
+  }
+
+  Future<void> togglePaused() => setPaused(!paused.value);
+
+  /// 切换本格清晰度（独立于其他格）。
+  Future<void> changeQuality(
+    int index, {
+    bool userInitiated = true,
+  }) {
+    if (index < 0 || index >= _qualities.length) {
+      return Future<void>.value();
+    }
+    if (userInitiated) {
+      _userQualityIndex = index;
+      qualityLocked.value = true;
+      if (_memoryPressureQualityIndex != null) {
+        // Remember the newest user target, but retain the emergency override.
+        _memoryPressureQualityIndex = index;
+        return Future<void>.value();
+      }
+    }
+    return _enqueue(() async {
+      if (index == _qualityIndex) {
         return;
       }
       _qualityIndex = index;
@@ -342,11 +548,22 @@ class MultiRoomPlayerController extends GetxController {
         if (_disposed) return;
         await _openCurrentUrl();
       } catch (e) {
-        Log.e("多开切换清晰度失败：${item.site.id}/${item.roomId} $e",
-            StackTrace.current);
+        Log.e(
+            "多开切换清晰度失败：${item.site.id}/${item.roomId} $e", StackTrace.current);
         errorText.value = e.toString();
       }
     });
+  }
+
+  Future<void> changeQualityAutomatically(int index) {
+    if (qualityLocked.value || _memoryPressureQualityIndex != null) {
+      return Future<void>.value();
+    }
+    return changeQuality(index, userInitiated: false);
+  }
+
+  void useAutomaticQuality() {
+    qualityLocked.value = false;
   }
 
   /// 切换本格线路（独立于其他格）。
@@ -360,8 +577,7 @@ class MultiRoomPlayerController extends GetxController {
       try {
         await _openCurrentUrl();
       } catch (e) {
-        Log.e("多开切换线路失败：${item.site.id}/${item.roomId} $e",
-            StackTrace.current);
+        Log.e("多开切换线路失败：${item.site.id}/${item.roomId} $e", StackTrace.current);
         errorText.value = e.toString();
       }
     });
@@ -376,7 +592,10 @@ class MultiRoomPlayerController extends GetxController {
   /// 低内存恢复：重建本格弹幕连接。
   Future<void> restoreDanmaku() async {
     final roomDetail = detail.value;
-    if (_disposed || _danmakuActive || roomDetail == null || !liveStatus.value) {
+    if (_disposed ||
+        _danmakuActive ||
+        roomDetail == null ||
+        !liveStatus.value) {
       return;
     }
     await _startDanmaku(roomDetail);
@@ -387,7 +606,19 @@ class MultiRoomPlayerController extends GetxController {
     if (_qualities.length <= 1 || _qualityIndex == _qualities.length - 1) {
       return;
     }
-    await changeQuality(_qualities.length - 1);
+    _memoryPressureQualityIndex ??= _userQualityIndex ?? _qualityIndex;
+    await changeQuality(
+      _qualities.length - 1,
+      userInitiated: false,
+    );
+  }
+
+  /// Restores the most recent user target after a temporary memory override.
+  Future<void> restoreQualityAfterMemoryPressure() async {
+    final target = _memoryPressureQualityIndex;
+    _memoryPressureQualityIndex = null;
+    if (target == null || target < 0 || target >= _qualities.length) return;
+    await changeQuality(target, userInitiated: false);
   }
 
   /// 由 `DanmakuScreen` 创建后回传渲染控制器。
@@ -569,22 +800,35 @@ class MultiRoomPlayerController extends GetxController {
     }
   }
 
-  Future<void> refreshRoom() async {
+  Future<MultiRoomRefreshResult> refreshRoom({bool showToast = true}) async {
     await load();
-    SmartDialog.showToast("已刷新 ${item.userName}");
+    final error = errorText.value.trim();
+    final result = MultiRoomRefreshResult(
+      roomKey: item.key,
+      success: error.isEmpty,
+      error: error.isEmpty ? null : error,
+    );
+    if (showToast) {
+      SmartDialog.showToast(
+        result.success ? "已刷新 ${item.userName}" : "刷新失败 ${item.userName}",
+      );
+    }
+    return result;
   }
 
   Future<void> toggleMute() async {
-    muted.value = !muted.value;
+    await setMuted(!muted.value);
+  }
+
+  Future<void> setMuted(bool value) async {
+    if (muted.value == value) return;
+    muted.value = value;
     await player.setVolume(muted.value ? 0 : volume.value);
   }
 
-  /// 设置本格音量（0-100）并取消静音。
+  /// 设置本格音量（0-100）。静音归属只由 [setMuted] 控制。
   Future<void> setVolume(double value) async {
     volume.value = value.clamp(0, 100).toDouble();
-    if (muted.value && value > 0) {
-      muted.value = false;
-    }
     if (muted.value) {
       await player.setVolume(0);
     } else {
@@ -592,10 +836,40 @@ class MultiRoomPlayerController extends GetxController {
     }
   }
 
+  /// Stops native resources before the focused room opens as a single room.
+  /// Normal controller disposal remains safe after this method completes.
+  Future<void> closeForRouteTransition() async {
+    final activeTransition = _routeTransitionFuture;
+    if (activeTransition != null) return activeTransition;
+    if (_disposed || _playerDisposed) return;
+    late final Future<void> transition;
+    transition = _mutationQueue.run<void>(() async {
+      if (_playerDisposed) return;
+      _routeTransitionClosed = true;
+      _playbackDesired = false;
+      if (_isBuffering) _finishBuffering(DateTime.now());
+      try {
+        await _stopDanmaku();
+        await player.stop();
+        await player.dispose();
+        _playerDisposed = true;
+      } catch (_) {
+        _routeTransitionClosed = false;
+        rethrow;
+      }
+    });
+    _routeTransitionFuture = transition;
+    _operationChain = transition.catchError((Object _) {});
+    await transition;
+  }
+
   @override
   void onClose() {
     _disposed = true;
     _playbackDesired = false;
+    if (_isBuffering) _finishBuffering(DateTime.now());
+    unawaited(_bufferingSubscription?.cancel());
+    _bufferingSubscription = null;
     _danmakuActive = false;
     // 必须断开弹幕长连接，否则移除格子后连接和心跳会泄漏。
     liveDanmaku.onMessage = null;
@@ -606,8 +880,14 @@ class MultiRoomPlayerController extends GetxController {
     danmakuController = null;
     // 等当前串行的 open/load 收尾后再释放 Player，避免异步回调操作已释放实例。
     unawaited(_operationChain.whenComplete(() async {
-      await player.stop();
-      await player.dispose();
+      if (!_playerDisposed) {
+        await player.stop();
+        await player.dispose();
+        _playerDisposed = true;
+      }
+      if (_ownsMutationQueue) {
+        await _mutationQueue.close();
+      }
     }));
     super.onClose();
   }

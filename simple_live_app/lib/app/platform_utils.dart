@@ -4,6 +4,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/widgets.dart';
 
 class PlatformUtils {
+  static const int mobileMultiRoomMax = 4;
+
   PlatformUtils._();
 
   static bool get isOhos => Platform.operatingSystem == 'ohos';

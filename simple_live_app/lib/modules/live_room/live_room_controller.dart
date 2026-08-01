@@ -48,7 +48,6 @@ import 'package:simple_live_app/widgets/status/app_empty_widget.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:video_player/video_player.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
 @visibleForTesting
@@ -1309,7 +1308,7 @@ class LiveRoomController extends PlayerController
         await player.stop();
       }
       if (!Utils.isOhos) {
-        await WakelockPlus.disable();
+        setPlaybackKeepScreenAwake(false);
       }
       if (Utils.isOhos) {
         await closePlayerResources();
@@ -2867,7 +2866,6 @@ class LiveRoomController extends PlayerController
         title: "观看历史",
         width: 420,
         useSystem: true,
-        clickMaskDismiss: false,
         child: buildHistorySelection(
           onClose: Utils.hideRightDialog,
           scrollController: liveRoomHistoryScrollController,
@@ -2893,7 +2891,6 @@ class LiveRoomController extends PlayerController
         title: "同类推荐",
         width: 420,
         useSystem: true,
-        clickMaskDismiss: false,
         child: buildCategoryRecommendationSelection(
           onClose: Utils.hideRightDialog,
           scrollController: liveRoomRecommendationScrollController,
@@ -3095,7 +3092,6 @@ class LiveRoomController extends PlayerController
       title: "添加直播间",
       width: 420,
       useSystem: true,
-      clickMaskDismiss: false,
       child: DefaultTabController(
         length: 2,
         child: Column(
@@ -3161,20 +3157,23 @@ class LiveRoomController extends PlayerController
     // 等待右侧选择面板退场，避免遮罩与路由动画叠在一起。
     await Future.delayed(const Duration(milliseconds: 220));
     final wasPlaying = player.state.playing;
-    await releaseWakelockOwnership();
     try {
       if (wasPlaying) {
         await player.pause();
       }
-      await AppNavigator.toMultiRoom([currentRoom, addedRoom]);
+      final result = await AppNavigator.toMultiRoom(
+        [currentRoom, addedRoom],
+        returnToLiveRoom: true,
+      );
+      if (result is MultiRoomOpenSingleResult &&
+          !_roomDisposed &&
+          !isPlayerClosing) {
+        await resetRoom(result.room.site, result.room.roomId);
+      }
     } finally {
       if (!_roomDisposed && !isPlayerClosing) {
-        try {
-          if (wasPlaying) {
-            await player.play();
-          }
-        } finally {
-          reclaimWakelockOwnership();
+        if (wasPlaying) {
+          await player.play();
         }
         if (fullScreenState.value) {
           await restoreFullScreenSystemUi();
@@ -3291,7 +3290,7 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  void resetRoom(Site site, String roomId) async {
+  Future<void> resetRoom(Site site, String roomId) async {
     if (this.site == site && this.roomId == roomId) {
       return;
     }
@@ -3371,8 +3370,6 @@ ${errorStackTrace ?? ""}''');
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       Log.d("进入后台:$state");
-      updateSystemUiAppLifecycle(false);
-      updateWakelockAppLifecycle(false);
       isBackground = true;
       _backgroundedAt ??= DateTime.now();
       _positionBeforeBackground ??= _lastKnownPlayerPosition;
@@ -3393,11 +3390,6 @@ ${errorStackTrace ?? ""}''');
       }
     } else if (state == AppLifecycleState.resumed) {
       Log.d("返回前台");
-      updateSystemUiAppLifecycle(true);
-      updateWakelockAppLifecycle(true);
-      if (fullScreenState.value) {
-        unawaited(restoreFullScreenSystemUi());
-      }
       _refreshAutoExitCountdown();
       isBackground = false;
       unawaited(

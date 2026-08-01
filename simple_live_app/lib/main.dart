@@ -21,6 +21,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/app/utils/listen_fourth_button.dart';
+import 'package:simple_live_app/generated/app_version.g.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/models/db/history.dart';
@@ -39,6 +40,7 @@ import 'package:simple_live_app/services/live_notification_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
 import 'package:simple_live_app/widgets/status/app_loadding_widget.dart';
@@ -74,7 +76,9 @@ Future<void> initializeApplication(List<String> args) async {
   await Hive.initFlutter(await resolveHivePath(args));
   //初始化服务
   await initServices();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  if (Utils.isOhos) {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
   //设置状态栏为透明
   SystemUiOverlayStyle systemUiOverlayStyle = const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -506,8 +510,8 @@ Future initServices() async {
       ? PackageInfo(
           appName: 'Simple Live',
           packageName: 'com.xycz.simple_live_app',
-          version: '1.12.7',
-          buildNumber: '11207',
+          version: GeneratedAppVersion.versionName,
+          buildNumber: GeneratedAppVersion.buildNumber,
         )
       : await PackageInfo.fromPlatform();
   //本地存储
@@ -515,6 +519,7 @@ Future initServices() async {
   await Get.put(LocalStorageService()).init();
   await Get.put(DBService()).init();
   Get.put(CurrentRoomService());
+  await Get.put(PlaybackDisplayCoordinator(), permanent: true).initialize();
   //初始化设置控制器
   Get.put(AppSettingsController());
 

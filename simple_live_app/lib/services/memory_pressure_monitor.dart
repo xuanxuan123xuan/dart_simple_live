@@ -57,6 +57,9 @@ class MemoryPressureMonitor {
     _running = false;
     _timer?.cancel();
     _timer = null;
+    _isDegraded = false;
+    _recoverCount = 0;
+    _lastRssBytes = 0;
   }
 
   void _sample() {
@@ -68,7 +71,8 @@ class MemoryPressureMonitor {
         if (_recoverCount >= _recoverStableSamples) {
           _isDegraded = false;
           _recoverCount = 0;
-          Log.d("多开内存已回落 (${(_lastRssBytes / 1024 / 1024).toStringAsFixed(0)}MB)，恢复");
+          Log.d(
+              "多开内存已回落 (${(_lastRssBytes / 1024 / 1024).toStringAsFixed(0)}MB)，恢复");
           onRecover?.call();
         }
       } else {
@@ -80,7 +84,8 @@ class MemoryPressureMonitor {
     if (_lastRssBytes >= _highRssBytes) {
       _isDegraded = true;
       _recoverCount = 0;
-      Log.d("多开内存压力大 (${(_lastRssBytes / 1024 / 1024).toStringAsFixed(0)}MB)，触发降级");
+      Log.d(
+          "多开内存压力大 (${(_lastRssBytes / 1024 / 1024).toStringAsFixed(0)}MB)，触发降级");
       onDegrade?.call();
     }
   }

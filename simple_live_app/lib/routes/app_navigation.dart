@@ -56,10 +56,11 @@ class AppNavigator {
   }
 
   /// 跳转至直播间
-  static void toLiveRoomDetail({
+  static Future<dynamic> toLiveRoomDetail({
     required Site site,
     required String roomId,
     bool initialDesktopSidePanelCollapsed = false,
+    bool replace = false,
   }) async {
     final roomKey = "${site.id}_$roomId";
     final lastOpenAt = _lastLiveRoomOpenAt[roomKey];
@@ -67,7 +68,7 @@ class AppNavigator {
     if (lastOpenAt != null &&
         now.difference(lastOpenAt) < const Duration(milliseconds: 1500)) {
       SmartDialog.showToast("正在打开直播间，请稍候");
-      return;
+      return Future.value();
     }
     _lastLiveRoomOpenAt[roomKey] = now;
 
@@ -95,27 +96,45 @@ class AppNavigator {
       }
     }
 
-    Get.toNamed(
-      RoutePath.kLiveRoomDetail,
-      arguments: {
-        "site": site,
-        "initialDesktopSidePanelCollapsed": initialDesktopSidePanelCollapsed,
-      },
-      parameters: {
-        "roomId": roomId,
-      },
-    );
+    final arguments = {
+      "site": site,
+      "initialDesktopSidePanelCollapsed": initialDesktopSidePanelCollapsed,
+    };
+    final parameters = {"roomId": roomId};
+    return (replace
+            ? Get.offNamed(
+                RoutePath.kLiveRoomDetail,
+                arguments: arguments,
+                parameters: parameters,
+              )
+            : Get.toNamed(
+                RoutePath.kLiveRoomDetail,
+                arguments: arguments,
+                parameters: parameters,
+              )) ??
+        Future.value();
   }
 
-  static Future<dynamic> toMultiRoom(List<MultiRoomItem> rooms) {
+  static Future<dynamic> toMultiRoom(
+    List<MultiRoomItem> rooms, {
+    bool returnToLiveRoom = false,
+  }) {
     final unavailableReason = PlatformUtils.inlineMultiRoomUnavailableReason;
     if (unavailableReason != null) {
       SmartDialog.showToast(unavailableReason);
       return Future.value();
     }
+    if (PlatformUtils.isMobileApp &&
+        rooms.length > PlatformUtils.mobileMultiRoomMax) {
+      SmartDialog.showToast("移动端最多支持4个直播间");
+      return Future.value();
+    }
     return Get.toNamed(
           RoutePath.kMultiRoom,
-          arguments: rooms,
+          arguments: MultiRoomLaunchArgs(
+            rooms: rooms,
+            returnToLiveRoom: returnToLiveRoom,
+          ),
         ) ??
         Future.value();
   }

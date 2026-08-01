@@ -89,6 +89,18 @@ jobs:
           & (Join-Path $env:FLUTTER_OHOS_ROOT "bin\flutter.bat") pub get
           if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed" }
 
+      - name: Check synchronized app version
+        id: appver
+        working-directory: simple_live_app
+        shell: pwsh
+        run: |
+          $dart = Join-Path $env:FLUTTER_OHOS_ROOT "bin\dart.bat"
+          & $dart run tool/app_version.dart check
+          if ($LASTEXITCODE -ne 0) { throw "App version check failed" }
+          $version = (& $dart run tool/app_version.dart print name).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Reading app version failed" }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Run tests
         working-directory: simple_live_app
         shell: pwsh
@@ -125,7 +137,8 @@ jobs:
           $artifactDir = Join-Path $env:RUNNER_TEMP "ohos-hap-artifact"
           New-Item -ItemType Directory -Force $artifactDir | Out-Null
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $target = Join-Path $artifactDir "dart_simple_live-1.12.7-ohos-arm64-$shortSha.hap"
+          $appVersion = "${{ steps.appver.outputs.version }}"
+          $target = Join-Path $artifactDir "dart_simple_live-$appVersion-ohos-arm64-$shortSha.hap"
           Copy-Item -LiteralPath $source -Destination $target -Force
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash
           "artifact_dir=$artifactDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append

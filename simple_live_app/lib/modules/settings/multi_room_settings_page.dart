@@ -58,6 +58,24 @@ class MultiRoomSettingsPage extends GetView<AppSettingsController> {
                 ),
                 AppStyle.divider,
                 Obx(
+                  () => SettingsSwitch(
+                    title: "仅允许一路声音",
+                    subtitle: "取消某格静音时自动静音其他直播间；关闭后允许多路混音",
+                    value: controller.multiRoomSingleAudio.value,
+                    onChanged: controller.setMultiRoomSingleAudio,
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
+                  () => SettingsSwitch(
+                    title: "自动调节多开画质",
+                    subtitle: "根据缓冲、内存和设备解码负载优先保障主画面",
+                    value: controller.multiRoomAdaptiveQuality.value,
+                    onChanged: controller.setMultiRoomAdaptiveQuality,
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
                   () => SettingsNumber(
                     title: "布局间距",
                     subtitle: isDesktop

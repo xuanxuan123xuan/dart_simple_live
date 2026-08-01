@@ -113,8 +113,8 @@ jobs:
         id: appver
         shell: bash
         run: |
-          raw="$(grep -m1 '^version:' simple_live_app/pubspec.yaml | sed 's/version:[[:space:]]*//')"
-          echo "version=${raw%%+*}" >> "$GITHUB_OUTPUT"
+          dart run simple_live_app/tool/app_version.dart check
+          echo "version=$(dart run simple_live_app/tool/app_version.dart print name)" >> "$GITHUB_OUTPUT"
 
       # ---------- 未签名路径 ----------
 

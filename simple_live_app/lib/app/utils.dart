@@ -17,6 +17,7 @@ import 'package:simple_live_app/app/log.dart';
 typedef TextValidate = bool Function(String text);
 
 class Utils {
+  static int _rightDialogRequest = 0;
   static bool get isOhos => Platform.operatingSystem == 'ohos';
 
   static late PackageInfo packageInfo;
@@ -119,79 +120,86 @@ class Utils {
     bool useSystem = false,
     bool clickMaskDismiss = true,
   }) {
-    SmartDialog.show(
-      alignment: Alignment.topRight,
-      // 默认保留点击遮罩关闭的原有交互。全屏播放器等会继续
-      // 处理打开手势的场景，可由调用方显式关闭遮罩点击退出。
-      clickMaskDismiss: clickMaskDismiss,
-      animationBuilder: (controller, child, animationParam) {
-        //从右到左
-        return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(1, 0),
-            end: Offset.zero,
-          ).animate(controller.view),
-          child: child,
-        );
-      },
-      useSystem: useSystem,
-      maskColor: Colors.transparent,
-      animationTime: const Duration(milliseconds: 200),
-      builder: (context) => Container(
-        width: width + MediaQuery.of(context).padding.right,
-        padding: EdgeInsets.only(right: MediaQuery.of(context).padding.right),
-        decoration: BoxDecoration(
-          color: Get.theme.cardColor,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(4),
-            bottomLeft: Radius.circular(4),
+    final request = ++_rightDialogRequest;
+    // 等当前点击手势和外层播放器的 rebuild 完成后再创建遮罩，
+    // 既避免新弹窗被同一次手势误关，又保留点击弹窗外关闭。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (request != _rightDialogRequest) return;
+      SmartDialog.show(
+        alignment: Alignment.topRight,
+        clickMaskDismiss: clickMaskDismiss,
+        animationBuilder: (controller, child, animationParam) {
+          //从右到左
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(1, 0),
+              end: Offset.zero,
+            ).animate(controller.view),
+            child: child,
+          );
+        },
+        useSystem: useSystem,
+        maskColor: Colors.transparent,
+        animationTime: const Duration(milliseconds: 200),
+        builder: (context) => Container(
+          width: width + MediaQuery.of(context).padding.right,
+          padding: EdgeInsets.only(right: MediaQuery.of(context).padding.right),
+          decoration: BoxDecoration(
+            color: Get.theme.cardColor,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(4),
+              bottomLeft: Radius.circular(4),
+            ),
           ),
-        ),
-        child: SafeArea(
-          left: false,
-          right: false,
-          child: MediaQuery(
-            data: const MediaQueryData(padding: EdgeInsets.zero),
-            child: Column(
-              children: [
-                ListTile(
-                  visualDensity: VisualDensity.compact,
-                  contentPadding: EdgeInsets.zero,
-                  leading: IconButton(
-                    onPressed: () {
-                      SmartDialog.dismiss(status: SmartStatus.allCustom).then(
-                        (value) => onDismiss?.call(),
-                      );
-                    },
-                    icon: const Icon(Icons.arrow_back),
+          child: SafeArea(
+            left: false,
+            right: false,
+            child: MediaQuery(
+              data: const MediaQueryData(padding: EdgeInsets.zero),
+              child: Column(
+                children: [
+                  ListTile(
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: EdgeInsets.zero,
+                    leading: IconButton(
+                      onPressed: () {
+                        SmartDialog.dismiss(status: SmartStatus.allCustom).then(
+                          (value) => onDismiss?.call(),
+                        );
+                      },
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                    title: Text(
+                      title,
+                      style: Get.textTheme.titleMedium,
+                    ),
                   ),
-                  title: Text(
-                    title,
-                    style: Get.textTheme.titleMedium,
+                  Divider(
+                    height: 1,
+                    color: Colors.grey.withAlpha(25),
                   ),
-                ),
-                Divider(
-                  height: 1,
-                  color: Colors.grey.withAlpha(25),
-                ),
-                Expanded(
-                  child: child,
-                ),
-              ],
+                  Expanded(
+                    child: child,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-      ),
-    );
+      );
+    });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   static void hideRightDialog() {
+    _rightDialogRequest += 1;
     SmartDialog.dismiss(status: SmartStatus.allCustom);
   }
 
   static Future<void> switchRightDialog(
     FutureOr<void> Function() openNext,
   ) async {
+    _rightDialogRequest += 1;
     await SmartDialog.dismiss(status: SmartStatus.allCustom);
     await Future.delayed(const Duration(milliseconds: 220));
     await openNext();

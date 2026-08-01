@@ -401,6 +401,14 @@ class AppSettingsController extends GetxController {
       LocalStorageService.kMultiRoomLowMemoryDegrade,
       true,
     );
+    multiRoomSingleAudio.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kMultiRoomSingleAudio,
+      true,
+    );
+    multiRoomAdaptiveQuality.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kMultiRoomAdaptiveQuality,
+      true,
+    );
 
     initSiteSort();
     initHomeSort();
@@ -2092,6 +2100,26 @@ class AppSettingsController extends GetxController {
     multiRoomLowMemoryDegrade.value = value;
     LocalStorageService.instance.setValue(
       LocalStorageService.kMultiRoomLowMemoryDegrade,
+      value,
+    );
+  }
+
+  /// 多开音频策略：开启时同一时间只允许一个直播间出声。
+  var multiRoomSingleAudio = true.obs;
+  void setMultiRoomSingleAudio(bool value) {
+    multiRoomSingleAudio.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kMultiRoomSingleAudio,
+      value,
+    );
+  }
+
+  /// 根据缓冲、内存和解码负载自动降低/恢复多开画质。
+  var multiRoomAdaptiveQuality = true.obs;
+  void setMultiRoomAdaptiveQuality(bool value) {
+    multiRoomAdaptiveQuality.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kMultiRoomAdaptiveQuality,
       value,
     );
   }

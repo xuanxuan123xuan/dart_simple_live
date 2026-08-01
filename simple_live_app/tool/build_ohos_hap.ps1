@@ -24,6 +24,7 @@ $signedHap = Join-Path $outputDir "simple_live_app-release-signed.hap"
 $verifyDir = Join-Path $outputDir "verify"
 $java = Join-Path $JavaHome "bin\java.exe"
 $flutter = Join-Path $FlutterRoot "bin\flutter.bat"
+$dart = Join-Path $FlutterRoot "bin\dart.bat"
 $signTool = Join-Path $SdkRoot "default\openharmony\toolchains\lib\hap-sign-tool.jar"
 $nativeRoot = Join-Path $SdkRoot "default\openharmony\native"
 $cmake = Join-Path $nativeRoot "build-tools\cmake\bin\cmake.exe"
@@ -40,6 +41,9 @@ $env:PATH = "$cliRoot\bin;$cliRoot\tool\node;$JavaHome\bin;$FlutterRoot\bin;$env
 
 Push-Location $appRoot
 try {
+  & $dart run tool/app_version.dart sync
+  if ($LASTEXITCODE -ne 0) { throw "App version synchronization failed." }
+
   # Flutter's generated OHOS project contains a blue grid placeholder icon.
   # Keep the HarmonyOS media resource synchronized with Simple Live's real
   # high-resolution launcher artwork before every build.

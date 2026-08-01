@@ -63,7 +63,8 @@ jobs:
         id: app_version
         shell: bash
         run: |
-          app_version="$(grep '^version:' simple_live_app/pubspec.yaml | awk '{print $2}')"
+          dart run simple_live_app/tool/app_version.dart check
+          app_version="$(dart run simple_live_app/tool/app_version.dart print full)"
           echo "app_version=$app_version" >> "$GITHUB_OUTPUT"
 
       - name: Resolve ref info

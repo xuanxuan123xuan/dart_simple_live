@@ -480,6 +480,11 @@ class FollowUserController extends BasePageController<FollowUser> {
       selectedMultiRoomCount.value = selectedMultiRoomKeys.length;
       return;
     }
+    if (PlatformUtils.isMobileApp &&
+        selectedMultiRoomKeys.length >= PlatformUtils.mobileMultiRoomMax) {
+      SmartDialog.showToast("移动端最多支持4个直播间");
+      return;
+    }
     selectedMultiRoomKeys.add(item.id);
     selectedMultiRoomCount.value = selectedMultiRoomKeys.length;
   }
@@ -499,6 +504,11 @@ class FollowUserController extends BasePageController<FollowUser> {
         .toList();
     if (selected.length < 2) {
       SmartDialog.showToast("至少选择 2 个直播中的关注");
+      return;
+    }
+    if (PlatformUtils.isMobileApp &&
+        selected.length > PlatformUtils.mobileMultiRoomMax) {
+      SmartDialog.showToast("移动端最多支持4个直播间");
       return;
     }
     if (await DesktopMultiWindowService.openRooms(selected)) {

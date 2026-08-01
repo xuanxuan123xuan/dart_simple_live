@@ -32,151 +32,231 @@ class MultiRoomPage extends GetView<MultiRoomController> {
             LayoutBuilder(
               builder: (context, constraints) => Obx(
                 () {
-            final rooms = controller.rooms.toList();
-            if (rooms.isEmpty) {
-              return const _CenterText("没有可播放的直播间");
-            }
-            final gap = AppSettingsController.instance
-                .effectiveMultiRoomGap
-                .toDouble();
-            // 双击聚焦模式：只显示单个直播间全屏。
-            final focusKey = controller.focusedRoomKey.value;
-            if (focusKey != null) {
-              final idx = rooms.indexWhere((r) => r.key == focusKey);
-              if (idx >= 0) {
-                return Padding(
-                  padding: EdgeInsets.all(gap),
-                  child: _tileAt(idx, rooms),
-                );
-              }
-            }
-            final showChat = AppSettingsController.instance
-                    .multiRoomShowChatPanel.value &&
-                (rooms.length == 2 || rooms.length == 3);
-            if (showChat) {
-              return _buildChatPanelLayout(rooms, constraints, gap);
-            }
-            if (controller.isMainSubLayoutActive) {
-              return _buildMainSubRoomLayout(rooms, gap);
-            }
-            final columns = _bestColumnCount(
-              rooms.length,
-              constraints.maxWidth,
-              constraints.maxHeight,
-              gap,
-            );
-            final rows = (rooms.length / columns).ceil();
-            return Padding(
-              padding: EdgeInsets.all(gap),
-              child: Column(
-                children: [
-                  for (var row = 0; row < rows; row += 1) ...[
-                    if (row > 0) SizedBox(height: gap),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          for (var col = 0; col < columns; col += 1) ...[
-                            if (col > 0) SizedBox(width: gap),
-                            Expanded(
-                              child: _tileAt(row * columns + col, rooms),
+                  final rooms = controller.rooms.toList();
+                  if (rooms.isEmpty) {
+                    return const _CenterText("没有可播放的直播间");
+                  }
+                  final gap = AppSettingsController
+                      .instance.effectiveMultiRoomGap
+                      .toDouble();
+                  final mainSubLayoutActive = controller.isMainSubLayoutActive;
+                  final chatPanelRatio = controller.chatPanelRatio.value;
+                  // 双击聚焦模式：只显示单个直播间全屏。
+                  final focusKey = controller.focusedRoomKey.value;
+                  if (focusKey != null) {
+                    final idx = rooms.indexWhere((r) => r.key == focusKey);
+                    if (idx >= 0) {
+                      return Padding(
+                        padding: EdgeInsets.all(gap),
+                        child: _tileAt(idx, rooms),
+                      );
+                    }
+                  }
+                  final showChat = AppSettingsController
+                          .instance.multiRoomShowChatPanel.value &&
+                      (rooms.length == 2 || rooms.length == 3);
+                  if (showChat) {
+                    return _buildChatPanelLayout(
+                      rooms,
+                      constraints,
+                      gap,
+                      mainSubLayoutActive: mainSubLayoutActive,
+                      chatPanelRatio: chatPanelRatio,
+                    );
+                  }
+                  if (mainSubLayoutActive) {
+                    return _buildMainSubRoomLayout(rooms, gap);
+                  }
+                  final columns = _bestColumnCount(
+                    rooms.length,
+                    constraints.maxWidth,
+                    constraints.maxHeight,
+                    gap,
+                  );
+                  final rows = (rooms.length / columns).ceil();
+                  return Padding(
+                    padding: EdgeInsets.all(gap),
+                    child: Column(
+                      children: [
+                        for (var row = 0; row < rows; row += 1) ...[
+                          if (row > 0) SizedBox(height: gap),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                for (var col = 0; col < columns; col += 1) ...[
+                                  if (col > 0) SizedBox(width: gap),
+                                  Expanded(
+                                    child: _tileAt(row * columns + col, rooms),
+                                  ),
+                                ],
+                              ],
                             ),
-                          ],
+                          ),
                         ],
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            // 顶部覆盖层：点击画面切换显隐，8 秒自动隐藏，尺寸与播放器全屏控件一致
+            Obx(
+              () => AnimatedPositioned(
+                left: 0,
+                right: 0,
+                top: controller.showOverlay.value
+                    ? 0
+                    : -(56 + MediaQuery.of(context).viewPadding.top),
+                duration: const Duration(milliseconds: 200),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  // 拦截点击，避免冒泡到外层 GestureDetector 触发 toggleOverlay
+                  // （那会导致页面 rebuild，弹窗刚打开就被 pop）。
+                  onTap: () {},
+                  child: Container(
+                    height: 56 + MediaQuery.of(context).viewPadding.top,
+                    padding: EdgeInsets.only(
+                      left: 32,
+                      right: 32,
+                      top: MediaQuery.of(context).viewPadding.top,
+                    ),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [Colors.transparent, Colors.black87],
                       ),
                     ),
-                  ],
-                ],
-              ),
-            );
-          },
-        ),
-      ),
-      // 顶部覆盖层：点击画面切换显隐，8 秒自动隐藏，尺寸与播放器全屏控件一致
-      Obx(
-        () => AnimatedPositioned(
-          left: 0,
-          right: 0,
-          top: controller.showOverlay.value ? 0 : -(56 + MediaQuery.of(context).viewPadding.top),
-          duration: const Duration(milliseconds: 200),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            // 拦截点击，避免冒泡到外层 GestureDetector 触发 toggleOverlay
-            // （那会导致页面 rebuild，弹窗刚打开就被 pop）。
-            onTap: () {},
-            child: Container(
-            height: 56 + MediaQuery.of(context).viewPadding.top,
-            padding: EdgeInsets.only(
-              left: 32,
-              right: 32,
-              top: MediaQuery.of(context).viewPadding.top,
-            ),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: [Colors.transparent, Colors.black87],
-              ),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: "返回",
-                  onPressed: () {
-                    if (controller.focusedRoomKey.value != null) {
-                      controller.exitFocus();
-                    } else {
-                      Get.back();
-                    }
-                  },
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                ),
-                const SizedBox(width: 12),
-                Obx(() => Text(
-                  controller.focusedRoomKey.value != null
-                      ? "聚焦中"
-                      : "多开同屏（${controller.rooms.length}）",
-                  style: const TextStyle(color: Colors.white, fontSize: 18),
-                )),
-                const Spacer(),
-                IconButton(
-                  tooltip: "加入直播间",
-                  onPressed: () => _showAddRoomSheet(context),
-                  icon: const Icon(Remix.play_list_add_line, color: Colors.white),
-                ),
-                if (controller.canToggleMainSubLayout)
-                  IconButton(
-                    tooltip: controller.mainSubLayout.value
-                        ? "切换为均分布局"
-                        : "切换为 1+${controller.rooms.length - 1} 主次布局",
-                    onPressed: controller.toggleMainSubLayout,
-                    icon: Icon(
-                      controller.mainSubLayout.value
-                          ? Icons.view_column_outlined
-                          : Icons.grid_view_outlined,
-                      color: controller.mainSubLayout.value
-                          ? Colors.amber
-                          : Colors.white,
+                    child: Row(
+                      children: [
+                        IconButton(
+                          tooltip: "返回",
+                          onPressed: () {
+                            if (controller.focusedRoomKey.value != null) {
+                              controller.exitFocus();
+                            } else {
+                              Get.back();
+                            }
+                          },
+                          icon:
+                              const Icon(Icons.arrow_back, color: Colors.white),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Obx(
+                            () => Text(
+                              controller.focusedRoomKey.value != null
+                                  ? "聚焦中"
+                                  : "多开同屏（${controller.rooms.length}）",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 18),
+                            ),
+                          ),
+                        ),
+                        if (controller.adaptiveQualityStatus.value.isNotEmpty ||
+                            controller.totalBandwidthMbps.value != null)
+                          Container(
+                            margin: const EdgeInsets.only(right: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black45,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              [
+                                if (controller
+                                    .adaptiveQualityStatus.value.isNotEmpty)
+                                  controller.adaptiveQualityStatus.value,
+                                if (controller.totalBandwidthMbps.value != null)
+                                  "${controller.totalBandwidthMbps.value!.toStringAsFixed(1)} Mbps",
+                              ].join(" · "),
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 11),
+                            ),
+                          ),
+                        if (controller.focusedRoomKey.value != null)
+                          IconButton(
+                            tooltip: "转到单直播间",
+                            onPressed: controller.openingSingleRoom.value
+                                ? null
+                                : controller.openFocusedRoomAsSingle,
+                            icon: const Icon(Icons.open_in_new,
+                                color: Colors.white),
+                          ),
+                        IconButton(
+                          tooltip: "加入直播间",
+                          onPressed: controller.canAddRoom
+                              ? () => _showAddRoomSheet(context)
+                              : null,
+                          icon: Icon(
+                            Remix.play_list_add_line,
+                            color: controller.canAddRoom
+                                ? Colors.white
+                                : Colors.white38,
+                          ),
+                        ),
+                        if (controller.canToggleMainSubLayout)
+                          IconButton(
+                            tooltip: controller.mainSubLayout.value
+                                ? "切换为均分布局"
+                                : "切换为 1+${controller.rooms.length - 1} 主次布局",
+                            onPressed: controller.toggleMainSubLayout,
+                            icon: Icon(
+                              controller.mainSubLayout.value
+                                  ? Icons.view_column_outlined
+                                  : Icons.grid_view_outlined,
+                              color: controller.mainSubLayout.value
+                                  ? Colors.amber
+                                  : Colors.white,
+                            ),
+                          ),
+                        IconButton(
+                          tooltip: controller.allPaused.value ? "全部继续" : "全部暂停",
+                          onPressed: controller.toggleAllPaused,
+                          icon: Icon(
+                            controller.allPaused.value
+                                ? Icons.play_arrow
+                                : Icons.pause,
+                            color: Colors.white,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: "全部静音",
+                          onPressed: controller.muteAll,
+                          icon: const Icon(Remix.volume_mute_line,
+                              color: Colors.white),
+                        ),
+                        IconButton(
+                          tooltip: controller.isRefreshingAll.value
+                              ? "正在刷新 ${controller.refreshProgress.value}"
+                              : "全部刷新",
+                          onPressed: controller.isRefreshingAll.value
+                              ? null
+                              : controller.refreshAllRooms,
+                          icon: controller.isRefreshingAll.value
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Remix.refresh_line,
+                                  color: Colors.white),
+                        ),
+                      ],
                     ),
                   ),
-                IconButton(
-                  tooltip: "全部刷新",
-                  onPressed: () {
-                    for (final room in controller.rooms) {
-                      controller.playerFor(room).refreshRoom();
-                    }
-                  },
-                  icon: const Icon(Remix.refresh_line, color: Colors.white),
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
+          ],
         ),
       ),
-    ],
-  ),
-),
-);
+    );
   }
 
   Widget _buildMainSubRoomLayout(
@@ -221,6 +301,11 @@ class MultiRoomPage extends GetView<MultiRoomController> {
       item: room,
       controller: controller.playerFor(room),
       onRemove: () => controller.removeRoom(room),
+      onSetMain: () => controller.setMainRoom(room.key),
+      onTogglePaused: () => controller.toggleRoomPaused(room),
+      onToggleAudio: () => controller.toggleRoomAudio(room),
+      refreshDisabled: controller.isRefreshingAll.value,
+      isMain: index == 0 && controller.isMainSubLayoutActive,
       loadDanmaku: loadDanmaku,
     );
     return GestureDetector(
@@ -232,41 +317,42 @@ class MultiRoomPage extends GetView<MultiRoomController> {
         switchInCurve: Curves.easeOut,
         switchOutCurve: Curves.easeIn,
         child: DragTarget<int>(
-        onWillAcceptWithDetails: (details) => details.data != index,
-        onAcceptWithDetails: (details) {
-          controller.swapRooms(details.data, index);
-        },
-        builder: (ctx, candidates, rejected) {
-          return Opacity(
-            opacity: candidates.isNotEmpty ? 0.8 : 1,
-            child: LongPressDraggable<int>(
-              data: index,
-              delay: const Duration(milliseconds: 300),
-              feedback: Opacity(
-                opacity: 0.85,
-                child: Material(
-                  color: Colors.transparent,
-                  child: SizedBox(
-                    width: MediaQuery.of(ctx).size.width * 0.4,
-                    child: _MultiRoomTile(
-                      item: room,
-                      controller: controller.playerFor(room),
-                      onRemove: () => {},
-                      loadDanmaku: loadDanmaku,
+          onWillAcceptWithDetails: (details) => details.data != index,
+          onAcceptWithDetails: (details) {
+            controller.swapRooms(details.data, index);
+          },
+          builder: (ctx, candidates, rejected) {
+            return Opacity(
+              opacity: candidates.isNotEmpty ? 0.8 : 1,
+              child: LongPressDraggable<int>(
+                data: index,
+                delay: const Duration(milliseconds: 300),
+                feedback: Opacity(
+                  opacity: 0.85,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: SizedBox(
+                      width: MediaQuery.of(ctx).size.width * 0.4,
+                      child: _MultiRoomTile(
+                        item: room,
+                        controller: controller.playerFor(room),
+                        onRemove: () => {},
+                        isMain: index == 0 && controller.isMainSubLayoutActive,
+                        loadDanmaku: loadDanmaku,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              childWhenDragging: Opacity(
-                opacity: 0.4,
+                childWhenDragging: Opacity(
+                  opacity: 0.4,
+                  child: tile,
+                ),
                 child: tile,
               ),
-              child: tile,
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
-    ),
     );
   }
 
@@ -289,9 +375,8 @@ class MultiRoomPage extends GetView<MultiRoomController> {
         continue;
       }
       // 画面按 contain 缩放后的实际尺寸。
-      final videoWidth = cellWidth / cellHeight > 16 / 9
-          ? cellHeight * 16 / 9
-          : cellWidth;
+      final videoWidth =
+          cellWidth / cellHeight > 16 / 9 ? cellHeight * 16 / 9 : cellWidth;
       final videoHeight = videoWidth * 9 / 16;
       final area = videoWidth * videoHeight;
       if (area > bestArea) {
@@ -305,10 +390,12 @@ class MultiRoomPage extends GetView<MultiRoomController> {
   Widget _buildChatPanelLayout(
     List<MultiRoomItem> rooms,
     BoxConstraints constraints,
-    double gap,
-  ) {
-    final chatRoomIndex = controller.chatTargetIndex.value
-        .clamp(0, rooms.length - 1);
+    double gap, {
+    required bool mainSubLayoutActive,
+    required double chatPanelRatio,
+  }) {
+    final chatRoomIndex =
+        controller.chatTargetIndex.value.clamp(0, rooms.length - 1);
     final chatController = controller.playerFor(rooms[chatRoomIndex]);
 
     if (rooms.length == 2) {
@@ -317,11 +404,11 @@ class MultiRoomPage extends GetView<MultiRoomController> {
         child: LayoutBuilder(
           builder: (ctx, innerConstraints) {
             final chatWidth =
-                _chatPanelWidth(innerConstraints.maxWidth, gap);
+                _chatPanelWidth(innerConstraints.maxWidth, gap, chatPanelRatio);
             final dragHandle =
                 _buildChatResizeHandle(innerConstraints.maxWidth, gap);
             // 主次布局：左主格 + 右（上次直播间小 + 下聊天区大）。
-            if (controller.isMainSubLayoutActive) {
+            if (mainSubLayoutActive) {
               return Row(
                 children: [
                   Expanded(
@@ -390,13 +477,13 @@ class MultiRoomPage extends GetView<MultiRoomController> {
       child: LayoutBuilder(
         builder: (ctx, innerConstraints) {
           final chatColumnWidth =
-              _chatPanelWidth(innerConstraints.maxWidth, gap);
+              _chatPanelWidth(innerConstraints.maxWidth, gap, chatPanelRatio);
           final dragHandle =
               _buildChatResizeHandle(innerConstraints.maxWidth, gap);
           return Row(
             children: [
               Expanded(
-                child: controller.isMainSubLayoutActive
+                child: mainSubLayoutActive
                     ? _tileAt(0, rooms, loadDanmaku: true)
                     : Column(
                         children: [
@@ -414,8 +501,8 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                 child: Column(
                   children: [
                     Expanded(
-                      flex: controller.isMainSubLayoutActive ? 2 : 1,
-                      child: controller.isMainSubLayoutActive
+                      flex: mainSubLayoutActive ? 2 : 1,
+                      child: mainSubLayoutActive
                           ? Row(
                               children: [
                                 Expanded(
@@ -439,7 +526,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                     ),
                     SizedBox(height: gap),
                     Expanded(
-                      flex: controller.isMainSubLayoutActive ? 3 : 1,
+                      flex: mainSubLayoutActive ? 3 : 1,
                       child: _ChatPanel(
                         rooms: rooms,
                         chatController: chatController,
@@ -459,10 +546,14 @@ class MultiRoomPage extends GetView<MultiRoomController> {
 
   static const double _chatResizeHandleWidth = 24;
 
-  double _chatPanelWidth(double availableWidth, double gap) {
+  double _chatPanelWidth(
+    double availableWidth,
+    double gap,
+    double chatPanelRatio,
+  ) {
     final contentWidth = availableWidth - _chatResizeHandleWidth - gap * 2;
     final resizableWidth = contentWidth > 0 ? contentWidth : 0.0;
-    return (resizableWidth * controller.chatPanelRatio.value).clamp(
+    return (resizableWidth * chatPanelRatio).clamp(
       resizableWidth * 0.2,
       resizableWidth * 0.6,
     );
@@ -478,8 +569,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
         onHorizontalDragUpdate: (details) {
           // 聊天区位于手柄右侧：手柄右移时宽度应减小。
           controller.changeChatPanelRatio(
-            controller.chatPanelRatio.value -
-                details.delta.dx / resizableWidth,
+            controller.chatPanelRatio.value - details.delta.dx / resizableWidth,
           );
         },
         child: Container(
@@ -534,14 +624,14 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Obx(() => Row(
-                        children: [
-                          _TabChip("关注(直播中)", tabIndex.value == 0,
-                              () => tabIndex.value = 0),
-                          const SizedBox(width: 8),
-                          _TabChip("历史", tabIndex.value == 1,
-                              () => tabIndex.value = 1),
-                        ],
-                      )),
+                            children: [
+                              _TabChip("关注(直播中)", tabIndex.value == 0,
+                                  () => tabIndex.value = 0),
+                              const SizedBox(width: 8),
+                              _TabChip("历史", tabIndex.value == 1,
+                                  () => tabIndex.value = 1),
+                            ],
+                          )),
                     ),
                     Expanded(
                       child: Obx(() {
@@ -565,16 +655,22 @@ class MultiRoomPage extends GetView<MultiRoomController> {
     final liveList = FollowService.instance.liveList;
     if (liveList.isEmpty) {
       return const Center(
-        child: Text("没有直播中的关注", style: TextStyle(color: Colors.white70)));
+          child: Text("没有直播中的关注", style: TextStyle(color: Colors.white70)));
     }
     return ListView.builder(
       itemCount: liveList.length,
       itemBuilder: (_, i) {
         final item = liveList[i];
-        final added = alreadyInRoom.contains(MultiRoomItem.fromFollow(item).key);
-        return FollowUserItem(item: item, playing: added,
+        final added =
+            alreadyInRoom.contains(MultiRoomItem.fromFollow(item).key);
+        return FollowUserItem(
+          item: item,
+          playing: added,
           onTap: () {
-            if (!added) { Get.back(); controller.addRoomFromFollow(item); }
+            if (!added) {
+              Get.back();
+              controller.addRoomFromFollow(item);
+            }
           },
         );
       },
@@ -585,7 +681,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
     final histories = DBService.instance.getHistores();
     if (histories.isEmpty) {
       return const Center(
-        child: Text("没有历史记录", style: TextStyle(color: Colors.white70)));
+          child: Text("没有历史记录", style: TextStyle(color: Colors.white70)));
     }
     return ListView.builder(
       itemCount: histories.length,
@@ -603,7 +699,10 @@ class MultiRoomPage extends GetView<MultiRoomController> {
               style: const TextStyle(color: Colors.white54, fontSize: 12)),
           enabled: !added,
           onTap: () {
-            if (!added) { Get.back(); controller.addRoomFromHistory(item); }
+            if (!added) {
+              Get.back();
+              controller.addRoomFromHistory(item);
+            }
           },
         );
       },
@@ -651,104 +750,101 @@ class _ChatPanelState extends State<_ChatPanel> {
           borderRadius: AppStyle.radius8,
         ),
         child: Column(
-        children: [
-          // 顶部直播间选择按钮行
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Colors.black54, Colors.transparent],
+          children: [
+            // 顶部直播间选择按钮行
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.black54, Colors.transparent],
+                ),
+              ),
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 6,
+                children: List.generate(rooms.length, (i) {
+                  final room = rooms[i];
+                  final selected = i == chatRoomIndex;
+                  return GestureDetector(
+                    onTap: () => onSelect(i),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: selected ? Colors.white30 : Colors.transparent,
+                        ),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Image.asset(
+                            room.site.logo,
+                            width: 20,
+                            height: 20,
+                            opacity: selected
+                                ? const AlwaysStoppedAnimation(1)
+                                : const AlwaysStoppedAnimation(0.5),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            room.userName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: selected ? Colors.white : Colors.white54,
+                              fontSize: 13,
+                              fontWeight: selected
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
               ),
             ),
-            child: Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
-              runSpacing: 6,
-              children: List.generate(rooms.length, (i) {
-                final room = rooms[i];
-                final selected = i == chatRoomIndex;
-                return GestureDetector(
-                  onTap: () => onSelect(i),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 8),
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: selected
-                            ? Colors.white30
-                            : Colors.transparent,
-                      ),
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Image.asset(
-                          room.site.logo,
-                          width: 20,
-                          height: 20,
-                          opacity: selected
-                              ? const AlwaysStoppedAnimation(1)
-                              : const AlwaysStoppedAnimation(0.5),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          room.userName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: selected
-                                ? Colors.white
-                                : Colors.white54,
-                            fontSize: 13,
-                            fontWeight: selected
-                                ? FontWeight.w600
-                                : FontWeight.normal,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+            // 竖向弹幕列表
+            Expanded(
+              child: Obx(() {
+                final msgs = chatController.chatMessages;
+                if (msgs.isEmpty) {
+                  return const Center(
+                    child: Text("暂无弹幕",
+                        style: TextStyle(color: Colors.white24, fontSize: 12)),
+                  );
+                }
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (_scrollController.hasClients) {
+                    _scrollController.jumpTo(
+                      _scrollController.position.maxScrollExtent,
+                    );
+                  }
+                });
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  itemCount: msgs.length,
+                  itemBuilder: (_, i) {
+                    final msg = msgs[i];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 1),
+                      child: ChatMessageItem(message: msg),
+                    );
+                  },
                 );
               }),
             ),
-          ),
-          // 竖向弹幕列表
-          Expanded(
-            child: Obx(() {
-              final msgs = chatController.chatMessages;
-              if (msgs.isEmpty) {
-                return const Center(
-                  child: Text("暂无弹幕",
-                      style: TextStyle(color: Colors.white24, fontSize: 12)),
-                );
-              }
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (_scrollController.hasClients) {
-                  _scrollController.jumpTo(
-                    _scrollController.position.maxScrollExtent,
-                  );
-                }
-              });
-              return ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                itemCount: msgs.length,
-                itemBuilder: (_, i) {
-                  final msg = msgs[i];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 1),
-                    child: ChatMessageItem(message: msg),
-                  );
-                },
-              );
-            }),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
@@ -769,9 +865,11 @@ class _TabChip extends StatelessWidget {
           color: selected ? Colors.white24 : Colors.white10,
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Text(label, style: TextStyle(
-          color: selected ? Colors.white : Colors.white54, fontSize: 14,
-        )),
+        child: Text(label,
+            style: TextStyle(
+              color: selected ? Colors.white : Colors.white54,
+              fontSize: 14,
+            )),
       ),
     );
   }
@@ -781,6 +879,11 @@ class _MultiRoomTile extends StatefulWidget {
   final MultiRoomItem item;
   final MultiRoomPlayerController controller;
   final VoidCallback onRemove;
+  final VoidCallback? onSetMain;
+  final VoidCallback? onTogglePaused;
+  final VoidCallback? onToggleAudio;
+  final bool isMain;
+  final bool refreshDisabled;
 
   /// 是否渲染画面弹幕层（1+3 主次布局的小格传 false）。
   final bool loadDanmaku;
@@ -789,6 +892,11 @@ class _MultiRoomTile extends StatefulWidget {
     required this.item,
     required this.controller,
     required this.onRemove,
+    this.onSetMain,
+    this.onTogglePaused,
+    this.onToggleAudio,
+    this.isMain = false,
+    this.refreshDisabled = false,
     this.loadDanmaku = true,
   });
 
@@ -859,8 +967,8 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                 }
                 final isStream = status.contains("重试中");
                 return Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: isStream
                         ? Colors.red.withAlpha(200)
@@ -874,6 +982,18 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                 );
               }),
             ),
+            if (widget.onSetMain != null)
+              Positioned(
+                right: 4,
+                top: 4,
+                child: _OverlayButton(
+                  tooltip: widget.isMain ? "当前主画面" : "设为主画面",
+                  icon:
+                      widget.isMain ? Icons.push_pin : Icons.push_pin_outlined,
+                  onPressed: widget.isMain ? null : widget.onSetMain!,
+                  color: widget.isMain ? Colors.amber : Colors.white,
+                ),
+              ),
             Positioned(
               left: 6,
               bottom: 6,
@@ -890,8 +1010,7 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                       const SizedBox(width: 6),
                       _InfoChip(
                         text: controller.qualityInfo.value,
-                        onTap: () =>
-                            _showTileQualitySheet(context, controller),
+                        onTap: () => _showTileQualitySheet(context, controller),
                       ),
                     ],
                     if (controller.lineInfo.value.isNotEmpty) ...[
@@ -921,9 +1040,17 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                     ),
                   ),
                   _OverlayButton(
+                    tooltip: controller.paused.value ? "继续播放" : "暂停播放",
+                    icon: controller.paused.value
+                        ? Icons.play_arrow
+                        : Icons.pause,
+                    onPressed: widget.onTogglePaused ?? controller.togglePaused,
+                  ),
+                  _OverlayButton(
                     tooltip: "刷新",
                     icon: Remix.refresh_line,
-                    onPressed: controller.refreshRoom,
+                    onPressed:
+                        widget.refreshDisabled ? null : controller.refreshRoom,
                   ),
                   Obx(
                     () => _OverlayButton(
@@ -933,10 +1060,11 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                           : Remix.volume_up_line,
                       onPressed: () {
                         if (controller.muted.value) {
-                          controller.toggleMute();
+                          (widget.onToggleAudio ?? controller.toggleMute)
+                              .call();
                         } else {
-                          setState(() =>
-                              _showVolumeSlider = !_showVolumeSlider);
+                          setState(
+                              () => _showVolumeSlider = !_showVolumeSlider);
                         }
                       },
                     ),
@@ -965,16 +1093,33 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: SizedBox(
-                      width: 140,
-                      child: Obx(
-                        () => Slider(
-                          value: controller.volume.value,
-                          min: 0,
-                          max: 100,
-                          onChanged: (v) {
-                            controller.setVolume(v);
-                          },
-                        ),
+                      width: 180,
+                      child: Row(
+                        children: [
+                          IconButton(
+                            tooltip: "静音此直播间",
+                            onPressed: () {
+                              (widget.onToggleAudio ?? controller.toggleMute)
+                                  .call();
+                              setState(() => _showVolumeSlider = false);
+                            },
+                            icon: const Icon(
+                              Remix.volume_mute_line,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
+                          Expanded(
+                            child: Obx(
+                              () => Slider(
+                                value: controller.volume.value,
+                                min: 0,
+                                max: 100,
+                                onChanged: controller.setVolume,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -1008,9 +1153,8 @@ class _DanmakuLayer extends StatelessWidget {
           return const SizedBox.shrink();
         }
         // 与 Video 的 BoxFit.contain 保持一致，算出画面实际占据的矩形。
-        final videoWidth = tileWidth / tileHeight > 16 / 9
-            ? tileHeight * 16 / 9
-            : tileWidth;
+        final videoWidth =
+            tileWidth / tileHeight > 16 / 9 ? tileHeight * 16 / 9 : tileWidth;
         final videoHeight = videoWidth * 9 / 16;
         final settings = AppSettingsController.instance;
         final resolvedLineCount = settings.resolveDanmuTargetLineCount(
@@ -1109,6 +1253,19 @@ void _showTileQualitySheet(
               icon: const Icon(Remix.close_line),
             ),
           ),
+          Obx(
+            () => ListTile(
+              title: const Text("自动"),
+              subtitle: const Text("允许多开根据缓冲、内存和设备负载调整"),
+              trailing: controller.qualityLocked.value
+                  ? null
+                  : const Icon(Icons.check, size: 18),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                controller.useAutomaticQuality();
+              },
+            ),
+          ),
           for (var i = 0; i < qualities.length; i++)
             ListTile(
               title: Text(qualities[i].quality),
@@ -1201,12 +1358,14 @@ void _showStableBottomSheet({
 class _OverlayButton extends StatelessWidget {
   final String tooltip;
   final IconData icon;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
+  final Color color;
 
   const _OverlayButton({
     required this.tooltip,
     required this.icon,
     required this.onPressed,
+    this.color = Colors.white,
   });
   @override
   Widget build(BuildContext context) {
@@ -1216,7 +1375,7 @@ class _OverlayButton extends StatelessWidget {
         constraints: const BoxConstraints.tightFor(width: 36, height: 36),
         style: IconButton.styleFrom(
           backgroundColor: Colors.black.withAlpha(150),
-          foregroundColor: Colors.white,
+          foregroundColor: color,
         ),
         onPressed: onPressed,
         icon: Icon(icon, size: 18),

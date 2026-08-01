@@ -147,10 +147,19 @@ class AppPages {
       name: RoutePath.kMultiRoom,
       page: () => const MultiRoomPage(),
       binding: BindingsBuilder.put(
-        () => MultiRoomController(
-          (Get.arguments as List?)?.whereType<MultiRoomItem>().toList() ??
-              const <MultiRoomItem>[],
-        ),
+        () {
+          final args = Get.arguments;
+          if (args is MultiRoomLaunchArgs) {
+            return MultiRoomController(
+              args.rooms,
+              returnToLiveRoom: args.returnToLiveRoom,
+            );
+          }
+          return MultiRoomController(
+            (args as List?)?.whereType<MultiRoomItem>().toList() ??
+                const <MultiRoomItem>[],
+          );
+        },
       ),
     ),
     //弹幕设置

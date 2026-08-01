@@ -25,3 +25,19 @@ class MultiRoomItem {
 
   String get key => "${site.id}_$roomId";
 }
+
+class MultiRoomLaunchArgs {
+  final List<MultiRoomItem> rooms;
+  final bool returnToLiveRoom;
+
+  const MultiRoomLaunchArgs({
+    required this.rooms,
+    this.returnToLiveRoom = false,
+  });
+}
+
+class MultiRoomOpenSingleResult {
+  final MultiRoomItem room;
+
+  const MultiRoomOpenSingleResult(this.room);
+}
