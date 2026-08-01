@@ -307,6 +307,65 @@ class MultiRoomPage extends GetView<MultiRoomController> {
             final ratio = controller.chatPanelRatio.value;
             final chatWidth =
                 (innerConstraints.maxWidth * ratio).clamp(200.0, 800.0);
+            // 聊天区宽度拖动手柄
+            final dragHandle = GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onHorizontalDragUpdate: (details) {
+                controller.changeChatPanelRatio(
+                  ratio + details.delta.dx / innerConstraints.maxWidth,
+                );
+              },
+              child: Container(
+                width: 16,
+                color: Colors.transparent,
+                child: Center(
+                  child: Container(
+                    width: 3,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.all(Radius.circular(2)),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            // 主次布局：左主格 + 右（上次直播间小 + 下聊天区大）。
+            if (controller.mainSubLayout.value) {
+              return Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: _tileAt(0, rooms, loadDanmaku: true),
+                  ),
+                  SizedBox(width: gap),
+                  dragHandle,
+                  SizedBox(width: gap),
+                  SizedBox(
+                    width: chatWidth,
+                    child: Column(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: _tileAt(1, rooms, loadDanmaku: false),
+                        ),
+                        SizedBox(height: gap),
+                        Expanded(
+                          flex: 3,
+                          child: _ChatPanel(
+                            rooms: rooms,
+                            chatController: chatController,
+                            chatRoomIndex: chatRoomIndex,
+                            onSelect: (i) =>
+                                controller.chatTargetIndex.value = i,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            }
             return Row(
               children: [
                 Expanded(
@@ -319,30 +378,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                   ),
                 ),
                 SizedBox(width: gap),
-                // 拖动聊天区边框调整宽度
-                GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onHorizontalDragUpdate: (details) {
-                    controller.changeChatPanelRatio(
-                      ratio +
-                          details.delta.dx / innerConstraints.maxWidth,
-                    );
-                  },
-                  child: Container(
-                    width: 16,
-                    color: Colors.transparent,
-                    child: Center(
-                      child: Container(
-                        width: 3,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: Colors.white24,
-                          borderRadius: BorderRadius.all(Radius.circular(2)),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+                dragHandle,
                 SizedBox(width: gap),
                 SizedBox(
                   width: chatWidth,
