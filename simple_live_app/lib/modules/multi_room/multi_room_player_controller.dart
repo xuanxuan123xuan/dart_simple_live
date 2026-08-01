@@ -8,6 +8,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -51,6 +52,10 @@ class MultiRoomPlayerController extends GetxController {
   final chatMessages = <LiveMessage>[].obs;
   static const int _maxChatMessages = 200;
 
+  /// 重复弹幕去重（对齐正常直播间行为）。
+  final List<String> _recentDanmuFingerprints = [];
+  static const int _recentDanmuWindow = 10;
+
   List<LivePlayQuality> _qualities = const [];
   List<String> _playUrls = const [];
   Map<String, String>? _playHeaders;
@@ -82,6 +87,7 @@ class MultiRoomPlayerController extends GetxController {
       // 重新加载前断开旧连接，避免刷新后同一格挂着两条长连接。
       await _stopDanmaku();
       chatMessages.clear();
+      _recentDanmuFingerprints.clear();
       final roomDetail =
           await item.site.liveSite.getRoomDetail(roomId: item.roomId);
       if (_disposed) {
@@ -158,6 +164,7 @@ class MultiRoomPlayerController extends GetxController {
     liveDanmaku.onMessage = _onDanmakuMessage;
     liveDanmaku.onClose = (msg) {
       Log.d("多开弹幕关闭：${item.site.id}/${item.roomId} $msg");
+      _addSysMessage(msg);
     };
     liveDanmaku.onReady = () {
       Log.d("多开弹幕已连接：${item.site.id}/${item.roomId}");
@@ -166,15 +173,75 @@ class MultiRoomPlayerController extends GetxController {
       liveDanmaku.start(roomDetail.danmakuData).catchError((Object e) {
         // 弹幕连不上不影响看画面，只记日志。
         Log.e("多开弹幕启动失败：${item.site.id}/${item.roomId} $e", StackTrace.current);
+        _addSysMessage("弹幕连接失败");
       }),
     );
+  }
+
+  /// 追加一条系统消息到聊天区（对齐正常直播间 LiveSysMessage 样式）。
+  void _addSysMessage(String msg) {
+    if (_disposed || msg.isEmpty) return;
+    chatMessages.add(
+      LiveMessage(
+        type: LiveMessageType.chat,
+        userName: "LiveSysMessage",
+        message: msg,
+        color: LiveMessageColor.white,
+      ),
+    );
+    while (chatMessages.length > _maxChatMessages) {
+      chatMessages.removeAt(0);
+    }
+  }
+
+  /// 用户/关键词/重复弹幕过滤（对齐正常直播间行为）。
+  bool _shouldFilterDanmu(LiveMessage msg) {
+    final settings = AppSettingsController.instance;
+    if (settings.shouldShieldUser(msg.userName, siteId: item.site.id)) {
+      Log.d("多开过滤被屏蔽用户: ${msg.userName}");
+      return true;
+    }
+    if (settings.danmuShieldEnable.value &&
+        settings.danmuKeywordShieldEnable.value) {
+      for (final keyword in settings.shieldList) {
+        Pattern? pattern;
+        if (Utils.isRegexFormat(keyword)) {
+          final removedSlash = Utils.removeRegexFormat(keyword);
+          try {
+            pattern = RegExp(removedSlash);
+          } catch (e) {
+            Log.d("正则屏蔽词 $keyword 无法编译，已跳过");
+          }
+        } else {
+          pattern = keyword;
+        }
+        if (pattern != null && msg.message.contains(pattern)) {
+          Log.d("多开命中屏蔽词 $keyword");
+          return true;
+        }
+      }
+    }
+    if (settings.danmuDedupeEnable.value) {
+      final fingerprint = "${msg.userName}|${msg.message}";
+      if (_recentDanmuFingerprints.contains(fingerprint)) {
+        return true;
+      }
+      _recentDanmuFingerprints.add(fingerprint);
+      if (_recentDanmuFingerprints.length > _recentDanmuWindow) {
+        _recentDanmuFingerprints.removeAt(0);
+      }
+    }
+    return false;
   }
 
   void _onDanmakuMessage(LiveMessage msg) {
     if (_disposed || msg.type != LiveMessageType.chat || !liveStatus.value) {
       return;
     }
-    // 聊天区消息始终记录（不受弹幕开关控制）。
+    // 对齐正常直播间：屏蔽/去重过滤后仍记录到聊天区（不受弹幕开关控制）。
+    if (_shouldFilterDanmu(msg)) {
+      return;
+    }
     chatMessages.add(msg);
     while (chatMessages.length > _maxChatMessages) {
       chatMessages.removeAt(0);

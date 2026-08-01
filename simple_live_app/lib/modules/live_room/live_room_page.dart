@@ -19,6 +19,7 @@ import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
+import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/settings/settings_action.dart';
@@ -1403,89 +1404,15 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   }
 
   Widget buildMessageItem(LiveMessage message) {
-    if (message.userName == "LiveSysMessage") {
-      return Obx(
-        () => Text(
-          message.message,
-          style: TextStyle(
-            color: Colors.grey,
-            fontSize: AppSettingsController.instance.chatTextSize.value,
-          ),
-        ),
-      );
-    }
-
-    Widget buildMessageContent({
-      required TextStyle userStyle,
-      required TextStyle messageStyle,
-    }) {
-      final remark = controller.getUserRemark(message.userName);
-      return _InteractiveChatText(
-        userName: message.userName,
-        remark: remark,
-        message: message.message,
-        imageUrls: AppSettingsController.instance.danmuRenderEmoji.value
-            ? message.imageUrls
-            : null,
-        spans: AppSettingsController.instance.danmuRenderEmoji.value
-            ? message.spans
-            : null,
-        userStyle: userStyle,
-        messageStyle: messageStyle,
-        onUserTap: () => controller.showUserActions(
-          message.userName,
-          messageContent: message.message,
-        ),
-        onUserLongPress: () => controller.copyUserName(message.userName),
-      );
-    }
-
-    return Obx(
-      () => AppSettingsController.instance.chatBubbleStyle.value
-          ? Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Flexible(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.blueGrey.withAlpha(25),
-                      //borderRadius: AppStyle.radius8,
-                      borderRadius: const BorderRadius.only(
-                        topRight: Radius.circular(12),
-                        bottomLeft: Radius.circular(12),
-                        bottomRight: Radius.circular(12),
-                      ),
-                    ),
-                    padding:
-                        AppStyle.edgeInsetsA4.copyWith(left: 12, right: 12),
-                    child: buildMessageContent(
-                      userStyle: TextStyle(
-                        color: Colors.grey,
-                        fontSize:
-                            AppSettingsController.instance.chatTextSize.value,
-                      ),
-                      messageStyle: TextStyle(
-                        color:
-                            Get.isDarkMode ? Colors.white : AppColors.black333,
-                        fontSize:
-                            AppSettingsController.instance.chatTextSize.value,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          : buildMessageContent(
-              userStyle: TextStyle(
-                color: Colors.grey,
-                fontSize: AppSettingsController.instance.chatTextSize.value,
-              ),
-              messageStyle: TextStyle(
-                color: Get.isDarkMode ? Colors.white : AppColors.black333,
-                fontSize: AppSettingsController.instance.chatTextSize.value,
-              ),
-            ),
+    final remark = controller.getUserRemark(message.userName);
+    return ChatMessageItem(
+      message: message,
+      remark: remark,
+      onUserTap: () => controller.showUserActions(
+        message.userName,
+        messageContent: message.message,
+      ),
+      onUserLongPress: () => controller.copyUserName(message.userName),
     );
   }
 
@@ -2331,122 +2258,4 @@ class _SubtitleModelTile extends StatelessWidget {
     );
   }
 }
-
-class _InteractiveChatText extends StatelessWidget {
-  static final RegExp _emojiTokenPattern = RegExp(r'\[[^\[\]]{1,16}\]');
-
-  final String userName;
-  final String? remark;
-  final String message;
-  final List<String>? imageUrls;
-  final List<LiveMessageSpan>? spans;
-  final TextStyle userStyle;
-  final TextStyle messageStyle;
-  final VoidCallback onUserTap;
-  final VoidCallback onUserLongPress;
-
-  const _InteractiveChatText({
-    required this.userName,
-    this.remark,
-    required this.message,
-    this.imageUrls,
-    this.spans,
-    required this.userStyle,
-    required this.messageStyle,
-    required this.onUserTap,
-    required this.onUserLongPress,
-  });
-
-  TextSpan _buildTextSpan() {
-    final richSpans = spans ?? const <LiveMessageSpan>[];
-    return TextSpan(
-      style: messageStyle,
-      children: [
-        TextSpan(
-          text: '$userName：',
-          style: userStyle,
-        ),
-        if ((remark ?? "").trim().isNotEmpty)
-          TextSpan(
-            text: '[${remark!.trim()}] ',
-            style: userStyle.copyWith(
-              color: userStyle.color?.withAlpha(180),
-              fontSize: (userStyle.fontSize ?? 14) - 1,
-            ),
-          ),
-        if (richSpans.isNotEmpty)
-          for (final span in richSpans)
-            if (span.isText)
-              TextSpan(text: span.text)
-            else if (span.isImage)
-              _buildImageSpan(span.imageUrl!.trim()),
-        if (richSpans.isEmpty) ...[
-          ..._buildFallbackContentSpans(),
-        ],
-      ],
-    );
-  }
-
-  List<InlineSpan> _buildFallbackContentSpans() {
-    final urls = (imageUrls ?? const <String>[])
-        .map((url) => url.trim())
-        .where((url) => url.isNotEmpty)
-        .toList();
-    if (urls.isEmpty) {
-      return [TextSpan(text: message)];
-    }
-
-    final result = <InlineSpan>[];
-    var start = 0;
-    var imageIndex = 0;
-    for (final match in _emojiTokenPattern.allMatches(message)) {
-      if (imageIndex >= urls.length) {
-        break;
-      }
-      if (match.start > start) {
-        result.add(TextSpan(text: message.substring(start, match.start)));
-      }
-      result.add(_buildImageSpan(urls[imageIndex]));
-      imageIndex += 1;
-      start = match.end;
-    }
-    if (start < message.length) {
-      result.add(TextSpan(text: message.substring(start)));
-    }
-    for (; imageIndex < urls.length; imageIndex += 1) {
-      result.add(_buildImageSpan(urls[imageIndex]));
-    }
-    return result;
-  }
-
-  WidgetSpan _buildImageSpan(String url) {
-    return WidgetSpan(
-      alignment: PlaceholderAlignment.middle,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: NetImage(
-          url,
-          width: (messageStyle.fontSize ?? 14) * 1.35,
-          height: (messageStyle.fontSize ?? 14) * 1.35,
-          fit: BoxFit.contain,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final textSpan = _buildTextSpan();
-
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: onUserTap,
-      onLongPress: onUserLongPress,
-      child: Text.rich(
-        textSpan,
-        softWrap: true,
-        textWidthBasis: TextWidthBasis.parent,
-      ),
-    );
-  }
-}
+

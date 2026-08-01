@@ -8,12 +8,12 @@ import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
-import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_controller.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
 
 class MultiRoomPage extends GetView<MultiRoomController> {
@@ -84,7 +84,12 @@ class MultiRoomPage extends GetView<MultiRoomController> {
           right: 0,
           top: controller.showOverlay.value ? 0 : -(56 + MediaQuery.of(context).viewPadding.top),
           duration: const Duration(milliseconds: 200),
-          child: Container(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            // 拦截点击，避免冒泡到外层 GestureDetector 触发 toggleOverlay
+            // （那会导致页面 rebuild，弹窗刚打开就被 pop）。
+            onTap: () {},
+            child: Container(
             height: 56 + MediaQuery.of(context).viewPadding.top,
             padding: EdgeInsets.only(
               left: 32,
@@ -128,6 +133,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
               ],
             ),
           ),
+        ),
         ),
       ),
     ],
@@ -298,27 +304,60 @@ class MultiRoomPage extends GetView<MultiRoomController> {
     final tabIndex = 0.obs;
     final alreadyInRoom = <String>{for (final r in controller.rooms) r.key};
 
-    Utils.showBottomSheet(
-      title: "加入直播间",
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Obx(() => Row(
-              children: [
-                _TabChip("关注(直播中)", tabIndex.value == 0, () => tabIndex.value = 0),
-                const SizedBox(width: 8),
-                _TabChip("历史", tabIndex.value == 1, () => tabIndex.value = 1),
-              ],
-            )),
+    // 用页面自身的 context 打开弹窗（Utils.showBottomSheet 内部用
+    // Get.context!，页面 rebuild 时弹窗会被误 pop）。
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(12),
+          topRight: Radius.circular(12),
+        ),
+      ),
+      builder: (_) => SafeArea(
+        top: false,
+        bottom: false,
+        child: Padding(
+          padding: AppStyle.bottomSheetPadding(),
+          child: Column(
+            children: [
+              ListTile(
+                contentPadding: const EdgeInsets.only(left: 12),
+                title: const Text("加入直播间"),
+                trailing: IconButton(
+                  onPressed: Get.back,
+                  icon: const Icon(Remix.close_line),
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Obx(() => Row(
+                        children: [
+                          _TabChip("关注(直播中)", tabIndex.value == 0,
+                              () => tabIndex.value = 0),
+                          const SizedBox(width: 8),
+                          _TabChip("历史", tabIndex.value == 1,
+                              () => tabIndex.value = 1),
+                        ],
+                      )),
+                    ),
+                    Expanded(
+                      child: Obx(() {
+                        if (tabIndex.value == 1) {
+                          return _buildHistoryTab(alreadyInRoom);
+                        }
+                        return _buildFollowTab(alreadyInRoom);
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          Expanded(
-            child: Obx(() {
-              if (tabIndex.value == 1) return _buildHistoryTab(alreadyInRoom);
-              return _buildFollowTab(alreadyInRoom);
-            }),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -373,7 +412,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
   }
 }
 
-class _ChatPanel extends StatelessWidget {
+class _ChatPanel extends StatefulWidget {
   final List<MultiRoomItem> rooms;
   final MultiRoomPlayerController chatController;
   final int chatRoomIndex;
@@ -387,7 +426,24 @@ class _ChatPanel extends StatelessWidget {
   });
 
   @override
+  State<_ChatPanel> createState() => _ChatPanelState();
+}
+
+class _ChatPanelState extends State<_ChatPanel> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final rooms = widget.rooms;
+    final chatController = widget.chatController;
+    final chatRoomIndex = widget.chatRoomIndex;
+    final onSelect = widget.onSelect;
     return ClipRRect(
       borderRadius: AppStyle.radius8,
       child: Container(
@@ -471,35 +527,22 @@ class _ChatPanel extends StatelessWidget {
                       style: TextStyle(color: Colors.white24, fontSize: 12)),
                 );
               }
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (_scrollController.hasClients) {
+                  _scrollController.jumpTo(
+                    _scrollController.position.maxScrollExtent,
+                  );
+                }
+              });
               return ListView.builder(
+                controller: _scrollController,
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 itemCount: msgs.length,
                 itemBuilder: (_, i) {
                   final msg = msgs[i];
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 1),
-                    child: RichText(
-                      text: TextSpan(
-                        children: [
-                          TextSpan(
-                            text: "${msg.userName}: ",
-                            style: TextStyle(
-                              color: Color.fromARGB(
-                                  255, msg.color.r, msg.color.g, msg.color.b),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          TextSpan(
-                            text: msg.message,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    child: ChatMessageItem(message: msg),
                   );
                 },
               );

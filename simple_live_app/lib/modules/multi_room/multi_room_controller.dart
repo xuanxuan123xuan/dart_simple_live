@@ -24,6 +24,7 @@ class MultiRoomController extends GetxController
   var chatTargetIndex = 0.obs;
 
   Timer? _autoHideTimer;
+  Timer? _resumeTimer;
 
   void toggleOverlay() {
     showOverlay.value = !showOverlay.value;
@@ -53,6 +54,7 @@ class MultiRoomController extends GetxController
   void onClose() {
     WidgetsBinding.instance.removeObserver(this);
     _autoHideTimer?.cancel();
+    _resumeTimer?.cancel();
     for (final item in rooms) {
       final tag = playerTag(item);
       if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
@@ -104,15 +106,23 @@ class MultiRoomController extends GetxController
     rooms.insert(newIndex, item);
   }
 
+  /// 恢复所有应播放但已暂停的播放器。
+  ///
+  /// iOS 上 media_kit/libmpv 多实例共享 audio session：新增 Player 的
+  /// open() 会中断正在播放的旧 Player，延迟一段时间后把它拉回来。
+  void _resumeAllPlayers() {
+    for (final room in rooms) {
+      final c = playerFor(room);
+      if (c.liveStatus.value && !c.player.state.playing) {
+        c.player.play();
+      }
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      for (final room in rooms) {
-        final c = playerFor(room);
-        if (c.liveStatus.value && !c.player.state.playing) {
-          c.player.play();
-        }
-      }
+      _resumeAllPlayers();
     }
   }
 
@@ -125,6 +135,7 @@ class MultiRoomController extends GetxController
     }
     rooms.add(room);
     SmartDialog.showToast("已加入 ${item.userName}");
+    _scheduleResumePlayers();
   }
 
   /// 从历史记录中添加房间。
@@ -146,5 +157,16 @@ class MultiRoomController extends GetxController
     }
     rooms.add(room);
     SmartDialog.showToast("已加入 ${item.userName}");
+    _scheduleResumePlayers();
+  }
+
+  /// 新房间的 Player.open() 会抢占 iOS 共享 audio session 中断旧播放器，
+  /// 延迟到新 Player 初始化完成后再恢复全部播放器。
+  void _scheduleResumePlayers() {
+    _resumeTimer?.cancel();
+    _resumeTimer = Timer(const Duration(milliseconds: 800), () {
+      _resumeTimer = null;
+      _resumeAllPlayers();
+    });
   }
 }
