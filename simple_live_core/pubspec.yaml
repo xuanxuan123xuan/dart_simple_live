@@ -1,7 +1,7 @@
 name: simple_live_core
 version: 1.0.3
 description: "聚合直播核心库"
-repository: https://github.com/xiaoyaocz/dart_simple_live
+repository: https://github.com/xuanxuan123xuan/dart_simple_live
 publish_to: "none"
 environment:
   sdk: '>=3.0.5 <4.0.0'
