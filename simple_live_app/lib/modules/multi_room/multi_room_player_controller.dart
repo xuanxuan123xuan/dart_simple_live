@@ -66,6 +66,18 @@ class MultiRoomPlayerController extends GetxController {
   int _lineIndex = 0;
   bool _disposed = false;
 
+  /// 当前格子的可选清晰度列表。
+  List<LivePlayQuality> get qualities => _qualities;
+
+  /// 当前清晰度索引。
+  int get qualityIndex => _qualityIndex;
+
+  /// 当前线路列表。
+  List<String> get playUrls => _playUrls;
+
+  /// 当前线路索引。
+  int get lineIndex => _lineIndex;
+
   String get title {
     final roomTitle = detail.value?.title.trim();
     if (roomTitle != null && roomTitle.isNotEmpty) {
@@ -155,6 +167,41 @@ class MultiRoomPlayerController extends GetxController {
     }
     await player.open(Media(url, httpHeaders: _playHeaders));
     await player.setVolume(muted.value ? 0 : volume.value);
+  }
+
+  /// 切换本格清晰度（独立于其他格）。
+  Future<void> changeQuality(int index) async {
+    if (index < 0 || index >= _qualities.length || index == _qualityIndex) {
+      return;
+    }
+    _qualityIndex = index;
+    qualityInfo.value = _qualities[index].quality;
+    final roomDetail = detail.value;
+    if (roomDetail == null) return;
+    try {
+      await _loadPlayUrls(roomDetail);
+      await _openCurrentUrl();
+    } catch (e) {
+      Log.e("多开切换清晰度失败：${item.site.id}/${item.roomId} $e",
+          StackTrace.current);
+      errorText.value = e.toString();
+    }
+  }
+
+  /// 切换本格线路（独立于其他格）。
+  Future<void> changeLine(int index) async {
+    if (index < 0 || index >= _playUrls.length || index == _lineIndex) {
+      return;
+    }
+    _lineIndex = index;
+    lineInfo.value = "线路${_lineIndex + 1}";
+    try {
+      await _openCurrentUrl();
+    } catch (e) {
+      Log.e("多开切换线路失败：${item.site.id}/${item.roomId} $e",
+          StackTrace.current);
+      errorText.value = e.toString();
+    }
   }
 
   /// 由 `DanmakuScreen` 创建后回传渲染控制器。

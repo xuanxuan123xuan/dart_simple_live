@@ -1,14 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
+import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
+import 'package:simple_live_app/services/local_storage_service.dart';
 
 class MultiRoomController extends GetxController
     with WidgetsBindingObserver {
@@ -24,11 +27,35 @@ class MultiRoomController extends GetxController
   /// 聊天区面板当前展示的直播间索引（对应 rooms 列表）。
   var chatTargetIndex = 0.obs;
 
+  /// 双击聚焦的单格 key；null = 正常网格。
+  final focusedRoomKey = Rxn<String>();
+
   Timer? _autoHideTimer;
   Timer? _resumeTimer;
 
+  /// 上次多开的布局（恢复用）。
+  Map<String, double> _pendingVolumes = {};
+  Map<String, bool> _pendingDanmaku = {};
+  int _pendingChatTarget = 0;
+
   void toggleOverlay() {
     showOverlay.value = !showOverlay.value;
+    _resetAutoHideTimer();
+  }
+
+  /// 双击聚焦某格（单独放大）。
+  void focusRoom(String key) {
+    if (rooms.any((r) => r.key == key)) {
+      focusedRoomKey.value = key;
+      showOverlay.value = true;
+      _resetAutoHideTimer();
+    }
+  }
+
+  /// 退出聚焦，回到多开网格。
+  void exitFocus() {
+    focusedRoomKey.value = null;
+    showOverlay.value = true;
     _resetAutoHideTimer();
   }
 
@@ -48,6 +75,7 @@ class MultiRoomController extends GetxController
     super.onInit();
     WidgetsBinding.instance.addObserver(this);
     rooms.assignAll(_distinct(initialRooms));
+    _restoreLayout(rooms);
     _resetAutoHideTimer();
     // 多开同屏进入沉浸模式，隐藏 iPad/Android 顶部状态栏。
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -58,6 +86,7 @@ class MultiRoomController extends GetxController
     WidgetsBinding.instance.removeObserver(this);
     _autoHideTimer?.cancel();
     _resumeTimer?.cancel();
+    _saveLayout();
     // 恢复系统栏。
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.edgeToEdge,
@@ -87,10 +116,19 @@ class MultiRoomController extends GetxController
 
   MultiRoomPlayerController playerFor(MultiRoomItem item) {
     final tag = playerTag(item);
-    if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
-      return Get.find<MultiRoomPlayerController>(tag: tag);
+    final controller = Get.isRegistered<MultiRoomPlayerController>(tag: tag)
+        ? Get.find<MultiRoomPlayerController>(tag: tag)
+        : Get.put(MultiRoomPlayerController(item), tag: tag);
+    // 恢复上次的每格音量/弹幕开关。
+    final volume = _pendingVolumes[item.key];
+    if (volume != null) {
+      controller.volume.value = volume;
     }
-    return Get.put(MultiRoomPlayerController(item), tag: tag);
+    final danmaku = _pendingDanmaku[item.key];
+    if (danmaku != null) {
+      controller.showDanmaku.value = danmaku;
+    }
+    return controller;
   }
 
   void removeRoom(MultiRoomItem item) {
@@ -176,5 +214,72 @@ class MultiRoomController extends GetxController
       _resumeTimer = null;
       _resumeAllPlayers();
     });
+  }
+
+  // ==================== 布局持久化 ====================
+
+  void _saveLayout() {
+    try {
+      final data = <String, dynamic>{
+        "roomKeys": rooms.map((r) => r.key).toList(),
+        "chatTarget": chatTargetIndex.value,
+        "volumes": {
+          for (final r in rooms) r.key: playerFor(r).volume.value,
+        },
+        "danmaku": {
+          for (final r in rooms) r.key: playerFor(r).showDanmaku.value,
+        },
+      };
+      LocalStorageService.instance.setValue(
+        LocalStorageService.kMultiRoomLayout,
+        jsonEncode(data),
+      );
+    } catch (e) {
+      Log.d("多开布局保存失败: $e");
+    }
+  }
+
+  void _restoreLayout(RxList<MultiRoomItem> rooms) {
+    final raw = LocalStorageService.instance.getValue(
+      LocalStorageService.kMultiRoomLayout,
+      "",
+    );
+    if (raw.isEmpty) return;
+    try {
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final keys = (data["roomKeys"] as List? ?? const []).cast<String>();
+      // 按上次顺序重排。
+      if (keys.isNotEmpty) {
+        final byKey = {for (final r in rooms) r.key: r};
+        final ordered = <MultiRoomItem>[];
+        final used = <String>{};
+        for (final k in keys) {
+          final r = byKey[k];
+          if (r != null && used.add(k)) {
+            ordered.add(r);
+          }
+        }
+        for (final r in rooms) {
+          if (used.add(r.key)) {
+            ordered.add(r);
+          }
+        }
+        rooms.assignAll(ordered);
+      }
+      _pendingChatTarget = (data["chatTarget"] as int?) ?? 0;
+      chatTargetIndex.value = _pendingChatTarget;
+      final volumes = data["volumes"] as Map? ?? const {};
+      _pendingVolumes = {
+        for (final e in volumes.entries)
+          if (e.value is num) e.key.toString(): (e.value as num).toDouble(),
+      };
+      final danmaku = data["danmaku"] as Map? ?? const {};
+      _pendingDanmaku = {
+        for (final e in danmaku.entries)
+          if (e.value is bool) e.key.toString(): e.value as bool,
+      };
+    } catch (e) {
+      Log.d("多开布局恢复失败: $e");
+    }
   }
 }

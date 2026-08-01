@@ -19,6 +19,7 @@ import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
+import 'package:simple_live_app/services/network_diagnose_service.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
@@ -38,6 +39,15 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   static const double _ohosFullscreenHorizontalInset = 28.0;
 
   const LiveRoomPage({Key? key}) : super(key: key);
+
+  /// 打开网络诊断弹窗：测试到公共 DNS 的延迟与丢包。
+  void showNetworkDiagnose(LiveRoomController controller) {
+    showModalBottomSheet<void>(
+      context: Get.context!,
+      isScrollControlled: true,
+      builder: (context) => _NetworkDiagnosePanel(controller: controller),
+    );
+  }
 
   double _bottomSafeInset(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
@@ -1917,6 +1927,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.network_check_outlined),
+              title: const Text("网络诊断"),
+              subtitle: const Text("测试延迟与丢包，判断网络还是平台问题"),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Get.back();
+                showNetworkDiagnose(controller);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.info_outline_rounded),
               title: const Text("播放信息"),
               trailing: const Icon(Icons.chevron_right),
@@ -2255,6 +2275,144 @@ class _SubtitleModelTile extends StatelessWidget {
       onTap: () {
         launchUrlString(url, mode: LaunchMode.externalApplication);
       },
+    );
+  }
+}
+
+/// 网络诊断面板：测试到公共 DNS 的延迟与丢包，帮助判断卡顿是
+/// 网络问题还是平台问题。
+class _NetworkDiagnosePanel extends StatefulWidget {
+  final LiveRoomController controller;
+
+  const _NetworkDiagnosePanel({required this.controller});
+
+  @override
+  State<_NetworkDiagnosePanel> createState() => _NetworkDiagnosePanelState();
+}
+
+class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
+  final List<NetworkDiagnosisResult> _results = [];
+  bool _running = true;
+  String _summary = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _run();
+  }
+
+  Future<void> _run() async {
+    setState(() {
+      _running = true;
+      _results.clear();
+      _summary = "";
+    });
+    // 目标：公共 DNS + 当前直播平台页面域名。
+    final roomUrl = widget.controller.detail.value?.url ?? "";
+    final roomHost = Uri.tryParse(roomUrl)?.host ?? "";
+    final targets = <String>[
+      ...NetworkDiagnoseService.defaultTargets,
+      if (roomHost.isNotEmpty) roomHost,
+    ].toList();
+    final results = await NetworkDiagnoseService.diagnose(targets);
+    if (!mounted) return;
+    setState(() {
+      _results
+        ..clear()
+        ..addAll(results);
+      _summary = NetworkDiagnoseService.summarize(results);
+      _running = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text("网络诊断",
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+                IconButton(
+                  tooltip: "重新测试",
+                  onPressed: _running ? null : _run,
+                  icon: const Icon(Icons.refresh),
+                ),
+                IconButton(
+                  onPressed: Get.back,
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            if (_running)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              )
+            else ...[
+              for (final r in _results)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          r.host,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      Text(
+                        r.lost == r.samples
+                            ? "不通"
+                            : "${r.avgMs.toStringAsFixed(0)}ms",
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: r.lossRate > 20 || r.lost == r.samples
+                              ? Colors.red
+                              : r.avgMs > 250
+                                  ? Colors.orange
+                                  : Colors.green,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        "丢包 ${r.lossRate.toStringAsFixed(0)}%",
+                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        r.latencyLabel,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.black.withAlpha(10),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _summary,
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

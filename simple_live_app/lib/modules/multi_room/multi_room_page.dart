@@ -39,6 +39,17 @@ class MultiRoomPage extends GetView<MultiRoomController> {
             final gap = AppSettingsController.instance
                 .effectiveMultiRoomGap
                 .toDouble();
+            // 双击聚焦模式：只显示单个直播间全屏。
+            final focusKey = controller.focusedRoomKey.value;
+            if (focusKey != null) {
+              final idx = rooms.indexWhere((r) => r.key == focusKey);
+              if (idx >= 0) {
+                return Padding(
+                  padding: EdgeInsets.all(gap),
+                  child: _tileAt(idx, rooms),
+                );
+              }
+            }
             final showChat = AppSettingsController.instance
                     .multiRoomShowChatPanel.value &&
                 (rooms.length == 2 || rooms.length == 3);
@@ -107,12 +118,20 @@ class MultiRoomPage extends GetView<MultiRoomController> {
               children: [
                 IconButton(
                   tooltip: "返回",
-                  onPressed: () => Get.back(),
+                  onPressed: () {
+                    if (controller.focusedRoomKey.value != null) {
+                      controller.exitFocus();
+                    } else {
+                      Get.back();
+                    }
+                  },
                   icon: const Icon(Icons.arrow_back, color: Colors.white),
                 ),
                 const SizedBox(width: 12),
                 Obx(() => Text(
-                  "多开同屏（${controller.rooms.length}）",
+                  controller.focusedRoomKey.value != null
+                      ? "聚焦中"
+                      : "多开同屏（${controller.rooms.length}）",
                   style: const TextStyle(color: Colors.white, fontSize: 18),
                 )),
                 const Spacer(),
@@ -153,12 +172,15 @@ class MultiRoomPage extends GetView<MultiRoomController> {
       controller: controller.playerFor(room),
       onRemove: () => controller.removeRoom(room),
     );
-    return AnimatedSwitcher(
-      key: ValueKey(room.key),
-      duration: const Duration(milliseconds: 300),
-      switchInCurve: Curves.easeOut,
-      switchOutCurve: Curves.easeIn,
-      child: DragTarget<int>(
+    return GestureDetector(
+      // 双击聚焦单格，再双击或点返回退出。
+      onDoubleTap: () => controller.focusRoom(room.key),
+      child: AnimatedSwitcher(
+        key: ValueKey(room.key),
+        duration: const Duration(milliseconds: 300),
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeIn,
+        child: DragTarget<int>(
         onWillAcceptWithDetails: (details) => details.data != index,
         onAcceptWithDetails: (details) {
           controller.swapRooms(details.data, index);
@@ -192,6 +214,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
           );
         },
       ),
+    ),
     );
   }
 
@@ -648,15 +671,30 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
               left: 6,
               bottom: 6,
               child: Obx(
-                () => Text(
-                  [
-                    "${item.site.name} · ${controller.title}",
-                    if (controller.qualityInfo.value.isNotEmpty)
-                      controller.qualityInfo.value,
-                    if (controller.lineInfo.value.isNotEmpty)
-                      controller.lineInfo.value,
-                  ].join(" · "),
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                () => Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "${item.site.name} · ${controller.title}",
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    if (controller.qualityInfo.value.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      _InfoChip(
+                        text: controller.qualityInfo.value,
+                        onTap: () =>
+                            _showTileQualitySheet(context, controller),
+                      ),
+                    ],
+                    if (controller.lineInfo.value.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      _InfoChip(
+                        text: controller.lineInfo.value,
+                        onTap: () => _showTileLineSheet(context, controller),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
@@ -814,6 +852,102 @@ class _DanmakuLayer extends StatelessWidget {
   }
 }
 
+/// 每格底部可点击的信息胶囊（清晰度/线路）。
+class _InfoChip extends StatelessWidget {
+  final String text;
+  final VoidCallback onTap;
+
+  const _InfoChip({required this.text, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.black.withAlpha(160),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          text,
+          style: const TextStyle(color: Colors.white, fontSize: 11),
+        ),
+      ),
+    );
+  }
+}
+
+void _showTileQualitySheet(
+  BuildContext context,
+  MultiRoomPlayerController controller,
+) {
+  final qualities = controller.qualities;
+  if (qualities.isEmpty) return;
+  showModalBottomSheet<void>(
+    context: context,
+    builder: (_) => SafeArea(
+      top: false,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(12),
+            child: Text("选择清晰度",
+                style: TextStyle(fontWeight: FontWeight.w600)),
+          ),
+          for (var i = 0; i < qualities.length; i++)
+            ListTile(
+              title: Text(qualities[i].quality),
+              trailing: i == controller.qualityIndex
+                  ? const Icon(Icons.check, size: 18)
+                  : null,
+              onTap: () {
+                Get.back();
+                controller.changeQuality(i);
+              },
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+void _showTileLineSheet(
+  BuildContext context,
+  MultiRoomPlayerController controller,
+) {
+  final urls = controller.playUrls;
+  if (urls.isEmpty) return;
+  showModalBottomSheet<void>(
+    context: context,
+    builder: (_) => SafeArea(
+      top: false,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(12),
+            child: Text("选择线路",
+                style: TextStyle(fontWeight: FontWeight.w600)),
+          ),
+          for (var i = 0; i < urls.length; i++)
+            ListTile(
+              title: Text("线路${i + 1}"),
+              trailing: i == controller.lineIndex
+                  ? const Icon(Icons.check, size: 18)
+                  : null,
+              onTap: () {
+                Get.back();
+                controller.changeLine(i);
+              },
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _OverlayButton extends StatelessWidget {
   final String tooltip;
   final IconData icon;
@@ -824,7 +958,6 @@ class _OverlayButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
   });
-
   @override
   Widget build(BuildContext context) {
     return Tooltip(
