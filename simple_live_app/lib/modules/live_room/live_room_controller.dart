@@ -17,6 +17,7 @@ import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/desktop_startup_args.dart';
 import 'package:simple_live_app/app/event_bus.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
@@ -24,6 +25,7 @@ import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
@@ -2546,6 +2548,7 @@ class LiveRoomController extends PlayerController
   Widget buildHistorySelection({
     required VoidCallback onClose,
     ScrollController? scrollController,
+    void Function(History item, Site site)? onSelected,
   }) {
     final currentSite = site;
     final histories = <History>[].obs;
@@ -2632,11 +2635,15 @@ class LiveRoomController extends PlayerController
                     ),
                   ],
                 ),
-                onTap: historySite == null
+                onTap: historySite == null || (isCurrent && onSelected != null)
                     ? null
                     : () {
                         onClose();
-                        resetRoom(historySite, item.roomId);
+                        if (onSelected != null) {
+                          onSelected(item, historySite);
+                        } else {
+                          resetRoom(historySite, item.roomId);
+                        }
                       },
                 onLongPress: () async {
                   final confirmed = await Utils.showAlertDialog(
@@ -2860,6 +2867,7 @@ class LiveRoomController extends PlayerController
         title: "观看历史",
         width: 420,
         useSystem: true,
+        clickMaskDismiss: false,
         child: buildHistorySelection(
           onClose: Utils.hideRightDialog,
           scrollController: liveRoomHistoryScrollController,
@@ -2885,6 +2893,7 @@ class LiveRoomController extends PlayerController
         title: "同类推荐",
         width: 420,
         useSystem: true,
+        clickMaskDismiss: false,
         child: buildCategoryRecommendationSelection(
           onClose: Utils.hideRightDialog,
           scrollController: liveRoomRecommendationScrollController,
@@ -2960,37 +2969,44 @@ class LiveRoomController extends PlayerController
   Widget buildFollowUserSelection({
     required VoidCallback onClose,
     ScrollController? scrollController,
+    ValueChanged<FollowUser>? onSelected,
+    bool liveOnly = false,
   }) {
     const options = ["全部", "直播中", "未开播"];
     return Obx(() {
       final filterMode = liveRoomFollowFilterMode.value;
-      final followUsers = _followUsersByFilterMode(filterMode);
+      final followUsers = liveOnly
+          ? FollowService.instance.sortFollowUsers(
+              FollowService.instance.liveList,
+            )
+          : _followUsersByFilterMode(filterMode);
       return Stack(
         children: [
           Column(
             children: [
-              Padding(
-                padding: AppStyle.edgeInsetsA12.copyWith(bottom: 0),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: List.generate(options.length, (index) {
-                      return Padding(
-                        padding: EdgeInsets.only(
-                          right: index == options.length - 1 ? 0 : 12,
-                        ),
-                        child: FilterButton(
-                          text: options[index],
-                          selected: filterMode == index,
-                          onTap: () {
-                            liveRoomFollowFilterMode.value = index;
-                          },
-                        ),
-                      );
-                    }),
+              if (!liveOnly)
+                Padding(
+                  padding: AppStyle.edgeInsetsA12.copyWith(bottom: 0),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: List.generate(options.length, (index) {
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            right: index == options.length - 1 ? 0 : 12,
+                          ),
+                          child: FilterButton(
+                            text: options[index],
+                            selected: filterMode == index,
+                            onTap: () {
+                              liveRoomFollowFilterMode.value = index;
+                            },
+                          ),
+                        );
+                      }),
+                    ),
                   ),
                 ),
-              ),
               Expanded(
                 child: RefreshIndicator(
                   onRefresh: FollowService.instance.loadData,
@@ -3007,6 +3023,7 @@ class LiveRoomController extends PlayerController
                       return _buildLiveRoomFollowItem(
                         item: item,
                         onClose: onClose,
+                        onSelected: onSelected,
                       );
                     },
                   ),
@@ -3033,6 +3050,7 @@ class LiveRoomController extends PlayerController
   Widget _buildLiveRoomFollowItem({
     required FollowUser item,
     required VoidCallback onClose,
+    ValueChanged<FollowUser>? onSelected,
   }) {
     return Obx(
       () => FollowUserItem(
@@ -3040,15 +3058,129 @@ class LiveRoomController extends PlayerController
         showSpecialMark: true,
         playing:
             rxSite.value.id == item.siteId && rxRoomId.value == item.roomId,
-        onTap: () {
-          onClose();
-          resetRoom(
-            Sites.allSites[item.siteId]!,
-            item.roomId,
-          );
-        },
+        onTap: rxSite.value.id == item.siteId &&
+                rxRoomId.value == item.roomId &&
+                onSelected != null
+            ? null
+            : () {
+                onClose();
+                if (onSelected != null) {
+                  onSelected(item);
+                } else {
+                  resetRoom(
+                    Sites.allSites[item.siteId]!,
+                    item.roomId,
+                  );
+                }
+              },
       ),
     );
+  }
+
+  bool get canStartInlineMultiRoom =>
+      PlatformUtils.inlineMultiRoomUnavailableReason == null;
+
+  void showAddToMultiRoomPanel() {
+    final unavailableReason = PlatformUtils.inlineMultiRoomUnavailableReason;
+    if (unavailableReason != null) {
+      SmartDialog.showToast(unavailableReason);
+      return;
+    }
+    if (detail.value == null) {
+      SmartDialog.showToast("直播间信息还未加载完成");
+      return;
+    }
+
+    Utils.showRightDialog(
+      title: "添加直播间",
+      width: 420,
+      useSystem: true,
+      clickMaskDismiss: false,
+      child: DefaultTabController(
+        length: 2,
+        child: Column(
+          children: [
+            const TabBar(
+              tabs: [
+                Tab(text: "关注（直播中）"),
+                Tab(text: "历史"),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  buildFollowUserSelection(
+                    onClose: Utils.hideRightDialog,
+                    liveOnly: true,
+                    onSelected: (item) {
+                      unawaited(
+                        _openInlineMultiRoom(MultiRoomItem.fromFollow(item)),
+                      );
+                    },
+                  ),
+                  buildHistorySelection(
+                    onClose: Utils.hideRightDialog,
+                    onSelected: (item, historySite) {
+                      unawaited(
+                        _openInlineMultiRoom(
+                          MultiRoomItem(
+                            site: historySite,
+                            roomId: item.roomId,
+                            userName: item.userName,
+                            face: item.face,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openInlineMultiRoom(MultiRoomItem addedRoom) async {
+    final roomDetail = detail.value;
+    if (roomDetail == null || isPlayerClosing) {
+      return;
+    }
+    final currentRoom = MultiRoomItem(
+      site: site,
+      roomId: roomId,
+      userName: roomDetail.userName,
+      face: roomDetail.userAvatar,
+    );
+    if (currentRoom.key == addedRoom.key) {
+      SmartDialog.showToast("请选择另一个直播间");
+      return;
+    }
+
+    // 等待右侧选择面板退场，避免遮罩与路由动画叠在一起。
+    await Future.delayed(const Duration(milliseconds: 220));
+    final wasPlaying = player.state.playing;
+    await releaseWakelockOwnership();
+    try {
+      if (wasPlaying) {
+        await player.pause();
+      }
+      await AppNavigator.toMultiRoom([currentRoom, addedRoom]);
+    } finally {
+      if (!_roomDisposed && !isPlayerClosing) {
+        try {
+          if (wasPlaying) {
+            await player.play();
+          }
+        } finally {
+          reclaimWakelockOwnership();
+        }
+        if (fullScreenState.value) {
+          await restoreFullScreenSystemUi();
+        }
+      }
+    }
   }
 
   void showFollowUserSheet() {
@@ -3239,6 +3371,8 @@ ${errorStackTrace ?? ""}''');
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       Log.d("进入后台:$state");
+      updateSystemUiAppLifecycle(false);
+      updateWakelockAppLifecycle(false);
       isBackground = true;
       _backgroundedAt ??= DateTime.now();
       _positionBeforeBackground ??= _lastKnownPlayerPosition;
@@ -3259,6 +3393,11 @@ ${errorStackTrace ?? ""}''');
       }
     } else if (state == AppLifecycleState.resumed) {
       Log.d("返回前台");
+      updateSystemUiAppLifecycle(true);
+      updateWakelockAppLifecycle(true);
+      if (fullScreenState.value) {
+        unawaited(restoreFullScreenSystemUi());
+      }
       _refreshAutoExitCountdown();
       isBackground = false;
       unawaited(

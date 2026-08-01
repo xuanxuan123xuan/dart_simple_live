@@ -117,9 +117,13 @@ class Utils {
     required Widget child,
     double width = 320,
     bool useSystem = false,
+    bool clickMaskDismiss = true,
   }) {
     SmartDialog.show(
       alignment: Alignment.topRight,
+      // 默认保留点击遮罩关闭的原有交互。全屏播放器等会继续
+      // 处理打开手势的场景，可由调用方显式关闭遮罩点击退出。
+      clickMaskDismiss: clickMaskDismiss,
       animationBuilder: (controller, child, animationParam) {
         //从右到左
         return SlideTransition(

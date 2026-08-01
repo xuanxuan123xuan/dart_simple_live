@@ -554,6 +554,16 @@ Widget _buildFullTopBar(
                 size: 24,
               ),
             ),
+            if (controller.canStartInlineMultiRoom)
+              IconButton(
+                tooltip: "添加直播间并进入多开",
+                onPressed: controller.showAddToMultiRoomPanel,
+                icon: const Icon(
+                  Remix.play_list_add_line,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
             if (Platform.isAndroid || Utils.isOhos)
               IconButton(
                 onPressed: controller.enablePIP,
@@ -981,6 +991,7 @@ void showLinesInfo(LiveRoomController controller) {
   Utils.showRightDialog(
     title: "线路选择",
     useSystem: true,
+    clickMaskDismiss: false,
     child: ListView.builder(
       padding: EdgeInsets.zero,
       itemCount: controller.playUrls.length,
@@ -1033,6 +1044,7 @@ void showQualitesInfo(LiveRoomController controller) {
   Utils.showRightDialog(
     title: "清晰度",
     useSystem: true,
+    clickMaskDismiss: false,
     child: ListView.builder(
       padding: EdgeInsets.zero,
       itemCount: controller.qualites.length,
@@ -1065,6 +1077,7 @@ void showDanmakuSettings(LiveRoomController controller) {
     title: "弹幕设置",
     width: 400,
     useSystem: true,
+    clickMaskDismiss: false,
     child: ListView(
       padding: AppStyle.edgeInsetsA12,
       children: [
@@ -1087,6 +1100,7 @@ void showPlayerSettings(LiveRoomController controller) {
     title: "设置",
     width: 320,
     useSystem: true,
+    clickMaskDismiss: false,
     child: Obx(
       () => ListView(
         padding: AppStyle.edgeInsetsV12,
@@ -1190,6 +1204,7 @@ void showQuickAccess(LiveRoomController controller) {
     title: "快捷入口",
     width: 320,
     useSystem: true,
+    clickMaskDismiss: false,
     child: ListView(
       padding: AppStyle.edgeInsetsV12,
       children:
@@ -1244,6 +1259,7 @@ void showFollowUser(LiveRoomController controller) {
     title: "关注列表",
     width: 400,
     useSystem: true,
+    clickMaskDismiss: false,
     child: controller.buildFollowUserSelection(
       onClose: Utils.hideRightDialog,
       scrollController: controller.liveRoomFollowDialogScrollController,

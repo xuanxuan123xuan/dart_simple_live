@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,9 +15,9 @@ import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/memory_pressure_monitor.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
-class MultiRoomController extends GetxController
-    with WidgetsBindingObserver {
+class MultiRoomController extends GetxController with WidgetsBindingObserver {
   final List<MultiRoomItem> initialRooms;
 
   MultiRoomController(this.initialRooms);
@@ -37,12 +38,34 @@ class MultiRoomController extends GetxController
     chatPanelRatio.value = ratio.clamp(0.2, 0.6);
   }
 
-  /// 4 格 1+3 主次布局开关（左主格 + 右三小格，小格不加载弹幕）。
+  /// 2-4 路直播间的主次布局开关。
   var mainSubLayout = false.obs;
 
+  bool get canToggleMainSubLayout =>
+      rooms.length >= 2 && rooms.length <= 4;
+
+  bool get isMainSubLayoutActive =>
+      canToggleMainSubLayout && mainSubLayout.value;
+
   void toggleMainSubLayout() {
+    if (!canToggleMainSubLayout) {
+      mainSubLayout.value = false;
+      return;
+    }
+    // 布局切换必须先退出单格聚焦，否则底层布局虽已改变，
+    // 画面仍会被聚焦分支覆盖，看起来像“按钮没反应”。
+    focusedRoomKey.value = null;
     mainSubLayout.value = !mainSubLayout.value;
-    if (mainSubLayout.value) {
+    showOverlay.value = true;
+    _resetAutoHideTimer();
+  }
+
+  void _normalizeLayoutAfterRoomChange() {
+    if (!canToggleMainSubLayout) {
+      mainSubLayout.value = false;
+    }
+    final focusKey = focusedRoomKey.value;
+    if (focusKey != null && !rooms.any((room) => room.key == focusKey)) {
       focusedRoomKey.value = null;
     }
   }
@@ -52,6 +75,9 @@ class MultiRoomController extends GetxController
 
   Timer? _autoHideTimer;
   Timer? _resumeTimer;
+  bool _closing = false;
+  bool _appActive = true;
+  bool _danmakuSuspendedForLifecycle = false;
 
   /// 上次多开的布局（恢复用）。
   Map<String, double> _pendingVolumes = {};
@@ -90,7 +116,11 @@ class MultiRoomController extends GetxController
     if (showOverlay.value) {
       _autoHideTimer = Timer(
         const Duration(seconds: 8),
-        () => showOverlay.value = false,
+        () {
+          if (!_closing && !isClosed) {
+            showOverlay.value = false;
+          }
+        },
       );
     }
   }
@@ -101,24 +131,25 @@ class MultiRoomController extends GetxController
     WidgetsBinding.instance.addObserver(this);
     rooms.assignAll(_distinct(initialRooms));
     _restoreLayout(rooms);
+    _normalizeChatTarget(null, chatTargetIndex.value);
+    _normalizeLayoutAfterRoomChange();
     _resetAutoHideTimer();
     _setupMemoryMonitor();
-    // 多开同屏进入沉浸模式，隐藏 iPad/Android 顶部状态栏。
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    unawaited(WakelockPlus.enable());
+    unawaited(_hideSystemUi());
   }
 
   @override
   void onClose() {
+    _closing = true;
+    _appActive = false;
     WidgetsBinding.instance.removeObserver(this);
     _autoHideTimer?.cancel();
     _resumeTimer?.cancel();
     _teardownMemoryMonitor();
     _saveLayout();
-    // 恢复系统栏。
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.edgeToEdge,
-      overlays: SystemUiOverlay.values,
-    );
+    unawaited(WakelockPlus.disable());
+    unawaited(_restoreSystemUi());
     for (final item in rooms) {
       final tag = playerTag(item);
       if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
@@ -143,31 +174,58 @@ class MultiRoomController extends GetxController
 
   MultiRoomPlayerController playerFor(MultiRoomItem item) {
     final tag = playerTag(item);
-    final controller = Get.isRegistered<MultiRoomPlayerController>(tag: tag)
+    if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
+      return Get.find<MultiRoomPlayerController>(tag: tag);
+    }
+    if (_closing || isClosed) {
+      throw StateError("多开页面已关闭，不能再创建播放器");
+    }
+    // 持久化状态只在新 controller 构造前消费一次，后续 rebuild 不再覆盖用户操作。
+    return Get.put(
+      MultiRoomPlayerController(
+        item,
+        onPlayerOpened: _scheduleResumePlayers,
+        initialVolume: _pendingVolumes.remove(item.key),
+        initialShowDanmaku: _pendingDanmaku.remove(item.key),
+        initialQualityIndex: _pendingQualities.remove(item.key),
+        initialLineIndex: _pendingLines.remove(item.key),
+      ),
+      tag: tag,
+    );
+  }
+
+  MultiRoomPlayerController? _existingPlayerFor(MultiRoomItem item) {
+    final tag = playerTag(item);
+    return Get.isRegistered<MultiRoomPlayerController>(tag: tag)
         ? Get.find<MultiRoomPlayerController>(tag: tag)
-        : Get.put(MultiRoomPlayerController(item), tag: tag);
-    // 恢复上次的每格音量/弹幕开关。
-    final volume = _pendingVolumes[item.key];
-    if (volume != null) {
-      controller.volume.value = volume;
+        : null;
+  }
+
+  String? _currentChatTargetKey() {
+    final index = chatTargetIndex.value;
+    return index >= 0 && index < rooms.length ? rooms[index].key : null;
+  }
+
+  void _normalizeChatTarget([String? preferredKey, int fallbackIndex = 0]) {
+    if (rooms.isEmpty) {
+      chatTargetIndex.value = 0;
+      return;
     }
-    final danmaku = _pendingDanmaku[item.key];
-    if (danmaku != null) {
-      controller.showDanmaku.value = danmaku;
-    }
-    final quality = _pendingQualities[item.key];
-    if (quality != null) {
-      controller.restoreQualityIndex(quality);
-    }
-    final line = _pendingLines[item.key];
-    if (line != null) {
-      controller.restoreLineIndex(line);
-    }
-    return controller;
+    final preferredIndex = preferredKey == null
+        ? -1
+        : rooms.indexWhere((room) => room.key == preferredKey);
+    chatTargetIndex.value = preferredIndex >= 0
+        ? preferredIndex
+        : fallbackIndex.clamp(0, rooms.length - 1).toInt();
   }
 
   void removeRoom(MultiRoomItem item) {
+    final chatTargetKey = _currentChatTargetKey();
+    final fallbackIndex = chatTargetIndex.value;
     rooms.removeWhere((room) => room.key == item.key);
+    _normalizeChatTarget(chatTargetKey, fallbackIndex);
+    _normalizeLayoutAfterRoomChange();
+    _degradedKeys.remove(item.key);
     final tag = playerTag(item);
     if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
       Get.delete<MultiRoomPlayerController>(tag: tag);
@@ -183,8 +241,10 @@ class MultiRoomController extends GetxController
     if (oldIndex == newIndex) return;
     if (oldIndex < 0 || oldIndex >= rooms.length) return;
     if (newIndex < 0 || newIndex >= rooms.length) return;
+    final chatTargetKey = _currentChatTargetKey();
     final item = rooms.removeAt(oldIndex);
     rooms.insert(newIndex, item);
+    _normalizeChatTarget(chatTargetKey, newIndex);
   }
 
   /// 恢复所有应播放但已暂停的播放器。
@@ -192,10 +252,11 @@ class MultiRoomController extends GetxController
   /// iOS 上 media_kit/libmpv 多实例共享 audio session：新增 Player 的
   /// open() 会中断正在播放的旧 Player，延迟一段时间后把它拉回来。
   void _resumeAllPlayers() {
+    if (_closing || isClosed || !_appActive) return;
     for (final room in rooms) {
-      final c = playerFor(room);
-      if (c.liveStatus.value && !c.player.state.playing) {
-        c.player.play();
+      final controller = _existingPlayerFor(room);
+      if (controller != null) {
+        unawaited(controller.ensurePlaying());
       }
     }
   }
@@ -203,26 +264,73 @@ class MultiRoomController extends GetxController
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      if (_closing || isClosed) return;
+      _appActive = true;
+      unawaited(WakelockPlus.enable());
+      unawaited(_hideSystemUi());
       _resumeAllPlayers();
-      _restoreDanmakuAll();
+      if (_danmakuSuspendedForLifecycle) {
+        _danmakuSuspendedForLifecycle = false;
+        _restoreDanmakuAll();
+      }
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
+      _appActive = false;
+      _resumeTimer?.cancel();
+      _resumeTimer = null;
+      unawaited(WakelockPlus.disable());
       // 后台挂起：断开所有格子弹幕长连接，省心跳与流量，前台恢复。
-      _suspendDanmakuAll();
+      if (!_danmakuSuspendedForLifecycle) {
+        _danmakuSuspendedForLifecycle = true;
+        _suspendDanmakuAll();
+      }
     }
+  }
+
+  Future<void> _hideSystemUi() async {
+    // 等待多开页完成首帧，避免 iOS 路由切换恢复状态栏。
+    await WidgetsBinding.instance.endOfFrame;
+    if (_closing || isClosed) {
+      return;
+    }
+    if (Platform.isIOS) {
+      await SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: const [],
+      );
+    } else if (Platform.isAndroid) {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    }
+  }
+
+  Future<void> _restoreSystemUi() async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return;
+    }
+    await SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+      overlays: SystemUiOverlay.values,
+    );
   }
 
   /// 后台挂起：断开所有格子弹幕连接（含降级中的）。
   void _suspendDanmakuAll() {
     for (final room in rooms) {
-      unawaited(playerFor(room).degradeDanmaku());
+      final controller = _existingPlayerFor(room);
+      if (controller != null) {
+        unawaited(controller.degradeDanmaku());
+      }
     }
   }
 
   /// 前台恢复：重建所有格子弹幕连接。
   void _restoreDanmakuAll() {
     for (final room in rooms) {
-      unawaited(playerFor(room).restoreDanmaku());
+      if (_degradedKeys.contains(room.key)) continue;
+      final controller = _existingPlayerFor(room);
+      if (controller != null) {
+        unawaited(controller.restoreDanmaku());
+      }
     }
   }
 
@@ -234,6 +342,7 @@ class MultiRoomController extends GetxController
       return;
     }
     rooms.add(room);
+    _normalizeLayoutAfterRoomChange();
     SmartDialog.showToast("已加入 ${item.userName}");
     _scheduleResumePlayers();
   }
@@ -256,16 +365,21 @@ class MultiRoomController extends GetxController
       return;
     }
     rooms.add(room);
+    _normalizeLayoutAfterRoomChange();
     SmartDialog.showToast("已加入 ${item.userName}");
     _scheduleResumePlayers();
   }
 
-  /// 新房间的 Player.open() 会抢占 iOS 共享 audio session 中断旧播放器，
-  /// 延迟到新 Player 初始化完成后再恢复全部播放器。
+  /// 任意一格的 Player.open() 会抢占 iOS 共享 audio session 中断其他格，
+  /// 延迟到本次 Player 初始化完成后再恢复全部播放器。
   void _scheduleResumePlayers() {
+    if (_closing || isClosed || !_appActive) return;
     _resumeTimer?.cancel();
     _resumeTimer = Timer(const Duration(milliseconds: 800), () {
       _resumeTimer = null;
+      if (_closing || isClosed || !_appActive) return;
+      // Wakelock 是全局开关，底层单直播间的延迟清理可能在路由切换后关闭它。
+      unawaited(WakelockPlus.enable());
       _resumeAllPlayers();
     });
   }
@@ -294,7 +408,9 @@ class MultiRoomController extends GetxController
 
   /// 内存压力大：暂停非活跃格子的弹幕；房间数 ≥ 4 时额外降画质。
   void _onMemoryDegrade() {
-    if (!AppSettingsController.instance.multiRoomLowMemoryDegrade.value) {
+    if (_closing ||
+        isClosed ||
+        !AppSettingsController.instance.multiRoomLowMemoryDegrade.value) {
       return;
     }
     _degradedKeys.clear();
@@ -304,7 +420,8 @@ class MultiRoomController extends GetxController
       if (_isActiveRoom(room, i)) {
         continue;
       }
-      final c = playerFor(room);
+      final c = _existingPlayerFor(room);
+      if (c == null) continue;
       _degradedKeys.add(room.key);
       unawaited(c.degradeDanmaku());
       if (heavy) {
@@ -321,10 +438,14 @@ class MultiRoomController extends GetxController
 
   /// 内存回落：恢复被降级的格子弹幕。
   void _onMemoryRecover() {
+    if (_closing || isClosed) return;
     for (final key in _degradedKeys) {
       final room = rooms.firstWhereOrNull((r) => r.key == key);
-      if (room != null) {
-        unawaited(playerFor(room).restoreDanmaku());
+      final controller = room == null ? null : _existingPlayerFor(room);
+      if (controller != null &&
+          _appActive &&
+          !_danmakuSuspendedForLifecycle) {
+        unawaited(controller.restoreDanmaku());
       }
     }
     _degradedKeys.clear();
@@ -340,16 +461,28 @@ class MultiRoomController extends GetxController
         "chatRatio": chatPanelRatio.value,
         "mainSub": mainSubLayout.value,
         "volumes": {
-          for (final r in rooms) r.key: playerFor(r).volume.value,
+          for (final r in rooms)
+            r.key: _existingPlayerFor(r)?.volume.value ??
+                _pendingVolumes[r.key] ??
+                100.0,
         },
         "danmaku": {
-          for (final r in rooms) r.key: playerFor(r).showDanmaku.value,
+          for (final r in rooms)
+            r.key: _existingPlayerFor(r)?.showDanmaku.value ??
+                _pendingDanmaku[r.key] ??
+                true,
         },
         "qualities": {
-          for (final r in rooms) r.key: playerFor(r).qualityIndex,
+          for (final r in rooms)
+            r.key: _existingPlayerFor(r)?.qualityIndex ??
+                _pendingQualities[r.key] ??
+                -1,
         },
         "lines": {
-          for (final r in rooms) r.key: playerFor(r).lineIndex,
+          for (final r in rooms)
+            r.key: _existingPlayerFor(r)?.lineIndex ??
+                _pendingLines[r.key] ??
+                0,
         },
       };
       LocalStorageService.instance.setValue(

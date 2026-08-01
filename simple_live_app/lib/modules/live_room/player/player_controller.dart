@@ -520,6 +520,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   final pip = Floating();
   StreamSubscription<PiPStatus>? _pipSubscription;
   StreamSubscription<bool>? _ohosPipSubscription;
+  int _mobileSystemUiRequest = 0;
+  bool _systemUiAppActive = true;
 
   //final VolumeController volumeController = VolumeController();
 
@@ -547,6 +549,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   /// 释放一些系统状态
   Future resetSystem() async {
+    _systemUiAppActive = false;
+    _mobileSystemUiRequest += 1;
     _pipSubscription?.cancel();
     _ohosPipSubscription?.cancel();
     //pip.dispose();
@@ -568,7 +572,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       }
     }
 
-    await WakelockPlus.disable();
   }
 
   /// 进入全屏
@@ -611,14 +614,11 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       ohosFullscreenTransition.value = false;
     } else if (Platform.isAndroid || Platform.isIOS) {
       fullScreenState.value = true;
-      //全屏（immersiveSticky 在 iPad 上也能隐藏顶部状态栏）
-      await SystemChrome.setEnabledSystemUIMode(
-        SystemUiMode.immersiveSticky,
-      );
       if (!isVertical.value) {
         //横屏
         await setLandscapeOrientation();
       }
+      await restoreFullScreenSystemUi();
     } else {
       fullScreenState.value = true;
       _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
@@ -637,6 +637,59 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       await Future.delayed(const Duration(milliseconds: 32));
     }
     //danmakuController?.clear();
+  }
+
+  /// 隐藏移动端系统栏。
+  ///
+  /// iOS 不支持 Android 的 immersiveSticky 语义，需要明确传入空 overlays。
+  /// 该方法也会在 App 回到前台时重新调用，防止 iOS 恢复状态栏。
+  Future<void> restoreFullScreenSystemUi() async {
+    if ((!Platform.isAndroid && !Platform.isIOS) ||
+        !_systemUiAppActive ||
+        !fullScreenState.value ||
+        smallWindowState.value) {
+      return;
+    }
+    final request = ++_mobileSystemUiRequest;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!_isCurrentMobileSystemUiRequest(request)) {
+      return;
+    }
+    await _hideMobileSystemUi();
+    if (Platform.isIOS) {
+      // iOS may restore the status bar once more while a route/orientation
+      // transition is finishing. Reapply only if this is still the latest
+      // fullscreen request, so an exit request can never be overwritten.
+      await Future.delayed(const Duration(milliseconds: 120));
+      if (_isCurrentMobileSystemUiRequest(request)) {
+        await _hideMobileSystemUi();
+      }
+    }
+  }
+
+  bool _isCurrentMobileSystemUiRequest(int request) {
+    return request == _mobileSystemUiRequest &&
+        _systemUiAppActive &&
+        fullScreenState.value &&
+        !smallWindowState.value &&
+        !isPlayerClosing;
+  }
+
+  /// Cancels stale fullscreen UI work while backgrounded. The caller should
+  /// request a restore after marking the app active again.
+  void updateSystemUiAppLifecycle(bool active) {
+    _systemUiAppActive = active;
+    _mobileSystemUiRequest += 1;
+  }
+
+  Future<void> _hideMobileSystemUi() {
+    if (Platform.isIOS) {
+      return SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: const [],
+      );
+    }
+    return SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   Future<void> toggleFullScreen() async {
@@ -690,6 +743,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       return;
     }
     if (Platform.isAndroid || Platform.isIOS) {
+      _mobileSystemUiRequest += 1;
       await SystemChrome.setEnabledSystemUIMode(
         SystemUiMode.edgeToEdge,
         overlays: SystemUiOverlay.values,
@@ -1656,6 +1710,10 @@ class PlayerController extends BaseController
   StreamSubscription? _logSubscription;
   StreamSubscription? _playingSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
+  bool _wakelockAppActive = true;
+  bool _ownsWakelock = true;
+  bool? _pendingWakelockState;
+  Future<void>? _wakelockDrain;
 
   // Fix Issue #57: 流错误重试计数器
   int _streamErrorRetryCount = 0;
@@ -1689,9 +1747,11 @@ class PlayerController extends BaseController
     });
 
     _playingSubscription = player.stream.playing.listen((event) {
+      _requestWakelockEnabled(
+        _wakelockAppActive && !isPlayerClosing && event,
+      );
+      unawaited(_syncBackgroundPlaybackService(event));
       if (event) {
-        WakelockPlus.enable();
-        unawaited(_syncBackgroundPlaybackService(true));
         Log.d("Playing");
         // 播放成功，重置流错误计数
         _streamErrorRetryCount = 0;
@@ -1800,6 +1860,79 @@ class PlayerController extends BaseController
     _surfaceHealthCheckTimer?.cancel();
   }
 
+  /// Keeps the screen awake only while this foreground room is actually
+  /// playing. Playback can be paused internally even though the UI has no
+  /// pause button (for example while opening multi-room or losing focus).
+  void updateWakelockAppLifecycle(bool active) {
+    _wakelockAppActive = active;
+    _syncWakelockForCurrentState();
+  }
+
+  void _syncWakelockForCurrentState() {
+    if (Utils.isOhos || !_ownsWakelock) {
+      return;
+    }
+    _requestWakelockEnabled(
+      _wakelockAppActive && !isPlayerClosing && player.state.playing,
+    );
+  }
+
+  void _requestWakelockEnabled(bool enabled) {
+    if (Utils.isOhos || !_ownsWakelock) {
+      return;
+    }
+    _pendingWakelockState = enabled;
+    _wakelockDrain ??= _drainWakelockState();
+  }
+
+  Future<void> _drainWakelockState() async {
+    try {
+      while (_ownsWakelock && _pendingWakelockState != null) {
+        final enabled = _pendingWakelockState!;
+        _pendingWakelockState = null;
+        if (enabled) {
+          await WakelockPlus.enable();
+        } else {
+          await WakelockPlus.disable();
+        }
+      }
+    } catch (e) {
+      Log.d("同步屏幕常亮状态失败: $e");
+    } finally {
+      _wakelockDrain = null;
+      if (_ownsWakelock && _pendingWakelockState != null) {
+        _wakelockDrain = _drainWakelockState();
+      }
+    }
+  }
+
+  /// Transfers the global wakelock to another player surface. Waiting for the
+  /// in-flight operation prevents this controller from disabling multi-room's
+  /// wakelock after the new route has already opened.
+  Future<void> releaseWakelockOwnership() async {
+    if (Utils.isOhos || !_ownsWakelock) {
+      return;
+    }
+    _ownsWakelock = false;
+    _pendingWakelockState = null;
+    try {
+      await _wakelockDrain;
+      if (!_ownsWakelock) {
+        await WakelockPlus.disable();
+      }
+    } catch (e) {
+      Log.d("释放屏幕常亮所有权失败: $e");
+    }
+  }
+
+  void reclaimWakelockOwnership() {
+    if (Utils.isOhos) {
+      return;
+    }
+    _ownsWakelock = true;
+    _syncWakelockForCurrentState();
+  }
+
   // Fix Issue #57: 判断是否为流错误（网络/解码错误）
   bool _isStreamError(String error) {
     return error.contains('mbedtls_ssl_read') ||
@@ -1898,16 +2031,12 @@ class PlayerController extends BaseController
   }
 
   void mediaEnd() {
-    if (!Utils.isOhos) {
-      WakelockPlus.disable();
-    }
+    _requestWakelockEnabled(false);
     unawaited(stopBackgroundPlaybackService());
   }
 
   void mediaError(String error) {
-    if (!Utils.isOhos) {
-      WakelockPlus.disable();
-    }
+    _requestWakelockEnabled(false);
     unawaited(stopBackgroundPlaybackService());
   }
 
@@ -2096,6 +2225,7 @@ class PlayerController extends BaseController
       return;
     }
     _playerClosing = true;
+    await releaseWakelockOwnership();
     if (Utils.isOhos) {
       if (fullScreenState.value) {
         await exitFull();

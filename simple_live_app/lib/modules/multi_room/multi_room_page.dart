@@ -56,30 +56,8 @@ class MultiRoomPage extends GetView<MultiRoomController> {
             if (showChat) {
               return _buildChatPanelLayout(rooms, constraints, gap);
             }
-            // 4 格 1+3 主次布局：左主格 + 右三小格（小格不加载弹幕）。
-            if (rooms.length == 4 && controller.mainSubLayout.value) {
-              return Padding(
-                padding: EdgeInsets.all(gap),
-                child: Row(
-                  children: [
-                    Expanded(flex: 3, child: _tileAt(0, rooms, loadDanmaku: true)),
-                    SizedBox(width: gap),
-                    Expanded(
-                      flex: 2,
-                      child: Column(
-                        children: [
-                          for (var i = 1; i < 4; i += 1) ...[
-                            if (i > 1) SizedBox(height: gap),
-                            Expanded(
-                              child: _tileAt(i, rooms, loadDanmaku: false),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              );
+            if (controller.isMainSubLayoutActive) {
+              return _buildMainSubRoomLayout(rooms, gap);
             }
             final columns = _bestColumnCount(
               rooms.length,
@@ -165,18 +143,21 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                   onPressed: () => _showAddRoomSheet(context),
                   icon: const Icon(Remix.play_list_add_line, color: Colors.white),
                 ),
-                IconButton(
-                  tooltip: "主次布局(1+3)",
-                  onPressed: controller.toggleMainSubLayout,
-                  icon: Obx(() => Icon(
-                    controller.mainSubLayout.value
-                        ? Icons.view_column_outlined
-                        : Icons.grid_view_outlined,
-                    color: controller.mainSubLayout.value
-                        ? Colors.amber
-                        : Colors.white,
-                  )),
-                ),
+                if (controller.canToggleMainSubLayout)
+                  IconButton(
+                    tooltip: controller.mainSubLayout.value
+                        ? "切换为均分布局"
+                        : "切换为 1+${controller.rooms.length - 1} 主次布局",
+                    onPressed: controller.toggleMainSubLayout,
+                    icon: Icon(
+                      controller.mainSubLayout.value
+                          ? Icons.view_column_outlined
+                          : Icons.grid_view_outlined,
+                      color: controller.mainSubLayout.value
+                          ? Colors.amber
+                          : Colors.white,
+                    ),
+                  ),
                 IconButton(
                   tooltip: "全部刷新",
                   onPressed: () {
@@ -196,6 +177,37 @@ class MultiRoomPage extends GetView<MultiRoomController> {
   ),
 ),
 );
+  }
+
+  Widget _buildMainSubRoomLayout(
+    List<MultiRoomItem> rooms,
+    double gap,
+  ) {
+    return Padding(
+      padding: EdgeInsets.all(gap),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: _tileAt(0, rooms, loadDanmaku: true),
+          ),
+          SizedBox(width: gap),
+          Expanded(
+            flex: 2,
+            child: Column(
+              children: [
+                for (var i = 1; i < rooms.length; i += 1) ...[
+                  if (i > 1) SizedBox(height: gap),
+                  Expanded(
+                    child: _tileAt(i, rooms, loadDanmaku: false),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _tileAt(int index, List<MultiRoomItem> rooms,
@@ -304,38 +316,12 @@ class MultiRoomPage extends GetView<MultiRoomController> {
         padding: EdgeInsets.all(gap),
         child: LayoutBuilder(
           builder: (ctx, innerConstraints) {
-            final ratio = controller.chatPanelRatio.value;
-            // 用相对比例 clamp（0.2-0.6 倍总宽），避免窄屏时被绝对
-            // 宽度卡住导致拖动看起来没反应。
-            final minChatW = innerConstraints.maxWidth * 0.2;
-            final maxChatW = innerConstraints.maxWidth * 0.6;
             final chatWidth =
-                (innerConstraints.maxWidth * ratio).clamp(minChatW, maxChatW);
-            // 聊天区宽度拖动手柄
-            final dragHandle = GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onHorizontalDragUpdate: (details) {
-                controller.changeChatPanelRatio(
-                  ratio + details.delta.dx / innerConstraints.maxWidth,
-                );
-              },
-              child: Container(
-                width: 16,
-                color: Colors.transparent,
-                child: Center(
-                  child: Container(
-                    width: 3,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: Colors.white24,
-                      borderRadius: BorderRadius.all(Radius.circular(2)),
-                    ),
-                  ),
-                ),
-              ),
-            );
+                _chatPanelWidth(innerConstraints.maxWidth, gap);
+            final dragHandle =
+                _buildChatResizeHandle(innerConstraints.maxWidth, gap);
             // 主次布局：左主格 + 右（上次直播间小 + 下聊天区大）。
-            if (controller.mainSubLayout.value) {
+            if (controller.isMainSubLayoutActive) {
               return Row(
                 children: [
                   Expanded(
@@ -401,35 +387,114 @@ class MultiRoomPage extends GetView<MultiRoomController> {
     }
     return Padding(
       padding: EdgeInsets.all(gap),
-      child: Column(
-        children: [
-          Expanded(
-            child: Row(
-              children: [
-                Expanded(child: _tileAt(0, rooms)),
-                SizedBox(width: gap),
-                Expanded(child: _tileAt(1, rooms)),
-              ],
-            ),
-          ),
-          SizedBox(height: gap),
-          Expanded(
-            child: Row(
-              children: [
-                Expanded(child: _tileAt(2, rooms)),
-                SizedBox(width: gap),
-                Expanded(
-                  child: _ChatPanel(
-                    rooms: rooms,
-                    chatController: chatController,
-                    chatRoomIndex: chatRoomIndex,
-                    onSelect: (i) => controller.chatTargetIndex.value = i,
-                  ),
+      child: LayoutBuilder(
+        builder: (ctx, innerConstraints) {
+          final chatColumnWidth =
+              _chatPanelWidth(innerConstraints.maxWidth, gap);
+          final dragHandle =
+              _buildChatResizeHandle(innerConstraints.maxWidth, gap);
+          return Row(
+            children: [
+              Expanded(
+                child: controller.isMainSubLayoutActive
+                    ? _tileAt(0, rooms, loadDanmaku: true)
+                    : Column(
+                        children: [
+                          Expanded(child: _tileAt(0, rooms)),
+                          SizedBox(height: gap),
+                          Expanded(child: _tileAt(2, rooms)),
+                        ],
+                      ),
+              ),
+              SizedBox(width: gap),
+              dragHandle,
+              SizedBox(width: gap),
+              SizedBox(
+                width: chatColumnWidth,
+                child: Column(
+                  children: [
+                    Expanded(
+                      flex: controller.isMainSubLayoutActive ? 2 : 1,
+                      child: controller.isMainSubLayoutActive
+                          ? Row(
+                              children: [
+                                Expanded(
+                                  child: _tileAt(
+                                    1,
+                                    rooms,
+                                    loadDanmaku: false,
+                                  ),
+                                ),
+                                SizedBox(width: gap),
+                                Expanded(
+                                  child: _tileAt(
+                                    2,
+                                    rooms,
+                                    loadDanmaku: false,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : _tileAt(1, rooms),
+                    ),
+                    SizedBox(height: gap),
+                    Expanded(
+                      flex: controller.isMainSubLayoutActive ? 3 : 1,
+                      child: _ChatPanel(
+                        rooms: rooms,
+                        chatController: chatController,
+                        chatRoomIndex: chatRoomIndex,
+                        onSelect: (i) => controller.chatTargetIndex.value = i,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  static const double _chatResizeHandleWidth = 24;
+
+  double _chatPanelWidth(double availableWidth, double gap) {
+    final contentWidth = availableWidth - _chatResizeHandleWidth - gap * 2;
+    final resizableWidth = contentWidth > 0 ? contentWidth : 0.0;
+    return (resizableWidth * controller.chatPanelRatio.value).clamp(
+      resizableWidth * 0.2,
+      resizableWidth * 0.6,
+    );
+  }
+
+  Widget _buildChatResizeHandle(double availableWidth, double gap) {
+    final contentWidth = availableWidth - _chatResizeHandleWidth - gap * 2;
+    final resizableWidth = contentWidth > 0 ? contentWidth : 1.0;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) {
+          // 聊天区位于手柄右侧：手柄右移时宽度应减小。
+          controller.changeChatPanelRatio(
+            controller.chatPanelRatio.value -
+                details.delta.dx / resizableWidth,
+          );
+        },
+        child: Container(
+          width: _chatResizeHandleWidth,
+          color: Colors.transparent,
+          alignment: Alignment.center,
+          child: Container(
+            width: 3,
+            height: 64,
+            decoration: const BoxDecoration(
+              color: Colors.white38,
+              borderRadius: BorderRadius.all(Radius.circular(2)),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -438,9 +503,9 @@ class MultiRoomPage extends GetView<MultiRoomController> {
     final tabIndex = 0.obs;
     final alreadyInRoom = <String>{for (final r in controller.rooms) r.key};
 
-    // 用页面自身的 context 打开弹窗（Utils.showBottomSheet 内部用
-    // Get.context!，页面 rebuild 时弹窗会被误 pop）。
-    showModalBottomSheet<void>(
+    // 延后到当前指针事件结束后再打开，避免打开按钮的
+    // 残留手势命中新弹层，同时保留点击遮罩和下滑关闭。
+    _showStableBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.only(
@@ -448,7 +513,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
           topRight: Radius.circular(12),
         ),
       ),
-      builder: (_) => SafeArea(
+      builder: (sheetContext) => SafeArea(
         top: false,
         bottom: false,
         child: Padding(
@@ -459,7 +524,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                 contentPadding: const EdgeInsets.only(left: 12),
                 title: const Text("加入直播间"),
                 trailing: IconButton(
-                  onPressed: Get.back,
+                  onPressed: () => Navigator.of(sheetContext).pop(),
                   icon: const Icon(Remix.close_line),
                 ),
               ),
@@ -534,7 +599,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
               : const Icon(Icons.live_tv, color: Colors.white54),
           title: Text(item.userName,
               style: TextStyle(color: added ? Colors.white38 : Colors.white)),
-          subtitle: Text("${site?.name ?? item.siteId}",
+          subtitle: Text(site?.name ?? item.siteId,
               style: const TextStyle(color: Colors.white54, fontSize: 12)),
           enabled: !added,
           onTap: () {
@@ -693,7 +758,7 @@ class _TabChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _TabChip(this.label, this.selected, this.onTap, {super.key});
+  const _TabChip(this.label, this.selected, this.onTap);
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -1026,17 +1091,23 @@ void _showTileQualitySheet(
 ) {
   final qualities = controller.qualities;
   if (qualities.isEmpty) return;
-  showModalBottomSheet<void>(
+  _showStableBottomSheet(
     context: context,
-    builder: (_) => SafeArea(
+    builder: (sheetContext) => SafeArea(
       top: false,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: Text("选择清晰度",
-                style: TextStyle(fontWeight: FontWeight.w600)),
+          ListTile(
+            title: const Text(
+              "选择清晰度",
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            trailing: IconButton(
+              tooltip: "关闭",
+              onPressed: () => Navigator.of(sheetContext).pop(),
+              icon: const Icon(Remix.close_line),
+            ),
           ),
           for (var i = 0; i < qualities.length; i++)
             ListTile(
@@ -1045,7 +1116,7 @@ void _showTileQualitySheet(
                   ? const Icon(Icons.check, size: 18)
                   : null,
               onTap: () {
-                Get.back();
+                Navigator.of(sheetContext).pop();
                 controller.changeQuality(i);
               },
             ),
@@ -1061,17 +1132,23 @@ void _showTileLineSheet(
 ) {
   final urls = controller.playUrls;
   if (urls.isEmpty) return;
-  showModalBottomSheet<void>(
+  _showStableBottomSheet(
     context: context,
-    builder: (_) => SafeArea(
+    builder: (sheetContext) => SafeArea(
       top: false,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: Text("选择线路",
-                style: TextStyle(fontWeight: FontWeight.w600)),
+          ListTile(
+            title: const Text(
+              "选择线路",
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            trailing: IconButton(
+              tooltip: "关闭",
+              onPressed: () => Navigator.of(sheetContext).pop(),
+              icon: const Icon(Remix.close_line),
+            ),
           ),
           for (var i = 0; i < urls.length; i++)
             ListTile(
@@ -1080,7 +1157,7 @@ void _showTileLineSheet(
                   ? const Icon(Icons.check, size: 18)
                   : null,
               onTap: () {
-                Get.back();
+                Navigator.of(sheetContext).pop();
                 controller.changeLine(i);
               },
             ),
@@ -1088,6 +1165,37 @@ void _showTileLineSheet(
       ),
     ),
   );
+}
+
+bool _stableBottomSheetActive = false;
+
+void _showStableBottomSheet({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  ShapeBorder? shape,
+}) {
+  if (_stableBottomSheetActive) return;
+  _stableBottomSheetActive = true;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!context.mounted) {
+      _stableBottomSheetActive = false;
+      return;
+    }
+    try {
+      showModalBottomSheet<void>(
+        context: context,
+        shape: shape,
+        // 延后打开已隔离发起手势，这里可以保留标准关闭交互。
+        isDismissible: true,
+        enableDrag: true,
+        builder: builder,
+      ).whenComplete(() => _stableBottomSheetActive = false);
+    } catch (_) {
+      _stableBottomSheetActive = false;
+      rethrow;
+    }
+  });
+  WidgetsBinding.instance.scheduleFrame();
 }
 
 class _OverlayButton extends StatelessWidget {
