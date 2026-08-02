@@ -227,7 +227,23 @@ jobs:
           cache: true
 
       - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        shell: bash
+        run: |
+          set -e
+          # runner 镜像上 sdkmanager 不一定在 PATH；定位完整路径，找不到则下载 cmdline-tools。
+          ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            mkdir -p "$RUNNER_TEMP/cmdline-tools"
+            curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
+              -o "$RUNNER_TEMP/cmdline-tools.zip"
+            unzip -q "$RUNNER_TEMP/cmdline-tools.zip" -d "$RUNNER_TEMP/cmdline-tools"
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+            mv "$RUNNER_TEMP/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Restore packages
         working-directory: simple_live_app
@@ -606,10 +622,15 @@ jobs:
             $target = Join-Path $out "simple-live-${{ needs.prepare.outputs.version }}-windows$extension"
             Copy-Item -LiteralPath $file.FullName -Destination $target -Force
           }
-          Get-ChildItem -LiteralPath $out -File | ForEach-Object {
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
-            "$hash  $($_.Name)"
-          } | Out-File -LiteralPath (Join-Path $out "SHA256SUMS-windows.txt") -Encoding ascii
+          # 先收集 hash 到内存，再一次性写文件：避免 Get-ChildItem 惰性枚举
+          # 与 Out-File 同时操作 $out 导致文件句柄冲突；同时排除校验文件自身。
+          $lines = Get-ChildItem -LiteralPath $out -File |
+            Where-Object { $_.Name -notlike 'SHA256SUMS*' } |
+            ForEach-Object {
+              $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            }
+          $lines | Out-File -LiteralPath (Join-Path $out "SHA256SUMS-windows.txt") -Encoding ascii
 
       - uses: actions/upload-artifact@v4
         with:
