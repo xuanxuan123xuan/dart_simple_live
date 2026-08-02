@@ -144,14 +144,17 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     _resetAutoHideTimer();
   }
 
-  /// 双击聚焦某格（单独放大）。
+  /// 双击聚焦某格（单独放大）；已聚焦该格时再双击退出聚焦。
   void focusRoom(String key) {
-    if (rooms.any((r) => r.key == key)) {
-      focusedRoomKey.value = key;
-      showOverlay.value = true;
-      _resetAutoHideTimer();
-      _scheduleResumePlayers();
+    if (!rooms.any((r) => r.key == key)) return;
+    if (focusedRoomKey.value == key) {
+      exitFocus();
+      return;
     }
+    focusedRoomKey.value = key;
+    showOverlay.value = true;
+    _resetAutoHideTimer();
+    _scheduleResumePlayers();
   }
 
   /// 退出聚焦，回到多开网格。
