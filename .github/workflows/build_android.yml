@@ -1,0 +1,89 @@
+name: 构建 Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "可选版本号（如 1.13）；留空使用 pubspec 当前版本"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.22.3"
+
+jobs:
+  build:
+    name: 构建 Android APK 与 AAB
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+          cache: gradle
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: 准备 Android 签名（可选）
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [[ -n "$KEYSTORE_BASE64" && -n "$STORE_PASSWORD" && \
+                -n "$KEY_PASSWORD" && -n "$KEY_ALIAS" ]]; then
+            printf '%s' "$KEYSTORE_BASE64" | openssl base64 -d -A \
+              > simple_live_app/android/release-keystore.jks
+            printf 'storeFile=../release-keystore.jks\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\n' \
+              "$STORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" \
+              > simple_live_app/android/key.properties
+          else
+            echo "::warning::签名 secrets 不完整，将使用 debug fallback 签名。"
+          fi
+
+      - name: 恢复依赖包
+        working-directory: simple_live_app
+        run: flutter pub get
+
+      - name: 构建通用 APK
+        working-directory: simple_live_app
+        run: flutter build apk --release --no-pub
+
+      - name: 构建分架构 APK
+        working-directory: simple_live_app
+        run: flutter build apk --release --split-per-abi --no-pub
+
+      - name: 构建 AAB
+        working-directory: simple_live_app
+        run: flutter build appbundle --release --no-pub
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: simple_live_app/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 上传 AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: simple_live_app/build/app/outputs/bundle/release/*.aab
+          if-no-files-found: error
+          retention-days: 14

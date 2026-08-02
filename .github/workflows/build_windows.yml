@@ -1,0 +1,64 @@
+name: 构建 Windows 安装包
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "可选版本号（如 1.13）；留空使用 pubspec 当前版本"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.22.3"
+  FASTFORGE_VERSION: "0.6.10"
+
+jobs:
+  build:
+    name: 构建 Windows EXE、MSIX 与 ZIP
+    # Flutter 3.22 only recognizes Visual Studio major versions 16 and 17.
+    # windows-latest now carries VS 2026 (major 18), which Flutter 3.22
+    # incorrectly falls back to the VS 2019 CMake generator for.
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: 启用 Windows 桌面并恢复依赖
+        working-directory: simple_live_app
+        shell: pwsh
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+
+      - name: 安装 Inno Setup 与 Fastforge
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          dart pub global activate fastforge $env:FASTFORGE_VERSION
+          $pubBin = Join-Path $env:LOCALAPPDATA "Pub\Cache\bin"
+          $pubBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: 构建 Windows 安装包
+        working-directory: simple_live_app
+        shell: pwsh
+        run: fastforge package --platform windows --targets exe,msix,zip --skip-clean
+
+      - name: 上传 Windows 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: simple_live_app/build/dist/**
+          if-no-files-found: error
+          retention-days: 14

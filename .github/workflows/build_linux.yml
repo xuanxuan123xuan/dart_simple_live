@@ -1,0 +1,70 @@
+name: 构建 Linux 安装包
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "可选版本号（如 1.13）；留空使用 pubspec 当前版本"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.22.3"
+  FASTFORGE_VERSION: "0.6.10"
+
+jobs:
+  build:
+    name: 构建 Linux AppImage、DEB 与 RPM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: 安装 Linux 构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libasound2-dev libmpv-dev mpv libepoxy-dev rpm patchelf \
+            plocate libfuse2t64
+          wget -q -O "$RUNNER_TEMP/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          sudo install "$RUNNER_TEMP/appimagetool" /usr/local/bin/appimagetool
+
+      - name: 启用 Linux 桌面并恢复依赖
+        working-directory: simple_live_app
+        run: |
+          flutter config --enable-linux-desktop
+          flutter pub get
+
+      - name: 安装 Fastforge
+        run: |
+          dart pub global activate fastforge $FASTFORGE_VERSION
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: 构建 Linux 安装包
+        working-directory: simple_live_app
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: fastforge package --platform linux --targets appimage,deb,rpm,zip --skip-clean
+
+      - name: 上传 Linux 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-installers
+          path: simple_live_app/build/dist/**
+          if-no-files-found: error
+          retention-days: 14

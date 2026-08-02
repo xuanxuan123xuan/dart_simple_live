@@ -1,0 +1,63 @@
+name: 构建 macOS 安装包
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "可选版本号（如 1.13）；留空使用 pubspec 当前版本"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.22.3"
+  XCODE_VERSION: "15.4"
+  FASTFORGE_VERSION: "0.6.10"
+
+jobs:
+  build:
+    name: 构建 macOS DMG、PKG 与 ZIP
+    runs-on: macos-14
+    timeout-minutes: 75
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 选择 Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: 启用 macOS 桌面并恢复依赖
+        working-directory: simple_live_app
+        run: |
+          flutter config --enable-macos-desktop
+          flutter pub get
+
+      - name: 安装打包工具
+        run: |
+          npm install --global appdmg
+          dart pub global activate fastforge $FASTFORGE_VERSION
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: 构建 macOS 安装包
+        working-directory: simple_live_app
+        run: fastforge package --platform macos --targets dmg,pkg,zip --skip-clean
+
+      - name: 上传 macOS 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installers
+          path: simple_live_app/build/dist/**
+          if-no-files-found: error
+          retention-days: 14
