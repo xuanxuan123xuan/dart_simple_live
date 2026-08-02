@@ -99,7 +99,7 @@ tasks.named("preBuild") {
 android {
     namespace = "com.simplelive.tv"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "27.0.12077973"
 
     sourceSets {
         getByName("main") {

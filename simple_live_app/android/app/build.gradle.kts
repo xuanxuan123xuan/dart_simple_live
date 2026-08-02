@@ -101,7 +101,7 @@ android {
     namespace = "com.simplelive.app"
     // Current media/orientation plugins compile against Android API 36.
     compileSdk = 36
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "27.0.12077973"
 
     sourceSets {
         getByName("main") {
