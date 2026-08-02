@@ -233,12 +233,11 @@ class BiliBiliSite implements LiveSite {
       }
     }
     // 对链接进行排序，包含mcdn的在后
+    // 比较器需满足一致性：两个 URL 同时含或不含 mcdn 时返回 0
     urls.sort((a, b) {
-      if (a.contains("mcdn")) {
-        return 1;
-      } else {
-        return -1;
-      }
+      final aMcdn = a.contains("mcdn") ? 1 : 0;
+      final bMcdn = b.contains("mcdn") ? 1 : 0;
+      return aMcdn - bMcdn;
     });
     return LivePlayUrl(
       urls: urls,
@@ -316,9 +315,11 @@ class BiliBiliSite implements LiveSite {
       header: await getHeader(),
     );
 
-    var hasMore = (result["data"]["list"] as List).isNotEmpty;
+    // page_size 固定为 30，当前页满 30 条才可能还有下一页
+    var list = (result["data"]["list"] as List?) ?? const [];
+    var hasMore = list.length >= 30;
     var items = <LiveRoomItem>[];
-    for (var item in result["data"]["list"]) {
+    for (var item in list) {
       var roomItem = LiveRoomItem(
         roomId: item["roomid"].toString(),
         title: item["title"].toString(),

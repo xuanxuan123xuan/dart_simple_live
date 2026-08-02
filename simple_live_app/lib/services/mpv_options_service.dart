@@ -104,6 +104,7 @@ class MpvOptionsService {
     final options = effectiveOptions.options;
     if (!Platform.isAndroid) {
       return VideoControllerConfiguration(
+        vo: options["vo"],
         hwdec: _desktopVideoControllerHwdec(effectiveOptions),
         enableHardwareAcceleration: settings.hardwareDecode.value,
       );

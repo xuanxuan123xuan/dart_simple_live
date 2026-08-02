@@ -310,7 +310,10 @@ class DouyuSite implements LiveSite {
       );
       items.add(roomItem);
     }
-    var hasMore = result["data"]["relateShow"].isNotEmpty;
+    // searchShow 返回 data.total（总条数）与 data.pageSize=20，
+    // 当前页已加载完（page * pageSize）后才可能还有下一页
+    var total = int.tryParse(result["data"]["total"].toString()) ?? 0;
+    var hasMore = total > page * 20;
     return LiveSearchRoomResult(hasMore: hasMore, items: items);
   }
 
@@ -380,7 +383,7 @@ class DouyuSite implements LiveSite {
       );
       items.add(roomItem);
     }
-    var hasMore = result["data"]["relateUser"].isNotEmpty;
+    var hasMore = result["data"]["relateUser"].length >= 20;
     return LiveSearchAnchorResult(hasMore: hasMore, items: items);
   }
 

@@ -90,11 +90,13 @@ class NetworkDiagnoseService {
   /// 从一组播放线路 URL 中选出 TCP 延迟最低的线路索引。
   ///
   /// [urls] 为直播流地址；取各自 host 测延迟。全部失败返回 0。
-  /// 测速本身有超时，不会阻塞播放太久。
+  /// 测速有总时间预算（[totalBudget]），超时直接返回 0（默认第一条线路），
+  /// 不会阻塞播放启动太久。
   static Future<int> findFastestLine(
     List<String> urls, {
-    int samples = 2,
-    Duration timeout = const Duration(seconds: 2),
+    int samples = 1,
+    Duration timeout = const Duration(milliseconds: 800),
+    Duration totalBudget = const Duration(milliseconds: 1800),
   }) async {
     if (urls.length <= 1) {
       return 0;
@@ -112,11 +114,17 @@ class NetworkDiagnoseService {
     if (hosts.length <= 1) {
       return 0;
     }
-    final results = await Future.wait(
-      hosts.map(
-        (host) => diagnoseHost(host, samples: samples, timeout: timeout),
-      ),
-    );
+    List<NetworkDiagnosisResult> results;
+    try {
+      results = await Future.wait(
+        hosts.map(
+          (host) => diagnoseHost(host, samples: samples, timeout: timeout),
+        ),
+      ).timeout(totalBudget);
+    } on TimeoutException {
+      // 总测速超时：不阻塞播放，走默认第一条线路。
+      return 0;
+    }
     var bestIndex = 0;
     var bestLatency = double.infinity;
     for (var i = 0; i < results.length; i += 1) {

@@ -753,9 +753,27 @@ class _ChatPanel extends StatefulWidget {
 
 class _ChatPanelState extends State<_ChatPanel> {
   final ScrollController _scrollController = ScrollController();
+  /// 用户是否停留在列表底部附近；为 false 时新弹幕到达不再强制拉回底部。
+  bool _followBottom = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final pos = _scrollController.position;
+    final nearBottom = pos.pixels >= pos.maxScrollExtent - 50;
+    if (_followBottom != nearBottom) {
+      _followBottom = nearBottom;
+    }
+  }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
@@ -846,7 +864,7 @@ class _ChatPanelState extends State<_ChatPanel> {
                   );
                 }
                 WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (_scrollController.hasClients) {
+                  if (_scrollController.hasClients && _followBottom) {
                     _scrollController.jumpTo(
                       _scrollController.position.maxScrollExtent,
                     );

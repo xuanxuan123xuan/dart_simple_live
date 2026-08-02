@@ -403,8 +403,8 @@ class SignalRService {
     if (configured.isNotEmpty) {
       return _normalizeProxyAddress(configured);
     }
-    // Android / iOS 移动端通常无本地代理，不检测。
-    if (Platform.isAndroid || Platform.isIOS) {
+    // Android / iOS / OHOS 移动端通常无本地代理，不检测。
+    if (Platform.isAndroid || Platform.isIOS || Utils.isOhos) {
       return null;
     }
     if (await _isTcpPortOpen("127.0.0.1", 51888)) {
