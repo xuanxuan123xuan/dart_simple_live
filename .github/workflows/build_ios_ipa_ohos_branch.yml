@@ -1,4 +1,4 @@
-name: Build iOS IPA (ohos branch)
+name: 构建 iOS IPA（ohos 分支）
 
 # 本分支专用的 iOS 构建。
 #
@@ -65,17 +65,17 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Check out source
+      - name: 检出源码
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
 
-      - name: Select Xcode ${{ env.XCODE_VERSION }}
+      - name: 选择 Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: ${{ env.XCODE_VERSION }}
 
-      - name: Setup Flutter
+      - name: 配置 Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -84,7 +84,7 @@ jobs:
       # pubspec 的 3.22 pin 与所用 Flutter 必须一致，否则 pub get 会在
       # flutter_localizations 的 intl 传递依赖上失败。这里提前核对，
       # 让报错指向真正的原因而不是一长串 version solving 输出。
-      - name: Verify toolchain matches pubspec pins
+      - name: 校验工具链与 pubspec 钉住版本一致
         shell: bash
         run: |
           actual="$(flutter --version | sed -n 's/^Flutter \([0-9.]*\).*/\1/p' | head -1)"
@@ -100,16 +100,16 @@ jobs:
             echo "::warning::pubspec 的 intl 已改为 $intl_pin，不再是 3.22 线的 0.19.0；请确认 FLUTTER_VERSION 是否也该跟着调整。"
           fi
 
-      - name: Resolve dependencies
+      - name: 解析依赖
         working-directory: simple_live_app
         run: flutter pub get
 
-      - name: Run tests
+      - name: 运行测试
         if: ${{ inputs.run_tests }}
         working-directory: simple_live_app
         run: flutter test
 
-      - name: Read app version
+      - name: 读取应用版本
         id: appver
         shell: bash
         run: |
@@ -118,12 +118,12 @@ jobs:
 
       # ---------- 未签名路径 ----------
 
-      - name: Build iOS (unsigned)
+      - name: 构建 iOS（未签名）
         if: ${{ !inputs.signed }}
         working-directory: simple_live_app
         run: flutter build ios --release --no-codesign
 
-      - name: Package unsigned IPA
+      - name: 打包未签名 IPA
         if: ${{ !inputs.signed }}
         working-directory: simple_live_app/build/ios/iphoneos
         run: |
@@ -133,7 +133,7 @@ jobs:
 
       # ---------- 签名路径 ----------
 
-      - name: Import signing certificate and profile
+      - name: 导入签名证书与描述文件
         if: ${{ inputs.signed }}
         env:
           CERT_P12: ${{ secrets.IOS_CERT_P12_BASE64 }}
@@ -175,7 +175,7 @@ jobs:
           echo "PROFILE_UUID=$uuid" >> "$GITHUB_ENV"
           rm -f "$cert_path" "$profile_path"
 
-      - name: Build signed IPA
+      - name: 构建已签名 IPA
         if: ${{ inputs.signed }}
         working-directory: simple_live_app
         env:
@@ -209,7 +209,7 @@ jobs:
 
       # ---------- 收尾 ----------
 
-      - name: Stage artifact
+      - name: 暂存产物
         id: artifact
         shell: bash
         env:
@@ -256,7 +256,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload IPA
+      - name: 上传 IPA
         uses: actions/upload-artifact@v4
         with:
           name: dart-simple-live-ios-${{ github.sha }}
@@ -266,7 +266,7 @@ jobs:
 
       # GitHub artifact 下载永远是 zip 打包；需要"直接拿到 .ipa"时，
       # 发布到 Release 附件（附件不套 zip）。
-      - name: Publish release with .ipa
+      - name: 发布含 .ipa 的 Release
         if: ${{ inputs.publish_release }}
         uses: softprops/action-gh-release@v2
         env:
@@ -284,7 +284,7 @@ jobs:
           allowUpdates: true
           prerelease: true
 
-      - name: Clean up keychain
+      - name: 清理钥匙串
         if: ${{ always() && inputs.signed }}
         run: |
           security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true

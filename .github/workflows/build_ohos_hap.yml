@@ -1,4 +1,4 @@
-name: Build HarmonyOS HAP
+name: 构建鸿蒙 HAP
 
 on:
   workflow_dispatch:
@@ -23,10 +23,10 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: Check out source
+      - name: 检出源码
         uses: actions/checkout@v4
 
-      - name: Resolve runner toolchain
+      - name: 解析 runner 工具链
         shell: pwsh
         env:
           VAR_FLUTTER_OHOS_ROOT: ${{ vars.FLUTTER_OHOS_ROOT }}
@@ -55,7 +55,7 @@ jobs:
           "JAVA_HOME=$javaHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "PUB_CACHE=$pubCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Restore signing material from secrets
+      - name: 从 secrets 恢复签名材料
         shell: pwsh
         env:
           KEYSTORE_P12: ${{ secrets.OHOS_KEYSTORE_P12_BASE64 }}
@@ -82,14 +82,14 @@ jobs:
           }
           "OHOS_SIGNING_DIR=$signingDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Resolve Flutter dependencies
+      - name: 解析 Flutter 依赖
         working-directory: simple_live_app
         shell: pwsh
         run: |
           & (Join-Path $env:FLUTTER_OHOS_ROOT "bin\flutter.bat") pub get
           if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed" }
 
-      - name: Check synchronized app version
+      - name: 校验同步应用版本
         id: appver
         working-directory: simple_live_app
         shell: pwsh
@@ -101,14 +101,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Reading app version failed" }
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - name: Run tests
+      - name: 运行测试
         working-directory: simple_live_app
         shell: pwsh
         run: |
           & (Join-Path $env:FLUTTER_OHOS_ROOT "bin\flutter.bat") test
           if ($LASTEXITCODE -ne 0) { throw "Flutter tests failed" }
 
-      - name: Build, sign and verify HAP
+      - name: 构建、签名并校验 HAP
         working-directory: simple_live_app
         shell: pwsh
         env:
@@ -129,7 +129,7 @@ jobs:
             -KeyPassword $env:OHOS_KEY_PASSWORD
           if ($LASTEXITCODE -ne 0) { throw "HAP build failed" }
 
-      - name: Stage artifact
+      - name: 暂存产物
         id: artifact
         shell: pwsh
         run: |
@@ -144,7 +144,7 @@ jobs:
           "artifact_dir=$artifactDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "### HarmonyOS HAP`n`nSHA-256: ``$hash``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
-      - name: Upload signed HAP
+      - name: 上传已签名 HAP
         uses: actions/upload-artifact@v4
         with:
           name: dart-simple-live-ohos-arm64-${{ github.sha }}
@@ -152,7 +152,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Remove temporary signing material
+      - name: 移除临时签名材料
         if: always()
         shell: pwsh
         run: |

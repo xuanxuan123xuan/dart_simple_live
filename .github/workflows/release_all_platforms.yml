@@ -1,4 +1,4 @@
-name: Build all platforms and publish Release
+name: 全平台构建并发布 Release
 
 run-name: >-
   Release ${{ inputs.version || 'version from pubspec' }}
@@ -30,7 +30,7 @@ on:
         description: "使用自建 harmonyos runner 生成已签名 HAP"
         required: true
         type: boolean
-        default: true
+        default: false
   push:
     branches:
       - feat/ohos-1.12.7
@@ -52,7 +52,7 @@ env:
 
 jobs:
   prepare:
-    name: Validate and resolve release version
+    name: 校验并解析发布版本
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     outputs:
@@ -66,12 +66,12 @@ jobs:
       signed_ios: ${{ steps.settings.outputs.signed_ios }}
       include_ohos: ${{ steps.settings.outputs.include_ohos }}
     steps:
-      - name: Check out source
+      - name: 检出源码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Resolve workflow settings
+      - name: 解析工作流设置
         id: settings
         shell: bash
         env:
@@ -99,13 +99,13 @@ jobs:
             echo "include_ohos=$include_ohos"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Setup Flutter
+      - name: 配置 Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Apply requested version
+      - name: 应用指定版本
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
         shell: bash
         env:
@@ -117,25 +117,25 @@ jobs:
           fi
           dart run simple_live_app/tool/app_version.dart set "$REQUESTED_VERSION"
 
-      - name: Synchronize derived version files
+      - name: 同步派生版本文件
         run: dart run simple_live_app/tool/app_version.dart sync
 
-      - name: Restore packages
+      - name: 恢复依赖包
         working-directory: simple_live_app
         run: flutter pub get
 
-      - name: Check synchronized version
+      - name: 校验同步版本
         run: dart run simple_live_app/tool/app_version.dart check
 
-      - name: Analyze
+      - name: 静态分析
         working-directory: simple_live_app
         run: dart analyze lib test
 
-      - name: Run tests
+      - name: 运行测试
         working-directory: simple_live_app
         run: flutter test --no-pub
 
-      - name: Commit synchronized version update
+      - name: 提交版本更新
         shell: bash
         run: |
           set -e
@@ -160,7 +160,7 @@ jobs:
           git commit -m "chore: release v$version"
           git push origin "HEAD:$GITHUB_REF_NAME"
 
-      - name: Resolve release metadata
+      - name: 解析发布元数据
         id: release
         shell: bash
         run: |
@@ -188,7 +188,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   android:
-    name: Android APK and AAB
+    name: Android APK 与 AAB
     needs: prepare
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -197,7 +197,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
-      - name: Prepare Android keystore
+      - name: 准备 Android 签名
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -227,15 +227,15 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Restore packages
+      - name: 恢复依赖包
         working-directory: simple_live_app
         run: flutter pub get
 
-      - name: Build universal APK
+      - name: 构建通用 APK
         working-directory: simple_live_app
         run: flutter build apk --release --no-pub
 
-      - name: Stage universal APK
+      - name: 暂存通用 APK
         shell: bash
         run: |
           set -euo pipefail
@@ -243,15 +243,15 @@ jobs:
           cp simple_live_app/build/app/outputs/flutter-apk/app-release.apk \
             "$RUNNER_TEMP/release-android/simple-live-${{ needs.prepare.outputs.version }}-android-universal.apk"
 
-      - name: Build split APKs
+      - name: 构建分架构 APK
         working-directory: simple_live_app
         run: flutter build apk --release --split-per-abi --no-pub
 
-      - name: Build Android App Bundle
+      - name: 构建 Android AAB
         working-directory: simple_live_app
         run: flutter build appbundle --release --no-pub
 
-      - name: Stage Android artifacts
+      - name: 暂存 Android 产物
         shell: bash
         run: |
           set -euo pipefail
@@ -275,7 +275,7 @@ jobs:
           retention-days: 14
 
   android_tv:
-    name: Android TV APK and AAB
+    name: Android TV APK 与 AAB
     needs: prepare
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -284,7 +284,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
-      - name: Prepare Android TV keystore
+      - name: 准备 Android TV 签名
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -314,18 +314,18 @@ jobs:
           flutter-version: ${{ env.TV_FLUTTER_VERSION }}
           cache: true
 
-      - name: Restore TV packages
+      - name: 恢复 TV 依赖包
         working-directory: simple_live_tv_app
         run: flutter pub get
 
-      - name: Build TV universal APK
+      - name: 构建 TV 通用 APK
         working-directory: simple_live_tv_app
         run: >-
           flutter build apk --release --no-pub
           --build-name=${{ needs.prepare.outputs.version }}
           --build-number=${{ needs.prepare.outputs.build_number }}
 
-      - name: Stage TV universal APK
+      - name: 暂存 TV 通用 APK
         shell: bash
         run: |
           set -euo pipefail
@@ -333,21 +333,21 @@ jobs:
           cp simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk \
             "$RUNNER_TEMP/release-android-tv/simple-live-tv-${{ needs.prepare.outputs.version }}-android-universal.apk"
 
-      - name: Build TV split APKs
+      - name: 构建 TV 分架构 APK
         working-directory: simple_live_tv_app
         run: >-
           flutter build apk --release --split-per-abi --no-pub
           --build-name=${{ needs.prepare.outputs.version }}
           --build-number=${{ needs.prepare.outputs.build_number }}
 
-      - name: Build TV Android App Bundle
+      - name: 构建 TV AAB
         working-directory: simple_live_tv_app
         run: >-
           flutter build appbundle --release --no-pub
           --build-name=${{ needs.prepare.outputs.version }}
           --build-number=${{ needs.prepare.outputs.build_number }}
 
-      - name: Stage Android TV artifacts
+      - name: 暂存 Android TV 产物
         shell: bash
         run: |
           set -euo pipefail
@@ -389,11 +389,11 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Restore packages
+      - name: 恢复依赖包
         working-directory: simple_live_app
         run: flutter pub get
 
-      - name: Import signing certificate and profile
+      - name: 导入签名证书与描述文件
         if: ${{ needs.prepare.outputs.signed_ios == 'true' }}
         shell: bash
         env:
@@ -430,12 +430,12 @@ jobs:
           echo "PROFILE_UUID=$uuid" >> "$GITHUB_ENV"
           rm -f "$cert_path" "$profile_path"
 
-      - name: Build unsigned iOS app
+      - name: 构建未签名 iOS App
         if: ${{ needs.prepare.outputs.signed_ios != 'true' }}
         working-directory: simple_live_app
         run: flutter build ios --release --no-codesign --no-pub
 
-      - name: Package unsigned IPA
+      - name: 打包未签名 IPA
         if: ${{ needs.prepare.outputs.signed_ios != 'true' }}
         working-directory: simple_live_app/build/ios/iphoneos
         run: |
@@ -444,7 +444,7 @@ jobs:
           cp -R Runner.app Payload/Runner.app
           zip -q -r app-unsigned.ipa Payload
 
-      - name: Build signed IPA
+      - name: 构建已签名 IPA
         if: ${{ needs.prepare.outputs.signed_ios == 'true' }}
         working-directory: simple_live_app
         shell: bash
@@ -468,7 +468,7 @@ jobs:
           flutter build ipa --release --no-pub \
             --export-options-plist=ExportOptions.plist
 
-      - name: Stage IPA
+      - name: 暂存 IPA
         shell: bash
         env:
           SIGNED_IOS: ${{ needs.prepare.outputs.signed_ios }}
@@ -494,7 +494,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Clean up signing material
+      - name: 清理签名材料
         if: ${{ always() && needs.prepare.outputs.signed_ios == 'true' }}
         shell: bash
         run: |
@@ -502,7 +502,7 @@ jobs:
           rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision" || true
 
   macos:
-    name: macOS DMG, PKG and ZIP
+    name: macOS DMG、PKG 与 ZIP
     needs: prepare
     runs-on: macos-14
     timeout-minutes: 75
@@ -520,23 +520,23 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Enable macOS desktop and restore packages
+      - name: 启用 macOS 桌面并恢复依赖
         working-directory: simple_live_app
         run: |
           flutter config --enable-macos-desktop
           flutter pub get
 
-      - name: Install packagers
+      - name: 安装打包工具
         run: |
           npm install --global appdmg
           dart pub global activate fastforge $FASTFORGE_VERSION
           echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
 
-      - name: Build macOS packages
+      - name: 构建 macOS 安装包
         working-directory: simple_live_app
         run: fastforge package --platform macos --targets dmg,pkg,zip --skip-clean
 
-      - name: Stage macOS artifacts
+      - name: 暂存 macOS 产物
         shell: bash
         run: |
           set -euo pipefail
@@ -560,7 +560,7 @@ jobs:
           retention-days: 14
 
   windows:
-    name: Windows EXE, MSIX and ZIP
+    name: Windows EXE、MSIX 与 ZIP
     needs: prepare
     # Flutter 3.22 only recognizes Visual Studio major versions 16 and 17.
     # windows-latest now carries VS 2026 (major 18), which Flutter 3.22
@@ -577,14 +577,14 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Enable Windows desktop and restore packages
+      - name: 启用 Windows 桌面并恢复依赖
         working-directory: simple_live_app
         shell: pwsh
         run: |
           flutter config --enable-windows-desktop
           flutter pub get
 
-      - name: Install Inno Setup and Fastforge
+      - name: 安装 Inno Setup 与 Fastforge
         shell: pwsh
         run: |
           choco install innosetup --yes --no-progress
@@ -592,12 +592,12 @@ jobs:
           $pubBin = Join-Path $env:LOCALAPPDATA "Pub\Cache\bin"
           $pubBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Build Windows packages
+      - name: 构建 Windows 安装包
         working-directory: simple_live_app
         shell: pwsh
         run: fastforge package --platform windows --targets exe,msix,zip --skip-clean
 
-      - name: Stage Windows artifacts
+      - name: 暂存 Windows 产物
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP "release-windows"
@@ -628,7 +628,7 @@ jobs:
           retention-days: 14
 
   linux:
-    name: Linux AppImage, DEB, RPM and ZIP
+    name: Linux AppImage、DEB、RPM 与 ZIP
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -642,7 +642,7 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Install Linux build dependencies
+      - name: 安装 Linux 构建依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -654,24 +654,24 @@ jobs:
           chmod +x "$RUNNER_TEMP/appimagetool"
           sudo install "$RUNNER_TEMP/appimagetool" /usr/local/bin/appimagetool
 
-      - name: Enable Linux desktop and restore packages
+      - name: 启用 Linux 桌面并恢复依赖
         working-directory: simple_live_app
         run: |
           flutter config --enable-linux-desktop
           flutter pub get
 
-      - name: Install Fastforge
+      - name: 安装 Fastforge
         run: |
           dart pub global activate fastforge $FASTFORGE_VERSION
           echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
 
-      - name: Build Linux packages
+      - name: 构建 Linux 安装包
         working-directory: simple_live_app
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: fastforge package --platform linux --targets appimage,deb,rpm,zip --skip-clean
 
-      - name: Stage Linux artifacts
+      - name: 暂存 Linux 产物
         shell: bash
         run: |
           set -euo pipefail
@@ -698,7 +698,7 @@ jobs:
           retention-days: 14
 
   ohos:
-    name: HarmonyOS signed HAP
+    name: 鸿蒙已签名 HAP
     needs: prepare
     if: ${{ needs.prepare.outputs.include_ohos == 'true' }}
     runs-on: [self-hosted, Windows, X64, harmonyos]
@@ -708,7 +708,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
-      - name: Resolve runner toolchain
+      - name: 解析 runner 工具链
         shell: pwsh
         env:
           VAR_FLUTTER_OHOS_ROOT: ${{ vars.FLUTTER_OHOS_ROOT }}
@@ -735,7 +735,7 @@ jobs:
           "JAVA_HOME=$javaHome" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "PUB_CACHE=$pubCache" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Restore signing material
+      - name: 恢复签名材料
         shell: pwsh
         env:
           KEYSTORE_P12: ${{ secrets.OHOS_KEYSTORE_P12_BASE64 }}
@@ -762,7 +762,7 @@ jobs:
           }
           "OHOS_SIGNING_DIR=$signingDir" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Restore packages and check version
+      - name: 恢复依赖包 and check version
         working-directory: simple_live_app
         shell: pwsh
         run: |
@@ -773,7 +773,7 @@ jobs:
           & $dart run tool/app_version.dart check
           if ($LASTEXITCODE -ne 0) { throw "Version check failed" }
 
-      - name: Build signed HAP
+      - name: 构建已签名 HAP
         working-directory: simple_live_app
         shell: pwsh
         env:
@@ -794,7 +794,7 @@ jobs:
             -KeyPassword $env:OHOS_KEY_PASSWORD
           if ($LASTEXITCODE -ne 0) { throw "HAP build failed" }
 
-      - name: Stage HAP
+      - name: 暂存 HAP
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP "release-ohos"
@@ -813,7 +813,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Remove signing material
+      - name: 移除签名材料
         if: always()
         shell: pwsh
         run: |
@@ -822,13 +822,13 @@ jobs:
           }
 
   release:
-    name: Publish GitHub Release
+    name: 发布 GitHub Release
     needs: [prepare, android, android_tv, ios, macos, windows, linux, ohos]
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - name: Verify build jobs
+      - name: 校验构建任务
         shell: bash
         env:
           ANDROID_RESULT: ${{ needs.android.result }}
@@ -859,14 +859,14 @@ jobs:
             exit 1
           fi
 
-      - name: Download all release artifacts
+      - name: 下载全部发布产物
         uses: actions/download-artifact@v4
         with:
           pattern: release-*
           path: release-assets
           merge-multiple: true
 
-      - name: Generate combined checksums
+      - name: 生成汇总校验文件
         shell: bash
         run: |
           cd release-assets && sha256sum -- * > SHA256SUMS.txt
@@ -875,7 +875,7 @@ jobs:
           find release-assets -maxdepth 1 -type f -printf '%f\n' \
             | sort | sed 's/^/- `/' | sed 's/$/`/' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload consolidated artifact
+      - name: 上传汇总产物
         uses: actions/upload-artifact@v4
         with:
           name: simple-live-${{ needs.prepare.outputs.version }}-all-platforms
@@ -883,7 +883,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish Release
+      - name: 发布 Release
         if: ${{ needs.prepare.outputs.publish_release == 'true' }}
         uses: softprops/action-gh-release@v2
         env:
