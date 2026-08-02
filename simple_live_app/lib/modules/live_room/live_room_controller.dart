@@ -122,6 +122,150 @@ RoomLiveRefreshDecision resolveRoomLiveRefresh({
   );
 }
 
+@immutable
+class LiveRoomQualityPreference {
+  final int? qualityIndex;
+  final int? lineIndex;
+  final bool qualityLocked;
+
+  const LiveRoomQualityPreference({
+    required this.qualityIndex,
+    required this.lineIndex,
+    required this.qualityLocked,
+  });
+
+  @visibleForTesting
+  factory LiveRoomQualityPreference.fromStoredValue(Object? value) {
+    if (value is! Map) {
+      return const LiveRoomQualityPreference(
+        qualityIndex: null,
+        lineIndex: null,
+        qualityLocked: false,
+      );
+    }
+    final quality = value["quality"];
+    final line = value["line"];
+    final storedLocked = value["qualityLocked"];
+    return LiveRoomQualityPreference(
+      qualityIndex: quality is num ? quality.toInt() : null,
+      lineIndex: line is num ? line.toInt() : null,
+      // Before qualityLocked was persisted, a stored quality represented the
+      // user's remembered selection. Preserve that legacy behaviour once.
+      qualityLocked: storedLocked is bool ? storedLocked : quality is num,
+    );
+  }
+}
+
+@visibleForTesting
+int resolveInitialLiveRoomQualityIndex({
+  required int qualityCount,
+  required int qualityLevel,
+  required LiveRoomQualityPreference preference,
+}) {
+  assert(qualityCount > 0);
+  final remembered = preference.qualityIndex;
+  if (preference.qualityLocked &&
+      remembered != null &&
+      remembered >= 0 &&
+      remembered < qualityCount) {
+    return remembered;
+  }
+  if (qualityLevel == 2) {
+    return 0;
+  }
+  if (qualityLevel == 0) {
+    return qualityCount - 1;
+  }
+  return (qualityCount / 2).floor();
+}
+
+@visibleForTesting
+bool isCurrentLiveRoomPlaybackRequest({
+  required int roomGeneration,
+  required int expectedRoomGeneration,
+  required int requestRevision,
+  required int latestRequestRevision,
+}) {
+  return roomGeneration == expectedRoomGeneration &&
+      requestRevision == latestRequestRevision;
+}
+
+@visibleForTesting
+class LiveRoomAutoQualityBufferTracker {
+  final int requiredBufferStarts;
+  final Duration bufferingWindow;
+  final Duration stableResetAfter;
+  final Duration warmupDuration;
+
+  int _bufferingStarts = 0;
+  bool _isBuffering = false;
+  DateTime? _lastBufferingStartedAt;
+  DateTime? _stableSince;
+  DateTime? _warmupUntil;
+
+  LiveRoomAutoQualityBufferTracker({
+    this.requiredBufferStarts = 3,
+    this.bufferingWindow = const Duration(seconds: 30),
+    this.stableResetAfter = const Duration(seconds: 8),
+    this.warmupDuration = const Duration(seconds: 8),
+  });
+
+  void beginWarmup(DateTime now) {
+    reset();
+    _warmupUntil = now.add(warmupDuration);
+  }
+
+  void reset() {
+    _bufferingStarts = 0;
+    _isBuffering = false;
+    _lastBufferingStartedAt = null;
+    _stableSince = null;
+  }
+
+  /// Returns true after enough distinct buffering starts occur close together.
+  bool update({required bool buffering, required DateTime now}) {
+    if (!buffering) {
+      if (_isBuffering) {
+        _stableSince = now;
+      }
+      _isBuffering = false;
+      return false;
+    }
+    // A stream may emit the same buffering value more than once. Count only
+    // transitions into buffering.
+    if (_isBuffering) {
+      return false;
+    }
+    _isBuffering = true;
+
+    final warmupUntil = _warmupUntil;
+    if (warmupUntil != null && now.isBefore(warmupUntil)) {
+      return false;
+    }
+
+    final stableSince = _stableSince;
+    final lastStartedAt = _lastBufferingStartedAt;
+    if ((stableSince != null &&
+            now.difference(stableSince) >= stableResetAfter) ||
+        (lastStartedAt != null &&
+            now.difference(lastStartedAt) > bufferingWindow)) {
+      _bufferingStarts = 0;
+      _lastBufferingStartedAt = null;
+    }
+
+    _stableSince = null;
+    _lastBufferingStartedAt = now;
+    _bufferingStarts += 1;
+    if (_bufferingStarts < requiredBufferStarts) {
+      return false;
+    }
+
+    _bufferingStarts = 0;
+    _lastBufferingStartedAt = null;
+    return true;
+  }
+}
+
 class LiveRoomController extends PlayerController
     with WidgetsBindingObserver, WindowListener {
   static const volumeSliderDialogTag = "live_room_volume_slider";
@@ -213,6 +357,8 @@ class LiveRoomController extends PlayerController
   /// 选"自动"：解锁画质，回到按 qualityLevel 设置的自动档。
   Future<void> useAutomaticQuality() async {
     qualityLocked.value = false;
+    saveQualityMemory();
+    _autoQualityBufferTracker.reset();
     await reloadQuality();
   }
 
@@ -235,34 +381,30 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  /// 读取当前站点记忆的画质索引（无则 null）。
-  int? _loadQualityMemory() {
+  LiveRoomQualityPreference _loadQualityPreference() {
     try {
       final raw = LocalStorageService.instance
           .getValue(LocalStorageService.kRoomQualityMemory, "");
-      if (raw.isEmpty) return null;
-      final data = jsonDecode(raw) as Map<String, dynamic>;
-      final siteData = data[site.id];
-      if (siteData is Map && siteData["quality"] is num) {
-        return (siteData["quality"] as num).toInt();
+      if (raw.isEmpty) {
+        return const LiveRoomQualityPreference(
+          qualityIndex: null,
+          lineIndex: null,
+          qualityLocked: false,
+        );
       }
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      return LiveRoomQualityPreference.fromStoredValue(data[site.id]);
     } catch (_) {}
-    return null;
+    return const LiveRoomQualityPreference(
+      qualityIndex: null,
+      lineIndex: null,
+      qualityLocked: false,
+    );
   }
 
   /// 读取当前站点记忆的线路索引（无则 null）。
   int? _loadLineMemory() {
-    try {
-      final raw = LocalStorageService.instance
-          .getValue(LocalStorageService.kRoomQualityMemory, "");
-      if (raw.isEmpty) return null;
-      final data = jsonDecode(raw) as Map<String, dynamic>;
-      final siteData = data[site.id];
-      if (siteData is Map && siteData["line"] is num) {
-        return (siteData["line"] as num).toInt();
-      }
-    } catch (_) {}
-    return null;
+    return _loadQualityPreference().lineIndex;
   }
 
   /// 保存当前站点画质/线路记忆。
@@ -272,13 +414,17 @@ class LiveRoomController extends PlayerController
           .getValue(LocalStorageService.kRoomQualityMemory, "");
       Map<String, dynamic> data;
       if (raw.isNotEmpty) {
-        data = (jsonDecode(raw) as Map<String, dynamic>).cast<String, dynamic>();
+        data =
+            (jsonDecode(raw) as Map<String, dynamic>).cast<String, dynamic>();
       } else {
         data = <String, dynamic>{};
       }
       final siteData = (data[site.id] as Map?)?.cast<String, dynamic>() ?? {};
-      if (currentQuality >= 0) {
+      siteData["qualityLocked"] = qualityLocked.value;
+      if (qualityLocked.value && currentQuality >= 0) {
         siteData["quality"] = currentQuality;
+      } else {
+        siteData.remove("quality");
       }
       if (currentLineIndex >= 0) {
         siteData["line"] = currentLineIndex;
@@ -344,9 +490,10 @@ class LiveRoomController extends PlayerController
   DateTime? _backgroundedAt;
   Duration? _positionBeforeWindowBlur;
   DateTime? _windowBlurredAt;
-  bool _playerReopening = false;
+  Completer<void>? _playerReopenCompleter;
   bool _roomDisposed = false;
   int _loadGeneration = 0;
+  int _playbackRequestRevision = 0;
   final Set<String> _superChatFingerprints = <String>{};
   LiveRepeatedDanmuAggregator _liveEventFlowAggregator =
       LiveRepeatedDanmuAggregator();
@@ -400,37 +547,43 @@ class LiveRoomController extends PlayerController
 
   // --- 播放中自动降画质（未锁定画质时，缓冲多次自动降一档） ---
 
-  int _autoQualityBufferingCount = 0;
+  final LiveRoomAutoQualityBufferTracker _autoQualityBufferTracker =
+      LiveRoomAutoQualityBufferTracker();
   DateTime? _lastAutoQualityDownAt;
   StreamSubscription<bool>? _autoQualityBufferingSubscription;
 
   void _setupAutoQualityAdjust() {
     _autoQualityBufferingSubscription?.cancel();
+    if (!hasMpvPlayer || Utils.isOhos) {
+      _autoQualityBufferingSubscription = null;
+      return;
+    }
     _autoQualityBufferingSubscription =
         player.stream.buffering.listen((buffering) {
-      if (!buffering || _roomDisposed) {
+      if (_roomDisposed) {
         return;
       }
-      _autoQualityBufferingCount += 1;
-      // 连续缓冲 3 次、未手动锁定、且不在最低画质、且 10 秒冷却期外
-      if (_autoQualityBufferingCount >= 3 &&
+      final now = DateTime.now();
+      final shouldDegrade = _autoQualityBufferTracker.update(
+        buffering: buffering,
+        now: now,
+      );
+      // 时间窗口内连续缓冲 3 次、未手动锁定、且不在最低画质、且 10 秒冷却期外
+      if (shouldDegrade &&
           !qualityLocked.value &&
           currentQuality >= 0 &&
           currentQuality < qualites.length - 1) {
-        final now = DateTime.now();
         if (_lastAutoQualityDownAt != null &&
             now.difference(_lastAutoQualityDownAt!) <
                 const Duration(seconds: 10)) {
           return;
         }
         _lastAutoQualityDownAt = now;
-        _autoQualityBufferingCount = 0;
         // 降一档：index 增大 = 更低画质
         currentQuality += 1;
         currentQualityInfo.value = qualites[currentQuality].quality;
-        saveQualityMemory();
         SmartDialog.showToast("网络波动，已自动降低清晰度");
-        getPlayUrl();
+        unawaited(getPlayUrl());
       }
     });
   }
@@ -1821,26 +1974,13 @@ class LiveRoomController extends PlayerController
         return;
       }
       qualites.value = playQualites;
-      // 优先恢复上次记忆的画质；无记忆或越界时按 qualityLevel 设置。
-      final memory = _loadQualityMemory();
-      if (memory != null &&
-          memory >= 0 &&
-          memory < playQualites.length) {
-        currentQuality = memory;
-      } else {
-        var qualityLevel = await getQualityLevel();
-        if (qualityLevel == 2) {
-          // 最高
-          currentQuality = 0;
-        } else if (qualityLevel == 0) {
-          // 最低
-          currentQuality = playQualites.length - 1;
-        } else {
-          // 中间档
-          int middle = (playQualites.length / 2).floor();
-          currentQuality = middle;
-        }
-      }
+      final preference = _loadQualityPreference();
+      qualityLocked.value = preference.qualityLocked;
+      currentQuality = resolveInitialLiveRoomQualityIndex(
+        qualityCount: playQualites.length,
+        qualityLevel: await getQualityLevel(),
+        preference: preference,
+      );
       currentQualityInfo.value = qualites[currentQuality].quality;
 
       await getPlayUrl();
@@ -1885,8 +2025,21 @@ class LiveRoomController extends PlayerController
     return qualityLevel;
   }
 
-  Future<bool> _reloadPlayUrls(
-      {bool resetLine = false, bool silent = false}) async {
+  bool _isCurrentPlaybackRequest(int requestRevision, int loadGeneration) {
+    return !_roomDisposed &&
+        isCurrentLiveRoomPlaybackRequest(
+          roomGeneration: _loadGeneration,
+          expectedRoomGeneration: loadGeneration,
+          requestRevision: requestRevision,
+          latestRequestRevision: _playbackRequestRevision,
+        );
+  }
+
+  Future<bool> _reloadPlayUrls({
+    required int requestRevision,
+    bool resetLine = false,
+    bool silent = false,
+  }) async {
     final loadGeneration = _loadGeneration;
     if (_roomDisposed) {
       return false;
@@ -1899,7 +2052,7 @@ class LiveRoomController extends PlayerController
     currentQualityInfo.value = qualites[currentQuality].quality;
     var playUrl = await site.liveSite
         .getPlayUrls(detail: detail.value!, quality: qualites[currentQuality]);
-    if (!_isCurrentLoad(loadGeneration)) {
+    if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
       return false;
     }
     if (playUrl.urls.isEmpty) {
@@ -1911,50 +2064,62 @@ class LiveRoomController extends PlayerController
       }
       return false;
     }
-    waitingForPlaybackUrl.value = false;
-    playUrls.value = playUrl.urls;
-    playHeaders = playUrl.headers;
+    final nextPlayUrls = playUrl.urls;
+    var nextLineIndex = currentLineIndex;
     if (resetLine || currentLineIndex < 0) {
       // 优先恢复上次记忆的线路；无记忆则测速选最快。
       final lineMemory = _loadLineMemory();
       if (lineMemory != null &&
           lineMemory >= 0 &&
-          lineMemory < playUrls.length) {
-        currentLineIndex = lineMemory;
+          lineMemory < nextPlayUrls.length) {
+        nextLineIndex = lineMemory;
       } else {
-        currentLineIndex = 0;
+        nextLineIndex = 0;
         // 多线路时测速选最快的（TCP 延迟，带超时，不影响播放）。
         if (AppSettingsController.instance.autoSelectFastestLine.value &&
-            playUrls.length > 1) {
+            nextPlayUrls.length > 1) {
           final fastest = await NetworkDiagnoseService.findFastestLine(
-            playUrls.toList(),
+            nextPlayUrls.toList(),
           );
-          if (_isCurrentLoad(loadGeneration)) {
-            currentLineIndex = fastest;
+          if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+            return false;
           }
+          nextLineIndex = fastest;
         }
       }
-    } else if (currentLineIndex >= playUrls.length) {
-      currentLineIndex = playUrls.length - 1;
+    } else if (currentLineIndex >= nextPlayUrls.length) {
+      nextLineIndex = nextPlayUrls.length - 1;
     }
+    if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+      return false;
+    }
+    waitingForPlaybackUrl.value = false;
+    playUrls.value = nextPlayUrls;
+    playHeaders = playUrl.headers;
+    currentLineIndex = nextLineIndex;
     currentLineInfo.value = "线路${currentLineIndex + 1}";
     return true;
   }
 
   Future<void> getPlayUrl() async {
+    _autoQualityBufferTracker.beginWarmup(DateTime.now());
+    final requestRevision = ++_playbackRequestRevision;
     final loadGeneration = _loadGeneration;
     playUrls.clear();
     currentLineInfo.value = "";
     currentLineIndex = -1;
-    if (!await _reloadPlayUrls(resetLine: true)) {
+    if (!await _reloadPlayUrls(
+      requestRevision: requestRevision,
+      resetLine: true,
+    )) {
       return;
     }
-    if (!_isCurrentLoad(loadGeneration)) {
+    if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
       return;
     }
     // 重置播放器错误重试次数
     mediaErrorRetryCount = 0;
-    await initPlaylist();
+    await initPlaylist(requestRevision: requestRevision);
   }
 
   Future<void> changePlayLine(int index) async {
@@ -1965,12 +2130,21 @@ class LiveRoomController extends PlayerController
     await setPlayer();
   }
 
-  Future<void> initPlaylist() async {
+  Future<void> initPlaylist({required int requestRevision}) async {
     final loadGeneration = _loadGeneration;
     if (_roomDisposed ||
-        _playerReopening ||
+        !_isCurrentPlaybackRequest(requestRevision, loadGeneration) ||
         currentLineIndex < 0 ||
         currentLineIndex >= playUrls.length) {
+      return;
+    }
+    while (_playerReopenCompleter != null) {
+      await _playerReopenCompleter!.future;
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        return;
+      }
+    }
+    if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) {
       return;
     }
     if (Utils.isOhos) {
@@ -1986,7 +2160,8 @@ class LiveRoomController extends PlayerController
       waitingForPlaybackUrl.value = false;
       return;
     }
-    _playerReopening = true;
+    final reopenCompleter = Completer<void>();
+    _playerReopenCompleter = reopenCompleter;
     try {
       currentLineInfo.value = "线路${currentLineIndex + 1}";
       errorMsg.value = "";
@@ -2009,12 +2184,12 @@ class LiveRoomController extends PlayerController
       // 重新初始化播放器，并带上当前线路的请求头。
       final openStopwatch = Stopwatch()..start();
       await initializePlayer();
-      if (!_isCurrentLoad(loadGeneration)) {
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         return;
       }
 
       await _stopDesktopPlayerBeforeOpen();
-      if (!_isCurrentLoad(loadGeneration)) {
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         return;
       }
 
@@ -2024,7 +2199,7 @@ class LiveRoomController extends PlayerController
           httpHeaders: playHeaders,
         ),
       );
-      if (!_isCurrentLoad(loadGeneration)) {
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         if (!Utils.isOhos) {
           await player.stop();
         }
@@ -2046,7 +2221,10 @@ class LiveRoomController extends PlayerController
       );
       Log.d("播放链接\n$finalUrl");
     } finally {
-      _playerReopening = false;
+      if (identical(_playerReopenCompleter, reopenCompleter)) {
+        _playerReopenCompleter = null;
+      }
+      reopenCompleter.complete();
     }
   }
 
@@ -2069,9 +2247,18 @@ class LiveRoomController extends PlayerController
     bool refreshUrls = false,
     bool rotateOhosLine = false,
   }) async {
+    _autoQualityBufferTracker.beginWarmup(DateTime.now());
+    final requestRevision = ++_playbackRequestRevision;
+    final loadGeneration = _loadGeneration;
     if (refreshUrls) {
       final previousLineIndex = currentLineIndex;
-      var reloaded = await _reloadPlayUrls(silent: true);
+      var reloaded = await _reloadPlayUrls(
+        requestRevision: requestRevision,
+        silent: true,
+      );
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        return;
+      }
       if (!reloaded) {
         // The old source is still worth reopening when the platform API is
         // temporarily unavailable. Returning here leaves the errored widget
@@ -2085,7 +2272,7 @@ class LiveRoomController extends PlayerController
         Log.d("鸿蒙播放恢复切换到线路${currentLineIndex + 1}");
       }
     }
-    await initPlaylist();
+    await initPlaylist(requestRevision: requestRevision);
   }
 
   bool get _shouldRefreshUrlsOnPlaybackRetry =>

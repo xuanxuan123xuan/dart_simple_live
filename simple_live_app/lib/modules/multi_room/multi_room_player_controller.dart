@@ -28,6 +28,58 @@ class MultiRoomRefreshResult {
   final String? error;
 }
 
+/// Controls the visibility and auto-hide timer for one multi-room tile.
+///
+/// Keeping the timer state separate from the player makes the interaction
+/// deterministic and testable without constructing a media player.
+class MultiRoomTileControlsVisibility {
+  MultiRoomTileControlsVisibility({
+    this.hideDelay = const Duration(seconds: 5),
+  });
+
+  final Duration hideDelay;
+  final visible = true.obs;
+
+  Timer? _hideTimer;
+  bool _disposed = false;
+
+  /// Shows the controls and starts a fresh auto-hide countdown.
+  void showTemporarily() {
+    if (_disposed) return;
+    visible.value = true;
+    _scheduleHide();
+  }
+
+  /// Toggles the controls. Showing them always starts a fresh countdown.
+  void toggle() {
+    if (_disposed) return;
+    if (visible.value) {
+      visible.value = false;
+      _hideTimer?.cancel();
+      _hideTimer = null;
+      return;
+    }
+    showTemporarily();
+  }
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(hideDelay, () {
+      if (!_disposed) {
+        visible.value = false;
+      }
+      _hideTimer = null;
+    });
+  }
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _hideTimer?.cancel();
+    _hideTimer = null;
+  }
+}
+
 class MultiRoomPlayerController extends GetxController {
   final MultiRoomItem item;
   final void Function()? onPlayerOpened;
@@ -84,26 +136,15 @@ class MultiRoomPlayerController extends GetxController {
   final volume = 100.0.obs;
 
   /// 本格操作按钮（右下角）是否显示：点格子呼出，5 秒不操作自动隐藏。
-  final showTileControls = true.obs;
-  Timer? _tileControlsTimer;
+  final _tileControls = MultiRoomTileControlsVisibility();
+  RxBool get showTileControls => _tileControls.visible;
 
   /// 取消静音/激活音频时回调（iOS 共享 audio session 会中断其他格，
   /// 由 MultiRoomController 借此恢复所有播放器）。
   VoidCallback? onActivateAudio;
 
   /// 点击本格画面：呼出/收起本格按钮，并重置 5 秒自动隐藏计时。
-  void toggleTileControls() {
-    showTileControls.value = !showTileControls.value;
-    _tileControlsTimer?.cancel();
-    _tileControlsTimer = null;
-    if (showTileControls.value) {
-      _tileControlsTimer = Timer(const Duration(seconds: 5), () {
-        if (!_disposed) {
-          showTileControls.value = false;
-        }
-      });
-    }
-  }
+  void toggleTileControls() => _tileControls.toggle();
 
   /// 状态徽标：空=正常；"重试中…"=流错误重试；"弹幕重连…"=弹幕重连。
   final streamStatus = "".obs;
@@ -191,6 +232,7 @@ class MultiRoomPlayerController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    _tileControls.showTemporarily();
     unawaited(MpvOptionsService.applyToPlayer(player));
     // 流错误自动重试（对齐单直播间行为）。
     player.stream.error.listen((event) {
@@ -905,7 +947,7 @@ class MultiRoomPlayerController extends GetxController {
     liveDanmaku.onClose = null;
     liveDanmaku.onReady = null;
     _danmakuReconnectTimer?.cancel();
-    _tileControlsTimer?.cancel();
+    _tileControls.dispose();
     unawaited(liveDanmaku.stop());
     danmakuController = null;
     // 等当前串行的 open/load 收尾后再释放 Player，避免异步回调操作已释放实例。
