@@ -435,7 +435,7 @@ class DouyinSite implements LiveSite {
     var items = <LiveRoomItem>[];
     for (var item in roomData) {
       var roomItem = LiveRoomItem(
-        roomId: item["web_rid"].toString(),
+        roomId: item["web_rid"],
         title: item["room"]["title"].toString(),
         cover: item["room"]["cover"]["url_list"][0].toString(),
         userName: item["room"]["owner"]["nickname"].toString(),
@@ -491,7 +491,7 @@ class DouyinSite implements LiveSite {
     var items = <LiveRoomItem>[];
     for (var item in roomData) {
       var roomItem = LiveRoomItem(
-        roomId: item["web_rid"].toString(),
+        roomId: item["web_rid"],
         title: item["room"]["title"].toString(),
         cover: item["room"]["cover"]["url_list"][0].toString(),
         userName: item["room"]["owner"]["nickname"].toString(),
@@ -989,11 +989,11 @@ class DouyinSite implements LiveSite {
         for (var quality in qulityList) {
           int level = quality["level"];
           List<String> urls = [];
-          var flvIndex = level;
+          var flvIndex = flvList.length - level;
           if (flvIndex >= 0 && flvIndex < flvList.length) {
             urls.add(flvList[flvIndex]);
           }
-          var hlsIndex = level;
+          var hlsIndex = hlsList.length - level;
           if (hlsIndex >= 0 && hlsIndex < hlsList.length) {
             urls.add(hlsList[hlsIndex]);
           }

@@ -177,7 +177,7 @@ class HuyaSite implements LiveSite {
     LiveSubCategory category, {
     int page = 1,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    var resultText = await HttpClient.instance.getJson(
       "https://www.huya.com/cache.php",
       queryParameters: {
         "m": "LiveList",
@@ -187,6 +187,7 @@ class HuyaSite implements LiveSite {
         "page": page,
       },
     );
+    var result = json.decode(resultText);
     var items = <LiveRoomItem>[];
     for (var item in result["data"]["datas"]) {
       var cover = item["screenshot"].toString();
@@ -280,7 +281,7 @@ class HuyaSite implements LiveSite {
         "https://github.iill.moe/xiaoyaocz/dart_simple_live/master/assets/play_config.json",
         queryParameters: {"ts": DateTime.now().millisecondsSinceEpoch},
       );
-      playUserAgent = result['huya']['user_agent'];
+      playUserAgent = json.decode(result)['huya']['user_agent'];
     } catch (e) {
       CoreLog.error(e);
     }
@@ -387,7 +388,7 @@ class HuyaSite implements LiveSite {
 
   @override
   Future<LiveCategoryResult> getRecommendRooms({int page = 1}) async {
-    var result = await HttpClient.instance.getJson(
+    var resultText = await HttpClient.instance.getJson(
       "https://www.huya.com/cache.php",
       queryParameters: {
         "m": "LiveList",
@@ -396,6 +397,7 @@ class HuyaSite implements LiveSite {
         "page": page,
       },
     );
+    var result = json.decode(resultText);
     var items = <LiveRoomItem>[];
     for (var item in result["data"]["datas"]) {
       var cover = item["screenshot"].toString();
@@ -587,7 +589,7 @@ class HuyaSite implements LiveSite {
     String keyword, {
     int page = 1,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    var resultText = await HttpClient.instance.getJson(
       "https://search.cdn.huya.com/",
       queryParameters: {
         "m": "Search",
@@ -601,6 +603,7 @@ class HuyaSite implements LiveSite {
         "start": (page - 1) * 20,
       },
     );
+    var result = json.decode(resultText);
     var items = <LiveRoomItem>[];
     for (var item in result["response"]["3"]["docs"]) {
       var cover = item["game_screenshot"].toString();
@@ -631,7 +634,7 @@ class HuyaSite implements LiveSite {
     String keyword, {
     int page = 1,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    var resultText = await HttpClient.instance.getJson(
       "https://search.cdn.huya.com/",
       queryParameters: {
         "m": "Search",
@@ -645,6 +648,7 @@ class HuyaSite implements LiveSite {
         "start": (page - 1) * 20,
       },
     );
+    var result = json.decode(resultText);
     var items = <LiveAnchorItem>[];
     for (var item in result["response"]["1"]["docs"]) {
       var anchorItem = LiveAnchorItem(
