@@ -1045,11 +1045,23 @@ void showQualitesInfo(LiveRoomController controller) {
     useSystem: false,
     child: ListView.builder(
       padding: EdgeInsets.zero,
-      itemCount: controller.qualites.length,
+      itemCount: controller.qualites.length + 1,
       itemBuilder: (_, i) {
-        var item = controller.qualites[i];
+        if (i == 0) {
+          return ListTile(
+            selected: !controller.qualityLocked.value,
+            title: const Text("自动", style: TextStyle(fontSize: 14)),
+            subtitle: const Text("根据网络与设备情况自动调整"),
+            minLeadingWidth: 16,
+            onTap: () {
+              Utils.hideRightDialog();
+              unawaited(controller.useAutomaticQuality());
+            },
+          );
+        }
+        var item = controller.qualites[i - 1];
         return ListTile(
-          selected: controller.currentQuality == i,
+          selected: controller.currentQuality == i - 1,
           title: Text(
             item.quality,
             style: const TextStyle(fontSize: 14),
@@ -1057,7 +1069,9 @@ void showQualitesInfo(LiveRoomController controller) {
           minLeadingWidth: 16,
           onTap: () {
             Utils.hideRightDialog();
-            controller.currentQuality = i;
+            controller.qualityLocked.value = true;
+            controller.currentQuality = i - 1;
+            controller.saveQualityMemory();
             controller.getPlayUrl();
           },
         );

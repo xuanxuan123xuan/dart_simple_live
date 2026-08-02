@@ -37,6 +37,7 @@ class LocalStorageService extends GetxService {
   static const String kMultiRoomSingleAudio = "MultiRoomSingleAudio";
   static const String kMultiRoomAdaptiveQuality = "MultiRoomAdaptiveQuality";
   static const String kAutoSelectFastestLine = "AutoSelectFastestLine";
+  static const String kRoomQualityMemory = "RoomQualityMemory";
   static const String kMultiRoomLayout = "MultiRoomLayout";
   static const String kThemeMode = "ThemeMode";
   static const String kDebugModeKey = "DebugMode";

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -33,6 +34,7 @@ import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/network_diagnose_service.dart';
@@ -205,6 +207,90 @@ class LiveRoomController extends PlayerController
   var currentQuality = -1;
   var currentQualityInfo = "".obs;
 
+  /// 画质是否被手动锁定（选"自动"时 false，选具体画质时 true）。
+  final qualityLocked = false.obs;
+
+  /// 选"自动"：解锁画质，回到按 qualityLevel 设置的自动档。
+  Future<void> useAutomaticQuality() async {
+    qualityLocked.value = false;
+    await reloadQuality();
+  }
+
+  /// 按当前 qualityLevel 设置重新加载画质。
+  Future<void> reloadQuality() async {
+    if (qualites.isEmpty) return;
+    var qualityLevel = await getQualityLevel();
+    int target;
+    if (qualityLevel == 2) {
+      target = 0;
+    } else if (qualityLevel == 0) {
+      target = qualites.length - 1;
+    } else {
+      target = (qualites.length / 2).floor();
+    }
+    if (target != currentQuality) {
+      currentQuality = target;
+      currentQualityInfo.value = qualites[target].quality;
+      await getPlayUrl();
+    }
+  }
+
+  /// 读取当前站点记忆的画质索引（无则 null）。
+  int? _loadQualityMemory() {
+    try {
+      final raw = LocalStorageService.instance
+          .getValue(LocalStorageService.kRoomQualityMemory, "");
+      if (raw.isEmpty) return null;
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final siteData = data[site.id];
+      if (siteData is Map && siteData["quality"] is num) {
+        return (siteData["quality"] as num).toInt();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 读取当前站点记忆的线路索引（无则 null）。
+  int? _loadLineMemory() {
+    try {
+      final raw = LocalStorageService.instance
+          .getValue(LocalStorageService.kRoomQualityMemory, "");
+      if (raw.isEmpty) return null;
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final siteData = data[site.id];
+      if (siteData is Map && siteData["line"] is num) {
+        return (siteData["line"] as num).toInt();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 保存当前站点画质/线路记忆。
+  void saveQualityMemory() {
+    try {
+      final raw = LocalStorageService.instance
+          .getValue(LocalStorageService.kRoomQualityMemory, "");
+      Map<String, dynamic> data;
+      if (raw.isNotEmpty) {
+        data = (jsonDecode(raw) as Map<String, dynamic>).cast<String, dynamic>();
+      } else {
+        data = <String, dynamic>{};
+      }
+      final siteData = (data[site.id] as Map?)?.cast<String, dynamic>() ?? {};
+      if (currentQuality >= 0) {
+        siteData["quality"] = currentQuality;
+      }
+      if (currentLineIndex >= 0) {
+        siteData["line"] = currentLineIndex;
+      }
+      data[site.id] = siteData;
+      LocalStorageService.instance.setValue(
+        LocalStorageService.kRoomQualityMemory,
+        jsonEncode(data),
+      );
+    } catch (_) {}
+  }
+
   /// 播放线路列表
   RxList<String> playUrls = RxList<String>();
 
@@ -309,6 +395,44 @@ class LiveRoomController extends PlayerController
         _lastKnownPlayerPosition = event;
       });
     }
+    _setupAutoQualityAdjust();
+  }
+
+  // --- 播放中自动降画质（未锁定画质时，缓冲多次自动降一档） ---
+
+  int _autoQualityBufferingCount = 0;
+  DateTime? _lastAutoQualityDownAt;
+  StreamSubscription<bool>? _autoQualityBufferingSubscription;
+
+  void _setupAutoQualityAdjust() {
+    _autoQualityBufferingSubscription?.cancel();
+    _autoQualityBufferingSubscription =
+        player.stream.buffering.listen((buffering) {
+      if (!buffering || _roomDisposed) {
+        return;
+      }
+      _autoQualityBufferingCount += 1;
+      // 连续缓冲 3 次、未手动锁定、且不在最低画质、且 10 秒冷却期外
+      if (_autoQualityBufferingCount >= 3 &&
+          !qualityLocked.value &&
+          currentQuality >= 0 &&
+          currentQuality < qualites.length - 1) {
+        final now = DateTime.now();
+        if (_lastAutoQualityDownAt != null &&
+            now.difference(_lastAutoQualityDownAt!) <
+                const Duration(seconds: 10)) {
+          return;
+        }
+        _lastAutoQualityDownAt = now;
+        _autoQualityBufferingCount = 0;
+        // 降一档：index 增大 = 更低画质
+        currentQuality += 1;
+        currentQualityInfo.value = qualites[currentQuality].quality;
+        saveQualityMemory();
+        SmartDialog.showToast("网络波动，已自动降低清晰度");
+        getPlayUrl();
+      }
+    });
   }
 
   void scrollListener() {
@@ -1399,6 +1523,7 @@ class LiveRoomController extends PlayerController
     liveRoomHistoryScrollController.dispose();
     liveRoomRecommendationScrollController.dispose();
     autoExitTimer?.cancel();
+    _autoQualityBufferingSubscription?.cancel();
     _superChatRefreshTimer?.cancel();
     _liveEventFlowTimer?.cancel();
     _onlineRefreshTimer?.cancel();
@@ -1696,18 +1821,27 @@ class LiveRoomController extends PlayerController
         return;
       }
       qualites.value = playQualites;
-      var qualityLevel = await getQualityLevel();
-      if (qualityLevel == 2) {
-        // 最高
-        currentQuality = 0;
-      } else if (qualityLevel == 0) {
-        // 最低
-        currentQuality = playQualites.length - 1;
+      // 优先恢复上次记忆的画质；无记忆或越界时按 qualityLevel 设置。
+      final memory = _loadQualityMemory();
+      if (memory != null &&
+          memory >= 0 &&
+          memory < playQualites.length) {
+        currentQuality = memory;
       } else {
-        // 中间档
-        int middle = (playQualites.length / 2).floor();
-        currentQuality = middle;
+        var qualityLevel = await getQualityLevel();
+        if (qualityLevel == 2) {
+          // 最高
+          currentQuality = 0;
+        } else if (qualityLevel == 0) {
+          // 最低
+          currentQuality = playQualites.length - 1;
+        } else {
+          // 中间档
+          int middle = (playQualites.length / 2).floor();
+          currentQuality = middle;
+        }
       }
+      currentQualityInfo.value = qualites[currentQuality].quality;
 
       await getPlayUrl();
     } catch (e, stackTrace) {
@@ -1781,15 +1915,23 @@ class LiveRoomController extends PlayerController
     playUrls.value = playUrl.urls;
     playHeaders = playUrl.headers;
     if (resetLine || currentLineIndex < 0) {
-      currentLineIndex = 0;
-      // 多线路时测速选最快的（TCP 延迟，带超时，不影响播放）。
-      if (AppSettingsController.instance.autoSelectFastestLine.value &&
-          playUrls.length > 1) {
-        final fastest = await NetworkDiagnoseService.findFastestLine(
-          playUrls.toList(),
-        );
-        if (_isCurrentLoad(loadGeneration)) {
-          currentLineIndex = fastest;
+      // 优先恢复上次记忆的线路；无记忆则测速选最快。
+      final lineMemory = _loadLineMemory();
+      if (lineMemory != null &&
+          lineMemory >= 0 &&
+          lineMemory < playUrls.length) {
+        currentLineIndex = lineMemory;
+      } else {
+        currentLineIndex = 0;
+        // 多线路时测速选最快的（TCP 延迟，带超时，不影响播放）。
+        if (AppSettingsController.instance.autoSelectFastestLine.value &&
+            playUrls.length > 1) {
+          final fastest = await NetworkDiagnoseService.findFastestLine(
+            playUrls.toList(),
+          );
+          if (_isCurrentLoad(loadGeneration)) {
+            currentLineIndex = fastest;
+          }
         }
       }
     } else if (currentLineIndex >= playUrls.length) {
@@ -1817,6 +1959,7 @@ class LiveRoomController extends PlayerController
 
   Future<void> changePlayLine(int index) async {
     currentLineIndex = index;
+    saveQualityMemory();
     // 切线时同样重置重试次数
     mediaErrorRetryCount = 0;
     await setPlayer();
@@ -2347,15 +2490,30 @@ class LiveRoomController extends PlayerController
     Utils.showBottomSheet(
       title: "切换清晰度",
       child: ListView.builder(
-        itemCount: qualites.length,
+        itemCount: qualites.length + 1,
         itemBuilder: (_, i) {
-          var item = qualites[i];
+          if (i == 0) {
+            return RadioListTile(
+              value: -1,
+              groupValue: qualityLocked.value ? -2 : -1,
+              onChanged: (e) {
+                Get.back();
+                unawaited(useAutomaticQuality());
+              },
+              title: const Text("自动"),
+              subtitle: const Text("根据网络与设备情况自动调整"),
+            );
+          }
+          var item = qualites[i - 1];
           return RadioListTile(
-            value: i,
+            value: i - 1,
             groupValue: currentQuality,
             onChanged: (e) {
               Get.back();
+              qualityLocked.value = true;
               currentQuality = e ?? 0;
+              currentQualityInfo.value = qualites[currentQuality].quality;
+              saveQualityMemory();
               getPlayUrl();
             },
             title: Text(item.quality),
