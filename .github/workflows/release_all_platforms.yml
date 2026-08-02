@@ -138,6 +138,7 @@ jobs:
       - name: Commit synchronized version update
         shell: bash
         run: |
+          set -e
           if git diff --quiet -- \
             simple_live_app/pubspec.yaml \
             simple_live_app/ohos/AppScope/app.json5 \
@@ -243,7 +244,7 @@ jobs:
             mv "$RUNNER_TEMP/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           fi
-          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264" "cmake;3.22.1"
 
       - name: Restore packages
         working-directory: simple_live_app
@@ -256,6 +257,7 @@ jobs:
       - name: Stage universal APK
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release-android"
           cp simple_live_app/build/app/outputs/flutter-apk/app-release.apk \
             "$RUNNER_TEMP/release-android/simple-live-${{ needs.prepare.outputs.version }}-android-universal.apk"
@@ -271,6 +273,7 @@ jobs:
       - name: Stage Android artifacts
         shell: bash
         run: |
+          set -euo pipefail
           out="$RUNNER_TEMP/release-android"
           src="simple_live_app/build/app/outputs/flutter-apk"
           cp "$src/app-armeabi-v7a-release.apk" \
@@ -330,6 +333,25 @@ jobs:
           flutter-version: ${{ env.TV_FLUTTER_VERSION }}
           cache: true
 
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -e
+          # runner 镜像上 sdkmanager 不一定在 PATH；定位完整路径，找不到则下载 cmdline-tools。
+          ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            mkdir -p "$RUNNER_TEMP/cmdline-tools"
+            curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
+              -o "$RUNNER_TEMP/cmdline-tools.zip"
+            unzip -q "$RUNNER_TEMP/cmdline-tools.zip" -d "$RUNNER_TEMP/cmdline-tools"
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+            mv "$RUNNER_TEMP/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264" "cmake;3.22.1"
+
       - name: Restore TV packages
         working-directory: simple_live_tv_app
         run: flutter pub get
@@ -344,6 +366,7 @@ jobs:
       - name: Stage TV universal APK
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release-android-tv"
           cp simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk \
             "$RUNNER_TEMP/release-android-tv/simple-live-tv-${{ needs.prepare.outputs.version }}-android-universal.apk"
@@ -365,6 +388,7 @@ jobs:
       - name: Stage Android TV artifacts
         shell: bash
         run: |
+          set -euo pipefail
           out="$RUNNER_TEMP/release-android-tv"
           src="simple_live_tv_app/build/app/outputs/flutter-apk"
           cp "$src/app-armeabi-v7a-release.apk" \
@@ -487,6 +511,7 @@ jobs:
         env:
           SIGNED_IOS: ${{ needs.prepare.outputs.signed_ios }}
         run: |
+          set -euo pipefail
           out="$RUNNER_TEMP/release-ios"
           mkdir -p "$out"
           if [[ "$SIGNED_IOS" == "true" ]]; then
@@ -552,6 +577,7 @@ jobs:
       - name: Stage macOS artifacts
         shell: bash
         run: |
+          set -euo pipefail
           out="$RUNNER_TEMP/release-macos"
           mkdir -p "$out"
           while IFS= read -r -d '' file; do
@@ -686,6 +712,7 @@ jobs:
       - name: Stage Linux artifacts
         shell: bash
         run: |
+          set -euo pipefail
           out="$RUNNER_TEMP/release-linux"
           mkdir -p "$out"
           while IFS= read -r -d '' file; do
@@ -880,9 +907,7 @@ jobs:
       - name: Generate combined checksums
         shell: bash
         run: |
-          find release-assets -maxdepth 1 -type f ! -name 'SHA256SUMS*' \
-            -print0 | sort -z | xargs -0 sha256sum \
-            > release-assets/SHA256SUMS.txt
+          cd release-assets && sha256sum -- * > SHA256SUMS.txt
           echo "### Release assets" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           find release-assets -maxdepth 1 -type f -printf '%f\n' \
