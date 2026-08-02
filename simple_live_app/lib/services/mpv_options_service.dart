@@ -103,8 +103,10 @@ class MpvOptionsService {
     final effectiveOptions = effectiveOptionsWithSource();
     final options = effectiveOptions.options;
     if (!Platform.isAndroid) {
+      // 不传 vo：media_kit 各平台使用默认 video output。
+      // （桌面 profile 里的 gpu/gpu-next 是给 vo=gpu 场景设计的，
+      //  iOS 的 libmpv 不接受，传入会导致 VideoController 初始化失败黑屏。）
       return VideoControllerConfiguration(
-        vo: options["vo"],
         hwdec: _desktopVideoControllerHwdec(effectiveOptions),
         enableHardwareAcceleration: settings.hardwareDecode.value,
       );
