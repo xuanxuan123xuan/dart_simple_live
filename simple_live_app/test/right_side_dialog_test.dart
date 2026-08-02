@@ -10,6 +10,7 @@ void main() {
 
   tearDown(() {
     Utils.hideRightDialog();
+    Utils.debugResetRightDialog();
     Get.reset();
   });
 
@@ -71,6 +72,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Panel body'), findsOneWidget);
 
+    // 页面导航在弹窗打开后（pumpAndSettle 已完成入场动画）应关闭弹窗。
     navigatorKey.currentState!.push<void>(
       MaterialPageRoute(
         builder: (_) => const Scaffold(body: Text('Next page')),

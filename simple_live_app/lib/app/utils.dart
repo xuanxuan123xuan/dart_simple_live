@@ -193,6 +193,7 @@ class Utils {
     _rightDialogNavigator = null;
     _rightDialogFuture = null;
     if (route == null || navigator == null) return;
+    Log.d('RightSideDialogRoute: dismiss called (isCurrent=${route.isCurrent}, isActive=${route.isActive})');
     if (route.isCurrent) {
       navigator.pop<void>();
     } else if (route.isActive) {
@@ -206,6 +207,17 @@ class Utils {
   static void hideRightDialog() {
     _rightDialogRequest += 1;
     unawaited(_dismissRightDialog());
+  }
+
+  /// 测试专用：重置右侧面板的静态状态，避免跨测试残留
+  /// （tearDown 中 hideRightDialog 是异步的，Get.reset() 后残留的
+  ///  route/navigator 已 dispose，访问会抛异常）。
+  @visibleForTesting
+  static void debugResetRightDialog() {
+    _rightDialogRequest = 0;
+    _rightDialogRoute = null;
+    _rightDialogNavigator = null;
+    _rightDialogFuture = null;
   }
 
   static Future<void> switchRightDialog(
@@ -590,6 +602,12 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   final Widget child;
 
   @override
+  void dispose() {
+    Log.d('RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)');
+    super.dispose();
+  }
+
+  @override
   void didChangeNext(Route<dynamic>? nextRoute) {
     super.didChangeNext(nextRoute);
     if (nextRoute == null) return;
@@ -597,10 +615,14 @@ class _RightSideDialogRoute extends PopupRoute<void> {
     // 等浮层（PopupRoute）覆盖时不应关闭右侧面板——否则弹窗打开瞬间若有
     // 任何浮层 route push（如自动降画质 toast），弹窗会"刚打开就消失"。
     if (nextRoute is! PageRoute) return;
+    // 防御：入场动画尚未完成时的 PageRoute 覆盖多为手势/系统竞态，
+    // 忽略，避免"点开不到一秒自动关闭"。（不依赖墙钟，测试可控。）
+    if (animation?.isCompleted != true) return;
     // A page was pushed on top: remove this transient panel after the push
     // settles so it cannot contaminate the destination or reappear on return.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (isActive && !isCurrent) {
+        Log.d('RightSideDialogRoute: covered by $nextRoute, dismissing');
         unawaited(onCovered());
       }
     });
