@@ -1002,7 +1002,7 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      "${item.site.name} · ${controller.title}",
+                      "${item.site.name} · ${item.userName}",
                       style:
                           const TextStyle(color: Colors.white70, fontSize: 12),
                     ),
