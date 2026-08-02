@@ -89,16 +89,6 @@
 
 ---
 
-## 用户群
-
-扫码加入 SimpleLive 用户群，交流使用问题和反馈建议。
-
-<p align="center">
-  <img width="360" src="/assets/user_group_wechat.jpg" alt="SimpleLive 用户群二维码">
-</p>
-
----
-
 ## 环境
 
 | 构建目标 | Flutter 版本 | 说明 |
