@@ -84,6 +84,47 @@ void main() {
     expect(find.text('Open panel'), findsOneWidget);
     expect(find.text('Panel body'), findsNothing);
   });
+
+  testWidgets('a transient popup route does not dismiss the right-side panel',
+      (tester) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(_testApp(navigatorKey: navigatorKey));
+    await tester.tap(find.text('Open panel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Panel body'), findsOneWidget);
+
+    // 模拟 SmartDialog toast / Get.bottomSheet 等浮层 route
+    navigatorKey.currentState!.push<void>(_FakeTransientPopupRoute());
+    await tester.pumpAndSettle();
+    expect(find.text('Panel body'), findsOneWidget);
+  });
+}
+
+/// 模拟 SmartDialog toast / bottom sheet 等非页面浮层。
+class _FakeTransientPopupRoute extends PopupRoute<void> {
+  @override
+  Color? get barrierColor => Colors.transparent;
+
+  @override
+  bool get barrierDismissible => false;
+
+  @override
+  String? get barrierLabel => null;
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 50);
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    return const Align(
+      alignment: Alignment.bottomCenter,
+      child: Text('toast'),
+    );
+  }
 }
 
 Widget _testApp({GlobalKey<NavigatorState>? navigatorKey}) {

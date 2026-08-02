@@ -593,8 +593,11 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   void didChangeNext(Route<dynamic>? nextRoute) {
     super.didChangeNext(nextRoute);
     if (nextRoute == null) return;
-    // A PopupRoute normally remains below a newly pushed page and reappears
-    // when that page is popped. Remove this transient panel after the push
+    // 只响应真正的页面导航（PageRoute）。SmartDialog toast、Get.bottomSheet
+    // 等浮层（PopupRoute）覆盖时不应关闭右侧面板——否则弹窗打开瞬间若有
+    // 任何浮层 route push（如自动降画质 toast），弹窗会"刚打开就消失"。
+    if (nextRoute is! PageRoute) return;
+    // A page was pushed on top: remove this transient panel after the push
     // settles so it cannot contaminate the destination or reappear on return.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (isActive && !isCurrent) {
