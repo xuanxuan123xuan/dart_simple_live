@@ -83,6 +83,24 @@ class MultiRoomPlayerController extends GetxController {
   /// 本格独立音量（0-100），互不影响。
   final volume = 100.0.obs;
 
+  /// 本格操作按钮（右下角）是否显示：点格子呼出，5 秒不操作自动隐藏。
+  final showTileControls = true.obs;
+  Timer? _tileControlsTimer;
+
+  /// 点击本格画面：呼出/收起本格按钮，并重置 5 秒自动隐藏计时。
+  void toggleTileControls() {
+    showTileControls.value = !showTileControls.value;
+    _tileControlsTimer?.cancel();
+    _tileControlsTimer = null;
+    if (showTileControls.value) {
+      _tileControlsTimer = Timer(const Duration(seconds: 5), () {
+        if (!_disposed) {
+          showTileControls.value = false;
+        }
+      });
+    }
+  }
+
   /// 状态徽标：空=正常；"重试中…"=流错误重试；"弹幕重连…"=弹幕重连。
   final streamStatus = "".obs;
 
@@ -876,6 +894,7 @@ class MultiRoomPlayerController extends GetxController {
     liveDanmaku.onClose = null;
     liveDanmaku.onReady = null;
     _danmakuReconnectTimer?.cancel();
+    _tileControlsTimer?.cancel();
     unawaited(liveDanmaku.stop());
     danmakuController = null;
     // 等当前串行的 open/load 收尾后再释放 Player，避免异步回调操作已释放实例。

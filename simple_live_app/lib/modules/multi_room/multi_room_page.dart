@@ -912,7 +912,12 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
     final item = widget.item;
     final controller = widget.controller;
     final onRemove = widget.onRemove;
-    return ClipRRect(
+    // 点击画面：呼出/收起本格按钮（5 秒自动隐藏）。translucent 保留
+    // 外层双击聚焦与长按拖拽。
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: controller.toggleTileControls,
+      child: ClipRRect(
       borderRadius: AppStyle.radius8,
       child: DecoratedBox(
         decoration: BoxDecoration(
@@ -1027,7 +1032,13 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
             Positioned(
               right: 4,
               bottom: 4,
-              child: Row(
+              // 按钮随 showTileControls 显隐：点格子呼出，5 秒自动隐藏。
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 150),
+                opacity: controller.showTileControls.value ? 1 : 0,
+                child: IgnorePointer(
+                  ignoring: !controller.showTileControls.value,
+                  child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Obx(
@@ -1076,7 +1087,9 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                   ),
                 ],
               ),
-            ),
+              ),
+                ),
+              ),
             // 音量滑条
             Positioned(
               right: 4,
@@ -1128,6 +1141,7 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
             ),
           ],
         ),
+      ),
       ),
     );
   }
