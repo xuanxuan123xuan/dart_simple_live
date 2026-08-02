@@ -232,8 +232,11 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
 
   MultiRoomPlayerController playerFor(MultiRoomItem item) {
     final tag = playerTag(item);
+    final MultiRoomPlayerController existing;
     if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
-      return Get.find<MultiRoomPlayerController>(tag: tag);
+      existing = Get.find<MultiRoomPlayerController>(tag: tag);
+      existing.onActivateAudio = _scheduleResumePlayers;
+      return existing;
     }
     if (_closing || isClosed) {
       throw StateError("多开页面已关闭，不能再创建播放器");
@@ -260,6 +263,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         })) {
       unawaited(playerController.setMuted(true));
     }
+    playerController.onActivateAudio = _scheduleResumePlayers;
     return playerController;
   }
 

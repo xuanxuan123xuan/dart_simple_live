@@ -87,6 +87,10 @@ class MultiRoomPlayerController extends GetxController {
   final showTileControls = true.obs;
   Timer? _tileControlsTimer;
 
+  /// 取消静音/激活音频时回调（iOS 共享 audio session 会中断其他格，
+  /// 由 MultiRoomController 借此恢复所有播放器）。
+  VoidCallback? onActivateAudio;
+
   /// 点击本格画面：呼出/收起本格按钮，并重置 5 秒自动隐藏计时。
   void toggleTileControls() {
     showTileControls.value = !showTileControls.value;
@@ -842,6 +846,10 @@ class MultiRoomPlayerController extends GetxController {
     if (muted.value == value) return;
     muted.value = value;
     await player.setVolume(muted.value ? 0 : volume.value);
+    // 取消静音激活 audio session，可能中断其他格，通知恢复。
+    if (!muted.value && volume.value > 0) {
+      onActivateAudio?.call();
+    }
   }
 
   /// 设置本格音量（0-100）。静音归属只由 [setMuted] 控制。
@@ -851,6 +859,9 @@ class MultiRoomPlayerController extends GetxController {
       await player.setVolume(0);
     } else {
       await player.setVolume(volume.value);
+      if (volume.value > 0) {
+        onActivateAudio?.call();
+      }
     }
   }
 
