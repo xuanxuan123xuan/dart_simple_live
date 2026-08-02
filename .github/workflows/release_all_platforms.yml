@@ -227,27 +227,6 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Install Android SDK 36
-        shell: bash
-        run: |
-          set -e
-          # runner 镜像上 sdkmanager 不一定在 PATH；定位完整路径，找不到则下载 cmdline-tools。
-          ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            mkdir -p "$RUNNER_TEMP/cmdline-tools"
-            curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
-              -o "$RUNNER_TEMP/cmdline-tools.zip"
-            unzip -q "$RUNNER_TEMP/cmdline-tools.zip" -d "$RUNNER_TEMP/cmdline-tools"
-            mkdir -p "$ANDROID_HOME/cmdline-tools"
-            rm -rf "$ANDROID_HOME/cmdline-tools/latest"
-            mv "$RUNNER_TEMP/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          fi
-          # NDK/CMake 由 runner 镜像预装 + AGP 按需自动下载，无需 sdkmanager 显式安装
-          # （显式装 NDK 触发 ~1GB 下载，CI 上易超时失败）。只补 platforms/build-tools。
-          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
-
       - name: Restore packages
         working-directory: simple_live_app
         run: flutter pub get
@@ -334,27 +313,6 @@ jobs:
         with:
           flutter-version: ${{ env.TV_FLUTTER_VERSION }}
           cache: true
-
-      - name: Install Android SDK 36
-        shell: bash
-        run: |
-          set -e
-          # runner 镜像上 sdkmanager 不一定在 PATH；定位完整路径，找不到则下载 cmdline-tools。
-          ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            mkdir -p "$RUNNER_TEMP/cmdline-tools"
-            curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
-              -o "$RUNNER_TEMP/cmdline-tools.zip"
-            unzip -q "$RUNNER_TEMP/cmdline-tools.zip" -d "$RUNNER_TEMP/cmdline-tools"
-            mkdir -p "$ANDROID_HOME/cmdline-tools"
-            rm -rf "$ANDROID_HOME/cmdline-tools/latest"
-            mv "$RUNNER_TEMP/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          fi
-          # NDK/CMake 由 runner 镜像预装 + AGP 按需自动下载，无需 sdkmanager 显式安装
-          # （显式装 NDK 触发 ~1GB 下载，CI 上易超时失败）。只补 platforms/build-tools。
-          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Restore TV packages
         working-directory: simple_live_tv_app
