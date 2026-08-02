@@ -16,6 +16,19 @@ void main(List<String> arguments) {
   try {
     final command = arguments.firstOrNull;
     final appRoot = File.fromUri(Platform.script).parent.parent;
+
+    if (command == 'set') {
+      if (arguments.length != 2) {
+        throw const FormatException(
+          'Usage: dart run tool/app_version.dart set major.minor.patch',
+        );
+      }
+      final version = _parseVersionName(arguments[1]);
+      _set(appRoot, version);
+      stdout.writeln('Set and synchronized app version ${version.full}.');
+      return;
+    }
+
     final version = _readVersion(File('${appRoot.path}/pubspec.yaml'));
 
     switch (command) {
@@ -33,7 +46,8 @@ void main(List<String> arguments) {
       default:
         throw const FormatException(
           'Usage: dart run tool/app_version.dart '
-          '<sync|check|print [name|build-number|full]>',
+          '<set major.minor.patch|sync|check|'
+          'print [name|build-number|full]>',
         );
     }
   } on FormatException catch (error) {
@@ -43,6 +57,20 @@ void main(List<String> arguments) {
     stderr.writeln(error.message);
     exitCode = 74;
   }
+}
+
+AppVersion _parseVersionName(String value) {
+  final match = RegExp(r'^([0-9]+)\.([0-9]+)\.([0-9]+)$').firstMatch(value);
+  if (match == null) {
+    throw const FormatException(
+      'Version must use major.minor.patch, for example 1.13.1.',
+    );
+  }
+  return _versionFromComponents(
+    int.parse(match.group(1)!),
+    int.parse(match.group(2)!),
+    int.parse(match.group(3)!),
+  );
 }
 
 AppVersion _readVersion(File pubspec) {
@@ -61,6 +89,17 @@ AppVersion _readVersion(File pubspec) {
   final minor = int.parse(match.group(2)!);
   final patch = int.parse(match.group(3)!);
   final buildNumber = int.parse(match.group(4)!);
+  final version = _versionFromComponents(major, minor, patch);
+  if (buildNumber != version.buildNumber) {
+    throw FormatException(
+      'Invalid build number $buildNumber: '
+      '${version.name} requires ${version.buildNumber}.',
+    );
+  }
+  return version;
+}
+
+AppVersion _versionFromComponents(int major, int minor, int patch) {
   if (minor > 99 || patch > 99) {
     throw const FormatException(
       'Version minor and patch components must each be between 0 and 99.',
@@ -68,17 +107,24 @@ AppVersion _readVersion(File pubspec) {
   }
 
   final expectedBuildNumber = major * 10000 + minor * 100 + patch;
-  if (buildNumber != expectedBuildNumber) {
-    throw FormatException(
-      'Invalid build number $buildNumber: '
-      '$major.$minor.$patch requires $expectedBuildNumber.',
-    );
-  }
-
   return AppVersion(
     name: '$major.$minor.$patch',
-    buildNumber: buildNumber,
+    buildNumber: expectedBuildNumber,
   );
+}
+
+void _set(Directory appRoot, AppVersion version) {
+  final pubspec = File('${appRoot.path}/pubspec.yaml');
+  final contents = pubspec.readAsStringSync();
+  final pattern = RegExp(r'^version:\s*[^\r\n]+$', multiLine: true);
+  if (!pattern.hasMatch(contents)) {
+    throw const FormatException('pubspec.yaml must contain a version field.');
+  }
+  final updated = contents.replaceFirst(pattern, 'version: ${version.full}');
+  if (updated != contents) {
+    pubspec.writeAsStringSync(updated);
+  }
+  _sync(appRoot, version);
 }
 
 void _sync(Directory appRoot, AppVersion version) {

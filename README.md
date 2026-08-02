@@ -123,23 +123,39 @@ major × 10000 + minor × 100 + patch
 修改版本后在 `simple_live_app` 目录执行：
 
 ```bash
+# 直接设置版本并同步所有派生文件
+dart run tool/app_version.dart set 1.13.1
+
+# 或在手动修改 pubspec 后同步
 dart run tool/app_version.dart sync
 dart run tool/app_version.dart check
 ```
 
-`sync` 会同步生成 Flutter 运行时常量和鸿蒙 `app.json5`；本地鸿蒙构建脚本与 GitHub Actions 会在构建前检查版本一致性，并使用该版本命名构建产物。
+`set` 会按 `major × 10000 + minor × 100 + patch` 自动计算构建号；`sync` 会同步生成 Flutter 运行时常量和鸿蒙 `app.json5`。本地构建脚本与 GitHub Actions 会在构建前检查版本一致性，并使用该版本命名构建产物。
 
 ---
 
 ## 构建
 
-GitHub Actions 提供这些构建流程，均为手动触发（`workflow_dispatch`）：
+GitHub Actions 提供以下构建流程：
 
 | workflow | 产物 | runner | 说明 |
 |---|---|---|---|
+| `release_all_platforms.yml` | 全平台安装包 + GitHub Release | GitHub 托管 + 可选鸿蒙自建 runner | 推荐；支持一键更新版本、并行构建和发布 |
 | `build_ios_ipa_ohos_branch.yml` | iOS `ipa` | `macos-14` | 本分支专用；钉 Flutter `3.22.3` + Xcode `15.4` |
 | `build_ohos_hap.yml` | 鸿蒙 `hap`（已签名） | 自建 Windows | 需自建 runner，官方工具约 2.4 GB 且需账号登录 |
 | `publish_app_release_*.yml` | 各平台正式包 | GitHub 托管 | 主线用，本分支不适用 |
+
+### 一键全平台 Release
+
+在 Actions 中运行 `Build all platforms and publish Release`：
+
+- `version` 留空时构建 `pubspec.yaml` 当前版本；填写 `1.13.1` 之类的新版本时，workflow 会先更新并提交版本文件。
+- 直接向发布分支推送 `simple_live_app/pubspec.yaml` 的版本修改，也会自动触发全平台 Release。
+- 默认并行构建 Android 与 Android TV APK/AAB、iOS IPA、macOS DMG/PKG/ZIP、Windows EXE/MSIX/ZIP、Linux AppImage/DEB/RPM/ZIP，以及已签名鸿蒙 HAP。
+- 没有可用的鸿蒙自建 runner 时，手动运行前取消 `include_ohos`，其余平台仍可正常发布。
+- iOS 默认生成未签名 IPA；勾选 `signed_ios` 后使用下方四个 iOS secrets 生成 ad-hoc 签名 IPA。
+- 每个 Release 都包含分平台和总 `SHA256SUMS` 校验文件；DMG/PKG 尚未做 Apple 公证。
 
 ### iOS IPA
 
@@ -157,14 +173,15 @@ GitHub Actions 提供这些构建流程，均为手动触发（`workflow_dispatc
 
 ### Release 资产
 
-当前提供这些正式资产（主线）：
+统一 Release workflow 可生成这些正式资产：
 
-- Android `apk`
-- Android TV 拆分 `apk`（`arm64-v8a` / `armeabi-v7a` / `x86_64`）
-- Windows `zip`
-- Linux `zip` / `deb`
-
-鸿蒙 `hap` 与 iOS `ipa` 不随 Release 发布，需自行用对应 workflow 构建。
+- Android：通用及拆分 `apk`、`aab`
+- Android TV：通用及拆分 `apk`、`aab`
+- iOS：签名或未签名 `ipa`
+- macOS：`dmg`、`pkg`、`zip`
+- Windows：Inno Setup `exe`、`msix`、便携 `zip`
+- Linux：`AppImage`、`deb`、`rpm`、`zip`
+- HarmonyOS：已签名 `hap`（可选）
 
 ---
 

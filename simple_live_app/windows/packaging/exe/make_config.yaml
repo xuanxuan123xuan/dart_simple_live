@@ -1,0 +1,11 @@
+app_id: B4D2C61E-9F61-4F6B-9F5D-3A2C7587C1E0
+publisher: SimpleLive
+publisher_url: https://github.com/xuanxuan123xuan/dart_simple_live
+display_name: Simple Live
+create_desktop_icon: true
+setup_icon_file: windows\runner\resources\app_icon.ico
+locales:
+  - en
+  - zh
+architectures_allowed: x64compatible
+architectures_install_in_64_bit_mode: x64compatible

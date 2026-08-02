@@ -1,0 +1,899 @@
+name: Build all platforms and publish Release
+
+run-name: >-
+  Release ${{ inputs.version || 'version from pubspec' }}
+  (${{ github.event_name }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "可选新版本号（如 1.13.1）；留空则使用 pubspec 当前版本"
+        required: false
+        type: string
+      publish_release:
+        description: "构建完成后创建或更新 GitHub Release"
+        required: true
+        type: boolean
+        default: true
+      prerelease:
+        description: "标记为预发布版本"
+        required: true
+        type: boolean
+        default: false
+      signed_ios:
+        description: "生成已签名 IPA（需要 iOS 签名 secrets）"
+        required: true
+        type: boolean
+        default: false
+      include_ohos:
+        description: "使用自建 harmonyos runner 生成已签名 HAP"
+        required: true
+        type: boolean
+        default: true
+  push:
+    branches:
+      - feat/ohos-1.12.7
+    paths:
+      - simple_live_app/pubspec.yaml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-all-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.22.3"
+  TV_FLUTTER_VERSION: "3.41.x"
+  XCODE_VERSION: "15.4"
+  FASTFORGE_VERSION: "0.6.10"
+
+jobs:
+  prepare:
+    name: Validate and resolve release version
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      build_number: ${{ steps.release.outputs.build_number }}
+      full_version: ${{ steps.release.outputs.full_version }}
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+      publish_release: ${{ steps.settings.outputs.publish_release }}
+      prerelease: ${{ steps.settings.outputs.prerelease }}
+      signed_ios: ${{ steps.settings.outputs.signed_ios }}
+      include_ohos: ${{ steps.settings.outputs.include_ohos }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve workflow settings
+        id: settings
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_SIGNED_IOS: ${{ inputs.signed_ios }}
+          INPUT_INCLUDE_OHOS: ${{ inputs.include_ohos }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            publish_release="${INPUT_PUBLISH_RELEASE:-true}"
+            prerelease="${INPUT_PRERELEASE:-false}"
+            signed_ios="${INPUT_SIGNED_IOS:-false}"
+            include_ohos="${INPUT_INCLUDE_OHOS:-true}"
+          else
+            publish_release=true
+            prerelease=false
+            signed_ios=false
+            include_ohos=true
+          fi
+          {
+            echo "publish_release=$publish_release"
+            echo "prerelease=$prerelease"
+            echo "signed_ios=$signed_ios"
+            echo "include_ohos=$include_ohos"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Apply requested version
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/* ]]; then
+            echo "::error::自动更新版本只能从分支运行，不能从 tag 运行。" >&2
+            exit 1
+          fi
+          dart run simple_live_app/tool/app_version.dart set "$REQUESTED_VERSION"
+
+      - name: Synchronize derived version files
+        run: dart run simple_live_app/tool/app_version.dart sync
+
+      - name: Restore packages
+        working-directory: simple_live_app
+        run: flutter pub get
+
+      - name: Check synchronized version
+        run: dart run simple_live_app/tool/app_version.dart check
+
+      - name: Analyze
+        working-directory: simple_live_app
+        run: dart analyze lib test
+
+      - name: Run tests
+        working-directory: simple_live_app
+        run: flutter test --no-pub
+
+      - name: Commit synchronized version update
+        shell: bash
+        run: |
+          if git diff --quiet -- \
+            simple_live_app/pubspec.yaml \
+            simple_live_app/ohos/AppScope/app.json5 \
+            simple_live_app/lib/generated/app_version.g.dart; then
+            echo "版本派生文件已经同步，无需提交。"
+            exit 0
+          fi
+          if [[ "$GITHUB_REF" != refs/heads/* ]]; then
+            echo "::error::自动提交版本同步结果只能从分支运行。" >&2
+            exit 1
+          fi
+          version="$(dart run simple_live_app/tool/app_version.dart print name)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            simple_live_app/pubspec.yaml \
+            simple_live_app/ohos/AppScope/app.json5 \
+            simple_live_app/lib/generated/app_version.g.dart
+          git commit -m "chore: release v$version"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+
+      - name: Resolve release metadata
+        id: release
+        shell: bash
+        run: |
+          version="$(dart run simple_live_app/tool/app_version.dart print name)"
+          build_number="$(dart run simple_live_app/tool/app_version.dart print build-number)"
+          full_version="$(dart run simple_live_app/tool/app_version.dart print full)"
+          sha="$(git rev-parse HEAD)"
+          tag="v$version"
+
+          git fetch --force --tags origin
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            tagged_sha="$(git rev-list -n 1 "$tag")"
+            if [[ "$tagged_sha" != "$sha" ]]; then
+              echo "::error::标签 $tag 已指向 $tagged_sha，不能改指到 $sha。" >&2
+              exit 1
+            fi
+          fi
+
+          {
+            echo "version=$version"
+            echo "build_number=$build_number"
+            echo "full_version=$full_version"
+            echo "sha=$sha"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+  android:
+    name: Android APK and AAB
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Prepare Android keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [[ -n "$KEYSTORE_BASE64" && -n "$STORE_PASSWORD" && \
+                -n "$KEY_PASSWORD" && -n "$KEY_ALIAS" ]]; then
+            printf '%s' "$KEYSTORE_BASE64" | openssl base64 -d -A \
+              > simple_live_app/android/release-keystore.jks
+            printf 'storeFile=../release-keystore.jks\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\n' \
+              "$STORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" \
+              > simple_live_app/android/key.properties
+          else
+            echo "::warning::Android signing secrets 不完整，将使用项目的 debug fallback 签名。"
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Restore packages
+        working-directory: simple_live_app
+        run: flutter pub get
+
+      - name: Build universal APK
+        working-directory: simple_live_app
+        run: flutter build apk --release --no-pub
+
+      - name: Stage universal APK
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-android"
+          cp simple_live_app/build/app/outputs/flutter-apk/app-release.apk \
+            "$RUNNER_TEMP/release-android/simple-live-${{ needs.prepare.outputs.version }}-android-universal.apk"
+
+      - name: Build split APKs
+        working-directory: simple_live_app
+        run: flutter build apk --release --split-per-abi --no-pub
+
+      - name: Build Android App Bundle
+        working-directory: simple_live_app
+        run: flutter build appbundle --release --no-pub
+
+      - name: Stage Android artifacts
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/release-android"
+          src="simple_live_app/build/app/outputs/flutter-apk"
+          cp "$src/app-armeabi-v7a-release.apk" \
+            "$out/simple-live-${{ needs.prepare.outputs.version }}-android-armeabi-v7a.apk"
+          cp "$src/app-arm64-v8a-release.apk" \
+            "$out/simple-live-${{ needs.prepare.outputs.version }}-android-arm64-v8a.apk"
+          cp "$src/app-x86_64-release.apk" \
+            "$out/simple-live-${{ needs.prepare.outputs.version }}-android-x86_64.apk"
+          cp simple_live_app/build/app/outputs/bundle/release/app-release.aab \
+            "$out/simple-live-${{ needs.prepare.outputs.version }}-android.aab"
+          (cd "$out" && sha256sum -- * > SHA256SUMS-android.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: ${{ runner.temp }}/release-android/*
+          if-no-files-found: error
+          retention-days: 14
+
+  android_tv:
+    name: Android TV APK and AAB
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Prepare Android TV keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [[ -n "$KEYSTORE_BASE64" && -n "$STORE_PASSWORD" && \
+                -n "$KEY_PASSWORD" && -n "$KEY_ALIAS" ]]; then
+            printf '%s' "$KEYSTORE_BASE64" | openssl base64 -d -A \
+              > simple_live_tv_app/android/release-keystore.jks
+            printf 'storeFile=../release-keystore.jks\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\n' \
+              "$STORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" \
+              > simple_live_tv_app/android/key.properties
+          else
+            echo "::warning::Android TV signing secrets 不完整，将使用项目的 debug fallback 签名。"
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.TV_FLUTTER_VERSION }}
+          cache: true
+
+      - name: Restore TV packages
+        working-directory: simple_live_tv_app
+        run: flutter pub get
+
+      - name: Build TV universal APK
+        working-directory: simple_live_tv_app
+        run: >-
+          flutter build apk --release --no-pub
+          --build-name=${{ needs.prepare.outputs.version }}
+          --build-number=${{ needs.prepare.outputs.build_number }}
+
+      - name: Stage TV universal APK
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-android-tv"
+          cp simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk \
+            "$RUNNER_TEMP/release-android-tv/simple-live-tv-${{ needs.prepare.outputs.version }}-android-universal.apk"
+
+      - name: Build TV split APKs
+        working-directory: simple_live_tv_app
+        run: >-
+          flutter build apk --release --split-per-abi --no-pub
+          --build-name=${{ needs.prepare.outputs.version }}
+          --build-number=${{ needs.prepare.outputs.build_number }}
+
+      - name: Build TV Android App Bundle
+        working-directory: simple_live_tv_app
+        run: >-
+          flutter build appbundle --release --no-pub
+          --build-name=${{ needs.prepare.outputs.version }}
+          --build-number=${{ needs.prepare.outputs.build_number }}
+
+      - name: Stage Android TV artifacts
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/release-android-tv"
+          src="simple_live_tv_app/build/app/outputs/flutter-apk"
+          cp "$src/app-armeabi-v7a-release.apk" \
+            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-armeabi-v7a.apk"
+          cp "$src/app-arm64-v8a-release.apk" \
+            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-arm64-v8a.apk"
+          cp "$src/app-x86_64-release.apk" \
+            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-x86_64.apk"
+          cp simple_live_tv_app/build/app/outputs/bundle/release/app-release.aab \
+            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android.aab"
+          (cd "$out" && sha256sum -- * > SHA256SUMS-android-tv.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-android-tv
+          path: ${{ runner.temp }}/release-android-tv/*
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    name: iOS IPA
+    needs: prepare
+    runs-on: macos-14
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Restore packages
+        working-directory: simple_live_app
+        run: flutter pub get
+
+      - name: Import signing certificate and profile
+        if: ${{ needs.prepare.outputs.signed_ios == 'true' }}
+        shell: bash
+        env:
+          CERT_P12: ${{ secrets.IOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+          PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          for name in CERT_P12 CERT_PASSWORD PROVISIONING_PROFILE TEAM_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::签名 IPA 缺少 $name 对应的 secret。" >&2
+              exit 1
+            fi
+          done
+          cert_path="$RUNNER_TEMP/cert.p12"
+          profile_path="$RUNNER_TEMP/profile.mobileprovision"
+          printf '%s' "$CERT_P12" | base64 --decode > "$cert_path"
+          printf '%s' "$PROVISIONING_PROFILE" | base64 --decode > "$profile_path"
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert_path" -P "$CERT_PASSWORD" -A \
+            -t cert -f pkcs12 -k "$keychain"
+          security list-keychain -d user -s "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$keychain_password" "$keychain" >/dev/null
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          uuid="$(grep -aA1 UUID "$profile_path" \
+            | grep -o '[0-9A-Fa-f-]\{36\}' | head -1)"
+          cp "$profile_path" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/$uuid.mobileprovision"
+          echo "PROFILE_UUID=$uuid" >> "$GITHUB_ENV"
+          rm -f "$cert_path" "$profile_path"
+
+      - name: Build unsigned iOS app
+        if: ${{ needs.prepare.outputs.signed_ios != 'true' }}
+        working-directory: simple_live_app
+        run: flutter build ios --release --no-codesign --no-pub
+
+      - name: Package unsigned IPA
+        if: ${{ needs.prepare.outputs.signed_ios != 'true' }}
+        working-directory: simple_live_app/build/ios/iphoneos
+        run: |
+          rm -rf Payload
+          mkdir Payload
+          cp -R Runner.app Payload/Runner.app
+          zip -q -r app-unsigned.ipa Payload
+
+      - name: Build signed IPA
+        if: ${{ needs.prepare.outputs.signed_ios == 'true' }}
+        working-directory: simple_live_app
+        shell: bash
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>ad-hoc</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>stripSwiftSymbols</key><true/>
+            <key>compileBitcode</key><false/>
+          </dict>
+          </plist>
+          PLIST
+          flutter build ipa --release --no-pub \
+            --export-options-plist=ExportOptions.plist
+
+      - name: Stage IPA
+        shell: bash
+        env:
+          SIGNED_IOS: ${{ needs.prepare.outputs.signed_ios }}
+        run: |
+          out="$RUNNER_TEMP/release-ios"
+          mkdir -p "$out"
+          if [[ "$SIGNED_IOS" == "true" ]]; then
+            src="$(find simple_live_app/build/ios/ipa -name '*.ipa' -type f | head -1)"
+            suffix=signed
+          else
+            src="simple_live_app/build/ios/iphoneos/app-unsigned.ipa"
+            suffix=unsigned
+          fi
+          test -f "$src"
+          cp "$src" "$out/simple-live-${{ needs.prepare.outputs.version }}-ios-$suffix.ipa"
+          (cd "$out" && shasum -a 256 -- * > SHA256SUMS-ios.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-ios
+          path: ${{ runner.temp }}/release-ios/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Clean up signing material
+        if: ${{ always() && needs.prepare.outputs.signed_ios == 'true' }}
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision" || true
+
+  macos:
+    name: macOS DMG, PKG and ZIP
+    needs: prepare
+    runs-on: macos-14
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Enable macOS desktop and restore packages
+        working-directory: simple_live_app
+        run: |
+          flutter config --enable-macos-desktop
+          flutter pub get
+
+      - name: Install packagers
+        run: |
+          npm install --global appdmg
+          dart pub global activate fastforge $FASTFORGE_VERSION
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: Build macOS packages
+        working-directory: simple_live_app
+        run: fastforge package --platform macos --targets dmg,pkg,zip --skip-clean
+
+      - name: Stage macOS artifacts
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/release-macos"
+          mkdir -p "$out"
+          while IFS= read -r -d '' file; do
+            extension="${file##*.}"
+            cp "$file" \
+              "$out/simple-live-${{ needs.prepare.outputs.version }}-macos.$extension"
+          done < <(find simple_live_app/build/dist -type f \
+            \( -name '*.dmg' -o -name '*.pkg' -o -name '*.zip' \) -print0)
+          count="$(find "$out" -type f | wc -l | tr -d ' ')"
+          [[ "$count" -ge 3 ]]
+          (cd "$out" && shasum -a 256 -- * > SHA256SUMS-macos.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: ${{ runner.temp }}/release-macos/*
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows EXE, MSIX and ZIP
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Enable Windows desktop and restore packages
+        working-directory: simple_live_app
+        shell: pwsh
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+
+      - name: Install Inno Setup and Fastforge
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          dart pub global activate fastforge $env:FASTFORGE_VERSION
+          $pubBin = Join-Path $env:LOCALAPPDATA "Pub\Cache\bin"
+          $pubBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build Windows packages
+        working-directory: simple_live_app
+        shell: pwsh
+        run: fastforge package --platform windows --targets exe,msix,zip --skip-clean
+
+      - name: Stage Windows artifacts
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "release-windows"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $files = Get-ChildItem -LiteralPath "simple_live_app\build\dist" -Recurse -File |
+            Where-Object { $_.Extension -in ".exe", ".msix", ".zip" }
+          if ($files.Count -lt 3) { throw "Expected EXE, MSIX and ZIP outputs." }
+          foreach ($file in $files) {
+            $extension = $file.Extension.ToLowerInvariant()
+            $target = Join-Path $out "simple-live-${{ needs.prepare.outputs.version }}-windows$extension"
+            Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+          }
+          Get-ChildItem -LiteralPath $out -File | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Out-File -LiteralPath (Join-Path $out "SHA256SUMS-windows.txt") -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: ${{ runner.temp }}/release-windows/*
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    name: Linux AppImage, DEB, RPM and ZIP
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libasound2-dev libmpv-dev mpv libepoxy-dev rpm patchelf \
+            plocate libfuse2t64
+          wget -q -O "$RUNNER_TEMP/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          sudo install "$RUNNER_TEMP/appimagetool" /usr/local/bin/appimagetool
+
+      - name: Enable Linux desktop and restore packages
+        working-directory: simple_live_app
+        run: |
+          flutter config --enable-linux-desktop
+          flutter pub get
+
+      - name: Install Fastforge
+        run: |
+          dart pub global activate fastforge $FASTFORGE_VERSION
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: Build Linux packages
+        working-directory: simple_live_app
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: fastforge package --platform linux --targets appimage,deb,rpm,zip --skip-clean
+
+      - name: Stage Linux artifacts
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/release-linux"
+          mkdir -p "$out"
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.AppImage) extension="AppImage" ;;
+              *) extension="${file##*.}" ;;
+            esac
+            cp "$file" \
+              "$out/simple-live-${{ needs.prepare.outputs.version }}-linux.$extension"
+          done < <(find simple_live_app/build/dist -type f \
+            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.zip' \) -print0)
+          count="$(find "$out" -type f | wc -l | tr -d ' ')"
+          [[ "$count" -ge 4 ]]
+          (cd "$out" && sha256sum -- * > SHA256SUMS-linux.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: ${{ runner.temp }}/release-linux/*
+          if-no-files-found: error
+          retention-days: 14
+
+  ohos:
+    name: HarmonyOS signed HAP
+    needs: prepare
+    if: ${{ needs.prepare.outputs.include_ohos == 'true' }}
+    runs-on: [self-hosted, Windows, X64, harmonyos]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Resolve runner toolchain
+        shell: pwsh
+        env:
+          VAR_FLUTTER_OHOS_ROOT: ${{ vars.FLUTTER_OHOS_ROOT }}
+          VAR_HOS_SDK_HOME: ${{ vars.HOS_SDK_HOME }}
+          VAR_JAVA_HOME: ${{ vars.JAVA_HOME }}
+          VAR_OHOS_PUB_CACHE: ${{ vars.OHOS_PUB_CACHE }}
+        run: |
+          $flutterRoot = if ($env:VAR_FLUTTER_OHOS_ROOT) { $env:VAR_FLUTTER_OHOS_ROOT } else { $env:FLUTTER_OHOS_ROOT }
+          $sdkRoot = if ($env:VAR_HOS_SDK_HOME) { $env:VAR_HOS_SDK_HOME } else { $env:HOS_SDK_HOME }
+          $javaHome = if ($env:VAR_JAVA_HOME) { $env:VAR_JAVA_HOME } else { $env:JAVA_HOME }
+          $pubCache = if ($env:VAR_OHOS_PUB_CACHE) { $env:VAR_OHOS_PUB_CACHE } else { Join-Path $env:RUNNER_TEMP "pub-cache-ohos" }
+          $required = @{
+            FLUTTER_OHOS_ROOT = $flutterRoot
+            HOS_SDK_HOME = $sdkRoot
+            JAVA_HOME = $javaHome
+          }
+          foreach ($item in $required.GetEnumerator()) {
+            if ([string]::IsNullOrWhiteSpace($item.Value) -or -not (Test-Path -LiteralPath $item.Value)) {
+              throw "Missing runner toolchain path: $($item.Key)."
+            }
+          }
+          "FLUTTER_OHOS_ROOT=$flutterRoot" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "HOS_SDK_HOME=$sdkRoot" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "JAVA_HOME=$javaHome" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "PUB_CACHE=$pubCache" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Restore signing material
+        shell: pwsh
+        env:
+          KEYSTORE_P12: ${{ secrets.OHOS_KEYSTORE_P12_BASE64 }}
+          PROFILE_CERT_PEM: ${{ secrets.OHOS_PROFILE_CERT_PEM_BASE64 }}
+          APP_CERT_CHAIN_PEM: ${{ secrets.OHOS_APP_CERT_CHAIN_PEM_BASE64 }}
+          PROFILE_JSON: ${{ secrets.OHOS_PROFILE_JSON_BASE64 }}
+        run: |
+          $signingDir = Join-Path $env:RUNNER_TEMP "simple-live-ohos-signing"
+          New-Item -ItemType Directory -Force $signingDir | Out-Null
+          $files = @{
+            "OpenHarmony.p12" = $env:KEYSTORE_P12
+            "OpenHarmonyProfileRelease.pem" = $env:PROFILE_CERT_PEM
+            "app-release-chain.pem" = $env:APP_CERT_CHAIN_PEM
+            "profile-release.json" = $env:PROFILE_JSON
+          }
+          foreach ($item in $files.GetEnumerator()) {
+            if ([string]::IsNullOrWhiteSpace($item.Value)) {
+              throw "Missing OHOS signing secret for $($item.Key)."
+            }
+            [IO.File]::WriteAllBytes(
+              (Join-Path $signingDir $item.Key),
+              [Convert]::FromBase64String($item.Value)
+            )
+          }
+          "OHOS_SIGNING_DIR=$signingDir" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Restore packages and check version
+        working-directory: simple_live_app
+        shell: pwsh
+        run: |
+          $flutter = Join-Path $env:FLUTTER_OHOS_ROOT "bin\flutter.bat"
+          $dart = Join-Path $env:FLUTTER_OHOS_ROOT "bin\dart.bat"
+          & $flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed" }
+          & $dart run tool/app_version.dart check
+          if ($LASTEXITCODE -ne 0) { throw "Version check failed" }
+
+      - name: Build signed HAP
+        working-directory: simple_live_app
+        shell: pwsh
+        env:
+          OHOS_KEYSTORE_PASSWORD: ${{ secrets.OHOS_KEYSTORE_PASSWORD }}
+          OHOS_KEY_PASSWORD: ${{ secrets.OHOS_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:OHOS_KEYSTORE_PASSWORD) -or
+              [string]::IsNullOrWhiteSpace($env:OHOS_KEY_PASSWORD)) {
+            throw "Missing OHOS keystore passwords."
+          }
+          & .\tool\build_ohos_hap.ps1 `
+            -FlutterRoot $env:FLUTTER_OHOS_ROOT `
+            -SdkRoot $env:HOS_SDK_HOME `
+            -JavaHome $env:JAVA_HOME `
+            -PubCache $env:PUB_CACHE `
+            -SigningDir $env:OHOS_SIGNING_DIR `
+            -KeystorePassword $env:OHOS_KEYSTORE_PASSWORD `
+            -KeyPassword $env:OHOS_KEY_PASSWORD
+          if ($LASTEXITCODE -ne 0) { throw "HAP build failed" }
+
+      - name: Stage HAP
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "release-ohos"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $source = Join-Path $env:GITHUB_WORKSPACE "simple_live_app\build\ohos\hap\simple_live_app-release-signed.hap"
+          $target = Join-Path $out "simple-live-${{ needs.prepare.outputs.version }}-ohos-arm64-signed.hap"
+          Copy-Item -LiteralPath $source -Destination $target -Force
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
+          "$hash  $([IO.Path]::GetFileName($target))" |
+            Out-File -LiteralPath (Join-Path $out "SHA256SUMS-ohos.txt") -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-ohos
+          path: ${{ runner.temp }}/release-ohos/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove signing material
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:OHOS_SIGNING_DIR -and (Test-Path -LiteralPath $env:OHOS_SIGNING_DIR)) {
+            Remove-Item -LiteralPath $env:OHOS_SIGNING_DIR -Recurse -Force
+          }
+
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, android, android_tv, ios, macos, windows, linux, ohos]
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Verify build jobs
+        shell: bash
+        env:
+          ANDROID_RESULT: ${{ needs.android.result }}
+          ANDROID_TV_RESULT: ${{ needs.android_tv.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          OHOS_RESULT: ${{ needs.ohos.result }}
+          INCLUDE_OHOS: ${{ needs.prepare.outputs.include_ohos }}
+        run: |
+          for pair in \
+            "Android:$ANDROID_RESULT" \
+            "Android TV:$ANDROID_TV_RESULT" \
+            "iOS:$IOS_RESULT" \
+            "macOS:$MACOS_RESULT" \
+            "Windows:$WINDOWS_RESULT" \
+            "Linux:$LINUX_RESULT"; do
+            name="${pair%%:*}"
+            result="${pair#*:}"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::$name build result: $result" >&2
+              exit 1
+            fi
+          done
+          if [[ "$INCLUDE_OHOS" == "true" && "$OHOS_RESULT" != "success" ]]; then
+            echo "::error::HarmonyOS build result: $OHOS_RESULT" >&2
+            exit 1
+          fi
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate combined checksums
+        shell: bash
+        run: |
+          find release-assets -maxdepth 1 -type f ! -name 'SHA256SUMS*' \
+            -print0 | sort -z | xargs -0 sha256sum \
+            > release-assets/SHA256SUMS.txt
+          echo "### Release assets" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          find release-assets -maxdepth 1 -type f -printf '%f\n' \
+            | sort | sed 's/^/- `/' | sed 's/$/`/' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload consolidated artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: simple-live-${{ needs.prepare.outputs.version }}-all-platforms
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish Release
+        if: ${{ needs.prepare.outputs.publish_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Simple Live ${{ needs.prepare.outputs.version }}
+          target_commitish: ${{ needs.prepare.outputs.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          body: |
+            ## 安装包
+
+            - Android：通用/分架构 APK、AAB
+            - Android TV：通用/分架构 APK、AAB
+            - iOS：${{ needs.prepare.outputs.signed_ios == 'true' && 'ad-hoc 已签名 IPA' || '未签名 IPA（需 AltStore / Sideloadly）' }}
+            - macOS：DMG、PKG、ZIP（未公证）
+            - Windows：EXE 安装包、MSIX、便携 ZIP
+            - Linux：AppImage、DEB、RPM、ZIP
+            - HarmonyOS：${{ needs.prepare.outputs.include_ohos == 'true' && '已签名 HAP' || '本次未构建' }}
+
+            版本：`${{ needs.prepare.outputs.full_version }}`
+            提交：`${{ needs.prepare.outputs.sha }}`
+
+            下载后可用 `SHA256SUMS.txt` 校验文件完整性。
+          files: release-assets/*

@@ -1,0 +1,10 @@
+display_name: Simple Live
+icon: assets/logo.png
+keywords:
+  - Simple Live
+  - Live Stream
+generic_name: Live Stream Viewer
+categories:
+  - AudioVideo
+startup_notify: true
+include: []

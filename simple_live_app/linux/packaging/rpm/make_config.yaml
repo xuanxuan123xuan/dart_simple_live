@@ -1,0 +1,17 @@
+display_name: Simple Live
+package_name: simple-live
+summary: A cross-platform live stream viewer
+group: Applications/Multimedia
+vendor: SimpleLive
+packager: SimpleLive
+packager_email: xuanxuan123xuan@users.noreply.github.com
+license: GPL-3.0
+url: https://github.com/xuanxuan123xuan/dart_simple_live
+icon: assets/logo.png
+keywords:
+  - Simple Live
+  - Live Stream
+generic_name: Live Stream Viewer
+categories:
+  - AudioVideo
+startup_notify: true
