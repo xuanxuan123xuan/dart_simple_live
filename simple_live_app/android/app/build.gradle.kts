@@ -119,7 +119,8 @@ android {
         applicationId = "com.simplelive.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // auto_orientation_v2 插件要求 minSdk 24（flutter 默认 21）。
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode()
         versionName = flutter.versionName()
