@@ -173,7 +173,16 @@ class DouyuSite implements LiveSite {
       formUrlEncoded: true,
     );
 
-    return "${result["data"]["rtmp_url"]}/${HtmlUnescape().convert(result["data"]["rtmp_live"].toString())}";
+    var data = result["data"];
+    if (data is! Map) {
+      return "";
+    }
+    var rtmpUrl = data["rtmp_url"]?.toString() ?? "";
+    var rtmpLive = data["rtmp_live"]?.toString() ?? "";
+    if (rtmpUrl.isEmpty || rtmpLive.isEmpty) {
+      return "";
+    }
+    return "$rtmpUrl/${HtmlUnescape().convert(rtmpLive)}";
   }
 
   @override
@@ -225,7 +234,15 @@ class DouyuSite implements LiveSite {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
       },
     );
-    var crptext = json.decode(jsEncResult)["data"]["room$roomId"].toString();
+    var jsDecoded = json.decode(jsEncResult);
+    var encData = jsDecoded is Map ? jsDecoded["data"] : null;
+    var crptext = encData is Map
+        ? (encData["room$roomId"]?.toString() ?? "")
+        : "";
+    // 房间未开播或不存在时 data 中无对应加密数据，返回未开播状态
+    var isLive = crptext.isNotEmpty &&
+        roomInfo["show_status"] == 1 &&
+        roomInfo["videoLoop"] != 1;
 
     return LiveRoomDetail(
       cover: roomInfo["room_pic"].toString(),
@@ -236,9 +253,11 @@ class DouyuSite implements LiveSite {
       userAvatar: roomInfo["owner_avatar"].toString(),
       introduction: roomInfo["show_details"].toString(),
       notice: "",
-      status: roomInfo["show_status"] == 1 && roomInfo["videoLoop"] != 1,
+      status: isLive,
       danmakuData: roomInfo["room_id"].toString(),
-      data: DouyuSign.getSign(crptext, roomInfo["room_id"].toString()),
+      data: crptext.isEmpty
+          ? ""
+          : DouyuSign.getSign(crptext, roomInfo["room_id"].toString()),
       url: "https://www.douyu.com/$roomId",
       isRecord: roomInfo["videoLoop"] == 1,
       showTime: showTime,

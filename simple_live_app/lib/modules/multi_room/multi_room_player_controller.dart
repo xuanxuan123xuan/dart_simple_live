@@ -626,6 +626,8 @@ class MultiRoomPlayerController extends GetxController {
         await player.pause();
       } else if (_playbackDesired && liveStatus.value) {
         await player.play();
+        // 恢复播放激活 audio session，可能中断其他格，通知恢复。
+        onActivateAudio?.call();
       }
     });
   }

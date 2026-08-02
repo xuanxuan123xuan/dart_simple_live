@@ -1061,7 +1061,8 @@ void showQualitesInfo(LiveRoomController controller) {
         }
         var item = controller.qualites[i - 1];
         return ListTile(
-          selected: controller.currentQuality == i - 1,
+          selected: controller.qualityLocked.value &&
+              controller.currentQuality == i - 1,
           title: Text(
             item.quality,
             style: const TextStyle(fontSize: 14),

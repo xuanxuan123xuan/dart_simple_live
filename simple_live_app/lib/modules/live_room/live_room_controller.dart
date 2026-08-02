@@ -487,8 +487,10 @@ class LiveRoomController extends PlayerController
   Duration _lastKnownPlayerPosition = Duration.zero;
   Duration? _positionBeforeBackground;
   bool? _ohosWasPlayingBeforeBackground;
+  bool? _wasPlayingBeforeBackground;
   DateTime? _backgroundedAt;
   Duration? _positionBeforeWindowBlur;
+  bool? _wasPlayingBeforeWindowBlur;
   DateTime? _windowBlurredAt;
   Completer<void>? _playerReopenCompleter;
   bool _roomDisposed = false;
@@ -1734,9 +1736,6 @@ class LiveRoomController extends PlayerController
   void onWSMessage(LiveMessage msg) {
     msg = _sanitizeLiveMessage(msg);
     if (msg.type == LiveMessageType.chat) {
-      if (messages.length > 200 && !disableAutoScroll.value) {
-        messages.removeAt(0);
-      }
       if (_isUserShielded(msg.userName) || isTempMutedUser(msg.userName)) {
         Log.d("已过滤被屏蔽用户: ${msg.userName}");
         return;
@@ -1753,6 +1752,12 @@ class LiveRoomController extends PlayerController
       }
 
       messages.add(msg);
+
+      // 在屏蔽/去重过滤并添加之后按独立上限截断，与是否自动滚动无关，
+      // 保证过滤后列表长度有界，避免 disableAutoScroll 时内存无上限。
+      if (messages.length > 500) {
+        messages.removeRange(0, messages.length - 500);
+      }
 
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => chatScrollToBottom(),
@@ -2309,8 +2314,17 @@ class LiveRoomController extends PlayerController
         return;
       }
       if (site.id == Constant.kHuya) {
+        // 已判定下播或已达重试上限时停止重试，走切房/直播状态确认，
+        // 避免主播下播/断流后无限回退重试。重试计数不清零，保证有界。
+        if (roomLiveState.value != LiveStatusState.live ||
+            mediaErrorRetryCount >= 2) {
+          errorMsg.value = "直播流已中断，正在确认直播状态";
+          await _tryAutoSwitchToNextLiveRoom(reason: "live_end");
+          return;
+        }
+        // 仍判定直播中且未达重试上限：回退到线路 0 并刷新 URL 重试一次。
         currentLineIndex = 0;
-        mediaErrorRetryCount = 0;
+        mediaErrorRetryCount += 1;
         await setPlayer(refreshUrls: true);
         return;
       }
@@ -2345,8 +2359,18 @@ class LiveRoomController extends PlayerController
     if (playUrls.length - 1 == currentLineIndex) {
       _hasActivePlaybackSession = false;
       if (site.id == Constant.kHuya) {
+        // 已判定下播或已达重试上限时停止重试，走切房/播放失败处理，
+        // 避免主播下播/断流后无限回退重试。重试计数不清零，保证有界。
+        if (roomLiveState.value != LiveStatusState.live ||
+            mediaErrorRetryCount >= 2) {
+          errorMsg.value = "播放失败";
+          SmartDialog.showToast("播放失败: $error");
+          await _tryAutoSwitchToNextLiveRoom(reason: "playback_failure");
+          return;
+        }
+        // 仍判定直播中且未达重试上限：回退到线路 0 并刷新 URL 重试一次。
         currentLineIndex = 0;
-        mediaErrorRetryCount = 0;
+        mediaErrorRetryCount += 1;
         await setPlayer(refreshUrls: true);
         return;
       }
@@ -2537,6 +2561,11 @@ class LiveRoomController extends PlayerController
     if (!liveStatus.value) {
       return;
     }
+    // 播放地址未就绪时不复制
+    if (currentQuality < 0 || currentQuality >= qualites.length) {
+      SmartDialog.showToast("播放地址未就绪");
+      return;
+    }
     var playUrl = await site.liveSite
         .getPlayUrls(detail: detail.value!, quality: qualites[currentQuality]);
     if (playUrl.urls.isEmpty) {
@@ -2694,7 +2723,7 @@ class LiveRoomController extends PlayerController
           var item = qualites[i - 1];
           return RadioListTile(
             value: i - 1,
-            groupValue: currentQuality,
+            groupValue: qualityLocked.value ? currentQuality : -2,
             onChanged: (e) {
               Get.back();
               qualityLocked.value = true;
@@ -3718,6 +3747,10 @@ ${errorStackTrace ?? ""}''');
       isBackground = true;
       _backgroundedAt ??= DateTime.now();
       _positionBeforeBackground ??= _lastKnownPlayerPosition;
+      if (!Utils.isOhos) {
+        // 记录后台前的播放状态，供回前台时判断是否真的需要恢复播放。
+        _wasPlayingBeforeBackground ??= player.state.playing;
+      }
       if (Utils.isOhos && _ohosWasPlayingBeforeBackground == null) {
         _ohosWasPlayingBeforeBackground = ohosPlaying.value;
         if (!_allowBackgroundPlayback && !pipPlaybackActiveOrPrepared) {
@@ -3744,15 +3777,18 @@ ${errorStackTrace ?? ""}''');
       var backgroundedAt = _backgroundedAt;
       var positionBeforeBackground = _positionBeforeBackground;
       var ohosWasPlayingBeforeBackground = _ohosWasPlayingBeforeBackground;
+      var wasPlayingBeforeBackground = _wasPlayingBeforeBackground;
       _backgroundedAt = null;
       _positionBeforeBackground = null;
       _ohosWasPlayingBeforeBackground = null;
+      _wasPlayingBeforeBackground = null;
       unawaited(
         _recoverPlaybackAfterForeground(
           "返回前台",
           since: backgroundedAt,
           previousPosition: positionBeforeBackground,
           ohosWasPlaying: ohosWasPlayingBeforeBackground,
+          wasPlaying: wasPlayingBeforeBackground,
         ),
       );
     } else if (state == AppLifecycleState.inactive) {
@@ -3766,6 +3802,7 @@ ${errorStackTrace ?? ""}''');
     required DateTime? since,
     required Duration? previousPosition,
     required bool? ohosWasPlaying,
+    required bool? wasPlaying,
   }) async {
     if (Utils.isOhos) {
       if (ohosWasPlaying != true ||
@@ -3801,6 +3838,7 @@ ${errorStackTrace ?? ""}''');
     }
     if (since == null ||
         previousPosition == null ||
+        wasPlaying != true ||
         !liveStatus.value ||
         currentLineIndex < 0 ||
         playUrls.isEmpty) {
@@ -3829,14 +3867,17 @@ ${errorStackTrace ?? ""}''');
   void onWindowBlur() {
     _windowBlurredAt = DateTime.now();
     _positionBeforeWindowBlur = _lastKnownPlayerPosition;
+    _wasPlayingBeforeWindowBlur = player.state.playing;
   }
 
   @override
   void onWindowFocus() {
     var windowBlurredAt = _windowBlurredAt;
     var positionBeforeWindowBlur = _positionBeforeWindowBlur;
+    var wasPlayingBeforeWindowBlur = _wasPlayingBeforeWindowBlur;
     _windowBlurredAt = null;
     _positionBeforeWindowBlur = null;
+    _wasPlayingBeforeWindowBlur = null;
     _refreshDanmakuOverlay("窗口重新聚焦");
     unawaited(
       _recoverPlaybackAfterForeground(
@@ -3844,6 +3885,7 @@ ${errorStackTrace ?? ""}''');
         since: windowBlurredAt,
         previousPosition: positionBeforeWindowBlur,
         ohosWasPlaying: null,
+        wasPlaying: wasPlayingBeforeWindowBlur,
       ),
     );
   }

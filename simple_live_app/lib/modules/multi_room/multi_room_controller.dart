@@ -193,14 +193,18 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     _normalizeLayoutAfterRoomChange();
     _resetAutoHideTimer();
     _setupMemoryMonitor();
-    _adaptiveQualityTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => unawaited(_evaluateAdaptiveQuality()),
-    );
+    _startAdaptiveQualityTimer();
     _displayLease = PlaybackDisplayCoordinator.instance.acquire(
       debugLabel: 'multi-room',
       keepScreenAwake: true,
       immersiveSystemUi: true,
+    );
+  }
+
+  void _startAdaptiveQualityTimer() {
+    _adaptiveQualityTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => unawaited(_evaluateAdaptiveQuality()),
     );
   }
 
@@ -466,6 +470,8 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
       SmartDialog.showToast("转到单直播间失败，请重试");
       openingSingleRoom.value = false;
       _suppressPlayerOpenedResume = false;
+      // cancel 在 try 之前无条件执行，这里必须无条件重建自适应画质 timer。
+      _startAdaptiveQualityTimer();
     }
   }
 

@@ -1694,6 +1694,7 @@ class PlayerController extends BaseController
   DateTime? _lastBufferingTime;
   bool _autoDiagnoseRunning = false;
   Timer? _networkHintTimer;
+  DateTime? _lastAutoDiagnoseAt;
 
   void initStream() {
     _errorSubscription = player.stream.error.listen((event) {
@@ -1782,6 +1783,13 @@ class PlayerController extends BaseController
       _lastBufferingTime = now;
       _bufferingCount += 1;
       if (_bufferingCount >= 2 && networkHint.value.isEmpty) {
+        // 两次诊断之间至少间隔 30 秒，避免持续缓冲时反复触发网络诊断。
+        if (_lastAutoDiagnoseAt != null &&
+            now.difference(_lastAutoDiagnoseAt!) <
+                const Duration(seconds: 30)) {
+          return;
+        }
+        _lastAutoDiagnoseAt = now;
         unawaited(_runAutoNetworkDiagnose());
       }
     });
