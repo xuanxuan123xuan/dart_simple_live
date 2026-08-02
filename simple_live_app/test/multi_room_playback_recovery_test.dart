@@ -81,6 +81,36 @@ void main() {
       expect(requests, 3);
     });
 
+    test('requests play even when stale native state reports playing',
+        () async {
+      const coordinator = MultiRoomPlaybackRecoveryCoordinator(
+        maxAttempts: 1,
+        confirmTimeout: Duration.zero,
+        retryDelay: Duration.zero,
+      );
+      var requests = 0;
+
+      final recovered = await coordinator.recover(
+        targets: [
+          MultiRoomPlaybackRecoveryTarget(
+            roomKey: 'stale',
+            shouldPlay: () => true,
+            // 模拟 iOS 被抢占后滞后的 state：误报在播，但业务意图仍要恢复。
+            isPlaying: () => true,
+            requestPlay: () async {
+              requests += 1;
+            },
+            waitUntilPlaying: (_) async => false,
+          ),
+        ],
+        isCancelled: () => false,
+      );
+
+      // 旧逻辑会因 isPlaying()==true 跳过 requestPlay（requests==0）。
+      expect(requests, 1);
+      expect(recovered, isTrue);
+    });
+
     test('never resumes a player after the user pauses it', () async {
       const coordinator = MultiRoomPlaybackRecoveryCoordinator(
         maxAttempts: 3,

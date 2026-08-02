@@ -40,7 +40,10 @@ class MultiRoomPlaybackRecoveryCoordinator {
 
       for (final target in targets) {
         if (isCancelled()) return false;
-        if (!target.shouldPlay() || target.isPlaying()) continue;
+        // 不因 isPlaying() 跳过：iOS 上被抢占的格 state 可能滞后为 true，
+        // 依赖它判断会漏掉真正需要恢复的格。requestPlay 按业务意图幂等
+        // 发起（play 已播状态为 no-op），isPlaying 仅用于确认与重试。
+        if (!target.shouldPlay()) continue;
 
         try {
           await target.requestPlay();

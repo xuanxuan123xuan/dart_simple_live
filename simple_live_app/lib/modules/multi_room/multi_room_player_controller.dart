@@ -564,15 +564,15 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   /// iOS 上其他 Player.open() 可能抢占共享音频会话。这里依据业务意图恢复，
-  /// 不读取可能尚未刷新的 player.state.playing。
+  /// 不读取可能尚未刷新的 player.state.playing——被抢占的格 state 可能短暂
+  /// 滞后为 true，依赖它判断会漏恢复，导致"只有一个在播放"。
+  /// play() 在已播状态是幂等的，直接按业务意图发起。
   Future<void> ensurePlaying() {
     return _enqueue(() async {
       if (_disposed || paused.value || !_playbackDesired || !liveStatus.value) {
         return;
       }
-      if (!player.state.playing) {
-        await player.play();
-      }
+      await player.play();
     });
   }
 
