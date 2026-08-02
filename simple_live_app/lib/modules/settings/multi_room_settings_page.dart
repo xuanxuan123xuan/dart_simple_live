@@ -69,7 +69,7 @@ class MultiRoomSettingsPage extends GetView<AppSettingsController> {
                 Obx(
                   () => SettingsSwitch(
                     title: "自动调节多开画质",
-                    subtitle: "根据缓冲、内存和设备解码负载优先保障主画面",
+                    subtitle: "主次布局下根据缓冲、内存和设备负载优先保障主画面；普通布局不自动降级",
                     value: controller.multiRoomAdaptiveQuality.value,
                     onChanged: controller.setMultiRoomAdaptiveQuality,
                   ),

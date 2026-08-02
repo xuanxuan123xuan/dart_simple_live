@@ -482,7 +482,10 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         _adaptiveEvaluationRunning ||
         isRefreshingAll.value ||
         openingSingleRoom.value ||
-        !AppSettingsController.instance.multiRoomAdaptiveQuality.value) {
+        !AppSettingsController.instance.multiRoomAdaptiveQuality.value ||
+        // 自动调节只在主次布局（有主画面保护概念）下生效；
+        // 普通布局所有格子等大，不自动降级，避免干扰用户观看。
+        !isMainSubLayoutActive) {
       return;
     }
     _adaptiveEvaluationRunning = true;
