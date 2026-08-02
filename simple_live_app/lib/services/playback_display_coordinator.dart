@@ -77,16 +77,21 @@ class PlaybackDisplayCoordinator extends GetxService
     PlaybackDisplayGateway? gateway,
     PlaybackDisplayFrameScheduler? scheduleAfterFrame,
     PlaybackDisplayDelay? delay,
+    Duration metricsDebounceDuration = const Duration(milliseconds: 350),
   })  : _gateway = gateway ?? FlutterPlaybackDisplayGateway(),
         _scheduleAfterFrame = scheduleAfterFrame ?? _defaultScheduleAfterFrame,
-        _delay = delay ?? Future<void>.delayed;
+        _delay = delay ?? Future<void>.delayed,
+        _metricsDebounceDuration = metricsDebounceDuration;
 
   static PlaybackDisplayCoordinator get instance => Get.find();
 
   final PlaybackDisplayGateway _gateway;
   final PlaybackDisplayFrameScheduler _scheduleAfterFrame;
   final PlaybackDisplayDelay _delay;
+  final Duration _metricsDebounceDuration;
   final Map<int, _PlaybackDisplayLeaseState> _leases = {};
+
+  Timer? _metricsDebounce;
 
   bool _initialized = false;
   bool _appActive = true;
@@ -175,6 +180,24 @@ class PlaybackDisplayCoordinator extends GetxService
     if (_leases.remove(id) != null) {
       _invalidate();
     }
+  }
+
+  @override
+  void didChangeMetrics() {
+    // iPad 旋转/尺寸变化（含台前调度窗口调整）完成后，UIKit 会重新评估
+    // 状态栏外观，把 immersive 隐藏覆盖掉。合并短时间内的连续变化，
+    // 延迟后强制重新应用，覆盖"旋转动画结束、viewport 更新"的时刻。
+    if (!_appActive || !_gateway.requiresImmersiveRecheck || !_desiredImmersive) {
+      return;
+    }
+    _metricsDebounce?.cancel();
+    _metricsDebounce = Timer(_metricsDebounceDuration, () {
+      if (_appActive && _desiredImmersive) {
+        // 强制重应用：置 null 使 drain 重新执行平台调用。
+        _appliedImmersive = null;
+        _invalidate();
+      }
+    });
   }
 
   @override
@@ -300,6 +323,8 @@ class PlaybackDisplayCoordinator extends GetxService
 
   @override
   void onClose() {
+    _metricsDebounce?.cancel();
+    _metricsDebounce = null;
     if (_initialized) {
       WidgetsBinding.instance.removeObserver(this);
       _initialized = false;

@@ -136,6 +136,30 @@ void main() {
     await coordinator.settle();
     coordinator.onClose();
   });
+
+  test('reapplies immersive after metrics change (iPad rotation)', () async {
+    final gateway = _FakePlaybackDisplayGateway(requiresRecheck: true);
+    final coordinator = PlaybackDisplayCoordinator(
+      gateway: gateway,
+      metricsDebounceDuration: const Duration(milliseconds: 20),
+    );
+    await coordinator.initialize();
+    final lease = coordinator.acquire(immersiveSystemUi: true);
+    await coordinator.settle();
+    gateway.clear();
+
+    // 旋转/尺寸变化后 UIKit 可能重置状态栏外观，应强制重新应用。
+    // （首次为强制重应用，随后是 drain 内 requiresImmersiveRecheck 的
+    //  120ms 二次重检，均为幂等的 true。）
+    coordinator.didChangeMetrics();
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await coordinator.settle();
+    expect(gateway.immersiveCalls, [true, true]);
+
+    lease.dispose();
+    await coordinator.settle();
+    coordinator.onClose();
+  });
 }
 
 class _FakePlaybackDisplayGateway implements PlaybackDisplayGateway {
