@@ -10,7 +10,7 @@ const DOMAIN = 0x1208;
 const PREFS_NAME = 'simple_live_widget';
 const SNAPSHOT_KEY = 'follow_snapshot';
 const LAST_NOTIFIED_KEY = 'last_notified_ids';
-const BUNDLE_NAME = 'com.xycz.simple_live_app';
+const BUNDLE_NAME = 'com.simplelive.app';
 const ABILITY_NAME = 'EntryAbility';
 
 interface FollowItem {

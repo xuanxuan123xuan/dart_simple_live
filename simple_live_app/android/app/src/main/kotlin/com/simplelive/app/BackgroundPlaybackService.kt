@@ -1,4 +1,4 @@
-package com.xycz.simple_live
+package com.simplelive.app
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

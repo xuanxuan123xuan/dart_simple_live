@@ -509,7 +509,7 @@ Future initServices() async {
   Utils.packageInfo = Utils.isOhos
       ? PackageInfo(
           appName: 'Simple Live',
-          packageName: 'com.xycz.simple_live_app',
+          packageName: 'com.simplelive.app',
           version: GeneratedAppVersion.versionName,
           buildNumber: GeneratedAppVersion.buildNumber,
         )

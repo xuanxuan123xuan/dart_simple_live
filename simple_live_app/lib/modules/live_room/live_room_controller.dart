@@ -2865,7 +2865,7 @@ class LiveRoomController extends PlayerController
       Utils.showRightDialog(
         title: "观看历史",
         width: 420,
-        useSystem: true,
+        useSystem: false,
         child: buildHistorySelection(
           onClose: Utils.hideRightDialog,
           scrollController: liveRoomHistoryScrollController,
@@ -2890,7 +2890,7 @@ class LiveRoomController extends PlayerController
       Utils.showRightDialog(
         title: "同类推荐",
         width: 420,
-        useSystem: true,
+        useSystem: false,
         child: buildCategoryRecommendationSelection(
           onClose: Utils.hideRightDialog,
           scrollController: liveRoomRecommendationScrollController,
@@ -3091,7 +3091,7 @@ class LiveRoomController extends PlayerController
     Utils.showRightDialog(
       title: "添加直播间",
       width: 420,
-      useSystem: true,
+      useSystem: false,
       child: DefaultTabController(
         length: 2,
         child: Column(

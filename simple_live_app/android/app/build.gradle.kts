@@ -98,7 +98,7 @@ tasks.named("preBuild") {
 }
 
 android {
-    namespace = "com.xycz.simple_live"
+    namespace = "com.simplelive.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -115,7 +115,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.xycz.simple_live"
+        applicationId = "com.simplelive.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

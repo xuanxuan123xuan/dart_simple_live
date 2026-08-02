@@ -97,7 +97,7 @@ tasks.named("preBuild") {
 }
 
 android {
-    namespace = "com.xycz.simple_live_tv"
+    namespace = "com.simplelive.tv"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -118,7 +118,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.xycz.simple_live_tv"
+        applicationId = "com.simplelive.tv"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

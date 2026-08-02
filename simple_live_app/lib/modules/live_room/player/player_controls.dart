@@ -990,7 +990,7 @@ void showLinesInfo(LiveRoomController controller) {
   }
   Utils.showRightDialog(
     title: "线路选择",
-    useSystem: true,
+    useSystem: false,
     child: ListView.builder(
       padding: EdgeInsets.zero,
       itemCount: controller.playUrls.length,
@@ -1042,7 +1042,7 @@ void showQualitesInfo(LiveRoomController controller) {
   }
   Utils.showRightDialog(
     title: "清晰度",
-    useSystem: true,
+    useSystem: false,
     child: ListView.builder(
       padding: EdgeInsets.zero,
       itemCount: controller.qualites.length,
@@ -1074,7 +1074,7 @@ void showDanmakuSettings(LiveRoomController controller) {
   Utils.showRightDialog(
     title: "弹幕设置",
     width: 400,
-    useSystem: true,
+    useSystem: false,
     child: ListView(
       padding: AppStyle.edgeInsetsA12,
       children: [
@@ -1096,7 +1096,7 @@ void showPlayerSettings(LiveRoomController controller) {
   Utils.showRightDialog(
     title: "设置",
     width: 320,
-    useSystem: true,
+    useSystem: false,
     child: Obx(
       () => ListView(
         padding: AppStyle.edgeInsetsV12,
@@ -1199,7 +1199,7 @@ void showQuickAccess(LiveRoomController controller) {
   Utils.showRightDialog(
     title: "快捷入口",
     width: 320,
-    useSystem: true,
+    useSystem: false,
     child: ListView(
       padding: AppStyle.edgeInsetsV12,
       children:
@@ -1253,7 +1253,7 @@ void showFollowUser(LiveRoomController controller) {
   Utils.showRightDialog(
     title: "关注列表",
     width: 400,
-    useSystem: true,
+    useSystem: false,
     child: controller.buildFollowUserSelection(
       onClose: Utils.hideRightDialog,
       scrollController: controller.liveRoomFollowDialogScrollController,

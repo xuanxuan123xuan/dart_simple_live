@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "com.xycz.simple_live_app",
+    "bundleName": "com.simplelive.app",
     "vendor": "example",
     "versionCode": 11300,
     "versionName": "1.13.0",

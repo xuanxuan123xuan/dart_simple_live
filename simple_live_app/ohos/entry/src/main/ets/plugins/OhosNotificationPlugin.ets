@@ -10,7 +10,7 @@ import { WantAgent, wantAgent } from '@kit.AbilityKit';
 import { notificationManager } from '@kit.NotificationKit';
 
 const CHANNEL_NAME = 'simple_live/live_notifications';
-const BUNDLE_NAME = 'com.xycz.simple_live_app';
+const BUNDLE_NAME = 'com.simplelive.app';
 const ABILITY_NAME = 'EntryAbility';
 
 export interface LiveNotificationTarget {
