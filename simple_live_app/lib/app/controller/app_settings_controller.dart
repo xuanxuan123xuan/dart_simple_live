@@ -409,6 +409,10 @@ class AppSettingsController extends GetxController {
       LocalStorageService.kMultiRoomAdaptiveQuality,
       true,
     );
+    fullScreenForceLandscape.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kFullScreenForceLandscape,
+      true,
+    );
 
     initSiteSort();
     initHomeSort();
@@ -2120,6 +2124,17 @@ class AppSettingsController extends GetxController {
     multiRoomAdaptiveQuality.value = value;
     LocalStorageService.instance.setValue(
       LocalStorageService.kMultiRoomAdaptiveQuality,
+      value,
+    );
+  }
+
+  /// 全屏播放是否自动横屏（iPad 竖屏状态栏由系统强制显示，
+  /// 只有横屏才能可靠隐藏；关闭则保持当前方向）。
+  var fullScreenForceLandscape = true.obs;
+  void setFullScreenForceLandscape(bool value) {
+    fullScreenForceLandscape.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kFullScreenForceLandscape,
       value,
     );
   }

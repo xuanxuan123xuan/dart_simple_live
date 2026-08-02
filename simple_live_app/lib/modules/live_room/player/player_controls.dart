@@ -1190,6 +1190,17 @@ void showPlayerSettings(LiveRoomController controller) {
             contentPadding: AppStyle.edgeInsetsH16,
             secondary: const Icon(Icons.speed),
           ),
+          SwitchListTile(
+            value: AppSettingsController
+                .instance.fullScreenForceLandscape.value,
+            onChanged: (e) {
+              AppSettingsController.instance.setFullScreenForceLandscape(e);
+            },
+            title: const Text("全屏自动横屏"),
+            subtitle: const Text("竖屏进全屏时自动转横屏，状态栏才能隐藏；关闭则保持当前方向"),
+            contentPadding: AppStyle.edgeInsetsH16,
+            secondary: const Icon(Icons.screen_rotation),
+          ),
         ],
       ),
     ),

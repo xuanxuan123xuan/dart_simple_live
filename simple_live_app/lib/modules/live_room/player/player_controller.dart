@@ -610,7 +610,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       ohosFullscreenTransition.value = false;
     } else if (Platform.isAndroid || Platform.isIOS) {
       fullScreenState.value = true;
-      if (!isVertical.value) {
+      // 开关开启（默认）时全屏总是横屏：iPad 竖屏系统强制显示状态栏，
+      // 只有横屏才能可靠隐藏。关闭则保持当前方向（竖屏全屏状态栏隐藏不了）。
+      if (!isVertical.value ||
+          AppSettingsController.instance.fullScreenForceLandscape.value) {
         //横屏
         await setLandscapeOrientation();
       }
