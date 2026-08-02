@@ -244,7 +244,9 @@ jobs:
             mv "$RUNNER_TEMP/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           fi
-          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264" "cmake;3.22.1"
+          # NDK/CMake 由 runner 镜像预装 + AGP 按需自动下载，无需 sdkmanager 显式安装
+          # （显式装 NDK 触发 ~1GB 下载，CI 上易超时失败）。只补 platforms/build-tools。
+          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Restore packages
         working-directory: simple_live_app
@@ -350,7 +352,9 @@ jobs:
             mv "$RUNNER_TEMP/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           fi
-          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264" "cmake;3.22.1"
+          # NDK/CMake 由 runner 镜像预装 + AGP 按需自动下载，无需 sdkmanager 显式安装
+          # （显式装 NDK 触发 ~1GB 下载，CI 上易超时失败）。只补 platforms/build-tools。
+          yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Restore TV packages
         working-directory: simple_live_tv_app
