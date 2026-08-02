@@ -18,7 +18,7 @@ import java.util.Objects;
 
 import io.flutter.view.TextureRegistry;
 
-public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
+public class VideoOutput {
     private static final String TAG = "VideoOutput";
     private static final Method newGlobalObjectRef;
     private static final Method deleteGlobalObjectRef;
@@ -53,7 +53,8 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
         this.textureUpdateCallback = textureUpdateCallback;
 
         surfaceProducer = textureRegistryReference.createSurfaceProducer();
-        surfaceProducer.setCallback(this);
+        // Flutter 3.22 的 TextureRegistry.SurfaceProducer 没有 Callback/setCallback
+        // （3.24+ 才有），surface 创建/销毁由本类手动管理（setSurfaceSize/dispose）。
 
         // By default, android.graphics.SurfaceTexture has a size of 1x1.
         setSurfaceSize(1, 1, true);
@@ -93,7 +94,6 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
         }
     }
 
-    @Override
     public void onSurfaceCreated() {
         synchronized (lock) {
             Log.i(TAG, "onSurfaceCreated");
@@ -103,7 +103,6 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
         }
     }
 
-    @Override
     public void onSurfaceDestroyed() {
         synchronized (lock) {
             Log.i(TAG, "onSurfaceDestroyed");
