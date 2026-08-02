@@ -20,7 +20,7 @@ void main(List<String> arguments) {
     if (command == 'set') {
       if (arguments.length != 2) {
         throw const FormatException(
-          'Usage: dart run tool/app_version.dart set major.minor.patch',
+          'Usage: dart run tool/app_version.dart set major.minor[.patch]',
         );
       }
       final version = _parseVersionName(arguments[1]);
@@ -46,7 +46,7 @@ void main(List<String> arguments) {
       default:
         throw const FormatException(
           'Usage: dart run tool/app_version.dart '
-          '<set major.minor.patch|sync|check|'
+          '<set major.minor[.patch]|sync|check|'
           'print [name|build-number|full]>',
         );
     }
@@ -60,16 +60,19 @@ void main(List<String> arguments) {
 }
 
 AppVersion _parseVersionName(String value) {
-  final match = RegExp(r'^([0-9]+)\.([0-9]+)\.([0-9]+)$').firstMatch(value);
+  final match = RegExp(
+    r'^[vV]?([0-9]+)\.([0-9]+)(?:\.([0-9]+))?$',
+  ).firstMatch(value.trim());
   if (match == null) {
     throw const FormatException(
-      'Version must use major.minor.patch, for example 1.13.1.',
+      'Version must use major.minor or major.minor.patch, '
+      'for example 1.13 or 1.13.1.',
     );
   }
   return _versionFromComponents(
     int.parse(match.group(1)!),
     int.parse(match.group(2)!),
-    int.parse(match.group(3)!),
+    int.parse(match.group(3) ?? '0'),
   );
 }
 

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "可选新版本号（如 1.13.1）；留空则使用 pubspec 当前版本"
+        description: "可选新版本号（如 1.13 或 1.13.1）；留空则使用 pubspec 当前版本"
         required: false
         type: string
       publish_release:
@@ -555,7 +555,10 @@ jobs:
   windows:
     name: Windows EXE, MSIX and ZIP
     needs: prepare
-    runs-on: windows-latest
+    # Flutter 3.22 only recognizes Visual Studio major versions 16 and 17.
+    # windows-latest now carries VS 2026 (major 18), which Flutter 3.22
+    # incorrectly falls back to the VS 2019 CMake generator for.
+    runs-on: windows-2022
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4

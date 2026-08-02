@@ -123,8 +123,8 @@ major × 10000 + minor × 100 + patch
 修改版本后在 `simple_live_app` 目录执行：
 
 ```bash
-# 直接设置版本并同步所有派生文件
-dart run tool/app_version.dart set 1.13.1
+# 直接设置版本并同步所有派生文件；1.13 会自动规范为 1.13.0
+dart run tool/app_version.dart set 1.13
 
 # 或在手动修改 pubspec 后同步
 dart run tool/app_version.dart sync
@@ -150,7 +150,7 @@ GitHub Actions 提供以下构建流程：
 
 在 Actions 中运行 `Build all platforms and publish Release`：
 
-- `version` 留空时构建 `pubspec.yaml` 当前版本；填写 `1.13.1` 之类的新版本时，workflow 会先更新并提交版本文件。
+- `version` 留空时构建 `pubspec.yaml` 当前版本；填写 `1.13` 或 `1.13.1` 之类的新版本时，workflow 会先规范版本号、更新并提交版本文件。
 - 直接向发布分支推送 `simple_live_app/pubspec.yaml` 的版本修改，也会自动触发全平台 Release。
 - 默认并行构建 Android 与 Android TV APK/AAB、iOS IPA、macOS DMG/PKG/ZIP、Windows EXE/MSIX/ZIP、Linux AppImage/DEB/RPM/ZIP，以及已签名鸿蒙 HAP。
 - 没有可用的鸿蒙自建 runner 时，手动运行前取消 `include_ohos`，其余平台仍可正常发布。
