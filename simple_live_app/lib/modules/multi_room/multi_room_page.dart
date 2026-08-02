@@ -217,7 +217,8 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                                 : Colors.white38,
                           ),
                         ),
-                        if (controller.canToggleMainSubLayout)
+                        if (controller.canToggleMainSubLayout &&
+                            controller.focusedRoomKey.value == null)
                           IconButton(
                             tooltip: controller.mainSubLayout.value
                                 ? "切换为均分布局"
