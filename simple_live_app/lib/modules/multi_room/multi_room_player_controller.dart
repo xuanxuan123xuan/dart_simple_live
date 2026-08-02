@@ -215,6 +215,17 @@ class MultiRoomPlayerController extends GetxController {
 
   bool get playbackDesired => _playbackDesired && !paused.value;
 
+  bool get shouldRecoverPlayback =>
+      !_disposed &&
+      !_playerDisposed &&
+      !_routeTransitionClosed &&
+      !paused.value &&
+      _playbackDesired &&
+      liveStatus.value;
+
+  bool get isActuallyPlaying =>
+      !_disposed && !_playerDisposed && player.state.playing;
+
   /// 当前线路列表。
   List<String> get playUrls => _playUrls;
 
@@ -559,8 +570,47 @@ class MultiRoomPlayerController extends GetxController {
       if (_disposed || paused.value || !_playbackDesired || !liveStatus.value) {
         return;
       }
-      await player.play();
+      if (!player.state.playing) {
+        await player.play();
+      }
     });
+  }
+
+  /// Waits for the native player to report a real playing state.
+  ///
+  /// The business-level [paused] flag remains authoritative: a user pause
+  /// cancels this confirmation instead of being overwritten by recovery.
+  Future<bool> waitUntilActuallyPlaying(Duration timeout) async {
+    if (!shouldRecoverPlayback) return true;
+    if (isActuallyPlaying) return true;
+
+    StreamSubscription<bool>? subscription;
+    final completer = Completer<bool>();
+    try {
+      subscription = player.stream.playing.listen(
+        (playing) {
+          if (playing && !completer.isCompleted) {
+            completer.complete(true);
+          } else if (!shouldRecoverPlayback && !completer.isCompleted) {
+            completer.complete(false);
+          }
+        },
+        onError: (Object _, StackTrace __) {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+      );
+      if (isActuallyPlaying && !completer.isCompleted) {
+        completer.complete(true);
+      }
+      return await completer.future.timeout(
+        timeout,
+        onTimeout: () => isActuallyPlaying,
+      );
+    } catch (_) {
+      return isActuallyPlaying;
+    } finally {
+      await subscription?.cancel();
+    }
   }
 
   /// Applies the user's explicit playback intent. Reopens and lifecycle

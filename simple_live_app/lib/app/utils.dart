@@ -18,6 +18,9 @@ typedef TextValidate = bool Function(String text);
 
 class Utils {
   static int _rightDialogRequest = 0;
+  static Route<void>? _rightDialogRoute;
+  static NavigatorState? _rightDialogNavigator;
+  static Future<void>? _rightDialogFuture;
   static bool get isOhos => Platform.operatingSystem == 'ohos';
 
   static late PackageInfo packageInfo;
@@ -120,87 +123,96 @@ class Utils {
     bool useSystem = false,
     bool clickMaskDismiss = true,
   }) {
+    // `useSystem` is kept for source compatibility with existing callers.
+    // Right-side panels are always Navigator routes now, so they cannot leak
+    // through SmartDialog's process-wide custom-dialog queue.
     final request = ++_rightDialogRequest;
-    // 等当前点击手势和外层播放器的 rebuild 完成后再创建遮罩，
-    // 既避免新弹窗被同一次手势误关，又保留点击弹窗外关闭。
+    // 等当前点击手势和外层播放器的 rebuild 完成后再创建路由，
+    // 避免新弹窗的 barrier 接收到触发按钮的同一次点击。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (request != _rightDialogRequest) return;
-      SmartDialog.show(
-        alignment: Alignment.topRight,
-        clickMaskDismiss: clickMaskDismiss,
-        animationBuilder: (controller, child, animationParam) {
-          //从右到左
-          return SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(1, 0),
-              end: Offset.zero,
-            ).animate(controller.view),
-            child: child,
-          );
-        },
-        useSystem: useSystem,
-        maskColor: Colors.transparent,
-        animationTime: const Duration(milliseconds: 200),
-        builder: (context) => Container(
-          width: width + MediaQuery.of(context).padding.right,
-          padding: EdgeInsets.only(right: MediaQuery.of(context).padding.right),
-          decoration: BoxDecoration(
-            color: Get.theme.cardColor,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(4),
-              bottomLeft: Radius.circular(4),
-            ),
-          ),
-          child: SafeArea(
-            left: false,
-            right: false,
-            child: MediaQuery(
-              data: const MediaQueryData(padding: EdgeInsets.zero),
-              child: Column(
-                children: [
-                  ListTile(
-                    visualDensity: VisualDensity.compact,
-                    contentPadding: EdgeInsets.zero,
-                    leading: IconButton(
-                      onPressed: () {
-                        SmartDialog.dismiss(status: SmartStatus.allCustom).then(
-                          (value) => onDismiss?.call(),
-                        );
-                      },
-                      icon: const Icon(Icons.arrow_back),
-                    ),
-                    title: Text(
-                      title,
-                      style: Get.textTheme.titleMedium,
-                    ),
-                  ),
-                  Divider(
-                    height: 1,
-                    color: Colors.grey.withAlpha(25),
-                  ),
-                  Expanded(
-                    child: child,
-                  ),
-                ],
-              ),
-            ),
-          ),
+      unawaited(
+        _openRightDialog(
+          request: request,
+          title: title,
+          onDismiss: onDismiss,
+          child: child,
+          width: width,
+          clickMaskDismiss: clickMaskDismiss,
         ),
       );
     });
     WidgetsBinding.instance.scheduleFrame();
   }
 
+  static Future<void> _openRightDialog({
+    required int request,
+    required String title,
+    required Function()? onDismiss,
+    required Widget child,
+    required double width,
+    required bool clickMaskDismiss,
+  }) async {
+    await _dismissRightDialog();
+    if (request != _rightDialogRequest) return;
+
+    final context = Get.overlayContext ?? Get.context;
+    if (context == null || !context.mounted) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = _RightSideDialogRoute(
+      title: title,
+      width: width,
+      clickOutsideDismiss: clickMaskDismiss,
+      onHeaderBack: () async {
+        await _dismissRightDialog();
+        onDismiss?.call();
+      },
+      onCovered: _dismissRightDialog,
+      child: child,
+    );
+    _rightDialogRoute = route;
+    _rightDialogNavigator = navigator;
+    final routeFuture = navigator.push<void>(route);
+    _rightDialogFuture = routeFuture;
+    unawaited(
+      routeFuture.whenComplete(() {
+        if (identical(_rightDialogRoute, route)) {
+          _rightDialogRoute = null;
+          _rightDialogNavigator = null;
+          _rightDialogFuture = null;
+        }
+      }),
+    );
+  }
+
+  static Future<void> _dismissRightDialog() async {
+    final route = _rightDialogRoute;
+    final navigator = _rightDialogNavigator;
+    final routeFuture = _rightDialogFuture;
+    _rightDialogRoute = null;
+    _rightDialogNavigator = null;
+    _rightDialogFuture = null;
+    if (route == null || navigator == null) return;
+    if (route.isCurrent) {
+      navigator.pop<void>();
+    } else if (route.isActive) {
+      navigator.removeRoute(route);
+    }
+    if (routeFuture != null) {
+      await routeFuture;
+    }
+  }
+
   static void hideRightDialog() {
     _rightDialogRequest += 1;
-    SmartDialog.dismiss(status: SmartStatus.allCustom);
+    unawaited(_dismissRightDialog());
   }
 
   static Future<void> switchRightDialog(
     FutureOr<void> Function() openNext,
   ) async {
     _rightDialogRequest += 1;
-    await SmartDialog.dismiss(status: SmartStatus.allCustom);
+    await _dismissRightDialog();
     await Future.delayed(const Duration(milliseconds: 220));
     await openNext();
   }
@@ -552,5 +564,135 @@ class Utils {
       return "${(size / 1024 / 1024).toStringAsFixed(2)} MB";
     }
     return "${(size / 1024 / 1024 / 1024).toStringAsFixed(2)} GB";
+  }
+}
+
+/// A route-local right-side panel.
+///
+/// Keeping this panel in the Navigator avoids adding it to SmartDialog's
+/// process-wide custom-dialog queue. Toasts and loading indicators can still
+/// use SmartDialog, while a player panel is removed by normal route lifecycle.
+class _RightSideDialogRoute extends PopupRoute<void> {
+  _RightSideDialogRoute({
+    required this.title,
+    required this.width,
+    required this.clickOutsideDismiss,
+    required this.onHeaderBack,
+    required this.onCovered,
+    required this.child,
+  });
+
+  final String title;
+  final double width;
+  final bool clickOutsideDismiss;
+  final Future<void> Function() onHeaderBack;
+  final Future<void> Function() onCovered;
+  final Widget child;
+
+  @override
+  void didChangeNext(Route<dynamic>? nextRoute) {
+    super.didChangeNext(nextRoute);
+    if (nextRoute == null) return;
+    // A PopupRoute normally remains below a newly pushed page and reappears
+    // when that page is popped. Remove this transient panel after the push
+    // settles so it cannot contaminate the destination or reappear on return.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (isActive && !isCurrent) {
+        unawaited(onCovered());
+      }
+    });
+  }
+
+  @override
+  Color? get barrierColor => Colors.transparent;
+
+  @override
+  bool get barrierDismissible => clickOutsideDismiss;
+
+  @override
+  String? get barrierLabel => "关闭侧边弹窗";
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 200);
+
+  @override
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 200);
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    final mediaQuery = MediaQuery.of(context);
+    final panelWidth = (width + mediaQuery.padding.right)
+        .clamp(0.0, mediaQuery.size.width)
+        .toDouble();
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SizedBox(
+        width: panelWidth,
+        height: mediaQuery.size.height,
+        child: Material(
+          color: Theme.of(context).cardColor,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(4),
+              bottomLeft: Radius.circular(4),
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: EdgeInsets.only(right: mediaQuery.padding.right),
+            child: SafeArea(
+              left: false,
+              right: false,
+              child: Column(
+                children: [
+                  ListTile(
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: EdgeInsets.zero,
+                    leading: IconButton(
+                      onPressed: () => unawaited(onHeaderBack()),
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                    title: Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  Divider(
+                    height: 1,
+                    color: Colors.grey.withAlpha(25),
+                  ),
+                  Expanded(child: child),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(1, 0),
+        end: Offset.zero,
+      ).animate(curved),
+      child: child,
+    );
   }
 }

@@ -81,7 +81,9 @@ dependencies:
   # 网络相关
   shelf: 1.4.1 # Flutter 3.22 collection pin
   shelf_router: ^1.1.4
-  network_info_plus: ^7.0.0
+  # 7.x requires AGP 8.12.1/Gradle 8.13 and is incompatible with the
+  # Flutter 3.22 toolchain retained for HarmonyOS compatibility.
+  network_info_plus: 6.1.4
   web_socket_channel: ^3.0.1 #远程同步WebSocket
 
   # 视频播放

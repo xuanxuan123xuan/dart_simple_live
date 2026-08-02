@@ -11,10 +11,29 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_controller.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_tile_gesture_surface.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
+
+final Expando<Map<String, GlobalKey<_MultiRoomTileState>>>
+    _tileKeysByController =
+    Expando<Map<String, GlobalKey<_MultiRoomTileState>>>();
+
+GlobalKey<_MultiRoomTileState> _tileKeyFor(
+  MultiRoomController controller,
+  String roomKey,
+) {
+  final keys = _tileKeysByController[controller] ??=
+      <String, GlobalKey<_MultiRoomTileState>>{};
+  return keys.putIfAbsent(
+    roomKey,
+    () => GlobalKey<_MultiRoomTileState>(
+      debugLabel: 'multi-room-tile-$roomKey',
+    ),
+  );
+}
 
 class MultiRoomPage extends GetView<MultiRoomController> {
   const MultiRoomPage({super.key});
@@ -297,9 +316,11 @@ class MultiRoomPage extends GetView<MultiRoomController> {
       return const SizedBox.shrink();
     }
     final room = rooms[index];
+    final playerController = controller.playerFor(room);
     final tile = _MultiRoomTile(
+      key: _tileKeyFor(controller, room.key),
       item: room,
-      controller: controller.playerFor(room),
+      controller: playerController,
       onRemove: () => controller.removeRoom(room),
       onSetMain: () => controller.setMainRoom(room.key),
       onTogglePaused: () => controller.toggleRoomPaused(room),
@@ -308,8 +329,11 @@ class MultiRoomPage extends GetView<MultiRoomController> {
       isMain: index == 0 && controller.isMainSubLayoutActive,
       loadDanmaku: loadDanmaku,
     );
-    return GestureDetector(
-      // 双击聚焦单格，再双击或点返回退出。
+    return MultiRoomTileGestureSurface(
+      // 单击画面同时切换页面 TopBar 与本格按钮。单击、双击放在同一个
+      // recognizer 上，确保双击聚焦不会额外触发两套控件显隐。
+      onTogglePageOverlay: controller.toggleOverlay,
+      onToggleTileControls: playerController.toggleTileControls,
       onDoubleTap: () => controller.focusRoom(room.key),
       child: AnimatedSwitcher(
         key: ValueKey(room.key),
@@ -889,6 +913,7 @@ class _MultiRoomTile extends StatefulWidget {
   final bool loadDanmaku;
 
   const _MultiRoomTile({
+    super.key,
     required this.item,
     required this.controller,
     required this.onRemove,
@@ -912,252 +937,243 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
     final item = widget.item;
     final controller = widget.controller;
     final onRemove = widget.onRemove;
-    // 点击画面：呼出/收起本格按钮（5 秒自动隐藏）。translucent 保留
-    // 外层双击聚焦与长按拖拽。
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: controller.toggleTileControls,
-      child: ClipRRect(
-        borderRadius: AppStyle.radius8,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.black,
-            border: Border.all(color: Colors.white24),
-            borderRadius: AppStyle.radius8,
-          ),
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: Video(
-                  controller: controller.videoController,
-                  controls: NoVideoControls,
-                  fit: BoxFit.contain,
-                ),
+    return ClipRRect(
+      borderRadius: AppStyle.radius8,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black,
+          border: Border.all(color: Colors.white24),
+          borderRadius: AppStyle.radius8,
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Video(
+                key: ValueKey('multi-room-video-${controller.item.key}'),
+                controller: controller.videoController,
+                controls: NoVideoControls,
+                fit: BoxFit.contain,
               ),
-              // 弹幕铺在画面区域上。行数按格子高度自适应，格子太矮时会自动隐藏。
-              if (widget.loadDanmaku)
-                Positioned.fill(
-                  child: Obx(
-                    () => controller.showDanmaku.value
-                        ? _DanmakuLayer(controller: controller)
-                        : const SizedBox.shrink(),
-                  ),
-                ),
+            ),
+            // 弹幕铺在画面区域上。行数按格子高度自适应，格子太矮时会自动隐藏。
+            if (widget.loadDanmaku)
               Positioned.fill(
                 child: Obx(
-                  () {
-                    if (controller.loading.value) {
-                      return const Center(
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      );
-                    }
-                    if (controller.errorText.value.isNotEmpty) {
-                      return _CenterText(controller.errorText.value);
-                    }
-                    if (!controller.liveStatus.value) {
-                      return const _CenterText("未开播");
-                    }
-                    return const SizedBox.shrink();
-                  },
+                  () => controller.showDanmaku.value
+                      ? _DanmakuLayer(controller: controller)
+                      : const SizedBox.shrink(),
                 ),
               ),
-              Positioned(
-                left: 6,
-                top: 6,
-                // 状态徽标：断流重试 / 弹幕重连
-                child: Obx(() {
-                  final status = controller.streamStatus.value;
-                  if (status.isEmpty) {
-                    return const SizedBox.shrink();
+            Positioned.fill(
+              child: Obx(
+                () {
+                  if (controller.loading.value) {
+                    return const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    );
                   }
-                  final isStream = status.contains("重试中");
-                  return Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  if (controller.errorText.value.isNotEmpty) {
+                    return _CenterText(controller.errorText.value);
+                  }
+                  if (!controller.liveStatus.value) {
+                    return const _CenterText("未开播");
+                  }
+                  return const SizedBox.shrink();
+                },
+              ),
+            ),
+            Positioned(
+              left: 6,
+              top: 6,
+              // 状态徽标：断流重试 / 弹幕重连
+              child: Obx(() {
+                final status = controller.streamStatus.value;
+                if (status.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+                final isStream = status.contains("重试中");
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: isStream
+                        ? Colors.red.withAlpha(200)
+                        : Colors.amber.withAlpha(200),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    status,
+                    style: const TextStyle(fontSize: 11, color: Colors.white),
+                  ),
+                );
+              }),
+            ),
+            if (widget.onSetMain != null)
+              Positioned(
+                right: 4,
+                top: 4,
+                child: _OverlayButton(
+                  tooltip: widget.isMain ? "当前主画面" : "设为主画面",
+                  icon:
+                      widget.isMain ? Icons.push_pin : Icons.push_pin_outlined,
+                  onPressed: widget.isMain ? null : widget.onSetMain!,
+                  color: widget.isMain ? Colors.amber : Colors.white,
+                ),
+              ),
+            Positioned(
+              left: 6,
+              bottom: 6,
+              child: Obx(
+                () => Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "${item.site.name} · ${item.userName}",
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    if (controller.qualityInfo.value.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      _InfoChip(
+                        text: controller.qualityInfo.value,
+                        onTap: () => _showTileQualitySheet(context, controller),
+                      ),
+                    ],
+                    if (controller.lineInfo.value.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      _InfoChip(
+                        text: controller.lineInfo.value,
+                        onTap: () => _showTileLineSheet(context, controller),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              right: 4,
+              bottom: 4,
+              // 按钮随 showTileControls 显隐：点格子呼出，5 秒自动隐藏。
+              child: Obx(() {
+                final visible = controller.showTileControls.value;
+                return AnimatedOpacity(
+                  duration: const Duration(milliseconds: 150),
+                  opacity: visible ? 1 : 0,
+                  child: IgnorePointer(
+                    ignoring: !visible,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {},
+                      onDoubleTap: () {},
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Obx(
+                            () => _OverlayButton(
+                              tooltip: controller.showDanmaku.value
+                                  ? "关闭弹幕"
+                                  : "开启弹幕",
+                              icon: controller.showDanmaku.value
+                                  ? Remix.message_3_line
+                                  : Remix.message_3_fill,
+                              onPressed: controller.toggleDanmaku,
+                            ),
+                          ),
+                          _OverlayButton(
+                            tooltip: controller.paused.value ? "继续播放" : "暂停播放",
+                            icon: controller.paused.value
+                                ? Icons.play_arrow
+                                : Icons.pause,
+                            onPressed: widget.onTogglePaused ??
+                                controller.togglePaused,
+                          ),
+                          _OverlayButton(
+                            tooltip: "刷新",
+                            icon: Remix.refresh_line,
+                            onPressed: widget.refreshDisabled
+                                ? null
+                                : controller.refreshRoom,
+                          ),
+                          Obx(
+                            () => _OverlayButton(
+                              tooltip: controller.muted.value ? "取消静音" : "调节音量",
+                              icon: controller.muted.value
+                                  ? Remix.volume_mute_line
+                                  : Remix.volume_up_line,
+                              onPressed: () {
+                                if (controller.muted.value) {
+                                  (widget.onToggleAudio ??
+                                          controller.toggleMute)
+                                      .call();
+                                } else {
+                                  setState(() =>
+                                      _showVolumeSlider = !_showVolumeSlider);
+                                }
+                              },
+                            ),
+                          ),
+                          _OverlayButton(
+                            tooltip: "移除",
+                            icon: Remix.close_line,
+                            onPressed: onRemove,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+            // 音量滑条
+            Positioned(
+              right: 4,
+              bottom: 48,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 150),
+                opacity: _showVolumeSlider ? 1 : 0,
+                child: IgnorePointer(
+                  ignoring: !_showVolumeSlider,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
                     decoration: BoxDecoration(
-                      color: isStream
-                          ? Colors.red.withAlpha(200)
-                          : Colors.amber.withAlpha(200),
+                      color: Colors.black.withAlpha(160),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(
-                      status,
-                      style: const TextStyle(fontSize: 11, color: Colors.white),
-                    ),
-                  );
-                }),
-              ),
-              if (widget.onSetMain != null)
-                Positioned(
-                  right: 4,
-                  top: 4,
-                  child: _OverlayButton(
-                    tooltip: widget.isMain ? "当前主画面" : "设为主画面",
-                    icon: widget.isMain
-                        ? Icons.push_pin
-                        : Icons.push_pin_outlined,
-                    onPressed: widget.isMain ? null : widget.onSetMain!,
-                    color: widget.isMain ? Colors.amber : Colors.white,
-                  ),
-                ),
-              Positioned(
-                left: 6,
-                bottom: 6,
-                child: Obx(
-                  () => Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        "${item.site.name} · ${item.userName}",
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 12),
-                      ),
-                      if (controller.qualityInfo.value.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        _InfoChip(
-                          text: controller.qualityInfo.value,
-                          onTap: () =>
-                              _showTileQualitySheet(context, controller),
-                        ),
-                      ],
-                      if (controller.lineInfo.value.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        _InfoChip(
-                          text: controller.lineInfo.value,
-                          onTap: () => _showTileLineSheet(context, controller),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              Positioned(
-                right: 4,
-                bottom: 4,
-                // 按钮随 showTileControls 显隐：点格子呼出，5 秒自动隐藏。
-                child: Obx(() {
-                  final visible = controller.showTileControls.value;
-                  return AnimatedOpacity(
-                    duration: const Duration(milliseconds: 150),
-                    opacity: visible ? 1 : 0,
-                    child: IgnorePointer(
-                      ignoring: !visible,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () {},
-                        onDoubleTap: () {},
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Obx(
-                              () => _OverlayButton(
-                                tooltip: controller.showDanmaku.value
-                                    ? "关闭弹幕"
-                                    : "开启弹幕",
-                                icon: controller.showDanmaku.value
-                                    ? Remix.message_3_line
-                                    : Remix.message_3_fill,
-                                onPressed: controller.toggleDanmaku,
+                    child: SizedBox(
+                      width: 180,
+                      child: Row(
+                        children: [
+                          IconButton(
+                            tooltip: "静音此直播间",
+                            onPressed: () {
+                              (widget.onToggleAudio ?? controller.toggleMute)
+                                  .call();
+                              setState(() => _showVolumeSlider = false);
+                            },
+                            icon: const Icon(
+                              Remix.volume_mute_line,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
+                          Expanded(
+                            child: Obx(
+                              () => Slider(
+                                value: controller.volume.value,
+                                min: 0,
+                                max: 100,
+                                onChanged: controller.setVolume,
                               ),
                             ),
-                            _OverlayButton(
-                              tooltip:
-                                  controller.paused.value ? "继续播放" : "暂停播放",
-                              icon: controller.paused.value
-                                  ? Icons.play_arrow
-                                  : Icons.pause,
-                              onPressed: widget.onTogglePaused ??
-                                  controller.togglePaused,
-                            ),
-                            _OverlayButton(
-                              tooltip: "刷新",
-                              icon: Remix.refresh_line,
-                              onPressed: widget.refreshDisabled
-                                  ? null
-                                  : controller.refreshRoom,
-                            ),
-                            Obx(
-                              () => _OverlayButton(
-                                tooltip:
-                                    controller.muted.value ? "取消静音" : "调节音量",
-                                icon: controller.muted.value
-                                    ? Remix.volume_mute_line
-                                    : Remix.volume_up_line,
-                                onPressed: () {
-                                  if (controller.muted.value) {
-                                    (widget.onToggleAudio ??
-                                            controller.toggleMute)
-                                        .call();
-                                  } else {
-                                    setState(() =>
-                                        _showVolumeSlider = !_showVolumeSlider);
-                                  }
-                                },
-                              ),
-                            ),
-                            _OverlayButton(
-                              tooltip: "移除",
-                              icon: Remix.close_line,
-                              onPressed: onRemove,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ),
-              // 音量滑条
-              Positioned(
-                right: 4,
-                bottom: 48,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 150),
-                  opacity: _showVolumeSlider ? 1 : 0,
-                  child: IgnorePointer(
-                    ignoring: !_showVolumeSlider,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withAlpha(160),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: SizedBox(
-                        width: 180,
-                        child: Row(
-                          children: [
-                            IconButton(
-                              tooltip: "静音此直播间",
-                              onPressed: () {
-                                (widget.onToggleAudio ?? controller.toggleMute)
-                                    .call();
-                                setState(() => _showVolumeSlider = false);
-                              },
-                              icon: const Icon(
-                                Remix.volume_mute_line,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                            ),
-                            Expanded(
-                              child: Obx(
-                                () => Slider(
-                                  value: controller.volume.value,
-                                  min: 0,
-                                  max: 100,
-                                  onChanged: controller.setVolume,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

@@ -99,7 +99,8 @@ tasks.named("preBuild") {
 
 android {
     namespace = "com.simplelive.app"
-    compileSdk = flutter.compileSdkVersion
+    // Current media/orientation plugins compile against Android API 36.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     sourceSets {

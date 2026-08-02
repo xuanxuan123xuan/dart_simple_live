@@ -14,6 +14,7 @@ import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_adaptive_quality.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_playback_recovery.dart';
 import 'package:simple_live_app/modules/multi_room/player_mutation_queue.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
@@ -68,6 +69,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     mainSubLayout.value = !mainSubLayout.value;
     showOverlay.value = true;
     _resetAutoHideTimer();
+    _scheduleResumePlayers();
   }
 
   /// 将指定直播间稳定移动到主位，并立即切换为主次布局。
@@ -86,6 +88,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     focusedRoomKey.value = null;
     showOverlay.value = true;
     _resetAutoHideTimer();
+    _scheduleResumePlayers();
     return true;
   }
 
@@ -111,6 +114,9 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
   bool _suppressPlayerOpenedResume = false;
   bool _adaptiveEvaluationRunning = false;
   final PlayerMutationQueue _playerMutationQueue = PlayerMutationQueue();
+  final MultiRoomPlaybackRecoveryCoordinator _playbackRecovery =
+      const MultiRoomPlaybackRecoveryCoordinator();
+  int _playbackRecoveryGeneration = 0;
   final MultiRoomAdaptiveQualityController _adaptiveQuality =
       MultiRoomAdaptiveQualityController();
   late final PlaybackDisplayLease _displayLease;
@@ -144,6 +150,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
       focusedRoomKey.value = key;
       showOverlay.value = true;
       _resetAutoHideTimer();
+      _scheduleResumePlayers();
     }
   }
 
@@ -152,6 +159,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     focusedRoomKey.value = null;
     showOverlay.value = true;
     _resetAutoHideTimer();
+    _scheduleResumePlayers();
   }
 
   void _resetAutoHideTimer() {
@@ -202,7 +210,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     _appActive = false;
     WidgetsBinding.instance.removeObserver(this);
     _autoHideTimer?.cancel();
-    _resumeTimer?.cancel();
+    _cancelPlaybackRecovery();
     _adaptiveQualityTimer?.cancel();
     _teardownMemoryMonitor();
     _saveLayout();
@@ -325,6 +333,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     final item = rooms.removeAt(oldIndex);
     rooms.insert(newIndex, item);
     _normalizeChatTarget(chatTargetKey, newIndex);
+    _scheduleResumePlayers();
   }
 
   Future<void> toggleRoomPaused(MultiRoomItem room) async {
@@ -524,18 +533,38 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
   }
 
-  /// 恢复所有应播放但已暂停的播放器。
-  ///
-  /// iOS 上 media_kit/libmpv 多实例共享 audio session：新增 Player 的
-  /// open() 会中断正在播放的旧 Player，延迟一段时间后把它拉回来。
-  void _resumeAllPlayers() {
-    if (_closing || isClosed || !_appActive) return;
-    for (final room in rooms) {
-      final controller = _existingPlayerFor(room);
-      if (controller != null) {
-        unawaited(controller.ensurePlaying());
-      }
+  Future<void> _recoverDesiredPlayers(int generation) async {
+    if (_isPlaybackRecoveryCancelled(generation)) return;
+    final targets = <MultiRoomPlaybackRecoveryTarget>[];
+    for (final room in rooms.toList()) {
+      final player = _existingPlayerFor(room);
+      if (player == null) continue;
+      targets.add(
+        MultiRoomPlaybackRecoveryTarget(
+          roomKey: room.key,
+          shouldPlay: () => player.shouldRecoverPlayback,
+          isPlaying: () => player.isActuallyPlaying,
+          requestPlay: player.ensurePlaying,
+          waitUntilPlaying: player.waitUntilActuallyPlaying,
+        ),
+      );
     }
+    await _playbackRecovery.recover(
+      targets: targets,
+      isCancelled: () => _isPlaybackRecoveryCancelled(generation),
+    );
+  }
+
+  bool _isPlaybackRecoveryCancelled(int generation) =>
+      generation != _playbackRecoveryGeneration ||
+      _closing ||
+      isClosed ||
+      !_appActive;
+
+  void _cancelPlaybackRecovery() {
+    _playbackRecoveryGeneration += 1;
+    _resumeTimer?.cancel();
+    _resumeTimer = null;
   }
 
   @override
@@ -543,7 +572,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       if (_closing || isClosed) return;
       _appActive = true;
-      _resumeAllPlayers();
+      _scheduleResumePlayers(delay: Duration.zero);
       if (_danmakuSuspendedForLifecycle) {
         _danmakuSuspendedForLifecycle = false;
         _restoreDanmakuAll();
@@ -555,8 +584,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       _appActive = false;
-      _resumeTimer?.cancel();
-      _resumeTimer = null;
+      _cancelPlaybackRecovery();
       // 后台挂起：断开所有格子弹幕长连接，省心跳与流量，前台恢复。
       if (!_danmakuSuspendedForLifecycle) {
         _danmakuSuspendedForLifecycle = true;
@@ -632,13 +660,16 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
 
   /// 任意一格的 Player.open() 会抢占 iOS 共享 audio session 中断其他格，
   /// 延迟到本次 Player 初始化完成后再恢复全部播放器。
-  void _scheduleResumePlayers() {
+  void _scheduleResumePlayers({
+    Duration delay = const Duration(milliseconds: 800),
+  }) {
     if (_closing || isClosed || !_appActive) return;
-    _resumeTimer?.cancel();
-    _resumeTimer = Timer(const Duration(milliseconds: 800), () {
+    _cancelPlaybackRecovery();
+    final generation = _playbackRecoveryGeneration;
+    _resumeTimer = Timer(delay, () {
       _resumeTimer = null;
-      if (_closing || isClosed || !_appActive) return;
-      _resumeAllPlayers();
+      if (_isPlaybackRecoveryCancelled(generation)) return;
+      unawaited(_recoverDesiredPlayers(generation));
     });
   }
 
