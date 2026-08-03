@@ -257,7 +257,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dart-simple-live-ios-${{ github.sha }}
-          path: ${{ steps.artifact.outputs.dir }}/*.ipa
+          # 只传固定名 simple-live.ipa（带版本名的是暂存中间产物），
+          # 避免 zip 里出现两个 ipa。
+          path: ${{ steps.artifact.outputs.dir }}/simple-live.ipa
           if-no-files-found: error
           retention-days: 14
 
@@ -280,7 +282,7 @@ jobs:
             - 提交：`${{ github.sha }}`
             - 下载附件 `*.ipa` 即为可直接安装的包（Release 附件不打包 zip）。
             - AltStore / LiveContainer 源：`https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps.json`
-          files: ${{ steps.artifact.outputs.dir }}/*.ipa
+          files: ${{ steps.artifact.outputs.dir }}/simple-live.ipa
           allowUpdates: true
           prerelease: false
 
