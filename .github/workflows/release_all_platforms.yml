@@ -852,6 +852,12 @@ jobs:
             exit 1
           fi
 
+      - name: 检出源码（What's Changed 需要 git 历史与 tags）
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+
       - name: 下载全部发布产物
         uses: actions/download-artifact@v4
         with:
@@ -876,15 +882,16 @@ jobs:
           body="$RUNNER_TEMP/release_body.md"
 
           # 收集本次变更的 commit 列表（上一 tag..HEAD，无 tag 时最近 30 条）
+          # 已 cd release-assets（无 .git），git 命令用 -C 指向 workspace
           commits=""
           if [[ -n "$TAG" ]]; then
-            prev_tag="$(git tag --sort=-v:refname | grep -v "^$TAG\$" | head -1 || true)"
+            prev_tag="$(git -C "$GITHUB_WORKSPACE" tag --sort=-v:refname | grep -v "^$TAG\$" | head -1 || true)"
             if [[ -n "$prev_tag" ]]; then
-              commits="$(git log --oneline --no-merges "$prev_tag..HEAD" | head -80)"
+              commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges "$prev_tag..HEAD" | head -80)"
             fi
           fi
           if [[ -z "$commits" ]]; then
-            commits="$(git log --oneline --no-merges -30 HEAD)"
+            commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges -30 HEAD)"
           fi
 
           # AI 总结 What's Changed（配置 DEEPSEEK_API_KEY secret 时生效；
@@ -918,8 +925,8 @@ jobs:
             echo ""
             if [[ -n "$ai_summary" ]]; then
               echo "$ai_summary"
-            elif [[ -f WHATS_CHANGED.md ]]; then
-              cat WHATS_CHANGED.md
+            elif [[ -f "$GITHUB_WORKSPACE/WHATS_CHANGED.md" ]]; then
+              cat "$GITHUB_WORKSPACE/WHATS_CHANGED.md"
             else
               echo "$commits"
             fi
