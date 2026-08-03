@@ -231,25 +231,9 @@ jobs:
         working-directory: simple_live_app
         run: flutter pub get
 
-      - name: 构建通用 APK
-        working-directory: simple_live_app
-        run: flutter build apk --release --no-pub
-
-      - name: 暂存通用 APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/release-android"
-          cp simple_live_app/build/app/outputs/flutter-apk/app-release.apk \
-            "$RUNNER_TEMP/release-android/simple-live-${{ needs.prepare.outputs.version }}-android-universal.apk"
-
       - name: 构建分架构 APK
         working-directory: simple_live_app
         run: flutter build apk --release --split-per-abi --no-pub
-
-      - name: 构建 Android AAB
-        working-directory: simple_live_app
-        run: flutter build appbundle --release --no-pub
 
       - name: 暂存 Android 产物
         shell: bash
@@ -265,9 +249,7 @@ jobs:
             "$out/simple-live-${{ needs.prepare.outputs.version }}-android-arm64-v8a.apk"
           cp "$src/app-x86_64-release.apk" \
             "$out/simple-live-${{ needs.prepare.outputs.version }}-android-x86_64.apk"
-          cp simple_live_app/build/app/outputs/bundle/release/app-release.aab \
-            "$out/simple-live-${{ needs.prepare.outputs.version }}-android.aab"
-          # 诊断：确认暂存结果（应为 universal + 3 个分架构 + AAB + 校验文件）
+          # 诊断：确认暂存结果（分架构 APK + 校验文件；不发布 universal/AAB）
           ls -la "$out"
           (cd "$out" && sha256sum -- * > SHA256SUMS-android.txt)
 
@@ -868,16 +850,52 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: 生成汇总校验文件
+      - name: 生成汇总校验文件与 Release 简介
         shell: bash
+        env:
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
+          FULL_VERSION: ${{ needs.prepare.outputs.full_version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          SIGNED_IOS: ${{ needs.prepare.outputs.signed_ios }}
+          INCLUDE_OHOS: ${{ needs.prepare.outputs.include_ohos }}
         run: |
           # 诊断：确认下载到 release-assets 的产物（应含各平台文件与分架构 APK）
           ls -la release-assets || true
-          cd release-assets && sha256sum -- * > SHA256SUMS.txt
+          # 汇总校验值写入 body，不再作为 asset 上传（排除各平台 SHA256SUMS-*.txt）
+          cd release-assets
+          mapfile -t files < <(ls | grep -v '^SHA256SUMS')
+          sha256sum -- "${files[@]}" > "$RUNNER_TEMP/sha256.txt"
+          body="$RUNNER_TEMP/release_body.md"
+          {
+            echo "## 安装包"
+            echo ""
+            echo "- Android：分架构 APK（arm64-v8a / armeabi-v7a / x86_64）"
+            echo "- Android TV：分架构 APK"
+            echo "- iOS：$([ "$SIGNED_IOS" == "true" ] && echo 'ad-hoc 已签名 IPA' || echo '未签名 IPA（需 AltStore / Sideloadly 侧载）')"
+            echo "- macOS：DMG、PKG、ZIP（未公证）"
+            echo "- Windows：EXE 安装包、MSIX、便携 ZIP"
+            echo "- Linux：AppImage、DEB、RPM、ZIP"
+            echo "- HarmonyOS：$([ "$INCLUDE_OHOS" == "true" ] && echo '已签名 HAP' || echo '本次未构建')"
+            echo ""
+            echo "版本：\`$FULL_VERSION\`"
+            echo "提交：\`$SHA\`"
+            echo ""
+            echo "### SHA-256 校验"
+            echo '```'
+            cat "$RUNNER_TEMP/sha256.txt"
+            echo '```'
+            echo ""
+            echo "### 📦 IPA 源（AltStore / LiveContainer）"
+            echo ""
+            echo "| 版本 | 源 URL |"
+            echo "|---|---|"
+            echo "| 稳定版 | \`https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps-stable.json\` |"
+            echo "| dev 测试版 | \`https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps.json\` |"
+          } > "$body"
+          echo "body_path=$body" >> "$GITHUB_ENV"
           echo "### Release assets" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          # cd 后当前目录已是 release-assets，find 用 .（避免找不存在的子目录）
-          find . -maxdepth 1 -type f -printf '%f\n' \
+          find . -maxdepth 1 -type f -name '!SHA256SUMS*' -printf '%f\n' \
             | sort | sed 's/^/- `/' | sed 's/$/`/' >> "$GITHUB_STEP_SUMMARY"
 
       - name: 上传汇总产物
@@ -897,22 +915,9 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: Simple Live ${{ needs.prepare.outputs.version }}
           target_commitish: ${{ needs.prepare.outputs.sha }}
-          generate_release_notes: true
           fail_on_unmatched_files: true
           prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
-          body: |
-            ## 安装包
-
-            - Android：通用/分架构 APK、AAB
-            - Android TV：通用/分架构 APK、AAB
-            - iOS：${{ needs.prepare.outputs.signed_ios == 'true' && 'ad-hoc 已签名 IPA' || '未签名 IPA（需 AltStore / Sideloadly）' }}
-            - macOS：DMG、PKG、ZIP（未公证）
-            - Windows：EXE 安装包、MSIX、便携 ZIP
-            - Linux：AppImage、DEB、RPM、ZIP
-            - HarmonyOS：${{ needs.prepare.outputs.include_ohos == 'true' && '已签名 HAP' || '本次未构建' }}
-
-            版本：`${{ needs.prepare.outputs.full_version }}`
-            提交：`${{ needs.prepare.outputs.sha }}`
-
-            下载后可用 `SHA256SUMS.txt` 校验文件完整性。
-          files: release-assets/*
+          body_path: ${{ env.body_path }}
+          files: |
+            release-assets/*
+            !release-assets/SHA256SUMS*
