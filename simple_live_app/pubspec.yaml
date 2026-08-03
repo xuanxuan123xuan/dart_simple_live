@@ -70,8 +70,8 @@ dependencies:
   flutter_inappwebview: 6.0.0 # Dart 3.4 compatible
   webview_flutter:
     git:
-      url: https://gitee.com/openharmony-sig/flutter_packages.git
-      ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/webview_flutter/webview_flutter
   connectivity_plus: 5.0.2 # OpenHarmony-SIG adapter baseline
   qr_code_scanner_plus: ^2.0.14 #二维码扫描
@@ -91,8 +91,8 @@ dependencies:
   media_kit_libs_video: ^1.0.7
   video_player:
     git:
-      url: https://gitee.com/openharmony-sig/flutter_packages.git
-      ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/video_player/video_player
 
   flutter:
@@ -139,25 +139,25 @@ dependency_overrides:
   screen_brightness_ios: 2.1.2
   path_provider:
     git:
-      url: https://gitee.com/openharmony-sig/flutter_packages.git
-      ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/path_provider/path_provider
   video_player_ohos:
     path: third_party/video_player_ohos
   webview_flutter_ohos:
     git:
-      url: https://gitee.com/openharmony-sig/flutter_packages.git
-      ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/webview_flutter/webview_flutter_ohos
   webview_flutter_platform_interface:
     git:
-      url: https://gitee.com/openharmony-sig/flutter_packages.git
-      ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/webview_flutter/webview_flutter_platform_interface
   webview_flutter_wkwebview:
     git:
-      url: https://gitee.com/openharmony-sig/flutter_packages.git
-      ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/webview_flutter/webview_flutter_wkwebview
 
 flutter_launcher_icons:
