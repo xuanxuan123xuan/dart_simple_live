@@ -120,6 +120,9 @@ dependency_overrides:
   # android.window.BackEvent（API 33）Missing class，改 minifyEnabled false。
   flutter_inappwebview_android:
     path: third_party/flutter_inappwebview_android
+  # 本地 fork：删除 v1 插件 API（PluginRegistry.Registrar，Flutter 3.41 已移除）。
+  webview_flutter_android:
+    path: third_party/webview_flutter_android
   # 本地 fork：compileSdk 31 提升到 34（低于 33 时 R8 可能缺 API 33 类）。
   dynamic_color:
     path: third_party/dynamic_color
@@ -146,11 +149,6 @@ dependency_overrides:
       url: https://gitee.com/openharmony-sig/flutter_packages.git
       ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
       path: packages/webview_flutter/webview_flutter_platform_interface
-  webview_flutter_android:
-    git:
-      url: https://gitee.com/openharmony-sig/flutter_packages.git
-      ref: 8c2c12ca96fc295052d7e5ba2ebeed6286fd927e
-      path: packages/webview_flutter/webview_flutter_android
   webview_flutter_wkwebview:
     git:
       url: https://gitee.com/openharmony-sig/flutter_packages.git
