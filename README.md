@@ -13,6 +13,19 @@
 
 > **Release 资产**：本仓库提供阶段性 `Release` 安装包与压缩包，见 [GitHub Releases](https://github.com/xuanxuan123xuan/dart_simple_live/releases) 页面。
 
+## 📦 IPA 源（AltStore / LiveContainer）
+
+iOS 测试可直接添加源，免去手动下载导入：
+
+| 版本 | 源 URL |
+|---|---|
+| **稳定版** | `https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps-stable.json` |
+| **dev 测试版** | `https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps.json` |
+
+用法：**LiveContainer（或 AltStore/SideStore）→ 源 → 添加源**，粘贴上面任一 URL 即可。构建发布后源内点更新就能拿到最新 IPA。
+
+> 稳定版源对应 `ios-stable` 标签发布；dev 测试版源对应 `ios-dev` 标签发布（Flutter 3.41 升级线）。
+
 ---
 
 ## 这个分支是什么
