@@ -13,7 +13,7 @@ import UserNotifications
     // Flutter 3.35+ 才有的 API,本分支钉在 3.22,需用此经典注册方式。
     GeneratedPluginRegistrant.register(with: self)
     UNUserNotificationCenter.current().delegate = self
-    if let controller = window?.rootViewController as? SimpleLiveFlutterViewController {
+    if let controller = window?.rootViewController as? FlutterViewController {
       let channel = FlutterMethodChannel(
         name: "simple_live/live_notifications",
         binaryMessenger: controller.binaryMessenger
@@ -30,10 +30,10 @@ import UserNotifications
         }
       }
 
-      // 状态栏隐藏（iOS 26）：SystemChrome 的 VC 查询在转场动画后被 scene-based
-      // 管理重置。走 VC-based 方案：SimpleLiveFlutterViewController 动态返回
-      // prefersStatusBarHidden + setNeedsStatusBarAppearanceUpdate 触发重查；
-      // 同时保留 setStatusBarHidden 全局兜底（双保险，动画窗口内也生效）。
+      // 状态栏隐藏：SystemChrome 在 iOS 26 转场动画后被 scene-based 管理重置。
+      // LiveContainer 的 rootViewController 是 FlutterViewController 基类实例，
+      // 不能用子类 cast（会失败导致 channel 不注册、app 启动崩溃）。
+      // 统一走 setStatusBarHidden 全局控制 + 周期重试对抗系统恢复。
       let statusBarChannel = FlutterMethodChannel(
         name: "simple_live/status_bar",
         binaryMessenger: controller.binaryMessenger
@@ -42,7 +42,6 @@ import UserNotifications
         if call.method == "setHidden" {
           let hidden = (call.arguments as? Bool) ?? false
           DispatchQueue.main.async {
-            controller.setStatusBarHidden(hidden)
             Self.applyStatusBar(hidden: hidden, retries: 0)
           }
           result(nil)
