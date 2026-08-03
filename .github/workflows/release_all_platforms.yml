@@ -855,6 +855,7 @@ jobs:
         env:
           FULL_VERSION: ${{ needs.prepare.outputs.full_version }}
           SHA: ${{ needs.prepare.outputs.sha }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           # 诊断：确认下载到 release-assets 的产物（应含各平台文件与分架构 APK）
           ls -la release-assets || true
@@ -871,6 +872,20 @@ jobs:
             echo '```'
             cat "$RUNNER_TEMP/sha256.txt"
             echo '```'
+            echo ""
+            echo "## What's Changed"
+            echo ""
+            # 优先读仓库维护的 WHATS_CHANGED.md；不存在时自动从 git log 生成。
+            if [[ -f WHATS_CHANGED.md ]]; then
+              cat WHATS_CHANGED.md
+            else
+              prev_tag="$(git tag --sort=-v:refname | grep -v "^$TAG\$" | head -1 || true)"
+              if [[ -n "$prev_tag" ]]; then
+                git log --oneline --no-merges "$prev_tag..HEAD" | head -80
+              else
+                git log --oneline --no-merges -30 HEAD
+              fi
+            fi
           } > "$body"
           echo "body_path=$body" >> "$GITHUB_ENV"
           echo "### Release assets" >> "$GITHUB_STEP_SUMMARY"
