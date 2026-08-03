@@ -142,6 +142,13 @@ dependency_overrides:
       url: https://github.com/xuanxuan123xuan/flutter_packages.git
       ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/path_provider/path_provider
+  # CPF-Flutter 的 path_provider 内部 git 依赖 path_provider_ohos 指向
+  # gitcode openharmony-tpc（CI clone 网络不稳）——override 到 GitHub 镜像。
+  path_provider_ohos:
+    git:
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
+      path: packages/path_provider/path_provider_ohos
   video_player_ohos:
     path: third_party/video_player_ohos
   webview_flutter_ohos:
