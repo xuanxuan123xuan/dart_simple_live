@@ -615,9 +615,9 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   }
 
   @override
-  void onPopInvokedWithResult(bool didPop, Object? result) {
-    Log.d('RightSideDialogRoute: onPopInvokedWithResult title=$title didPop=$didPop\n${StackTrace.current}');
-    super.onPopInvokedWithResult(didPop, result);
+  void onPopInvoked(bool didPop) {
+    Log.d('RightSideDialogRoute: onPopInvoked title=$title didPop=$didPop\n${StackTrace.current}');
+    super.onPopInvoked(didPop);
   }
 
   @override
