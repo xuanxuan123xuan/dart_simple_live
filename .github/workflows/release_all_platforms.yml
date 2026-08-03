@@ -856,6 +856,7 @@ jobs:
           FULL_VERSION: ${{ needs.prepare.outputs.full_version }}
           SHA: ${{ needs.prepare.outputs.sha }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           # 诊断：确认下载到 release-assets 的产物（应含各平台文件与分架构 APK）
           ls -la release-assets || true
@@ -864,6 +865,37 @@ jobs:
           mapfile -t files < <(ls | grep -v '^SHA256SUMS')
           sha256sum -- "${files[@]}" > "$RUNNER_TEMP/sha256.txt"
           body="$RUNNER_TEMP/release_body.md"
+
+          # 收集本次变更的 commit 列表（上一 tag..HEAD，无 tag 时最近 30 条）
+          commits=""
+          if [[ -n "$TAG" ]]; then
+            prev_tag="$(git tag --sort=-v:refname | grep -v "^$TAG\$" | head -1 || true)"
+            if [[ -n "$prev_tag" ]]; then
+              commits="$(git log --oneline --no-merges "$prev_tag..HEAD" | head -80)"
+            fi
+          fi
+          if [[ -z "$commits" ]]; then
+            commits="$(git log --oneline --no-merges -30 HEAD)"
+          fi
+
+          # AI 总结 What's Changed（配置 OPENAI_API_KEY secret 时生效；
+          # 失败/无 key 自动回退到 WHATS_CHANGED.md 或 git log 原文）
+          ai_summary=""
+          if [[ -n "$OPENAI_API_KEY" && -n "$commits" ]]; then
+            ai_summary="$(
+              jq -n --arg commits "$commits" \
+                '{model:"gpt-4o-mini",temperature:0.3,
+                  messages:[
+                    {role:"system",content:"你是发布说明撰写者。根据 commit 列表生成简洁的中文 What'\''s Changed：按功能归纳分组（如 弹窗稳定性/状态栏/Flutter 升级/构建发布），每组一行列表项；不要逐条翻译 commit，要提炼用户可见的变化；结尾可加一句总体说明。"},
+                    {role:"user",content:$commits}
+                  ]}' \
+              | curl -sS https://api.openai.com/v1/chat/completions \
+                  -H "Authorization: Bearer $OPENAI_API_KEY" \
+                  -H "Content-Type: application/json" -d @- \
+              | jq -r '.choices[0].message.content // empty' 2>/dev/null || true
+            )"
+          fi
+
           {
             echo "版本：\`$FULL_VERSION\`"
             echo "提交：\`$SHA\`"
@@ -875,16 +907,12 @@ jobs:
             echo ""
             echo "## What's Changed"
             echo ""
-            # 优先读仓库维护的 WHATS_CHANGED.md；不存在时自动从 git log 生成。
-            if [[ -f WHATS_CHANGED.md ]]; then
+            if [[ -n "$ai_summary" ]]; then
+              echo "$ai_summary"
+            elif [[ -f WHATS_CHANGED.md ]]; then
               cat WHATS_CHANGED.md
             else
-              prev_tag="$(git tag --sort=-v:refname | grep -v "^$TAG\$" | head -1 || true)"
-              if [[ -n "$prev_tag" ]]; then
-                git log --oneline --no-merges "$prev_tag..HEAD" | head -80
-              else
-                git log --oneline --no-merges -30 HEAD
-              fi
+              echo "$commits"
             fi
           } > "$body"
           echo "body_path=$body" >> "$GITHUB_ENV"
