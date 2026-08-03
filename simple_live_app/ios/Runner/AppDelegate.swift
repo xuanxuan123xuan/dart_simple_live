@@ -53,13 +53,10 @@ import UserNotifications
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  /// 状态栏区域遮罩（LiveContainer 下系统状态栏无法真正隐藏时的视觉兜底）。
-  private static var statusBarCovers: [UIWindow: UIView] = [:]
-
   /// 强制状态栏隐藏/显示。iOS 26 上 setStatusBarHidden 可能被系统忽略，
   /// 周期重试 5 次对抗系统恢复；同时刷新所有窗口 VC 外观（兼容 VC-based 路径）。
-  /// LiveContainer 下系统状态栏被容器接管，setStatusBarHidden/SystemChrome 均
-  /// 不生效，用顶部黑条遮罩做视觉隐藏兜底。
+  /// 注意：不在此处做视觉遮罩（黑条）——LiveContainer 下 safeArea/statusBarFrame
+  /// 不可靠，遮罩会盖住弹幕且退出全屏残留。状态栏隐藏依赖签名版 SystemChrome。
   static func applyStatusBar(hidden: Bool, retries: Int) {
     UIApplication.shared.setStatusBarHidden(hidden, with: .none)
     for scene in UIApplication.shared.connectedScenes {
@@ -70,22 +67,6 @@ import UserNotifications
           top = presented
         }
         top?.setNeedsStatusBarAppearanceUpdate()
-        // 视觉兜底：隐藏时盖住状态栏区域，显示时移除。
-        if hidden {
-          let barHeight = max(window.safeAreaInsets.top, UIApplication.shared.statusBarFrame.height, 24)
-          if Self.statusBarCovers[window] == nil {
-            let cover = UIView()
-            cover.backgroundColor = .black
-            cover.autoresizingMask = [.flexibleWidth]
-            window.addSubview(cover)
-            Self.statusBarCovers[window] = cover
-          }
-          // 每次更新 frame，处理横竖屏旋转后状态栏位置变化。
-          Self.statusBarCovers[window]?.frame = CGRect(x: 0, y: 0, width: window.bounds.width, height: barHeight)
-        } else {
-          Self.statusBarCovers[window]?.removeFromSuperview()
-          Self.statusBarCovers[window] = nil
-        }
       }
     }
     if retries < 5 {
