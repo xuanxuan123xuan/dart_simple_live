@@ -106,79 +106,60 @@ class FollowUserPage extends GetView<FollowUserController> {
               ),
             ),
           ],
-          PopupMenuButton(
-            itemBuilder: (context) {
-              return const [
-                PopupMenuItem(
-                  value: 0,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Remix.save_2_line),
-                      AppStyle.hGap12,
-                      Text("导出文件")
-                    ],
-                  ),
+          IconButton(
+            onPressed: () {
+              Utils.showRightDialog(
+                title: "更多",
+                width: 320,
+                useSystem: false,
+                child: ListView(
+                  padding: AppStyle.edgeInsetsV12,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Remix.save_2_line),
+                      title: const Text("导出文件"),
+                      onTap: () {
+                        Utils.hideRightDialog();
+                        FollowService.instance.exportFile();
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Remix.folder_open_line),
+                      title: const Text("导入文件"),
+                      onTap: () {
+                        Utils.hideRightDialog();
+                        FollowService.instance.inputFile();
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Remix.text),
+                      title: const Text("导出文本"),
+                      onTap: () {
+                        Utils.hideRightDialog();
+                        FollowService.instance.exportText();
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Remix.file_text_line),
+                      title: const Text("导入文本"),
+                      onTap: () {
+                        Utils.hideRightDialog();
+                        FollowService.instance.inputText();
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Remix.price_tag_line),
+                      title: const Text("标签管理"),
+                      onTap: () {
+                        Utils.hideRightDialog();
+                        showTagsManager();
+                      },
+                    ),
+                  ],
                 ),
-                PopupMenuItem(
-                  value: 1,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Remix.folder_open_line),
-                      AppStyle.hGap12,
-                      Text("导入文件")
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 2,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Remix.text),
-                      AppStyle.hGap12,
-                      Text("导出文本"),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 3,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Remix.file_text_line),
-                      AppStyle.hGap12,
-                      Text("导入文本"),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 4,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Remix.price_tag_line),
-                      AppStyle.hGap12,
-                      Text("标签管理"),
-                    ],
-                  ),
-                ),
-              ];
+              );
             },
-            onSelected: (value) {
-              if (value == 0) {
-                FollowService.instance.exportFile();
-              } else if (value == 1) {
-                FollowService.instance.inputFile();
-              } else if (value == 2) {
-                FollowService.instance.exportText();
-              } else if (value == 3) {
-                FollowService.instance.inputText();
-              } else if (value == 4) {
-                showTagsManager();
-              }
-            },
+            icon: const Icon(Icons.more_vert),
           ),
         ],
         leading: Obx(

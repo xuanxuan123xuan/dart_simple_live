@@ -241,43 +241,18 @@ class Utils {
     required Widget child,
     double maxWidth = 600,
   }) async {
-    var result = await showModalBottomSheet(
-      context: Get.context!,
-      constraints: BoxConstraints(
-        maxWidth: maxWidth,
-      ),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(12),
-          topRight: Radius.circular(12),
-        ),
-      ),
-      builder: (_) => SafeArea(
-        top: false,
-        bottom: false,
-        child: Padding(
-          padding: AppStyle.bottomSheetPadding(),
-          child: Column(
-            children: [
-              ListTile(
-                contentPadding: const EdgeInsets.only(
-                  left: 12,
-                ),
-                title: Text(title),
-                trailing: IconButton(
-                  onPressed: Get.back,
-                  icon: const Icon(Remix.close_line),
-                ),
-              ),
-              Expanded(
-                child: child,
-              ),
-            ],
-          ),
-        ),
-      ),
+    final context = Get.context;
+    if (context == null) return null;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = _RightSideSheetRoute(
+      title: title,
+      child: child,
+      maxWidth: maxWidth,
     );
-    return result;
+    // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透），
+    // 与右侧弹窗同一套防护。
+    route.scheduleBarrierEnable();
+    return navigator.push<void>(route);
   }
 
   static Widget bottomSheetSafeArea({
@@ -772,5 +747,116 @@ class _RightSideDialogRoute extends PopupRoute<void> {
       ).animate(curved),
       child: child,
     );
+  }
+}
+
+/// 底部弹窗（替代 showModalBottomSheet），带 barrier 1000ms 防穿透窗口。
+/// 视觉与 showModalBottomSheet 一致（底部圆角、maxWidth 约束、SafeArea）。
+class _RightSideSheetRoute extends PopupRoute<void> {
+  _RightSideSheetRoute({
+    required this.title,
+    required this.child,
+    required this.maxWidth,
+  });
+
+  final String title;
+  final Widget child;
+  final double maxWidth;
+
+  bool _barrierEnabled = false;
+  bool _disposed = false;
+  Timer? _barrierTimer;
+
+  void scheduleBarrierEnable() {
+    _barrierTimer?.cancel();
+    _barrierTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (_disposed || !isActive) {
+        return;
+      }
+      _barrierEnabled = true;
+      changedExternalState();
+    });
+  }
+
+  @override
+  bool get barrierDismissible => _barrierEnabled;
+
+  @override
+  Color? get barrierColor => Colors.black54;
+
+  @override
+  String? get barrierLabel => "关闭";
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 200);
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(12),
+            topRight: Radius.circular(12),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: Padding(
+            padding: AppStyle.bottomSheetPadding(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  contentPadding: const EdgeInsets.only(left: 12),
+                  title: Text(title),
+                  trailing: IconButton(
+                    onPressed: Get.back,
+                    icon: const Icon(Remix.close_line),
+                  ),
+                ),
+                Flexible(child: child),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 1),
+        end: Offset.zero,
+      ).animate(curved),
+      child: child,
+    );
+  }
+
+  @override
+  void dispose() {
+    _barrierTimer?.cancel();
+    _disposed = true;
+    super.dispose();
   }
 }

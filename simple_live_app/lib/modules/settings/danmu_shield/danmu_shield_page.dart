@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/danmu_shield_preset.dart';
 import 'package:simple_live_app/modules/settings/danmu_shield/danmu_shield_controller.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
@@ -284,47 +285,53 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
               label: const Text("保存当前"),
             ),
             AppStyle.hGap8,
-            PopupMenuButton<String>(
-              onSelected: (value) {
-                switch (value) {
-                  case "export_file":
-                    controller.exportPresetFile();
-                    break;
-                  case "export_text":
-                    controller.exportPresetText();
-                    break;
-                  case "import_file":
-                    controller.importPresetFile();
-                    break;
-                  case "import_text":
-                    controller.importPresetText();
-                    break;
-                  default:
-                }
+            IconButton(
+              onPressed: () {
+                Utils.showRightDialog(
+                  title: "导入/导出",
+                  width: 320,
+                  useSystem: false,
+                  child: ListView(
+                    padding: AppStyle.edgeInsetsV12,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.file_download_outlined),
+                        title: const Text("导出到文件"),
+                        onTap: () {
+                          Utils.hideRightDialog();
+                          controller.exportPresetFile();
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.text_snippet_outlined),
+                        title: const Text("导出为文本"),
+                        onTap: () {
+                          Utils.hideRightDialog();
+                          controller.exportPresetText();
+                        },
+                      ),
+                      const Divider(),
+                      ListTile(
+                        leading: const Icon(Icons.file_upload_outlined),
+                        title: const Text("从文件导入"),
+                        onTap: () {
+                          Utils.hideRightDialog();
+                          controller.importPresetFile();
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.notes_outlined),
+                        title: const Text("从文本导入"),
+                        onTap: () {
+                          Utils.hideRightDialog();
+                          controller.importPresetText();
+                        },
+                      ),
+                    ],
+                  ),
+                );
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: "export_file",
-                  child: Text("导出到文件"),
-                ),
-                PopupMenuItem(
-                  value: "export_text",
-                  child: Text("导出为文本"),
-                ),
-                PopupMenuDivider(),
-                PopupMenuItem(
-                  value: "import_file",
-                  child: Text("从文件导入"),
-                ),
-                PopupMenuItem(
-                  value: "import_text",
-                  child: Text("从文本导入"),
-                ),
-              ],
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Icon(Icons.import_export),
-              ),
+              icon: const Icon(Icons.import_export),
             ),
           ],
         ),
