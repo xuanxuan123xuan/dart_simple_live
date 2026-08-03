@@ -176,14 +176,8 @@ class Utils {
     Log.d('RightSideDialogRoute: opened title=$title request=$request\n${StackTrace.current}');
     final routeFuture = navigator.push<void>(route);
     // 前 1000ms 禁用 barrier 点击（拦截触摸穿透，重复事件约 300-400ms 延迟），
-    // 之后启用正常遮罩关闭。
-    unawaited(Future.delayed(const Duration(milliseconds: 1000), () {
-      if (route._disposed || !route.isActive) {
-        return;
-      }
-      route.enableBarrier();
-      Log.d('RightSideDialogRoute: barrier enabled title=$title');
-    }));
+    // 之后启用正常遮罩关闭。Timer 可取消，route dispose 时避免跨测试残留。
+    route.scheduleBarrierEnable();
     _rightDialogFuture = routeFuture;
     unawaited(
       routeFuture.whenComplete(() {
@@ -620,6 +614,18 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   /// 遮罩（>1s）正常关闭。
   bool _barrierEnabled = false;
   bool _disposed = false;
+  Timer? _barrierTimer;
+
+  void scheduleBarrierEnable() {
+    _barrierTimer?.cancel();
+    _barrierTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (_disposed || !isActive) {
+        return;
+      }
+      enableBarrier();
+      Log.d('RightSideDialogRoute: barrier enabled title=$title');
+    });
+  }
 
   void enableBarrier() {
     _barrierEnabled = true;
@@ -632,6 +638,7 @@ class _RightSideDialogRoute extends PopupRoute<void> {
 
   @override
   void dispose() {
+    _barrierTimer?.cancel();
     _disposed = true;
     Log.d('RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)\n${StackTrace.current}');
     super.dispose();
