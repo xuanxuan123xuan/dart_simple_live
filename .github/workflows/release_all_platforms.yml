@@ -946,6 +946,8 @@ jobs:
           name: Simple Live ${{ needs.prepare.outputs.version }}
           target_commitish: ${{ needs.prepare.outputs.sha }}
           fail_on_unmatched_files: true
+          # v-dev 等固定 tag 每次构建覆盖更新（dev 分支重复发布必须）
+          allowUpdates: true
           prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           body_path: ${{ env.body_path }}
           files: |

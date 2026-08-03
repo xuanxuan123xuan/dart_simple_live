@@ -710,30 +710,32 @@ class FollowUserPage extends GetView<FollowUserController> {
                 return SizedBox(
                   height: 300,
                   width: 300,
-                  child: ListView.builder(
-                    controller: scrollController,
-                    itemCount: copiedList.length,
-                    itemBuilder: (context, index) {
-                      var tagItem = copiedList[index];
-                      return Container(
-                        decoration: BoxDecoration(
-                          border: Border(
-                            bottom: BorderSide(
-                              color: Colors.grey.shade300,
-                              width: 1.0,
+                  child: RadioGroup<FollowUserTag>(
+                    groupValue: checkTag.value,
+                    onChanged: (value) {
+                      if (value != null) checkTag.value = value;
+                    },
+                    child: ListView.builder(
+                      controller: scrollController,
+                      itemCount: copiedList.length,
+                      itemBuilder: (context, index) {
+                        var tagItem = copiedList[index];
+                        return Container(
+                          decoration: BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(
+                                color: Colors.grey.shade300,
+                                width: 1.0,
+                              ),
                             ),
                           ),
-                        ),
-                        child: RadioListTile<FollowUserTag>(
-                          title: Text(tagItem.tag),
-                          value: tagItem,
-                          groupValue: checkTag.value,
-                          onChanged: (value) {
-                            if (value != null) checkTag.value = value;
-                          },
-                        ),
-                      );
-                    },
+                          child: RadioListTile<FollowUserTag>(
+                            title: Text(tagItem.tag),
+                            value: tagItem,
+                          ),
+                        );
+                      },
+                    ),
                   ),
                 );
               },

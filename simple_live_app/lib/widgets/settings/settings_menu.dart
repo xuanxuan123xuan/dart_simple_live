@@ -67,22 +67,29 @@ class SettingsMenu<T> extends StatelessWidget {
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: valueMap.keys
-                .map(
-                  (e) => RadioListTile(
-                    value: e,
-                    groupValue: value,
-                    onChanged: (selected) {
-                      Get.back();
-                      if (selected != null) onChanged?.call(selected as T);
-                    },
-                    title: Text(
-                      (valueMap[e]?.tr) ?? "???",
-                      style: Get.textTheme.bodyMedium,
-                    ),
-                  ),
-                )
-                .toList(),
+            children: [
+              RadioGroup<T>(
+                groupValue: value,
+                onChanged: (selected) {
+                  Get.back();
+                  if (selected != null) onChanged?.call(selected as T);
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: valueMap.keys
+                      .map(
+                        (e) => RadioListTile(
+                          value: e,
+                          title: Text(
+                            (valueMap[e]?.tr) ?? "???",
+                            style: Get.textTheme.bodyMedium,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            ],
           ),
         ),
       ),

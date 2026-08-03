@@ -390,16 +390,23 @@ class Utils {
       context: Get.context!,
       builder: (_) => SimpleDialog(
         title: Text(title),
-        children: contents
-            .map(
-              (e) => RadioListTile<T>(
-                title: Text(e.toString()),
-                value: e,
-                groupValue: value,
-                onChanged: (selected) => Get.back(result: selected),
-              ),
-            )
-            .toList(),
+        children: [
+          RadioGroup<T>(
+            groupValue: value,
+            onChanged: (selected) => Get.back(result: selected),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: contents
+                  .map(
+                    (e) => RadioListTile<T>(
+                      title: Text(e.toString()),
+                      value: e,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ],
       ),
     );
     return result;
@@ -456,16 +463,23 @@ class Utils {
       context: Get.context!,
       builder: (_) => SimpleDialog(
         title: Text(title),
-        children: contents.keys
-            .map(
-              (e) => RadioListTile<T>(
-                title: Text((contents[e] ?? '-').tr),
-                value: e,
-                groupValue: value,
-                onChanged: (selected) => Get.back(result: selected),
-              ),
-            )
-            .toList(),
+        children: [
+          RadioGroup<T>(
+            groupValue: value,
+            onChanged: (selected) => Get.back(result: selected),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: contents.keys
+                  .map(
+                    (e) => RadioListTile<T>(
+                      title: Text((contents[e] ?? '-').tr),
+                      value: e,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ],
       ),
     );
     return result;

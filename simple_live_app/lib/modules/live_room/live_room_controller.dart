@@ -2705,36 +2705,37 @@ class LiveRoomController extends PlayerController
   void showQualitySheet() {
     Utils.showBottomSheet(
       title: "切换清晰度",
-      child: ListView.builder(
-        itemCount: qualites.length + 1,
-        itemBuilder: (_, i) {
-          if (i == 0) {
-            return RadioListTile(
-              value: -1,
-              groupValue: qualityLocked.value ? -2 : -1,
-              onChanged: (e) {
-                Get.back();
-                unawaited(useAutomaticQuality());
-              },
-              title: const Text("自动"),
-              subtitle: const Text("根据网络与设备情况自动调整"),
-            );
+      child: RadioGroup<int>(
+        groupValue: qualityLocked.value ? currentQuality : -1,
+        onChanged: (v) {
+          Get.back();
+          if (v == -1) {
+            unawaited(useAutomaticQuality());
+          } else {
+            qualityLocked.value = true;
+            currentQuality = v ?? 0;
+            currentQualityInfo.value = qualites[currentQuality].quality;
+            saveQualityMemory();
+            getPlayUrl();
           }
-          var item = qualites[i - 1];
-          return RadioListTile(
-            value: i - 1,
-            groupValue: qualityLocked.value ? currentQuality : -2,
-            onChanged: (e) {
-              Get.back();
-              qualityLocked.value = true;
-              currentQuality = e ?? 0;
-              currentQualityInfo.value = qualites[currentQuality].quality;
-              saveQualityMemory();
-              getPlayUrl();
-            },
-            title: Text(item.quality),
-          );
         },
+        child: ListView.builder(
+          itemCount: qualites.length + 1,
+          itemBuilder: (_, i) {
+            if (i == 0) {
+              return const RadioListTile(
+                value: -1,
+                title: Text("自动"),
+                subtitle: Text("根据网络与设备情况自动调整"),
+              );
+            }
+            var item = qualites[i - 1];
+            return RadioListTile(
+              value: i - 1,
+              title: Text(item.quality),
+            );
+          },
+        ),
       ),
     );
   }
@@ -2742,22 +2743,24 @@ class LiveRoomController extends PlayerController
   void showPlayUrlsSheet() {
     Utils.showBottomSheet(
       title: "线路选择",
-      child: ListView.builder(
-        itemCount: playUrls.length,
-        itemBuilder: (_, i) {
-          return RadioListTile(
-            value: i,
-            groupValue: currentLineIndex,
-            onChanged: (e) {
-              Get.back();
-              changePlayLine(e ?? 0);
-            },
-            title: Text("线路${i + 1}"),
-            secondary: Text(
-              playUrls[i].contains(".flv") ? "FLV" : "HLS",
-            ),
-          );
+      child: RadioGroup<int>(
+        groupValue: currentLineIndex,
+        onChanged: (v) {
+          Get.back();
+          changePlayLine(v ?? 0);
         },
+        child: ListView.builder(
+          itemCount: playUrls.length,
+          itemBuilder: (_, i) {
+            return RadioListTile(
+              value: i,
+              title: Text("线路${i + 1}"),
+              secondary: Text(
+                playUrls[i].contains(".flv") ? "FLV" : "HLS",
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -2766,45 +2769,39 @@ class LiveRoomController extends PlayerController
     Utils.showBottomSheet(
       title: "画面尺寸",
       child: Obx(
-        () => ListView(
-          padding: AppStyle.edgeInsetsV12,
-          children: [
-            RadioListTile(
-              value: 0,
-              groupValue: AppSettingsController.instance.scaleMode.value,
-              onChanged: _onScaleModeChanged,
-              title: const Text("适应"),
-              visualDensity: VisualDensity.compact,
-            ),
-            RadioListTile(
-              value: 1,
-              groupValue: AppSettingsController.instance.scaleMode.value,
-              onChanged: _onScaleModeChanged,
-              title: const Text("拉伸"),
-              visualDensity: VisualDensity.compact,
-            ),
-            RadioListTile(
-              value: 2,
-              groupValue: AppSettingsController.instance.scaleMode.value,
-              onChanged: _onScaleModeChanged,
-              title: const Text("铺满"),
-              visualDensity: VisualDensity.compact,
-            ),
-            RadioListTile(
-              value: 3,
-              groupValue: AppSettingsController.instance.scaleMode.value,
-              onChanged: _onScaleModeChanged,
-              title: const Text("16:9"),
-              visualDensity: VisualDensity.compact,
-            ),
-            RadioListTile(
-              value: 4,
-              groupValue: AppSettingsController.instance.scaleMode.value,
-              onChanged: _onScaleModeChanged,
-              title: const Text("4:3"),
-              visualDensity: VisualDensity.compact,
-            ),
-          ],
+        () => RadioGroup<int>(
+          groupValue: AppSettingsController.instance.scaleMode.value,
+          onChanged: _onScaleModeChanged,
+          child: ListView(
+            padding: AppStyle.edgeInsetsV12,
+            children: const [
+              RadioListTile(
+                value: 0,
+                title: Text("适应"),
+                visualDensity: VisualDensity.compact,
+              ),
+              RadioListTile(
+                value: 1,
+                title: Text("拉伸"),
+                visualDensity: VisualDensity.compact,
+              ),
+              RadioListTile(
+                value: 2,
+                title: Text("铺满"),
+                visualDensity: VisualDensity.compact,
+              ),
+              RadioListTile(
+                value: 3,
+                title: Text("16:9"),
+                visualDensity: VisualDensity.compact,
+              ),
+              RadioListTile(
+                value: 4,
+                title: Text("4:3"),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
         ),
       ),
     );

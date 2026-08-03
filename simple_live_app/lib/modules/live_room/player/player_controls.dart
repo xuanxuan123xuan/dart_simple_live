@@ -1123,60 +1123,47 @@ void showPlayerSettings(LiveRoomController controller) {
               style: Get.textTheme.titleMedium,
             ),
           ),
-          RadioListTile(
-            value: 0,
+          RadioGroup<int>(
             groupValue: AppSettingsController.instance.scaleMode.value,
             onChanged: (e) {
               AppSettingsController.instance.setScaleMode(e ?? 0);
               controller.updateScaleMode();
             },
-            contentPadding: AppStyle.edgeInsetsH4,
-            title: const Text("适应"),
-            visualDensity: VisualDensity.compact,
-          ),
-          RadioListTile(
-            value: 1,
-            groupValue: AppSettingsController.instance.scaleMode.value,
-            onChanged: (e) {
-              AppSettingsController.instance.setScaleMode(e ?? 0);
-              controller.updateScaleMode();
-            },
-            contentPadding: AppStyle.edgeInsetsH4,
-            title: const Text("拉伸"),
-            visualDensity: VisualDensity.compact,
-          ),
-          RadioListTile(
-            value: 2,
-            groupValue: AppSettingsController.instance.scaleMode.value,
-            onChanged: (e) {
-              AppSettingsController.instance.setScaleMode(e ?? 0);
-              controller.updateScaleMode();
-            },
-            contentPadding: AppStyle.edgeInsetsH4,
-            title: const Text("铺满"),
-            visualDensity: VisualDensity.compact,
-          ),
-          RadioListTile(
-            value: 3,
-            groupValue: AppSettingsController.instance.scaleMode.value,
-            onChanged: (e) {
-              AppSettingsController.instance.setScaleMode(e ?? 0);
-              controller.updateScaleMode();
-            },
-            contentPadding: AppStyle.edgeInsetsH4,
-            title: const Text("16:9"),
-            visualDensity: VisualDensity.compact,
-          ),
-          RadioListTile(
-            value: 4,
-            groupValue: AppSettingsController.instance.scaleMode.value,
-            onChanged: (e) {
-              AppSettingsController.instance.setScaleMode(e ?? 0);
-              controller.updateScaleMode();
-            },
-            contentPadding: AppStyle.edgeInsetsH4,
-            title: const Text("4:3"),
-            visualDensity: VisualDensity.compact,
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                RadioListTile(
+                  value: 0,
+                  contentPadding: AppStyle.edgeInsetsH4,
+                  title: Text("适应"),
+                  visualDensity: VisualDensity.compact,
+                ),
+                RadioListTile(
+                  value: 1,
+                  contentPadding: AppStyle.edgeInsetsH4,
+                  title: Text("拉伸"),
+                  visualDensity: VisualDensity.compact,
+                ),
+                RadioListTile(
+                  value: 2,
+                  contentPadding: AppStyle.edgeInsetsH4,
+                  title: Text("铺满"),
+                  visualDensity: VisualDensity.compact,
+                ),
+                RadioListTile(
+                  value: 3,
+                  contentPadding: AppStyle.edgeInsetsH4,
+                  title: Text("16:9"),
+                  visualDensity: VisualDensity.compact,
+                ),
+                RadioListTile(
+                  value: 4,
+                  contentPadding: AppStyle.edgeInsetsH4,
+                  title: Text("4:3"),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
           ),
           AppStyle.divider,
           SwitchListTile(
