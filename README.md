@@ -4,7 +4,7 @@
 <h2 align="center">Simple Live — 鸿蒙 / 多开分支</h2>
 
 <p align="center">
-简简单单的看直播 · <code>v1.13.0</code> · <code>feat/ohos-1.12.7</code>
+简简单单的看直播 · <code>v1.13.0</code> · <code>stable</code>
 </p>
 
 ![浅色模式](/assets/screenshot_light.jpg)
@@ -30,7 +30,7 @@ iOS 测试可直接添加源，免去手动下载导入：
 
 ## 这个分支是什么
 
-本仓库 fork 自 [June6699/dart_simple_live](https://github.com/June6699/dart_simple_live)，`feat/ohos-1.12.7` 是一个长期维护的独立分支，重点维护三部分：
+本仓库 fork 自 [June6699/dart_simple_live](https://github.com/June6699/dart_simple_live)，`stable` 是一个长期维护的独立分支，重点维护三部分：
 
 1. **鸿蒙 NEXT 适配**：完整的 OHOS 端口，包含 ArkTS 原生插件层（播放器、截图、扫码、Cookie、文件管理、PIP、网络信息）、服务卡片（关注主播开播状态）、后台开播检查（WorkScheduler + 用户开关）、以及 QuickJS FFI 签名桥接（抖音）。
 2. **多开同屏**：在同一窗口内播放 2～4 个直播间，支持均分/主次布局、聚焦、聊天区、独立暂停与音频控制，以及自动画质调节。
@@ -98,7 +98,7 @@ iOS 测试可直接添加源，免去手动下载导入：
 | Linux | ✅ | zip / deb |
 | Android TV | ✅ | 拆分 APK（按 ABI） |
 | TV-windows | ✅ | TV 的 UI 在 Windows 上运行，支持多开 |
-| HarmonyOS NEXT | ✅ | 本分支 `feat/ohos-1.12.7`，见下方构建 |
+| HarmonyOS NEXT | ✅ | 本分支 `stable`，见下方构建 |
 
 ---
 
@@ -108,7 +108,7 @@ iOS 测试可直接添加源，免去手动下载导入：
 |---|---|---|
 | Windows / Android / Android TV | 3.41.9 | 主线 |
 | Linux | 3.38.10 | 主线 WSL |
-| **本分支所有目标** | **3.22.x** | `feat/ohos-1.12.7`，pubspec 钉死 |
+| **本分支所有目标** | **3.22.x** | `stable`，pubspec 钉死 |
 | 鸿蒙 HAP | 3.22 线 OHOS fork | `tool/build_ohos_hap.ps1` 自带 |
 
 本分支的 `pubspec.yaml` 有 7 处依赖按 Flutter 3.22 钉死（`intl`、`archive`、`lottie`、`package_info_plus`、`window_manager`、`shelf`、`dynamic_color`），换用更新的 Flutter 会在 `flutter_localizations` 的 `intl` 传递依赖上解析失败，需连同这些依赖一起升级。

@@ -33,7 +33,7 @@ on:
         default: false
   push:
     branches:
-      - feat/ohos-1.12.7
+      - stable
     paths:
       - simple_live_app/pubspec.yaml
 
