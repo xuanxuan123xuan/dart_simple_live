@@ -1,4 +1,4 @@
-name: 构建鸿蒙 HAP
+name: 构建HarmonyOS HAP
 
 on:
   workflow_dispatch:
