@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/web_socket_util.dart';
+import 'package:simple_live_core/src/danmaku/common_emoji_assets.dart';
 import 'package:simple_live_core/src/model/tars/huya_danmaku.dart';
 import 'package:tars_dart/tars/codec/tars_input_stream.dart';
 import 'package:tars_dart/tars/codec/tars_output_stream.dart';
@@ -30,6 +31,19 @@ class HuyaDanmakuArgs {
 class HuyaDanmaku implements LiveDanmaku {
   @override
   int heartbeatTime = 60 * 1000;
+
+  /// 弹幕文本中的通用表情片段（[表情名] → Twemoji 图）。
+  List<LiveMessageSpan> _emojiSpans(String content) =>
+      buildCommonEmojiSpans(content);
+
+  List<String>? _emojiImageUrls(String content) {
+    final urls = buildCommonEmojiSpans(content)
+        .where((s) => s.isImage)
+        .map((s) => s.imageUrl!.trim())
+        .toSet()
+        .toList();
+    return urls.isEmpty ? null : urls;
+  }
 
   @override
   Function(LiveMessage msg)? onMessage;
@@ -136,6 +150,8 @@ class HuyaDanmaku implements LiveDanmaku {
                   : LiveMessageColor.numberToColor(color),
               message: content,
               userName: uname,
+              imageUrls: _emojiImageUrls(content),
+              spans: _emojiSpans(content),
             ),
           );
         } else if (wSPushMessage.uri == 8006) {

@@ -4,12 +4,26 @@ import 'dart:typed_data';
 
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/web_socket_util.dart';
+import 'package:simple_live_core/src/danmaku/common_emoji_assets.dart';
 
 import '../common/binary_writer.dart';
 
 class DouyuDanmaku implements LiveDanmaku {
   @override
   int heartbeatTime = 45 * 1000;
+
+  /// 弹幕文本中的通用表情片段（[表情名] → Twemoji 图）。
+  List<LiveMessageSpan> _emojiSpans(String content) =>
+      buildCommonEmojiSpans(content);
+
+  List<String>? _emojiImageUrls(String content) {
+    final urls = buildCommonEmojiSpans(content)
+        .where((s) => s.isImage)
+        .map((s) => s.imageUrl!.trim())
+        .toSet()
+        .toList();
+    return urls.isEmpty ? null : urls;
+  }
 
   @override
   Function(LiveMessage msg)? onMessage;
@@ -87,6 +101,8 @@ class DouyuDanmaku implements LiveDanmaku {
           userName: jsonData["nn"].toString(),
           message: jsonData["txt"].toString(),
           color: getColor(col),
+          imageUrls: _emojiImageUrls(jsonData["txt"].toString()),
+          spans: _emojiSpans(jsonData["txt"].toString()),
         );
 
         onMessage?.call(liveMsg);
