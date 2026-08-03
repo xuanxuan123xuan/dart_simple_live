@@ -610,14 +610,14 @@ class _RightSideDialogRoute extends PopupRoute<void> {
 
   @override
   void didComplete(void result) {
-    Log.d('RightSideDialogRoute: didComplete title=$title (pop 完成)');
+    Log.d('RightSideDialogRoute: didComplete title=$title (pop 完成)\n${StackTrace.current}');
     super.didComplete(result);
   }
 
   @override
-  void didPopNext(Route<dynamic> nextRoute) {
-    Log.d('RightSideDialogRoute: didPopNext title=$title next=$nextRoute');
-    super.didPopNext(nextRoute);
+  void onPopInvokedWithResult(bool didPop, Object? result) {
+    Log.d('RightSideDialogRoute: onPopInvokedWithResult title=$title didPop=$didPop\n${StackTrace.current}');
+    super.onPopInvokedWithResult(didPop, result);
   }
 
   @override
