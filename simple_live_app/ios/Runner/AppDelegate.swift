@@ -29,6 +29,37 @@ import UserNotifications
           result(FlutterMethodNotImplemented)
         }
       }
+
+      // iOS 26 + LiveContainer 下 SystemChrome 隐藏状态栏失效（引擎未适配
+      // scene-based 状态栏管理，容器 VC 层级进一步覆盖）。走原生强制隐藏：
+      // UIViewControllerBasedStatusBarAppearance=false 后系统改用
+      // UIApplication.setStatusBarHidden 全局控制，绕过 VC appearance 查询。
+      let statusBarChannel = FlutterMethodChannel(
+        name: "simple_live/status_bar",
+        binaryMessenger: controller.binaryMessenger
+      )
+      statusBarChannel.setMethodCallHandler { call, result in
+        if call.method == "setHidden" {
+          let hidden = (call.arguments as? Bool) ?? false
+          DispatchQueue.main.async {
+            UIApplication.shared.setStatusBarHidden(hidden, with: .none)
+            // 同时刷新所有窗口的 VC 外观，兼容仍在查询 VC 的系统路径。
+            for scene in UIApplication.shared.connectedScenes {
+              guard let windowScene = scene as? UIWindowScene else { continue }
+              for window in windowScene.windows {
+                var top = window.rootViewController
+                while let presented = top?.presentedViewController {
+                  top = presented
+                }
+                top?.setNeedsStatusBarAppearanceUpdate()
+              }
+            }
+          }
+          result(nil)
+        } else {
+          result(FlutterMethodNotImplemented)
+        }
+      }
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }

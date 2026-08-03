@@ -58,11 +58,16 @@ class FlutterPlaybackDisplayGateway implements PlaybackDisplayGateway {
         SystemUiMode.manual,
         overlays: const [],
       );
+      // iOS 26 + LiveContainer：SystemChrome 可能不生效，原生强制隐藏兜底。
+      unawaited(_statusBarChannel.invokeMethod('setHidden', immersive));
       return;
     }
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 }
+
+/// 原生状态栏强制控制（iOS 26 / LiveContainer 兜底）。
+const _statusBarChannel = MethodChannel('simple_live/status_bar');
 
 typedef PlaybackDisplayFrameScheduler = void Function(VoidCallback callback);
 typedef PlaybackDisplayDelay = Future<void> Function(Duration duration);
