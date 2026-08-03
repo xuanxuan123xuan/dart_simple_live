@@ -101,7 +101,7 @@ android {
     namespace = "com.simplelive.app"
     // Current media/orientation plugins compile against Android API 36.
     compileSdk = 36
-    ndkVersion = "27.0.12077973"
+    ndkVersion = "28.2.13676358" # jni(media_kit) 要求，向后兼容
 
     sourceSets {
         getByName("main") {
