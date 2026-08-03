@@ -54,6 +54,17 @@ void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   DesktopStartupArgs.initialize(args);
 
+  // 诊断：监听系统/容器返回消息（LiveContainer 点击穿透、iOS 边缘返回会走这里）。
+  // 链式转发给原有 handler，不破坏系统返回处理。
+  final prevNavHandler = SystemChannels.navigation.methodCallHandler;
+  SystemChannels.navigation.setMethodCallHandler((call) async {
+    if (call.method == 'popRoute') {
+      Log.d('AppNavigation: SystemChannels popRoute received\n${StackTrace.current}');
+    }
+    final prev = prevNavHandler;
+    return prev == null ? null : await prev(call);
+  });
+
   if (Utils.isOhos) {
     runApp(OhosBootstrapApp(args: args));
     return;
@@ -633,11 +644,6 @@ class MyApp extends StatelessWidget {
         getPages: AppPages.routes,
         routingCallback: (_) {
           unawaited(_syncDesktopShortcutCaptureState());
-        },
-        // 系统/容器返回消息（iOS 边缘返回手势、LiveContainer 点击穿透等会走这里）
-        onPopRoute: () async {
-          Log.d('AppNavigation: onPopRoute called（系统/容器返回消息）\n${StackTrace.current}');
-          return false;
         },
         //国际化
         locale: const Locale("zh", "CN"),
