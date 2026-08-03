@@ -1,0 +1,10 @@
+name: dart_quickjs
+description: 纯 Dart 测试替身（stub）——仅用于 simple_live_core 在无 Flutter/C 工具链环境解析与跑单测。真实实现由 app 层 dependency_overrides 提供（dart_quickjs_compat）。
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.5 <4.0.0"
+
+dev_dependencies:
+  lints: ^2.0.0

@@ -12,6 +12,7 @@ export 'src/common/core_log.dart';
 export 'src/common/douyin_cookie_helper.dart';
 export 'src/common/douyin_follow_refresh_limiter.dart';
 export 'src/common/kuaishou_live_link.dart';
+export 'src/common/network_diagnose_service.dart';
 export 'src/model/live_message.dart';
 export 'src/danmaku/bilibili_danmaku.dart';
 export 'src/danmaku/douyu_danmaku.dart';

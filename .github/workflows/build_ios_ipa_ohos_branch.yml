@@ -98,6 +98,13 @@ jobs:
         working-directory: simple_live_app
         run: flutter pub get
 
+      - name: 运行 core 单元测试（离线，不含真实平台 API 集成测试）
+        if: ${{ inputs.run_tests }}
+        working-directory: simple_live_core
+        run: |
+          dart pub get
+          dart test test/web_socket_util_test.dart test/kuaishou_live_link_test.dart test/kuaishou_site_test.dart test/live_repeated_danmu_summary_test.dart test/network_diagnose_service_test.dart test/kuaishou_danmaku_test.dart
+
       - name: 运行测试
         if: ${{ inputs.run_tests }}
         working-directory: simple_live_app

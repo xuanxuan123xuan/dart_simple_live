@@ -1,5 +1,5 @@
 name: simple_live_app
-version: 1.13.1+11301
+version: 1.13.0+11300
 publish_to: none
 description: "Simple Live APP"
 environment:
@@ -111,6 +111,11 @@ dev_dependencies:
     sdk: flutter
 
 dependency_overrides:
+  # core 声明 git 源 dart_quickjs（纯 Dart，可解析/测试）；
+  # app 侧统一覆盖为本地 compat（鸿蒙 OHOS 3.22 工具链不能消费
+  # git 源的 Dart 3.10 Native Assets），避免"同一包双源"冲突。
+  dart_quickjs:
+    path: ../third_party/dart_quickjs_compat
   canvas_danmaku:
     path: ../third_party/canvas_danmaku
   # 本地 fork：原包缺 androidx.core 依赖，Android 构建 toUri 无法解析。

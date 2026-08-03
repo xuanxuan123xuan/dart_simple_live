@@ -25,9 +25,9 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
-import 'package:simple_live_app/services/network_diagnose_service.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:video_player/video_player.dart';
 

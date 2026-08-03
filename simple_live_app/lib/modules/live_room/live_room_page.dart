@@ -19,7 +19,6 @@ import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
-import 'package:simple_live_app/services/network_diagnose_service.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';

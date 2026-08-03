@@ -103,12 +103,17 @@ class NetworkDiagnoseService {
     }
     final hosts = <String>[];
     final indexByHost = <String, int>{};
+    final portByHost = <String, int>{};
     for (var i = 0; i < urls.length; i += 1) {
-      final host = Uri.tryParse(urls[i])?.host ?? "";
+      final uri = Uri.tryParse(urls[i]);
+      final host = uri?.host ?? "";
       if (host.isEmpty) continue;
       if (!indexByHost.containsKey(host)) {
         indexByHost[host] = i;
         hosts.add(host);
+        // 按线路实际 scheme/port 测速（http=80 / https=443 / 显式端口）；
+        // 无法解析（如 rtmp）时回退 443，与旧行为一致。
+        portByHost[host] = uri!.port > 0 ? uri.port : 443;
       }
     }
     if (hosts.length <= 1) {
@@ -118,7 +123,12 @@ class NetworkDiagnoseService {
     try {
       results = await Future.wait(
         hosts.map(
-          (host) => diagnoseHost(host, samples: samples, timeout: timeout),
+          (host) => diagnoseHost(
+            host,
+            samples: samples,
+            timeout: timeout,
+            port: portByHost[host]!,
+          ),
         ),
       ).timeout(totalBudget);
     } on TimeoutException {
@@ -150,8 +160,13 @@ class NetworkDiagnoseService {
     if (allLost) {
       return "所有测速目标均无法连接，多半是本地网络异常（断网/被拦截/需要代理）。";
     }
-    final avgAvg =
-        results.map((r) => r.avgMs).reduce((a, b) => a + b) / results.length;
+    // 平均延迟只统计"有成功样本"的目标；全 lost 目标 avgMs=0，
+    // 直接参与均值会把结果拉到不真实的低位。
+    final reachable = results.where((r) => r.lost < r.samples).toList();
+    final avgAvg = reachable.isEmpty
+        ? 0.0
+        : reachable.map((r) => r.avgMs).reduce((a, b) => a + b) /
+            reachable.length;
     final avgLoss = results.map((r) => r.lossRate).reduce((a, b) => a + b) /
         results.length;
     if (avgLoss > 20) {

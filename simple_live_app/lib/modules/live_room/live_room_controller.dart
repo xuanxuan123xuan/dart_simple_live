@@ -37,7 +37,6 @@ import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
-import 'package:simple_live_app/services/network_diagnose_service.dart';
 import 'package:simple_live_app/services/ohos_network_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';

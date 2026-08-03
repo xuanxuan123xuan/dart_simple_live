@@ -18,8 +18,13 @@ dependencies:
   tars_dart:
     path: ./packages/tars_dart
   fixnum: ^1.1.0
+  # git 源为纯 Dart（ffi/native_toolchain_c，无 Flutter SDK 依赖），
+  # 保证 simple_live_core 可在纯 Dart 环境解析并跑单测。
+  # 鸿蒙构建由 simple_live_app 的 dependency_overrides 覆盖为
+  # third_party/dart_quickjs_compat（OHOS 3.22 工具链无法消费 Native Assets）。
   dart_quickjs:
-    path: ../third_party/dart_quickjs_compat
+    git:
+      url: https://github.com/xiaoyaocz/dart_quickjs
   cookie_jar: ^4.0.8
   dio_cookie_manager: ^3.1.1
 
@@ -29,4 +34,10 @@ dev_dependencies:
 
 dependency_overrides:
   meta: 1.14.0
+  # 单测环境（纯 Dart、无 C 工具链）用 stub 替代 git 源的 native assets 实现，
+  # 避免 dart test 触发 build hooks 编译 QuickJS。该 override 只影响
+  # simple_live_core 自身解析，不跨包传播；app 构建仍由
+  # simple_live_app 的 dependency_overrides 覆盖为 dart_quickjs_compat。
+  dart_quickjs:
+    path: ../third_party/dart_quickjs_stub
 
