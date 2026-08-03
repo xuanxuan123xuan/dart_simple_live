@@ -230,38 +230,11 @@ jobs:
 
           target="$out/dart_simple_live-${APP_VERSION}-ios-${suffix}-${short_sha}.ipa"
           cp "$src" "$target"
-          # 固定名 IPA：供 AltStore/LiveContainer 源的 latest/download URL 使用。
+          # 固定名 IPA：供 AltStore/LiveContainer 源（ipa-source/apps.json）
+          # 的 releases/latest/download/simple-live.ipa URL 使用，永远最新。
           cp "$target" "$out/simple-live.ipa"
           sha="$(shasum -a 256 "$target" | cut -d' ' -f1)"
           size="$(du -h "$target" | cut -f1)"
-          ipa_size="$(stat -f%z "$target" 2>/dev/null || stat -c%s "$target")"
-
-          # AltStore / LiveContainer 源（apps.json）：downloadURL 指向
-          # releases/latest/download/simple-live.ipa，加一次源永远最新。
-          cat > "$out/apps.json" <<JSON
-{
-  "name": "Simple Live",
-  "identifier": "com.simplelive.source",
-  "sourceURL": "https://github.com/xuanxuan123xuan/dart_simple_live/releases/latest/download/apps.json",
-  "apps": [
-    {
-      "name": "Simple Live",
-      "bundleIdentifier": "com.simplelive.app",
-      "developerName": "xuanxuan123xuan",
-      "version": "${APP_VERSION}",
-      "versionDate": "$(date +%Y-%m-%d)",
-      "versionDescription": "iOS ${APP_VERSION}（${suffix}）· Flutter ${FLUTTER_VERSION}",
-      "downloadURL": "https://github.com/xuanxuan123xuan/dart_simple_live/releases/latest/download/simple-live.ipa",
-      "localizedDescription": "多平台直播聚合：虎牙/斗鱼/抖音/快手/B站",
-      "iconURL": "https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/icon.png",
-      "tintColor": "#4CAF50",
-      "size": ${ipa_size},
-      "minOSVersion": "15.0"
-    }
-  ],
-  "news": []
-}
-JSON
 
           echo "dir=$out" >> "$GITHUB_OUTPUT"
           {
@@ -289,8 +262,9 @@ JSON
           retention-days: 14
 
       # GitHub artifact 下载永远是 zip 打包；需要"直接拿到 .ipa"时，
-      # 发布到 Release 附件（附件不套 zip）。apps.json 供 AltStore/LiveContainer
-      # 源使用（latest/download URL 稳定，非 prerelease 才能被 latest 指向）。
+      # 发布到 Release 附件（附件不套 zip）。固定名 simple-live.ipa 供
+      # AltStore/LiveContainer 源（ipa-source/apps.json）的 latest 指向；
+      # 非 prerelease 才能被 releases/latest 命中。
       - name: 发布含 .ipa 的 Release
         if: ${{ inputs.publish_release }}
         uses: softprops/action-gh-release@v2
@@ -305,10 +279,8 @@ JSON
             - 版本：${{ steps.appver.outputs.version }}
             - 提交：`${{ github.sha }}`
             - 下载附件 `*.ipa` 即为可直接安装的包（Release 附件不打包 zip）。
-            - AltStore / LiveContainer 源：`https://github.com/xuanxuan123xuan/dart_simple_live/releases/latest/download/apps.json`
-          files: |
-            ${{ steps.artifact.outputs.dir }}/*.ipa
-            ${{ steps.artifact.outputs.dir }}/apps.json
+            - AltStore / LiveContainer 源：`https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps.json`
+          files: ${{ steps.artifact.outputs.dir }}/*.ipa
           allowUpdates: true
           prerelease: false
 
