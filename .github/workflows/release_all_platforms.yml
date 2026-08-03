@@ -247,6 +247,7 @@ jobs:
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/release-android"
+          mkdir -p "$out"
           src="simple_live_app/build/app/outputs/flutter-apk"
           # 诊断：确认 split-per-abi 的实际输出
           ls -la "$src" || true
@@ -345,6 +346,7 @@ jobs:
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/release-android-tv"
+          mkdir -p "$out"
           src="simple_live_tv_app/build/app/outputs/flutter-apk"
           cp "$src/app-armeabi-v7a-release.apk" \
             "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-armeabi-v7a.apk"
