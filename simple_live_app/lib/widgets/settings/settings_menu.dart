@@ -59,7 +59,7 @@ class SettingsMenu<T> extends StatelessWidget {
   }
 
   void openMenu(BuildContext context) {
-    showModalBottomSheet(
+    Utils.showModalBottomSheetSafe(
       context: context,
       showDragHandle: true,
       useSafeArea: true, //useSafeArea似乎无效

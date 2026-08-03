@@ -104,7 +104,7 @@ class SettingsNumber extends StatelessWidget {
 
   void openSilder(BuildContext context) {
     var newValue = value.obs;
-    showModalBottomSheet(
+    Utils.showModalBottomSheetSafe(
       context: context,
       showDragHandle: true,
       useSafeArea: true, //useSafeArea似乎无效

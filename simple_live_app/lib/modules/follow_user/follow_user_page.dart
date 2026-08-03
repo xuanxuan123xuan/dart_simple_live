@@ -425,8 +425,9 @@ class FollowUserPage extends GetView<FollowUserController> {
     final textController = TextEditingController(
       text: controller.searchKeyword.value,
     );
-    await Get.dialog(
-      AlertDialog(
+    await Utils.showDialogSafe(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: const Text("搜索主播"),
         content: TextField(
           controller: textController,
@@ -667,8 +668,9 @@ class FollowUserPage extends GetView<FollowUserController> {
         )
         .obs;
     final ScrollController scrollController = ScrollController();
-    Get.dialog(
-      AlertDialog(
+    Utils.showDialogSafe(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         contentPadding: const EdgeInsets.all(16.0),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12.0),
@@ -795,8 +797,9 @@ class FollowUserPage extends GetView<FollowUserController> {
     final TextEditingController tagEditController =
         TextEditingController(text: followUserTag?.tag);
     bool upMode = title == "添加标签";
-    Get.dialog(
-      AlertDialog(
+    Utils.showDialogSafe(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         contentPadding: const EdgeInsets.all(16.0),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12.0),

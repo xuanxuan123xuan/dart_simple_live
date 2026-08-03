@@ -255,6 +255,58 @@ class Utils {
     return navigator.push<void>(route);
   }
 
+  /// 通用底部弹窗（替代 showModalBottomSheet），带 barrier 1000ms 防穿透窗口。
+  /// 参数与 showModalBottomSheet 常用子集对齐。
+  static Future<void> showModalBottomSheetSafe({
+    required BuildContext context,
+    required WidgetBuilder builder,
+    bool isScrollControlled = false,
+    bool showDragHandle = false,
+    bool useSafeArea = false,
+    BoxConstraints? constraints,
+    ShapeBorder? shape,
+    Color? backgroundColor,
+  }) {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = _SafeBottomSheetRoute(
+      builder: builder,
+      isScrollControlled: isScrollControlled,
+      showDragHandle: showDragHandle,
+      useSafeArea: useSafeArea,
+      constraints: constraints,
+      shape: shape,
+      backgroundColor: backgroundColor,
+      alignment: Alignment.bottomCenter,
+      dismissByBarrier: true,
+    );
+    // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透）。
+    route.scheduleBarrierEnable();
+    return navigator.push<void>(route);
+  }
+
+  /// 通用居中弹窗（替代 Get.dialog / showDialog），带 barrier 1000ms 防穿透窗口。
+  static Future<void> showDialogSafe({
+    required BuildContext context,
+    required WidgetBuilder builder,
+    bool dismissByBarrier = true,
+  }) {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = _SafeBottomSheetRoute(
+      builder: builder,
+      isScrollControlled: false,
+      showDragHandle: false,
+      useSafeArea: false,
+      constraints: null,
+      shape: null,
+      backgroundColor: Colors.transparent,
+      alignment: Alignment.center,
+      dismissByBarrier: dismissByBarrier,
+    );
+    // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透）。
+    route.scheduleBarrierEnable();
+    return navigator.push<void>(route);
+  }
+
   static Widget bottomSheetSafeArea({
     required Widget child,
     double bottom = 12,
@@ -826,6 +878,141 @@ class _RightSideSheetRoute extends PopupRoute<void> {
                 Flexible(child: child),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 1),
+        end: Offset.zero,
+      ).animate(curved),
+      child: child,
+    );
+  }
+
+  @override
+  void dispose() {
+    _barrierTimer?.cancel();
+    _disposed = true;
+    super.dispose();
+  }
+}
+
+/// 通用底部弹窗 route（替代 showModalBottomSheet），带 barrier 1000ms 防穿透窗口。
+class _SafeBottomSheetRoute extends PopupRoute<void> {
+  _SafeBottomSheetRoute({
+    required this.builder,
+    required this.isScrollControlled,
+    required this.showDragHandle,
+    required this.useSafeArea,
+    required this.constraints,
+    required this.shape,
+    required this.backgroundColor,
+    required this.alignment,
+    required this.dismissByBarrier,
+  });
+
+  final WidgetBuilder builder;
+  final bool isScrollControlled;
+  final bool showDragHandle;
+  final bool useSafeArea;
+  final BoxConstraints? constraints;
+  final ShapeBorder? shape;
+  final Color? backgroundColor;
+  final AlignmentGeometry alignment;
+  final bool dismissByBarrier;
+
+  bool _barrierEnabled = false;
+  bool _disposed = false;
+  Timer? _barrierTimer;
+
+  void scheduleBarrierEnable() {
+    _barrierTimer?.cancel();
+    _barrierTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (_disposed || !isActive) {
+        return;
+      }
+      _barrierEnabled = true;
+      changedExternalState();
+    });
+  }
+
+  @override
+  bool get barrierDismissible => _barrierEnabled && dismissByBarrier;
+
+  @override
+  Color? get barrierColor => Colors.black54;
+
+  @override
+  String? get barrierLabel => "关闭";
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 200);
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    final mediaQuery = MediaQuery.of(context);
+    final maxHeight = isScrollControlled
+        ? mediaQuery.size.height * 0.9
+        : mediaQuery.size.height * 0.5;
+    return Align(
+      alignment: alignment,
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: constraints?.maxWidth ?? double.infinity,
+          maxHeight: maxHeight,
+        ),
+        decoration: ShapeDecoration(
+          color: backgroundColor ?? Theme.of(context).scaffoldBackgroundColor,
+          shape: shape ??
+              const RoundedRectangleBorder(
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(12),
+                  topRight: Radius.circular(12),
+                ),
+              ),
+        ),
+        child: SafeArea(
+          top: useSafeArea,
+          bottom: useSafeArea,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (showDragHandle)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 4),
+                  child: Center(
+                    child: Container(
+                      width: 32,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                ),
+              Flexible(child: Builder(builder: builder)),
+            ],
           ),
         ),
       ),

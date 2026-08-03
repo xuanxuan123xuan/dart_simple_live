@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_controller.dart';
@@ -1405,12 +1406,9 @@ void _showStableBottomSheet({
       return;
     }
     try {
-      showModalBottomSheet<void>(
+      Utils.showModalBottomSheetSafe(
         context: context,
         shape: shape,
-        // 延后打开已隔离发起手势，这里可以保留标准关闭交互。
-        isDismissible: true,
-        enableDrag: true,
         builder: builder,
       ).whenComplete(() => _stableBottomSheetActive = false);
     } catch (_) {

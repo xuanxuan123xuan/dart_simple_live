@@ -42,7 +42,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
 
   /// 打开网络诊断弹窗：测试到公共 DNS 的延迟与丢包。
   void showNetworkDiagnose(LiveRoomController controller) {
-    showModalBottomSheet<void>(
+    Utils.showModalBottomSheetSafe(
       context: Get.context!,
       isScrollControlled: true,
       builder: (context) => _NetworkDiagnosePanel(controller: controller),
@@ -1814,7 +1814,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   }
 
   void showMore() {
-    showModalBottomSheet(
+    Utils.showModalBottomSheetSafe(
       context: Get.context!,
       constraints: const BoxConstraints(
         maxWidth: 600,
@@ -2148,7 +2148,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     if (!LiveSubtitleService.instance.uiEnabled) {
       return;
     }
-    showModalBottomSheet(
+    Utils.showModalBottomSheetSafe(
       context: Get.context!,
       constraints: const BoxConstraints(maxWidth: 600),
       isScrollControlled: true,
