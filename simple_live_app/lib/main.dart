@@ -79,28 +79,30 @@ class _PopRouteDiagObserver extends WidgetsBindingObserver {
 }
 
 /// 诊断：全局 route 操作日志（push/pop/remove/replace），与弹窗生命周期交叉比对。
+/// didPop/didRemove 是同步回调，其 StackTrace 能看到谁调用了 pop（Get.back、
+/// barrier 点击、iOS 边缘滑动 _CupertinoBackGestureDetector 等）。
 class _RouteDiagObserver extends NavigatorObserver {
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    Log.d('AppNavigation: didPush ${route.runtimeType} prev=${previousRoute?.runtimeType}');
+    Log.d('AppNavigation: didPush ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
     super.didPush(route, previousRoute);
   }
 
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    Log.d('AppNavigation: didPop ${route.runtimeType} prev=${previousRoute?.runtimeType}');
+    Log.d('AppNavigation: didPop ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
     super.didPop(route, previousRoute);
   }
 
   @override
   void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    Log.d('AppNavigation: didRemove ${route.runtimeType} prev=${previousRoute?.runtimeType}');
+    Log.d('AppNavigation: didRemove ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
     super.didRemove(route, previousRoute);
   }
 
   @override
   void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
-    Log.d('AppNavigation: didReplace new=${newRoute?.runtimeType} old=${oldRoute?.runtimeType}');
+    Log.d('AppNavigation: didReplace new=${newRoute?.runtimeType} old=${oldRoute?.runtimeType}\n${StackTrace.current}');
     super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
   }
 }
