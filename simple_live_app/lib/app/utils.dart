@@ -172,6 +172,7 @@ class Utils {
     );
     _rightDialogRoute = route;
     _rightDialogNavigator = navigator;
+    Log.d('RightSideDialogRoute: opened title=$title request=$request');
     final routeFuture = navigator.push<void>(route);
     _rightDialogFuture = routeFuture;
     unawaited(
@@ -605,6 +606,18 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   void dispose() {
     Log.d('RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)');
     super.dispose();
+  }
+
+  @override
+  void didComplete(void result) {
+    Log.d('RightSideDialogRoute: didComplete title=$title (pop 完成)');
+    super.didComplete(result);
+  }
+
+  @override
+  void didPopNext(Route<dynamic> nextRoute) {
+    Log.d('RightSideDialogRoute: didPopNext title=$title next=$nextRoute');
+    super.didPopNext(nextRoute);
   }
 
   @override
