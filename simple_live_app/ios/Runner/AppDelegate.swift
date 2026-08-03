@@ -42,18 +42,7 @@ import UserNotifications
         if call.method == "setHidden" {
           let hidden = (call.arguments as? Bool) ?? false
           DispatchQueue.main.async {
-            UIApplication.shared.setStatusBarHidden(hidden, with: .none)
-            // 同时刷新所有窗口的 VC 外观，兼容仍在查询 VC 的系统路径。
-            for scene in UIApplication.shared.connectedScenes {
-              guard let windowScene = scene as? UIWindowScene else { continue }
-              for window in windowScene.windows {
-                var top = window.rootViewController
-                while let presented = top?.presentedViewController {
-                  top = presented
-                }
-                top?.setNeedsStatusBarAppearanceUpdate()
-              }
-            }
+            Self.applyStatusBar(hidden: hidden, retries: 0)
           }
           result(nil)
         } else {
@@ -62,6 +51,28 @@ import UserNotifications
       }
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  /// 强制状态栏隐藏/显示。iOS 26 上 setStatusBarHidden 可能被系统忽略，
+  /// 周期重试 3 次对抗系统恢复；同时刷新所有窗口 VC 外观（兼容 VC-based 路径）。
+  static func applyStatusBar(hidden: Bool, retries: Int) {
+    UIApplication.shared.setStatusBarHidden(hidden, with: .none)
+    for scene in UIApplication.shared.connectedScenes {
+      guard let windowScene = scene as? UIWindowScene else { continue }
+      for window in windowScene.windows {
+        var top = window.rootViewController
+        while let presented = top?.presentedViewController {
+          top = presented
+        }
+        top?.setNeedsStatusBarAppearanceUpdate()
+      }
+    }
+    if retries < 3 {
+      let delays = [0.5, 1.0, 1.5]
+      DispatchQueue.main.asyncAfter(deadline: .now() + delays[retries]) {
+        Self.applyStatusBar(hidden: hidden, retries: retries + 1)
+      }
+    }
   }
 
   private func showLiveStartNotification(title: String, body: String) {

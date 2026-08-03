@@ -59,7 +59,12 @@ class FlutterPlaybackDisplayGateway implements PlaybackDisplayGateway {
         overlays: const [],
       );
       // iOS 26 + LiveContainer：SystemChrome 可能不生效，原生强制隐藏兜底。
-      unawaited(_statusBarChannel.invokeMethod('setHidden', immersive));
+      try {
+        await _statusBarChannel.invokeMethod('setHidden', immersive);
+        Log.d('SystemUi: native setHidden=$immersive ok');
+      } catch (error) {
+        Log.d('SystemUi: native setHidden=$immersive error: $error');
+      }
       return;
     }
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);

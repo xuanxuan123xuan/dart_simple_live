@@ -605,6 +605,21 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   final Future<void> Function() onCovered;
   final Widget child;
 
+  /// 弹窗 push 时刻。用于拦截"打开瞬间的触摸穿透"。
+  final DateTime _openedAt = DateTime.now();
+
+  @override
+  RoutePopDisposition get popDisposition {
+    // LiveContainer / iOS 26 会重复投递触摸事件：第一次触发按钮 onPressed
+    // 打开弹窗，第二次（毫秒级内）落在 barrier 上触发 maybePop 关闭弹窗。
+    // 打开后 300ms 内的 maybePop 视为穿透，不关闭；用户真实点击 barrier
+    // 通常在弹窗出现后 >300ms，不受影响。（dismiss 走 removeRoute，不受影响）
+    if (DateTime.now().difference(_openedAt) < const Duration(milliseconds: 300)) {
+      return RoutePopDisposition.doNotPop;
+    }
+    return super.popDisposition;
+  }
+
   @override
   void dispose() {
     Log.d('RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)');
