@@ -164,6 +164,7 @@ class Utils {
       width: width,
       clickOutsideDismiss: clickMaskDismiss,
       onHeaderBack: () async {
+        Log.d('RightSideDialogRoute: onHeaderBack title=$title');
         await _dismissRightDialog();
         onDismiss?.call();
       },
@@ -172,7 +173,7 @@ class Utils {
     );
     _rightDialogRoute = route;
     _rightDialogNavigator = navigator;
-    Log.d('RightSideDialogRoute: opened title=$title request=$request');
+    Log.d('RightSideDialogRoute: opened title=$title request=$request\n${StackTrace.current}');
     final routeFuture = navigator.push<void>(route);
     _rightDialogFuture = routeFuture;
     unawaited(
@@ -194,7 +195,7 @@ class Utils {
     _rightDialogNavigator = null;
     _rightDialogFuture = null;
     if (route == null || navigator == null) return;
-    Log.d('RightSideDialogRoute: dismiss called (isCurrent=${route.isCurrent}, isActive=${route.isActive})');
+    Log.d('RightSideDialogRoute: dismiss called (isCurrent=${route.isCurrent}, isActive=${route.isActive})\n${StackTrace.current}');
     if (route.isCurrent) {
       navigator.pop<void>();
     } else if (route.isActive) {
@@ -207,6 +208,7 @@ class Utils {
 
   static void hideRightDialog() {
     _rightDialogRequest += 1;
+    Log.d('RightSideDialogRoute: hideRightDialog called\n${StackTrace.current}');
     unawaited(_dismissRightDialog());
   }
 
@@ -225,6 +227,7 @@ class Utils {
     FutureOr<void> Function() openNext,
   ) async {
     _rightDialogRequest += 1;
+    Log.d('RightSideDialogRoute: switchRightDialog called\n${StackTrace.current}');
     await _dismissRightDialog();
     await Future.delayed(const Duration(milliseconds: 220));
     await openNext();
@@ -623,6 +626,7 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   @override
   void didChangeNext(Route<dynamic>? nextRoute) {
     super.didChangeNext(nextRoute);
+    Log.d('RightSideDialogRoute: didChangeNext title=$title next=${nextRoute?.runtimeType} completed=${animation?.isCompleted} isCurrent=$isCurrent isActive=$isActive');
     if (nextRoute == null) return;
     // 只响应真正的页面导航（PageRoute）。SmartDialog toast、Get.bottomSheet
     // 等浮层（PopupRoute）覆盖时不应关闭右侧面板——否则弹窗打开瞬间若有
@@ -635,7 +639,7 @@ class _RightSideDialogRoute extends PopupRoute<void> {
     // settles so it cannot contaminate the destination or reappear on return.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (isActive && !isCurrent) {
-        Log.d('RightSideDialogRoute: covered by $nextRoute, dismissing');
+        Log.d('RightSideDialogRoute: covered by ${nextRoute.runtimeType}, dismissing');
         unawaited(onCovered());
       }
     });

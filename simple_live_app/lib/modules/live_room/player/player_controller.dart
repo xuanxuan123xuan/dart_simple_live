@@ -1390,6 +1390,7 @@ mixin PlayerGestureControlMixin
     on PlayerStateMixin, PlayerMixin, PlayerSystemMixin {
   /// 单击显示/隐藏控制器
   void onTap() {
+    Log.d('PlayerGesture: onTap showControls=${showControlsState.value} lock=${lockControlsState.value} fullScreen=${fullScreenState.value}');
     if (lockControlsState.value && fullScreenState.value) {
       return;
     }
