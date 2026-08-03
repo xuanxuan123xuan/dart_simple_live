@@ -1,5 +1,18 @@
 // Generated from static Douyin emoji assets bundled with the apps.
 // Source: https://www.emojiall.com/zh-hans/platform-douyin
+//
+// 内置表为打包快照（兜底，asset:// 本地图）；运行时可通过
+// [refreshDouyinEmoji] 拉取抖音官方 emoji 接口并覆盖为 CDN 图，
+// 抖音新增/变更表情无需发版。
+library;
+
+import 'dart:convert';
+
+import 'package:simple_live_core/src/common/core_log.dart';
+import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/douyin_site.dart';
+import 'package:simple_live_core/src/scripts/douyin_sign.dart';
+
 const Map<String, String> douyinEmojiAssets = {
   '[V5]': 'asset://assets/images/douyin_emoji/clv.png',
   '[给力]': 'asset://assets/images/douyin_emoji/clw.png',
@@ -143,3 +156,98 @@ const Map<String, String> douyinEmojiAssets = {
   '[碰拳]': 'asset://assets/images/douyin_emoji/1f91b.png',
   '[OK]': 'asset://assets/images/douyin_emoji/1f44c.png',
 };
+
+/// 运行时从抖音官方接口拉取的最新映射（优先于内置静态表）。
+/// 注意：接口返回的是带签名/有效期的 douyinpic CDN URL，刷新即可续期。
+Map<String, String> _dynamicDouyinEmoji = const {};
+
+/// 解析单个表情 token（如 `[微笑]`）：动态覆盖优先，内置表兜底。
+String? resolveDouyinEmoji(String token) =>
+    _dynamicDouyinEmoji[token] ?? douyinEmojiAssets[token];
+
+/// 抖音 web 表情列表接口（同前端页面请求，参数集一致）。
+const String douyinEmojiListBaseUrl =
+    'https://live.douyin.com/aweme/v1/web/emoji/list'
+    '?aid=6383&app_name=douyin_web&live_id=1&device_platform=web'
+    '&language=zh-CN&enter_from=link_share&cookie_enabled=true'
+    '&screen_width=1920&screen_height=1080&browser_language=zh-CN'
+    '&browser_platform=Win32&browser_name=Edge&browser_version=151.0.0.0'
+    '&os_name=Windows&os_version=10';
+
+/// 拉取抖音最新表情映射并覆盖静态表。
+///
+/// 策略：先匿名请求；失败且 [cookie] 非空（用户配置的登录态）时
+/// 再带 cookie 重试一次。匿名成功则不暴露用户 cookie。
+/// 接口需要 a_bogus 签名（复用 [DouyinSign.getAbogusUrl]）。
+/// 全部失败（断网/签名变更/接口调整）静默保留现有映射，不抛异常。
+/// [fetcher] 仅供测试注入（跳过网络与签名）。
+Future<bool> refreshDouyinEmoji({
+  String? cookie,
+  Future<String> Function()? fetcher,
+}) async {
+  final effectiveCookie = (cookie == null || cookie.isEmpty) ? null : cookie;
+  String text;
+  if (fetcher != null) {
+    try {
+      text = await fetcher();
+    } catch (_) {
+      return false;
+    }
+  } else {
+    // 匿名优先，失败再带 cookie。
+    try {
+      text = await _fetchDouyinEmojiList(null);
+    } catch (e) {
+      CoreLog.d('抖音表情匿名刷新失败: $e');
+      if (effectiveCookie == null) {
+        return false;
+      }
+      try {
+        text = await _fetchDouyinEmojiList(effectiveCookie);
+      } catch (e2) {
+        CoreLog.d('抖音表情 cookie 刷新失败: $e2');
+        return false;
+      }
+    }
+  }
+  try {
+    final decoded = jsonDecode(text);
+    final list = (decoded as Map<String, dynamic>)['emoji_list'];
+    if (list is! List) return false;
+    final map = <String, String>{};
+    for (final item in list) {
+      if (item is! Map<String, dynamic>) continue;
+      final name = item['display_name'];
+      final urlList =
+          (item['emoji_url'] as Map<String, dynamic>?)?['url_list'];
+      if (name is String && urlList is List && urlList.isNotEmpty) {
+        map[name] = urlList.first.toString();
+      }
+    }
+    if (map.isEmpty) return false;
+    _dynamicDouyinEmoji = map;
+    CoreLog.d('抖音表情映射已刷新：${map.length} 项');
+    return true;
+  } catch (e) {
+    CoreLog.d('抖音表情映射解析失败: $e');
+    return false;
+  }
+}
+
+/// 请求抖音 emoji 列表（真实网络路径，计算 a_bogus 签名）。
+/// [cookie] 为 null 表示匿名请求。
+Future<String> _fetchDouyinEmojiList(String? cookie) async {
+  final requestUrl = DouyinSign.getAbogusUrl(
+    douyinEmojiListBaseUrl,
+    DouyinSite.kDefaultUserAgent,
+  );
+  final headers = <String, dynamic>{
+    'Authority': 'live.douyin.com',
+    'Referer': 'https://live.douyin.com',
+    'User-Agent': DouyinSite.kDefaultUserAgent,
+  };
+  if (cookie != null && cookie.isNotEmpty) {
+    headers['cookie'] = cookie;
+  }
+  return HttpClient.instance.getText(requestUrl, header: headers);
+}

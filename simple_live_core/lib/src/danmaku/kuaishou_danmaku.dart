@@ -104,15 +104,19 @@ class KuaishouDanmaku extends LiveDanmaku {
     _maybeRefreshEmoji();
   }
 
-  /// 全局只拉取一次最新表情映射（进程内），失败静默走内置表。
+  /// 全局只拉取一次最新表情映射（进程内）；cookie 变化（用户登录
+  /// 后带 cookie 再刷一次）除外。失败静默走内置表。
   static bool _emojiRefreshStarted = false;
+  static String? _lastRefreshCookie;
 
-  void _maybeRefreshEmoji() {
-    if (_emojiRefreshStarted) {
+  void _maybeRefreshEmoji([String? cookie]) {
+    final effective = (cookie == null || cookie.isEmpty) ? null : cookie;
+    if (_emojiRefreshStarted && effective == _lastRefreshCookie) {
       return;
     }
     _emojiRefreshStarted = true;
-    unawaited(refreshKuaishouEmoji());
+    _lastRefreshCookie = effective;
+    unawaited(refreshKuaishouEmoji(cookie: effective));
   }
 
   final WebSocketConnector? _connector;
@@ -146,6 +150,7 @@ class KuaishouDanmaku extends LiveDanmaku {
 
     danmakuArgs = args;
     _credentialResolver = args.credentialResolver;
+    _maybeRefreshEmoji(args.cookie);
     if (!args.hasConnectionInfo) {
       await _resolveCredentials(generation);
       return;

@@ -31,6 +31,25 @@ class DouyinDanmakuArgs {
 }
 
 class DouyinDanmaku implements LiveDanmaku {
+  DouyinDanmaku() {
+    _maybeRefreshEmoji();
+  }
+
+  /// 全局只拉取一次最新表情映射（进程内）；cookie 变化（用户登录
+  /// 后带 cookie 再刷一次）除外。失败静默走内置表。
+  static bool _emojiRefreshStarted = false;
+  static String? _lastRefreshCookie;
+
+  void _maybeRefreshEmoji([String? cookie]) {
+    final effective = (cookie == null || cookie.isEmpty) ? null : cookie;
+    if (_emojiRefreshStarted && effective == _lastRefreshCookie) {
+      return;
+    }
+    _emojiRefreshStarted = true;
+    _lastRefreshCookie = effective;
+    unawaited(refreshDouyinEmoji(cookie: effective));
+  }
+
   @override
   int heartbeatTime = 10 * 1000;
 
@@ -304,7 +323,7 @@ class DouyinDanmaku implements LiveDanmaku {
       if (token == null) {
         continue;
       }
-      final asset = douyinEmojiAssets[token];
+      final asset = resolveDouyinEmoji(token);
       if (asset == null) {
         continue;
       }

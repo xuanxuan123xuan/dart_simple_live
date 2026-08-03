@@ -233,14 +233,43 @@ const String kuaishouEmojiPanelUrl =
 
 /// 拉取快手最新表情映射并覆盖静态表。
 ///
-/// 匿名接口，无需登录。失败（断网/接口变更）时静默保留现有映射，
-/// 不抛异常、不影响弹幕流程。[fetcher] 仅供测试注入。
+/// 策略：先匿名请求；失败且 [cookie] 非空（用户配置的登录态）时
+/// 再带 cookie 重试一次。匿名成功则不暴露用户 cookie。
+/// 全部失败（断网/接口变更）静默保留现有映射，不抛异常。
+/// [fetcher] 仅供测试注入（跳过网络）。
 Future<void> refreshKuaishouEmoji({
+  String? cookie,
   Future<String> Function()? fetcher,
 }) async {
+  final effectiveCookie = (cookie == null || cookie.isEmpty) ? null : cookie;
+  String text;
+  if (fetcher != null) {
+    try {
+      text = await fetcher();
+    } catch (_) {
+      return;
+    }
+  } else {
+    // 匿名优先，失败再带 cookie。
+    try {
+      text = await HttpClient.instance.getText(kuaishouEmojiPanelUrl);
+    } catch (e) {
+      CoreLog.d('快手表情匿名刷新失败: $e');
+      if (effectiveCookie == null) {
+        return;
+      }
+      try {
+        text = await HttpClient.instance.getText(
+          kuaishouEmojiPanelUrl,
+          header: {'cookie': effectiveCookie},
+        );
+      } catch (e2) {
+        CoreLog.d('快手表情 cookie 刷新失败: $e2');
+        return;
+      }
+    }
+  }
   try {
-    final text = await (fetcher ??
-        (() => HttpClient.instance.getText(kuaishouEmojiPanelUrl)))();
     final decoded = jsonDecode(text);
     final data = (decoded as Map<String, dynamic>)['data'];
     if (data is! Map) return;
@@ -254,6 +283,6 @@ Future<void> refreshKuaishouEmoji({
     _dynamicKuaishouEmoji = map;
     CoreLog.d('快手表情映射已刷新：${map.length} 项');
   } catch (e) {
-    CoreLog.d('快手表情映射刷新失败，使用内置表: $e');
+    CoreLog.d('快手表情映射解析失败: $e');
   }
 }
