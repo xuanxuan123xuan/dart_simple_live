@@ -78,6 +78,33 @@ class _PopRouteDiagObserver extends WidgetsBindingObserver {
   }
 }
 
+/// 诊断：全局 route 操作日志（push/pop/remove/replace），与弹窗生命周期交叉比对。
+class _RouteDiagObserver extends NavigatorObserver {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    Log.d('AppNavigation: didPush ${route.runtimeType} prev=${previousRoute?.runtimeType}');
+    super.didPush(route, previousRoute);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    Log.d('AppNavigation: didPop ${route.runtimeType} prev=${previousRoute?.runtimeType}');
+    super.didPop(route, previousRoute);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    Log.d('AppNavigation: didRemove ${route.runtimeType} prev=${previousRoute?.runtimeType}');
+    super.didRemove(route, previousRoute);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    Log.d('AppNavigation: didReplace new=${newRoute?.runtimeType} old=${oldRoute?.runtimeType}');
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+  }
+}
+
 Future<void> initializeApplication(List<String> args) async {
   if (Utils.isOhos) {
     FilePickerOhos.registerWith();
@@ -645,7 +672,8 @@ class MyApp extends StatelessWidget {
             ThemeMode.values[Get.find<AppSettingsController>().themeMode.value],
         initialRoute: RoutePath.kIndex,
         getPages: AppPages.routes,
-        routingCallback: (_) {
+        routingCallback: (r) {
+          Log.d('AppNavigation: routingCallback cur=${r?.current?.name} prev=${r?.previous?.name}');
           unawaited(_syncDesktopShortcutCaptureState());
         },
         //国际化
@@ -663,7 +691,10 @@ class MyApp extends StatelessWidget {
         // 升级后Android页面过渡动画似乎有BUG
         defaultTransition: Platform.isAndroid ? Transition.cupertino : null,
         //debugShowCheckedModeBanner: false,
-        navigatorObservers: [FlutterSmartDialog.observer],
+        navigatorObservers: [
+          FlutterSmartDialog.observer,
+          _RouteDiagObserver(),
+        ],
         builder: FlutterSmartDialog.init(
           loadingBuilder: ((msg) => const AppLoaddingWidget()),
           //字体大小不跟随系统变化

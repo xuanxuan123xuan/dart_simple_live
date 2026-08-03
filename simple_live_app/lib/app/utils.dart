@@ -624,6 +624,12 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   }
 
   @override
+  void didPopNext(Route<dynamic> nextRoute) {
+    Log.d('RightSideDialogRoute: didPopNext title=$title next=${nextRoute.runtimeType}');
+    super.didPopNext(nextRoute);
+  }
+
+  @override
   void didChangeNext(Route<dynamic>? nextRoute) {
     super.didChangeNext(nextRoute);
     Log.d('RightSideDialogRoute: didChangeNext title=$title next=${nextRoute?.runtimeType} completed=${animation?.isCompleted} isCurrent=$isCurrent isActive=$isActive');
