@@ -1,5 +1,5 @@
 name: simple_live_app
-version: 1.13.0+11300
+version: 1.14.0+11400 # dev 分支独立版本线（与正常分支 feat/ohos 的 1.13.x 区分，避免 release tag 冲突）
 publish_to: none
 description: "Simple Live APP"
 environment:
