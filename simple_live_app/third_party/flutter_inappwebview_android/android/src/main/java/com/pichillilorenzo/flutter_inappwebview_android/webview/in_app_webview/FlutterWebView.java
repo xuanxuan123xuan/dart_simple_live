@@ -64,7 +64,7 @@ public class FlutterWebView implements PlatformWebView {
     }
 
     webView = new InAppWebView(context, plugin, id, windowId, customSettings, contextMenu, 
-            customSettings.useHybridComposition ? null : plugin.flutterView, userScripts);
+            null, userScripts);
     displayListenerProxy.onPostWebViewInitialization(displayManager);
 
     // set MATCH_PARENT layout params to the WebView, otherwise it won't take all the available space!
