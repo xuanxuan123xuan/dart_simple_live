@@ -175,8 +175,9 @@ class Utils {
     _rightDialogNavigator = navigator;
     Log.d('RightSideDialogRoute: opened title=$title request=$request\n${StackTrace.current}');
     final routeFuture = navigator.push<void>(route);
-    // 前 300ms 禁用 barrier 点击（拦截触摸穿透），之后启用正常遮罩关闭。
-    unawaited(Future.delayed(const Duration(milliseconds: 300), () {
+    // 前 1000ms 禁用 barrier 点击（拦截触摸穿透，重复事件约 300-400ms 延迟），
+    // 之后启用正常遮罩关闭。
+    unawaited(Future.delayed(const Duration(milliseconds: 1000), () {
       if (route._disposed || !route.isActive) {
         return;
       }
@@ -613,9 +614,10 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   final Future<void> Function() onCovered;
   final Widget child;
 
-  /// 弹窗 push 后前 300ms 禁用 barrier 点击（拦截 LiveContainer/iOS26
-  /// 触摸事件重复：第一次触发 onPressed 开弹窗，第二次落在 barrier 上关闭）。
-  /// 300ms 后 enableBarrier() 启用，用户真实点击遮罩（>300ms）正常关闭。
+  /// 弹窗 push 后前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26
+  /// 触摸事件重复：第一次触发 onPressed 开弹窗，第二次落在 barrier 上关闭。
+  /// 重复事件约 300-400ms 延迟，1000ms 后 enableBarrier() 启用，用户真实点击
+  /// 遮罩（>1s）正常关闭。
   bool _barrierEnabled = false;
   bool _disposed = false;
 

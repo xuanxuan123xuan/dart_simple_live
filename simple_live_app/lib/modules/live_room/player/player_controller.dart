@@ -654,9 +654,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     await PlaybackDisplayCoordinator.instance.settle();
     if (Platform.isIOS) {
       // iOS 横竖屏旋转/路由动画完成（约 300-400ms）后会重新应用系统栏
-      // 样式，把之前的 hidden 覆盖掉。延迟多次重检，确保动画结束后
-      // 状态栏仍保持隐藏。
-      for (final ms in const [250, 500, 900]) {
+      // 样式，把之前的 hidden 覆盖掉。延迟多次重检（最长 3s），确保动画
+      // 结束及系统 scene 重置后状态栏仍保持隐藏。
+      for (final ms in const [250, 500, 900, 2000, 3000]) {
         await Future.delayed(Duration(milliseconds: ms));
         if (!fullScreenState.value ||
             smallWindowState.value ||

@@ -35,8 +35,8 @@ void main() {
     await tester.tap(find.text('Open panel'));
     await tester.pumpAndSettle();
 
-    // barrier 打开后 300ms 内禁用（拦截触摸穿透），pump 越过窗口再点遮罩。
-    await tester.pump(const Duration(milliseconds: 350));
+    // barrier 打开后 1000ms 内禁用（拦截触摸穿透），pump 越过窗口再点遮罩。
+    await tester.pump(const Duration(milliseconds: 1050));
     await tester.pump();
     await tester.tapAt(const Offset(20, 300));
     await tester.pumpAndSettle();

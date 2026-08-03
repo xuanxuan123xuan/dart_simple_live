@@ -67,8 +67,8 @@ import UserNotifications
         top?.setNeedsStatusBarAppearanceUpdate()
       }
     }
-    if retries < 3 {
-      let delays = [0.5, 1.0, 1.5]
+    if retries < 5 {
+      let delays = [0.4, 0.8, 1.4, 2.2, 3.0]
       DispatchQueue.main.asyncAfter(deadline: .now() + delays[retries]) {
         Self.applyStatusBar(hidden: hidden, retries: retries + 1)
       }
