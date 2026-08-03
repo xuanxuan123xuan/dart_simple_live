@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/web_socket_util.dart';
+import 'package:simple_live_core/src/danmaku/kuaishou_emoji_assets.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -26,6 +27,71 @@ void main() {
     expect(messages.single.userName, '测试用户');
     expect(messages.single.message, '测试弹幕');
     expect(messages.single.color.toString(), '#ff6600');
+  });
+
+  test('extracts known kuaishou emoji into image spans', () {
+    final messages = <LiveMessage>[];
+    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+
+    danmaku.decodeMessage(
+      _socketMessage(
+        _feedPushWithContent('你好[奸笑]呀'),
+        compressionType: 0,
+      ),
+    );
+
+    final msg = messages.single;
+    // message 保留原始文本（渲染端优先使用 spans）。
+    expect(msg.message, '你好[奸笑]呀');
+    expect(msg.spans, isNotNull);
+    expect(msg.spans!.length, 3);
+    expect(msg.spans![0].isText, isTrue);
+    expect(msg.spans![0].text, '你好');
+    expect(msg.spans![1].isImage, isTrue);
+    expect(msg.spans![1].imageUrl, kuaishouEmojiAssets['[奸笑]']);
+    expect(msg.spans![2].isText, isTrue);
+    expect(msg.spans![2].text, '呀');
+    expect(msg.imageUrls, contains(kuaishouEmojiAssets['[奸笑]']));
+  });
+
+  test('unknown bracket tokens stay as plain text', () {
+    final messages = <LiveMessage>[];
+    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+
+    danmaku.decodeMessage(
+      _socketMessage(
+        _feedPushWithContent('普通[文本]测试'),
+        compressionType: 0,
+      ),
+    );
+
+    final msg = messages.single;
+    expect(msg.spans, isNotNull);
+    expect(msg.spans!.where((s) => s.isImage), isEmpty);
+    expect(msg.spans!.map((s) => s.text).join(), '普通[文本]测试');
+    expect(msg.imageUrls, isNull);
+  });
+
+  test('mixed multiple emoji and unknown tokens', () {
+    final messages = <LiveMessage>[];
+    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+
+    danmaku.decodeMessage(
+      _socketMessage(
+        _feedPushWithContent('[666][不存在的]哈'),
+        compressionType: 0,
+      ),
+    );
+
+    final msg = messages.single;
+    expect(msg.spans, hasLength(3));
+    expect(msg.spans![0].isImage, isTrue);
+    expect(msg.spans![0].imageUrl, kuaishouEmojiAssets['[666]']);
+    expect(msg.spans![1].isText, isTrue);
+    expect(msg.spans![1].text, '[不存在的]');
+    expect(msg.spans![2].isText, isTrue);
+    expect(msg.spans![2].text, '哈');
+    expect(msg.imageUrls, hasLength(1));
   });
 
   test('decodes gzip-compressed Kuaishou comment feed', () {
@@ -220,6 +286,15 @@ Uint8List _feedPush() {
     ..writeBytes(2, user.takeBytes())
     ..writeString(3, '测试弹幕')
     ..writeString(6, '#ff6600');
+  return (_ProtoWriter()..writeBytes(5, comment.takeBytes())).takeBytes();
+}
+
+Uint8List _feedPushWithContent(String content) {
+  final user = _ProtoWriter()..writeString(2, '测试用户');
+  final comment = _ProtoWriter()
+    ..writeBytes(2, user.takeBytes())
+    ..writeString(3, content)
+    ..writeString(6, '#ffffff');
   return (_ProtoWriter()..writeBytes(5, comment.takeBytes())).takeBytes();
 }
 

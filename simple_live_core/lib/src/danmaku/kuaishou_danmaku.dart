@@ -10,6 +10,7 @@ import 'package:pointycastle/padded_block_cipher/padded_block_cipher_impl.dart';
 import 'package:pointycastle/paddings/pkcs7.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/web_socket_util.dart';
+import 'package:simple_live_core/src/danmaku/kuaishou_emoji_assets.dart';
 
 const _kuaishouAesKey = 'PPbzKKL7NB15leYy';
 const _kuaishouAesIv = 'JRODKJiolJ9xqso0';
@@ -406,12 +407,46 @@ class KuaishouDanmaku extends LiveDanmaku {
       return null;
     }
 
+    final spans = _buildEmojiSpans(content);
+    final imageUrls = spans
+        .where((item) => item.isImage)
+        .map((item) => item.imageUrl!.trim())
+        .toSet()
+        .toList();
+
     return LiveMessage(
       type: LiveMessageType.chat,
       userName: userName,
       message: content,
       color: color,
+      imageUrls: imageUrls.isEmpty ? null : imageUrls,
+      spans: spans.isEmpty ? null : spans,
     );
+  }
+
+  /// 把弹幕文本中的 `[表情名]` token 转成图文混合片段；
+  /// 未命中 [kuaishouEmojiAssets] 的方括号文本保持原样，避免误伤普通文本。
+  static final RegExp _kuaishouEmojiPattern = RegExp(r'\[[^\[\]]{1,16}\]');
+
+  List<LiveMessageSpan> _buildEmojiSpans(String content) {
+    final spans = <LiveMessageSpan>[];
+    var start = 0;
+    for (final match in _kuaishouEmojiPattern.allMatches(content)) {
+      if (match.start > start) {
+        spans.add(LiveMessageSpan.text(content.substring(start, match.start)));
+      }
+      final url = kuaishouEmojiAssets[match.group(0)];
+      if (url != null) {
+        spans.add(LiveMessageSpan.image(url));
+      } else {
+        spans.add(LiveMessageSpan.text(match.group(0)!));
+      }
+      start = match.end;
+    }
+    if (start < content.length) {
+      spans.add(LiveMessageSpan.text(content.substring(start)));
+    }
+    return spans;
   }
 
   String _decodeSimpleUserInfo(List<int> payload) {
