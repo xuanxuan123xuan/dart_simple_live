@@ -275,11 +275,24 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (!Platform.isLinux)
-                            IconButton(
-                              onPressed: () {
-                                controller.shareLogFile(item);
+                            Builder(
+                              builder: (shareBtnContext) {
+                                return IconButton(
+                                  onPressed: () {
+                                    final box =
+                                        shareBtnContext.findRenderObject()
+                                            as RenderBox?;
+                                    controller.shareLogFile(
+                                      item,
+                                      sharePositionOrigin: box == null
+                                          ? null
+                                          : box.localToGlobal(Offset.zero) &
+                                              box.size,
+                                    );
+                                  },
+                                  icon: const Icon(Icons.share),
+                                );
                               },
-                              icon: const Icon(Icons.share),
                             ),
                           IconButton(
                             onPressed: () {

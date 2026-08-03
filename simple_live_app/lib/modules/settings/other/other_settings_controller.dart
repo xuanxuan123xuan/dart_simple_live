@@ -143,7 +143,7 @@ class OtherSettingsController extends BaseController {
     loadLogFiles();
   }
 
-  void shareLogFile(LogFileModel item) async {
+  void shareLogFile(LogFileModel item, {Rect? sharePositionOrigin}) async {
     if (Utils.isOhos) {
       try {
         await OhosDocumentService.shareFile(item.path, title: item.name);
@@ -153,7 +153,15 @@ class OtherSettingsController extends BaseController {
       }
       return;
     }
-    Share.shareXFiles([XFile(item.path)]);
+    // Application Support 是 app 沙盒，接收方无权限读取（分享出去 0 字节）；
+    // 复制到临时目录再分享，并传 iPad popover 锚点。
+    final tmpDir = await getTemporaryDirectory();
+    final tmpFile = File('${tmpDir.path}/${item.name}');
+    await File(item.path).copy(tmpFile.path);
+    Share.shareXFiles(
+      [XFile(tmpFile.path)],
+      sharePositionOrigin: sharePositionOrigin,
+    );
   }
 
   void saveLogFile(LogFileModel item) async {
