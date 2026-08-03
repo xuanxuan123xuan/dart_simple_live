@@ -1018,6 +1018,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   /// 设置横屏
   Future setLandscapeOrientation() async {
+    Log.d('SystemUi: setLandscapeOrientation enter');
     if (await beforeIOS16()) {
       AutoOrientation.landscapeAutoMode();
     } else {
