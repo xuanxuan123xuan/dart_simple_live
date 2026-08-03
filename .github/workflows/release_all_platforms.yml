@@ -856,7 +856,7 @@ jobs:
           FULL_VERSION: ${{ needs.prepare.outputs.full_version }}
           SHA: ${{ needs.prepare.outputs.sha }}
           TAG: ${{ needs.prepare.outputs.tag }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           # 诊断：确认下载到 release-assets 的产物（应含各平台文件与分架构 APK）
           ls -la release-assets || true
@@ -878,19 +878,19 @@ jobs:
             commits="$(git log --oneline --no-merges -30 HEAD)"
           fi
 
-          # AI 总结 What's Changed（配置 OPENAI_API_KEY secret 时生效；
+          # AI 总结 What's Changed（配置 DEEPSEEK_API_KEY secret 时生效；
           # 失败/无 key 自动回退到 WHATS_CHANGED.md 或 git log 原文）
           ai_summary=""
-          if [[ -n "$OPENAI_API_KEY" && -n "$commits" ]]; then
+          if [[ -n "$DEEPSEEK_API_KEY" && -n "$commits" ]]; then
             ai_summary="$(
               jq -n --arg commits "$commits" \
-                '{model:"gpt-4o-mini",temperature:0.3,
+                '{model:"deepseek-v4-flash",temperature:0.3,
                   messages:[
                     {role:"system",content:"你是发布说明撰写者。根据 commit 列表生成简洁的中文 What'\''s Changed：按功能归纳分组（如 弹窗稳定性/状态栏/Flutter 升级/构建发布），每组一行列表项；不要逐条翻译 commit，要提炼用户可见的变化；结尾可加一句总体说明。"},
                     {role:"user",content:$commits}
                   ]}' \
-              | curl -sS https://api.openai.com/v1/chat/completions \
-                  -H "Authorization: Bearer $OPENAI_API_KEY" \
+              | curl -sS https://api.deepseek.com/chat/completions \
+                  -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
                   -H "Content-Type: application/json" -d @- \
               | jq -r '.choices[0].message.content // empty' 2>/dev/null || true
             )"
