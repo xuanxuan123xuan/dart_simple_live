@@ -257,6 +257,8 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/release-android"
           src="simple_live_app/build/app/outputs/flutter-apk"
+          # 诊断：确认 split-per-abi 的实际输出
+          ls -la "$src" || true
           cp "$src/app-armeabi-v7a-release.apk" \
             "$out/simple-live-${{ needs.prepare.outputs.version }}-android-armeabi-v7a.apk"
           cp "$src/app-arm64-v8a-release.apk" \
@@ -265,6 +267,8 @@ jobs:
             "$out/simple-live-${{ needs.prepare.outputs.version }}-android-x86_64.apk"
           cp simple_live_app/build/app/outputs/bundle/release/app-release.aab \
             "$out/simple-live-${{ needs.prepare.outputs.version }}-android.aab"
+          # 诊断：确认暂存结果（应为 universal + 3 个分架构 + AAB + 校验文件）
+          ls -la "$out"
           (cd "$out" && sha256sum -- * > SHA256SUMS-android.txt)
 
       - uses: actions/upload-artifact@v4
@@ -869,6 +873,8 @@ jobs:
       - name: 生成汇总校验文件
         shell: bash
         run: |
+          # 诊断：确认下载到 release-assets 的产物（应含各平台文件与分架构 APK）
+          ls -la release-assets || true
           cd release-assets && sha256sum -- * > SHA256SUMS.txt
           echo "### Release assets" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
