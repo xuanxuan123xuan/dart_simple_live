@@ -75,7 +75,7 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      # pubspec 的 3.22 pin 与所用 Flutter 必须一致，否则 pub get 会在
+      # pubspec 的依赖钉版与所用 Flutter 必须一致，否则 pub get 会在
       # flutter_localizations 的 intl 传递依赖上失败。这里提前核对，
       # 让报错指向真正的原因而不是一长串 version solving 输出。
       - name: 校验工具链与 pubspec 钉住版本一致
@@ -84,14 +84,14 @@ jobs:
           actual="$(flutter --version | sed -n 's/^Flutter \([0-9.]*\).*/\1/p' | head -1)"
           echo "Flutter: $actual"
           echo "Xcode:   $(xcodebuild -version | head -1)"
-          if [[ "$actual" != 3.22.* ]]; then
-            echo "::error::Flutter $actual 与 pubspec 的 3.22 pin 不符。" >&2
-            echo "pubspec.yaml 有 7 处依赖按 Flutter 3.22 钉死，换版本需同时调整这些依赖。" >&2
+          if [[ "$actual" != 3.41.* ]]; then
+            echo "::error::Flutter $actual 与 pubspec 的 3.41 pin 不符。" >&2
+            echo "本分支依赖按 Flutter 3.41 钉死（intl 0.20.2 等），换版本需同时调整这些依赖。" >&2
             exit 1
           fi
           intl_pin="$(sed -n 's/^  intl:[[:space:]]*\([0-9.]*\).*/\1/p' simple_live_app/pubspec.yaml | head -1)"
-          if [[ "$intl_pin" != "0.19.0" ]]; then
-            echo "::warning::pubspec 的 intl 已改为 $intl_pin，不再是 3.22 线的 0.19.0；请确认 FLUTTER_VERSION 是否也该跟着调整。"
+          if [[ "$intl_pin" != "0.20.2" ]]; then
+            echo "::warning::pubspec 的 intl 已改为 $intl_pin，不再是 3.41 线的 0.20.2；请确认 FLUTTER_VERSION 是否也该跟着调整。"
           fi
 
       - name: 解析依赖
