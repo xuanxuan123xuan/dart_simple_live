@@ -101,6 +101,18 @@ class KuaishouDanmaku extends LiveDanmaku {
         _credentialRetryTimerFactory =
             credentialRetryTimerFactory ?? _defaultCredentialRetryTimer {
     heartbeatTime = 20 * 1000;
+    _maybeRefreshEmoji();
+  }
+
+  /// 全局只拉取一次最新表情映射（进程内），失败静默走内置表。
+  static bool _emojiRefreshStarted = false;
+
+  void _maybeRefreshEmoji() {
+    if (_emojiRefreshStarted) {
+      return;
+    }
+    _emojiRefreshStarted = true;
+    unawaited(refreshKuaishouEmoji());
   }
 
   final WebSocketConnector? _connector;
@@ -435,7 +447,7 @@ class KuaishouDanmaku extends LiveDanmaku {
       if (match.start > start) {
         spans.add(LiveMessageSpan.text(content.substring(start, match.start)));
       }
-      final url = kuaishouEmojiAssets[match.group(0)];
+      final url = resolveKuaishouEmoji(match.group(0)!);
       if (url != null) {
         spans.add(LiveMessageSpan.image(url));
       } else {

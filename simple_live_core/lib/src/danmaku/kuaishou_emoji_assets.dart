@@ -1,6 +1,16 @@
 // Generated from Kuaishou live emoji panel API
 // (https://live.kuaishou.com/live_api/emoji/panel) on 2026-08-03.
 // Source CDN: yximgs.com. Network URLs, not bundled assets.
+//
+// 内置表为抓取时的快照（兜底）；运行时可通过
+// [refreshKuaishouEmoji] 拉取最新映射并覆盖，快手新增表情无需发版。
+library;
+
+import 'dart:convert';
+
+import 'package:simple_live_core/src/common/core_log.dart';
+import 'package:simple_live_core/src/common/http_client.dart';
+
 const Map<String, String> kuaishouEmojiAssets = {
   '[666]': 'https://ali2.a.yximgs.com/bs2/emotion/1704763447505third_party_s1296657489.png',
   '[奸笑]': 'https://ali2.a.yximgs.com/bs2/emotion/1704776059816third_party_s1296748052.png',
@@ -210,3 +220,40 @@ const Map<String, String> kuaishouEmojiAssets = {
   '[早上好]': 'https://ali2.a.yximgs.com/bs2/emotion/1704790167344third_party_s1296853922.png',
   '[胡思乱想]': 'https://ali2.a.yximgs.com/bs2/emotion/1704790657229third_party_s1296858542.png',
 };
+
+/// 运行时从快手接口拉取的最新映射（优先于内置静态表）。
+Map<String, String> _dynamicKuaishouEmoji = const {};
+
+/// 解析单个表情 token（如 `[奸笑]`）：动态覆盖优先，内置表兜底。
+String? resolveKuaishouEmoji(String token) =>
+    _dynamicKuaishouEmoji[token] ?? kuaishouEmojiAssets[token];
+
+const String kuaishouEmojiPanelUrl =
+    'https://live.kuaishou.com/live_api/emoji/panel';
+
+/// 拉取快手最新表情映射并覆盖静态表。
+///
+/// 匿名接口，无需登录。失败（断网/接口变更）时静默保留现有映射，
+/// 不抛异常、不影响弹幕流程。[fetcher] 仅供测试注入。
+Future<void> refreshKuaishouEmoji({
+  Future<String> Function()? fetcher,
+}) async {
+  try {
+    final text = await (fetcher ??
+        (() => HttpClient.instance.getText(kuaishouEmojiPanelUrl)))();
+    final decoded = jsonDecode(text);
+    final data = (decoded as Map<String, dynamic>)['data'];
+    if (data is! Map) return;
+    final map = <String, String>{};
+    data.forEach((key, value) {
+      if (key is String && value is String) {
+        map[key] = value.startsWith('//') ? 'https:$value' : value;
+      }
+    });
+    if (map.isEmpty) return;
+    _dynamicKuaishouEmoji = map;
+    CoreLog.d('快手表情映射已刷新：${map.length} 项');
+  } catch (e) {
+    CoreLog.d('快手表情映射刷新失败，使用内置表: $e');
+  }
+}

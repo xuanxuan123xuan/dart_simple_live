@@ -206,6 +206,39 @@ void main() {
 
     expect(resolverCalls, 1);
   });
+
+  group('kuaishou emoji refresh', () {
+    test('静态表兜底：未刷新时命中内置映射', () {
+      expect(
+        resolveKuaishouEmoji('[奸笑]'),
+        kuaishouEmojiAssets['[奸笑]'],
+      );
+    });
+
+    test('动态映射覆盖优先，未覆盖项仍走静态表', () async {
+      await refreshKuaishouEmoji(
+        fetcher: () async =>
+            '{"data":{"[新表情]":"//cdn.test/emoji/new.png","[奸笑]":"//cdn.test/emoji/jx.png"}}',
+      );
+      expect(
+        resolveKuaishouEmoji('[新表情]'),
+        'https://cdn.test/emoji/new.png',
+      );
+      expect(
+        resolveKuaishouEmoji('[奸笑]'),
+        'https://cdn.test/emoji/jx.png',
+      );
+      // 动态表未覆盖的静态项仍可解析。
+      expect(resolveKuaishouEmoji('[666]'), kuaishouEmojiAssets['[666]']);
+    });
+
+    test('刷新失败静默降级，内置表仍可用', () async {
+      await refreshKuaishouEmoji(
+        fetcher: () async => throw Exception('network down'),
+      );
+      expect(resolveKuaishouEmoji('[奸笑]'), isNotNull);
+    });
+  });
 }
 
 KuaishouDanmakuArgs _missingCredentials({
@@ -342,3 +375,4 @@ class _ProtoWriter {
 
   Uint8List takeBytes() => _builder.takeBytes();
 }
+
