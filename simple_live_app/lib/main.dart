@@ -59,6 +59,14 @@ void main(List<String> args) async {
   // 弹窗 onPopInvoked 堆栈显示关闭来自 maybePop，用这个区分系统返回 vs 代码 Get.back。
   WidgetsBinding.instance.addObserver(_PopRouteDiagObserver());
 
+  // 诊断：全局 pointer up 记录。弹窗关闭来自 maybePop 且无 didPopRoute/dismiss，
+  // 用"pop 前是否有触摸"区分 barrier 点击（用户触摸）vs 代码 Get.back（自动）。
+  GestureBinding.instance.pointerRouter.addGlobalRoute((event) {
+    if (event is PointerUpEvent) {
+      Log.d('AppNavigation: global pointer up at ${event.position}');
+    }
+  });
+
   if (Utils.isOhos) {
     runApp(OhosBootstrapApp(args: args));
     return;
