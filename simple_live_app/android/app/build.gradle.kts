@@ -122,8 +122,8 @@ android {
         // auto_orientation_v2 插件要求 minSdk 24（flutter 默认 21）。
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode()
-        versionName = flutter.versionName()
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
     }
 
     signingConfigs {
