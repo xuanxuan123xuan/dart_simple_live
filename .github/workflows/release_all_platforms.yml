@@ -168,10 +168,17 @@ jobs:
           build_number="$(dart run simple_live_app/tool/app_version.dart print build-number)"
           full_version="$(dart run simple_live_app/tool/app_version.dart print full)"
           sha="$(git rev-parse HEAD)"
-          tag="v$version"
+          # dev 分支用固定 tag（v-dev），避免与 stable 分支同名版本（v1.13.0）冲突；
+          # 其他分支仍用 v$version。
+          if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
+            tag="v-dev"
+          else
+            tag="v$version"
+          fi
 
           git fetch --force --tags origin
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+          if [[ "$GITHUB_REF_NAME" != "dev" ]] \
+            && git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
             tagged_sha="$(git rev-list -n 1 "$tag")"
             if [[ "$tagged_sha" != "$sha" ]]; then
               echo "::error::标签 $tag 已指向 $tagged_sha，不能改指到 $sha。" >&2
