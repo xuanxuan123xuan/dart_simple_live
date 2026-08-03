@@ -54,16 +54,10 @@ void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   DesktopStartupArgs.initialize(args);
 
-  // 诊断：监听系统/容器返回消息（LiveContainer 点击穿透、iOS 边缘返回会走这里）。
-  // 链式转发给原有 handler，不破坏系统返回处理。
-  final prevNavHandler = SystemChannels.navigation.methodCallHandler;
-  SystemChannels.navigation.setMethodCallHandler((call) async {
-    if (call.method == 'popRoute') {
-      Log.d('AppNavigation: SystemChannels popRoute received\n${StackTrace.current}');
-    }
-    final prev = prevNavHandler;
-    return prev == null ? null : await prev(call);
-  });
+  // 诊断：监听系统/容器返回消息。WidgetsBinding.handlePopRoute 会先通知
+  // observers（didPopRoute），再走 WidgetsApp.didPopRoute → Navigator.maybePop。
+  // 弹窗 onPopInvoked 堆栈显示关闭来自 maybePop，用这个区分系统返回 vs 代码 Get.back。
+  WidgetsBinding.instance.addObserver(_PopRouteDiagObserver());
 
   if (Utils.isOhos) {
     runApp(OhosBootstrapApp(args: args));
@@ -73,6 +67,15 @@ void main(List<String> args) async {
   await initializeApplication(args);
   runApp(const MyApp());
   unawaited(setupDesktopWindowLifecycle());
+}
+
+/// 诊断：捕获系统/容器返回消息（popRoute），区分弹窗关闭来源。
+class _PopRouteDiagObserver extends WidgetsBindingObserver {
+  @override
+  Future<bool> didPopRoute() async {
+    Log.d('AppNavigation: WidgetsBinding didPopRoute（系统/容器返回消息）\n${StackTrace.current}');
+    return false; // 不拦截，让默认处理继续
+  }
 }
 
 Future<void> initializeApplication(List<String> args) async {
