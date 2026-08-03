@@ -673,7 +673,7 @@ class MyApp extends StatelessWidget {
         initialRoute: RoutePath.kIndex,
         getPages: AppPages.routes,
         routingCallback: (r) {
-          Log.d('AppNavigation: routingCallback cur=${r?.current?.name} prev=${r?.previous?.name}');
+          Log.d('AppNavigation: routingCallback cur=${r?.current} prev=${r?.previous}');
           unawaited(_syncDesktopShortcutCaptureState());
         },
         //国际化
