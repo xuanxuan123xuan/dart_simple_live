@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feat/ohos-1.12.7
+      - stable
     paths:
       - "simple_live_app/**"
       - "simple_live_core/**"
