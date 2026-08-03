@@ -45,6 +45,7 @@ class FlutterPlaybackDisplayGateway implements PlaybackDisplayGateway {
     if (!_isSupportedMobile) {
       return;
     }
+    Log.d('SystemUi: coordinator apply immersive=$immersive');
     if (!immersive) {
       await SystemChrome.setEnabledSystemUIMode(
         SystemUiMode.edgeToEdge,
@@ -273,6 +274,7 @@ class PlaybackDisplayCoordinator extends GetxService
       final operationRevision = _revision;
       final keepAwake = _desiredKeepAwake;
       final immersive = _desiredImmersive;
+      Log.d('SystemUi: coordinator drain revision=$_revision keepAwake=$keepAwake immersive=$immersive appliedRev=$_appliedRevision appliedImm=$_appliedImmersive');
 
       if (_appliedKeepAwake != keepAwake) {
         try {
@@ -299,6 +301,7 @@ class PlaybackDisplayCoordinator extends GetxService
       }
 
       if (immersive && _gateway.requiresImmersiveRecheck) {
+        Log.d('SystemUi: coordinator iOS recheck scheduled');
         await _delay(const Duration(milliseconds: 120));
         if (operationRevision != _revision || !_desiredImmersive) {
           continue;

@@ -649,6 +649,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         isPlayerClosing) {
       return;
     }
+    Log.d('SystemUi: restoreFullScreenSystemUi enter fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
     _playbackDisplayLease?.setImmersiveSystemUi(true);
     await PlaybackDisplayCoordinator.instance.settle();
     if (Platform.isIOS) {
@@ -660,8 +661,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         if (!fullScreenState.value ||
             smallWindowState.value ||
             isPlayerClosing) {
+          Log.d('SystemUi: restoreFullScreenSystemUi abort at ${ms}ms fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
           return;
         }
+        Log.d('SystemUi: reapply hidden at ${ms}ms');
         await SystemChrome.setEnabledSystemUIMode(
           SystemUiMode.manual,
           overlays: const [],
