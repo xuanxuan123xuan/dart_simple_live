@@ -17,7 +17,7 @@
 
 ## 这个分支是什么
 
-本仓库 fork 自 [xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live)，`feat/ohos-1.12.7` 是一个长期维护的独立分支，重点维护三部分：
+本仓库 fork 自 [June6699/dart_simple_live](https://github.com/June6699/dart_simple_live)，`feat/ohos-1.12.7` 是一个长期维护的独立分支，重点维护三部分：
 
 1. **鸿蒙 NEXT 适配**：完整的 OHOS 端口，包含 ArkTS 原生插件层（播放器、截图、扫码、Cookie、文件管理、PIP、网络信息）、服务卡片（关注主播开播状态）、后台开播检查（WorkScheduler + 用户开关）、以及 QuickJS FFI 签名桥接（抖音）。
 2. **多开同屏**：在同一窗口内播放 2～4 个直播间，支持均分/主次布局、聚焦、聊天区、独立暂停与音频控制，以及自动画质调节。
@@ -216,7 +216,7 @@ TV 端不内置浏览器，请从主 App 同步完整 Cookie。
 
 [AllLive](https://github.com/xiaoyaocz/AllLive) `本项目的 C# 版`
 
-[xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live) `上游 fork 来源`
+[June6699/dart_simple_live](https://github.com/June6699/dart_simple_live) `上游 fork 来源`
 
 [dart_tars_protocol](https://github.com/xiaoyaocz/dart_tars_protocol.git)
 
