@@ -853,11 +853,8 @@ jobs:
       - name: 生成汇总校验文件与 Release 简介
         shell: bash
         env:
-          APP_VERSION: ${{ needs.prepare.outputs.version }}
           FULL_VERSION: ${{ needs.prepare.outputs.full_version }}
           SHA: ${{ needs.prepare.outputs.sha }}
-          SIGNED_IOS: ${{ needs.prepare.outputs.signed_ios }}
-          INCLUDE_OHOS: ${{ needs.prepare.outputs.include_ohos }}
         run: |
           # 诊断：确认下载到 release-assets 的产物（应含各平台文件与分架构 APK）
           ls -la release-assets || true
@@ -867,16 +864,6 @@ jobs:
           sha256sum -- "${files[@]}" > "$RUNNER_TEMP/sha256.txt"
           body="$RUNNER_TEMP/release_body.md"
           {
-            echo "## 安装包"
-            echo ""
-            echo "- Android：分架构 APK（arm64-v8a / armeabi-v7a / x86_64）"
-            echo "- Android TV：分架构 APK"
-            echo "- iOS：$([ "$SIGNED_IOS" == "true" ] && echo 'ad-hoc 已签名 IPA' || echo '未签名 IPA（需 AltStore / Sideloadly 侧载）')"
-            echo "- macOS：DMG、PKG、ZIP（未公证）"
-            echo "- Windows：EXE 安装包、MSIX、便携 ZIP"
-            echo "- Linux：AppImage、DEB、RPM、ZIP"
-            echo "- HarmonyOS：$([ "$INCLUDE_OHOS" == "true" ] && echo '已签名 HAP' || echo '本次未构建')"
-            echo ""
             echo "版本：\`$FULL_VERSION\`"
             echo "提交：\`$SHA\`"
             echo ""
@@ -884,13 +871,6 @@ jobs:
             echo '```'
             cat "$RUNNER_TEMP/sha256.txt"
             echo '```'
-            echo ""
-            echo "### 📦 IPA 源（AltStore / LiveContainer）"
-            echo ""
-            echo "| 版本 | 源 URL |"
-            echo "|---|---|"
-            echo "| 稳定版 | \`https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps-stable.json\` |"
-            echo "| dev 测试版 | \`https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps.json\` |"
           } > "$body"
           echo "body_path=$body" >> "$GITHUB_ENV"
           echo "### Release assets" >> "$GITHUB_STEP_SUMMARY"
