@@ -6,6 +6,7 @@ import 'package:simple_live_app/modules/search/search_list_controller.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/live_room_card.dart';
+import 'package:simple_live_app/widgets/live_room_grid_layout.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/page_grid_view.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -17,8 +18,11 @@ class SearchListView extends StatelessWidget {
       Get.find<SearchListController>(tag: tag);
   @override
   Widget build(BuildContext context) {
-    var roomRowCount = MediaQuery.of(context).size.width ~/ 200;
-    if (roomRowCount < 2) roomRowCount = 2;
+    // Masonry 自适应高度，mainAxisExtent 仅 useFixedGrid 预留。
+    final roomLayout = LiveRoomGridLayout.resolve(
+      MediaQuery.sizeOf(context).width,
+      detailsExtent: 0,
+    );
 
     var userRowCount = MediaQuery.of(context).size.width ~/ 500;
     if (userRowCount < 1) userRowCount = 1;
@@ -29,9 +33,9 @@ class SearchListView extends StatelessWidget {
                 pageController: controller,
                 padding: AppStyle.edgeInsetsA12,
                 firstRefresh: false,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                crossAxisCount: roomRowCount,
+                mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
+                crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
+                crossAxisCount: roomLayout.crossAxisCount,
                 showPageLoadding: true,
                 itemBuilder: (_, i) {
                   var item = controller.list[i] as LiveRoomItem;
