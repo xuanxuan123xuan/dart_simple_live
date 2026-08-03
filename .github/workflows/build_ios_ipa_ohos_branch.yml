@@ -7,7 +7,7 @@ name: 构建 iOS IPA
 # Flutter 3.41.x（intl 0.20.2 + onPopInvokedWithResult 适配），
 # 依赖与 pubspec 保持一致。
 #
-# 注意：不读 simple_live_app/.fvmrc。鸿蒙 hap 走 build_ohos_hap.ps1 里
+# 注意：不读 simple_live_app/.fvmrc。HarmonyOS hap 走 build_ohos_hap.ps1 里
 # 自带的 OHOS Flutter fork（oh-3.41.9-release 线），也不读 .fvmrc。
 #
 # Xcode 15.4 在 macos-14 镜像上默认提供；3.41 亦兼容，仍显式指定避免

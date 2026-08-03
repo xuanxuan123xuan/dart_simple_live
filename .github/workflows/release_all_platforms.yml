@@ -689,7 +689,7 @@ jobs:
           retention-days: 14
 
   ohos:
-    name: 鸿蒙已签名 HAP
+    name: HarmonyOS已签名 HAP
     needs: prepare
     if: ${{ needs.prepare.outputs.include_ohos == 'true' }}
     runs-on: [self-hosted, Windows, X64, harmonyos]
