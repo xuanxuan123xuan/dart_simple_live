@@ -13,7 +13,7 @@ import UserNotifications
     // Flutter 3.35+ 才有的 API,本分支钉在 3.22,需用此经典注册方式。
     GeneratedPluginRegistrant.register(with: self)
     UNUserNotificationCenter.current().delegate = self
-    if let controller = window?.rootViewController as? FlutterViewController {
+    if let controller = window?.rootViewController as? SimpleLiveFlutterViewController {
       let channel = FlutterMethodChannel(
         name: "simple_live/live_notifications",
         binaryMessenger: controller.binaryMessenger
@@ -30,10 +30,10 @@ import UserNotifications
         }
       }
 
-      // iOS 26 + LiveContainer 下 SystemChrome 隐藏状态栏失效（引擎未适配
-      // scene-based 状态栏管理，容器 VC 层级进一步覆盖）。走原生强制隐藏：
-      // UIViewControllerBasedStatusBarAppearance=false 后系统改用
-      // UIApplication.setStatusBarHidden 全局控制，绕过 VC appearance 查询。
+      // 状态栏隐藏（iOS 26）：SystemChrome 的 VC 查询在转场动画后被 scene-based
+      // 管理重置。走 VC-based 方案：SimpleLiveFlutterViewController 动态返回
+      // prefersStatusBarHidden + setNeedsStatusBarAppearanceUpdate 触发重查；
+      // 同时保留 setStatusBarHidden 全局兜底（双保险，动画窗口内也生效）。
       let statusBarChannel = FlutterMethodChannel(
         name: "simple_live/status_bar",
         binaryMessenger: controller.binaryMessenger
@@ -42,6 +42,7 @@ import UserNotifications
         if call.method == "setHidden" {
           let hidden = (call.arguments as? Bool) ?? false
           DispatchQueue.main.async {
+            controller.setStatusBarHidden(hidden)
             Self.applyStatusBar(hidden: hidden, retries: 0)
           }
           result(nil)
