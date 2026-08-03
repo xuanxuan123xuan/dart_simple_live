@@ -368,8 +368,9 @@ class OtherSettingsController extends BaseController {
     final textController = TextEditingController(
       text: AppSettingsController.instance.mpvAdvancedOptions.value,
     );
-    final value = await Get.dialog<String>(
-      AlertDialog(
+    final value = await Utils.showDialogSafe<String>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: const Text("高级 mpv options"),
         content: SizedBox(
           width: 520,

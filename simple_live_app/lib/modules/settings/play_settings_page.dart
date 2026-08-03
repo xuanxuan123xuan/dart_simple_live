@@ -520,7 +520,9 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
   }
 
   void showSubtitleModelRecommendations() {
-    Get.dialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => 
       AlertDialog(
         title: const Text("字幕模型推荐"),
         content: const SingleChildScrollView(

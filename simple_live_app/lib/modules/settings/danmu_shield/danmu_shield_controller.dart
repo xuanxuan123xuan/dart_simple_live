@@ -240,8 +240,9 @@ class DanmuShieldController extends BaseController {
 
   void exportPresetText() {
     final content = settingsController.generateShieldPresetJson();
-    Get.dialog(
-      AlertDialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: const Text("导出屏蔽预设"),
         content: TextField(
           controller: TextEditingController(text: content),
@@ -293,8 +294,9 @@ class DanmuShieldController extends BaseController {
 
   Future<void> importPresetText() async {
     final textController = TextEditingController();
-    await Get.dialog(
-      AlertDialog(
+    await Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: const Text("导入屏蔽预设"),
         content: TextField(
           controller: textController,

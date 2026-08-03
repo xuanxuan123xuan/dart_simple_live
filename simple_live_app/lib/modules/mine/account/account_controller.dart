@@ -322,8 +322,9 @@ class AccountController extends GetxController {
   void doKuaishouCookieConfig() {
     final account = KuaishouAccountService.instance;
     final cookieController = TextEditingController(text: account.cookie);
-    Get.dialog(
-      AlertDialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) =>       AlertDialog(
         title: const Text("配置快手 Cookie"),
         content: SingleChildScrollView(
           child: Column(
@@ -381,8 +382,9 @@ class AccountController extends GetxController {
       SmartDialog.showToast("当前没有快手弹幕凭证");
       return;
     }
-    Get.dialog(
-      AlertDialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) =>       AlertDialog(
         title: const Text("当前快手弹幕凭证"),
         content: SingleChildScrollView(child: SelectableText(credentials)),
         actions: [
@@ -462,8 +464,9 @@ class AccountController extends GetxController {
       SmartDialog.showToast("当前没有自定义抖音 Cookie");
       return;
     }
-    Get.dialog(
-      AlertDialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) =>       AlertDialog(
         title: const Text("当前抖音 Cookie"),
         content: SingleChildScrollView(
           child: SelectableText(cookie),
@@ -566,8 +569,9 @@ class AccountController extends GetxController {
       (_) => updateExpiryText(),
     );
 
-    Get.dialog(
-      AlertDialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) =>       AlertDialog(
         title: const Text("配置抖音 Cookie"),
         content: SingleChildScrollView(
           child: Column(

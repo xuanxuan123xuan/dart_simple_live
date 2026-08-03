@@ -471,7 +471,9 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
     required ValueChanged<String> onConfirm,
   }) {
     final textController = TextEditingController(text: initialValue);
-    Get.dialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => 
       AlertDialog(
         title: Text(title),
         content: TextField(
@@ -521,7 +523,9 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
 
   void _showSavePresetDialog() {
     final textController = TextEditingController();
-    Get.dialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => 
       AlertDialog(
         title: const Text("保存屏蔽预设"),
         content: TextField(
@@ -556,7 +560,9 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
 
   void _showEditPresetDialog(String name) {
     final textController = TextEditingController(text: name);
-    Get.dialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => 
       AlertDialog(
         title: const Text("编辑并覆盖预设"),
         content: Column(
@@ -601,7 +607,9 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
   }
 
   void _showDeletePresetDialog(String name) {
-    Get.dialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => 
       AlertDialog(
         title: const Text("删除屏蔽预设"),
         content: Text('确定要删除“$name”吗？'),

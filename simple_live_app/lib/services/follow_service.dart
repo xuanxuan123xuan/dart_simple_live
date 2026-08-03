@@ -1418,7 +1418,9 @@ class FollowService extends GetxService {
       return;
     }
     var content = generateJson();
-    Get.dialog(
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => 
       AlertDialog(
         title: const Text("导出为文本"),
         content: TextField(
@@ -1450,8 +1452,9 @@ class FollowService extends GetxService {
 
   void inputText() async {
     final TextEditingController textController = TextEditingController();
-    await Get.dialog(
-      AlertDialog(
+    await Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: const Text("从文本导入"),
         content: TextField(
           controller: textController,

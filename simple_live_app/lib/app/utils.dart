@@ -61,8 +61,9 @@ class Utils {
     bool selectable = false,
     List<Widget>? actions,
   }) async {
-    var result = await Get.dialog(
-      AlertDialog(
+    var result = await showDialogSafe<bool>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: Text(title),
         content: Container(
           constraints: const BoxConstraints(
@@ -97,8 +98,9 @@ class Utils {
   /// - `confirm` 确认按钮内容，留空为确定
   static Future<bool> showMessageDialog(String content,
       {String title = '', String confirm = '', bool selectable = false}) async {
-    var result = await Get.dialog(
-      AlertDialog(
+    var result = await showDialogSafe<bool>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: Text(title),
         content: Padding(
           padding: AppStyle.edgeInsetsV12,
@@ -257,7 +259,7 @@ class Utils {
 
   /// 通用底部弹窗（替代 showModalBottomSheet），带 barrier 1000ms 防穿透窗口。
   /// 参数与 showModalBottomSheet 常用子集对齐。
-  static Future<void> showModalBottomSheetSafe({
+  static Future<T?> showModalBottomSheetSafe<T>({
     required BuildContext context,
     required WidgetBuilder builder,
     bool isScrollControlled = false,
@@ -268,7 +270,7 @@ class Utils {
     Color? backgroundColor,
   }) {
     final navigator = Navigator.of(context, rootNavigator: true);
-    final route = _SafeBottomSheetRoute(
+    final route = _SafeBottomSheetRoute<T>(
       builder: builder,
       isScrollControlled: isScrollControlled,
       showDragHandle: showDragHandle,
@@ -281,17 +283,17 @@ class Utils {
     );
     // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透）。
     route.scheduleBarrierEnable();
-    return navigator.push<void>(route);
+    return navigator.push<T>(route);
   }
 
   /// 通用居中弹窗（替代 Get.dialog / showDialog），带 barrier 1000ms 防穿透窗口。
-  static Future<void> showDialogSafe({
+  static Future<T?> showDialogSafe<T>({
     required BuildContext context,
     required WidgetBuilder builder,
     bool dismissByBarrier = true,
   }) {
     final navigator = Navigator.of(context, rootNavigator: true);
-    final route = _SafeBottomSheetRoute(
+    final route = _SafeBottomSheetRoute<T>(
       builder: builder,
       isScrollControlled: false,
       showDragHandle: false,
@@ -304,7 +306,7 @@ class Utils {
     );
     // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透）。
     route.scheduleBarrierEnable();
-    return navigator.push<void>(route);
+    return navigator.push<T>(route);
   }
 
   static Widget bottomSheetSafeArea({
@@ -336,8 +338,9 @@ class Utils {
   }) async {
     final TextEditingController textEditingController =
         TextEditingController(text: content);
-    var result = await Get.dialog(
-      AlertDialog(
+    var result = await showDialogSafe<String>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: Text(title),
         content: Padding(
           padding: AppStyle.edgeInsetsT12,
@@ -383,8 +386,9 @@ class Utils {
     T value, {
     String title = '',
   }) async {
-    var result = await Get.dialog(
-      SimpleDialog(
+    var result = await showDialogSafe<T>(
+      context: Get.context!,
+      builder: (_) => SimpleDialog(
         title: Text(title),
         children: contents
             .map(
@@ -410,8 +414,9 @@ class Utils {
     Widget? title,
     List<Widget>? actions,
   }) async {
-    var result = await Get.dialog(
-      AlertDialog(
+    var result = await showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: title ?? const Text("帮助"),
         scrollable: true,
         content: SingleChildScrollView(child: ListBody(children: content)),
@@ -447,8 +452,9 @@ class Utils {
     T value, {
     String title = '',
   }) async {
-    var result = await Get.dialog(
-      SimpleDialog(
+    var result = await showDialogSafe<T>(
+      context: Get.context!,
+      builder: (_) => SimpleDialog(
         title: Text(title),
         children: contents.keys
             .map(
@@ -914,7 +920,7 @@ class _RightSideSheetRoute extends PopupRoute<void> {
 }
 
 /// 通用底部弹窗 route（替代 showModalBottomSheet），带 barrier 1000ms 防穿透窗口。
-class _SafeBottomSheetRoute extends PopupRoute<void> {
+class _SafeBottomSheetRoute<T> extends PopupRoute<T> {
   _SafeBottomSheetRoute({
     required this.builder,
     required this.isScrollControlled,

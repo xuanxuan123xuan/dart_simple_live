@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -64,7 +65,9 @@ class ParseController extends GetxController {
 
         return;
       }
-      var result = await Get.dialog(SimpleDialog(
+      var result = await Utils.showDialogSafe<dynamic>(
+        context: Get.context!,
+        builder: (_) => SimpleDialog(
         title: const Text("选择清晰度"),
         children: qualites
             .map(
@@ -79,7 +82,8 @@ class ParseController extends GetxController {
               ),
             )
             .toList(),
-      ));
+        ),
+      );
       if (result == null) {
         return;
       }
@@ -87,7 +91,9 @@ class ParseController extends GetxController {
       var playUrl =
           await site.liveSite.getPlayUrls(detail: detail, quality: result);
       SmartDialog.dismiss(status: SmartStatus.loading);
-      await Get.dialog(SimpleDialog(
+      await Utils.showDialogSafe<dynamic>(
+        context: Get.context!,
+        builder: (_) => SimpleDialog(
         title: const Text("选择线路"),
         children: playUrl.urls
             .map(
@@ -108,7 +114,8 @@ class ParseController extends GetxController {
               ),
             )
             .toList(),
-      ));
+        ),
+      );
     } catch (e) {
       SmartDialog.showToast("读取直链失败");
     } finally {

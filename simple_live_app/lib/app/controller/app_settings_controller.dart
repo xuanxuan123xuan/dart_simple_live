@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/danmu_shield_preset.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
@@ -565,8 +566,9 @@ class AppSettingsController extends GetxController {
   }
 
   void changeTheme() {
-    Get.dialog(
-      SimpleDialog(
+    Utils.showDialogSafe<int>(
+      context: Get.context!,
+      builder: (_) => SimpleDialog(
         title: const Text("设置主题"),
         children: [
           RadioListTile<int>(
