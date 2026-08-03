@@ -872,7 +872,8 @@ jobs:
           cd release-assets && sha256sum -- * > SHA256SUMS.txt
           echo "### Release assets" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          find release-assets -maxdepth 1 -type f -printf '%f\n' \
+          # cd 后当前目录已是 release-assets，find 用 .（避免找不存在的子目录）
+          find . -maxdepth 1 -type f -printf '%f\n' \
             | sort | sed 's/^/- `/' | sed 's/$/`/' >> "$GITHUB_STEP_SUMMARY"
 
       - name: 上传汇总产物
