@@ -879,6 +879,9 @@ jobs:
           cd release-assets
           mapfile -t files < <(ls | grep -v '^SHA256SUMS')
           sha256sum -- "${files[@]}" > "$RUNNER_TEMP/sha256.txt"
+          # SHA 值已汇总进 body（sha256.txt），删除各平台 SHA256SUMS-*.txt，
+          # 避免作为 Release 附件上传（softprops 不支持 '!' 排除模式）。
+          rm -f SHA256SUMS-*.txt
           body="$RUNNER_TEMP/release_body.md"
 
           # 收集本次变更的 commit 列表（上一 tag..HEAD，无 tag 时最近 30 条）
@@ -959,6 +962,6 @@ jobs:
           allowUpdates: true
           prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           body_path: ${{ env.body_path }}
-          files: |
-            release-assets/*
-            !release-assets/SHA256SUMS*
+          # SHA256SUMS-*.txt 已在"生成汇总校验"步骤删除，files 不需要排除模式
+          # （softprops 不支持 '!' 负向 glob，会报 does not match any files）
+          files: release-assets/*
