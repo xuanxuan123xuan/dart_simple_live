@@ -3,20 +3,14 @@ name: 构建 iOS IPA
 # 本分支专用的 iOS 构建。
 #
 # 与 publish_app_release_ios_manual.yml 分开的原因：那个 workflow 钉
-# flutter-version 3.41.x，服务的是主线；本分支的 pubspec 是围着
-# Flutter 3.22 整体钉死的（intl / archive / lottie / package_info_plus /
-# window_manager / shelf / dynamic_color 共 7 处 "3.22 compatible" 注释），
-# 3.38 与 3.41 都会在 flutter_localizations 的 intl 传递依赖上解析失败：
-#   simple_live_app depends on intl 0.19.0
-#   flutter_localizations from sdk depends on intl 0.20.2
-# 因此这里钉 3.22.3，与 pubspec 保持一致，不动任何依赖版本。
+# flutter-version 3.41.x，服务的是主线；本分支已随全平台升级到
+# Flutter 3.41.x（intl 0.20.2 + onPopInvokedWithResult 适配），
+# 依赖与 pubspec 保持一致。
 #
-# 注意：不读 simple_live_app/.fvmrc。那里写的 3.38.3 与本目录 pubspec
-# 对不上（鸿蒙 hap 走 build_ohos_hap.ps1 里自带的 OHOS Flutter fork，
-# 同属 3.22 线，也不读 .fvmrc）。
+# 注意：不读 simple_live_app/.fvmrc。鸿蒙 hap 走 build_ohos_hap.ps1 里
+# 自带的 OHOS Flutter fork（oh-3.41.9-release 线），也不读 .fvmrc。
 #
-# Xcode 必须钉 15.4：Flutter 3.22 早于 Xcode 16，用 16.x 会在链接期报
-# undefined symbols。macos-14 镜像默认即 15.4，这里仍显式指定，避免
+# Xcode 15.4 在 macos-14 镜像上默认提供；3.41 亦兼容，仍显式指定避免
 # 镜像默认版本变动后静默走到 16.x。
 #
 # 产物默认是未签名 IPA，需要 AltStore / Sideloadly 之类的工具侧载。
@@ -53,7 +47,7 @@ permissions:
 
 env:
   # 与 simple_live_app/pubspec.yaml 里那 7 处 "Flutter 3.22 compatible" 对齐。
-  FLUTTER_VERSION: "3.22.3"
+  FLUTTER_VERSION: "3.41.x"
   XCODE_VERSION: "15.4"
 
 jobs:

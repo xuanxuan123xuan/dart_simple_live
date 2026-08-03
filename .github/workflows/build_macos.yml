@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  FLUTTER_VERSION: "3.22.3"
+  FLUTTER_VERSION: "3.41.x"
   XCODE_VERSION: "15.4"
   FASTFORGE_VERSION: "0.6.10"
 

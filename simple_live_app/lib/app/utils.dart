@@ -684,9 +684,10 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   }
 
   @override
-  void onPopInvoked(bool didPop) {
+  void onPopInvokedWithResult(bool didPop, dynamic result) {
     Log.d('RightSideDialogRoute: onPopInvoked title=$title didPop=$didPop\n${StackTrace.current}');
-    super.onPopInvoked(didPop);
+    // PopupRoute<void> 的 result 是 void?，只能传 null。
+    super.onPopInvokedWithResult(didPop, null);
   }
 
   @override

@@ -20,7 +20,7 @@ dependencies:
   hive: 2.2.3 #持久化存储
   hive_flutter: 1.1.0 #持久化存储
   logger: ^2.6.2 #日志
-  intl: 0.19.0 # Flutter OHOS 3.22 SDK pin
+  intl: 0.20.2 # Flutter 3.41 SDK pin（flutter_localizations 要求 ^0.20.2）
   qr_flutter: ^4.1.0 #二维码生成
   dynamic_color: 1.6.8 # Flutter 3.22 compatible
   path: any

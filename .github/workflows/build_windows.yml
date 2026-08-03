@@ -12,15 +12,13 @@ permissions:
   contents: read
 
 env:
-  FLUTTER_VERSION: "3.22.3"
+  FLUTTER_VERSION: "3.41.x"
   FASTFORGE_VERSION: "0.6.10"
 
 jobs:
   build:
     name: 构建 Windows EXE、MSIX 与 ZIP
-    # Flutter 3.22 only recognizes Visual Studio major versions 16 and 17.
-    # windows-latest now carries VS 2026 (major 18), which Flutter 3.22
-    # incorrectly falls back to the VS 2019 CMake generator for.
+    # Flutter 3.41 支持 VS 2022/2026；保留 windows-2022 镜像稳定构建。
     runs-on: windows-2022
     timeout-minutes: 75
     steps:

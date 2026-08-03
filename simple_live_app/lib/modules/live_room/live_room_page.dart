@@ -325,7 +325,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           controller.fullScreenState.value) {
         return PopScope(
           canPop: false,
-          onPopInvoked: (didPop) {
+          onPopInvokedWithResult: (didPop, result) {
             controller.exitPlayerWindowMode();
           },
           child: Scaffold(
@@ -357,7 +357,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               : buildTabletUI(context);
           return PopScope(
             canPop: _allowsNativePopGesture(),
-            onPopInvoked: (didPop) async {
+            onPopInvokedWithResult: (didPop, result) async {
               if (didPop) {
                 await controller.cancelAutoPipOnLeave();
                 return;
@@ -392,7 +392,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         );
         return PopScope(
           canPop: _allowsNativePopGesture(),
-          onPopInvoked: (didPop) async {
+          onPopInvokedWithResult: (didPop, result) async {
             if (didPop) {
               await controller.cancelAutoPipOnLeave();
               return;
