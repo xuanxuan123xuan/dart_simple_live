@@ -634,6 +634,11 @@ class MyApp extends StatelessWidget {
         routingCallback: (_) {
           unawaited(_syncDesktopShortcutCaptureState());
         },
+        // 系统/容器返回消息（iOS 边缘返回手势、LiveContainer 点击穿透等会走这里）
+        onPopRoute: () async {
+          Log.d('AppNavigation: onPopRoute called（系统/容器返回消息）\n${StackTrace.current}');
+          return false;
+        },
         //国际化
         locale: const Locale("zh", "CN"),
         localizationsDelegates: const [
