@@ -175,6 +175,14 @@ class Utils {
     _rightDialogNavigator = navigator;
     Log.d('RightSideDialogRoute: opened title=$title request=$request\n${StackTrace.current}');
     final routeFuture = navigator.push<void>(route);
+    // 前 300ms 禁用 barrier 点击（拦截触摸穿透），之后启用正常遮罩关闭。
+    unawaited(Future.delayed(const Duration(milliseconds: 300), () {
+      if (route._disposed || !route.isActive) {
+        return;
+      }
+      route.enableBarrier();
+      Log.d('RightSideDialogRoute: barrier enabled title=$title');
+    }));
     _rightDialogFuture = routeFuture;
     unawaited(
       routeFuture.whenComplete(() {
@@ -605,24 +613,25 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   final Future<void> Function() onCovered;
   final Widget child;
 
-  /// 弹窗 push 时刻。用于拦截"打开瞬间的触摸穿透"。
-  final DateTime _openedAt = DateTime.now();
+  /// 弹窗 push 后前 300ms 禁用 barrier 点击（拦截 LiveContainer/iOS26
+  /// 触摸事件重复：第一次触发 onPressed 开弹窗，第二次落在 barrier 上关闭）。
+  /// 300ms 后 enableBarrier() 启用，用户真实点击遮罩（>300ms）正常关闭。
+  bool _barrierEnabled = false;
+  bool _disposed = false;
 
-  @override
-  RoutePopDisposition get popDisposition {
-    // LiveContainer / iOS 26 会重复投递触摸事件：第一次触发按钮 onPressed
-    // 打开弹窗，第二次（毫秒级内）落在 barrier 上触发 maybePop 关闭弹窗。
-    // 打开后 300ms 内的 maybePop 视为穿透，不关闭；用户真实点击 barrier
-    // 通常在弹窗出现后 >300ms，不受影响。（dismiss 走 removeRoute，不受影响）
-    if (DateTime.now().difference(_openedAt) < const Duration(milliseconds: 300)) {
-      return RoutePopDisposition.doNotPop;
-    }
-    return super.popDisposition;
+  void enableBarrier() {
+    _barrierEnabled = true;
+    // 通知 _ModalScope 重建，让 barrier 的点击响应读到新的 barrierDismissible。
+    changedExternalState();
   }
 
   @override
+  bool get barrierDismissible => _barrierEnabled && clickOutsideDismiss;
+
+  @override
   void dispose() {
-    Log.d('RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)');
+    _disposed = true;
+    Log.d('RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)\n${StackTrace.current}');
     super.dispose();
   }
 
@@ -668,9 +677,6 @@ class _RightSideDialogRoute extends PopupRoute<void> {
 
   @override
   Color? get barrierColor => Colors.transparent;
-
-  @override
-  bool get barrierDismissible => clickOutsideDismiss;
 
   @override
   String? get barrierLabel => "关闭侧边弹窗";
