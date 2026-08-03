@@ -32,3 +32,4 @@ tmp_*.xml
 *.md
 !README.md
 !**/README.md
+!WHATS_CHANGED.md
