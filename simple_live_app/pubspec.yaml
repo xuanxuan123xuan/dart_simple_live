@@ -54,7 +54,7 @@ dependencies:
   path_provider: any
   cross_file: 0.3.4+2 # Dart 3.4 compatible
   permission_handler: 11.3.1 # Dart 3.4 compatible
-  image_gallery_saver_plus: 3.0.5 # Dart 3.4 compatible
+  image_gallery_saver_plus: 5.1.1 # Flutter 3.41 compatible（3.0.5 的 v1 Registrar 已被 3.41 移除）
   screen_brightness:
     path: third_party/screen_brightness
   screen_brightness_ohos:
