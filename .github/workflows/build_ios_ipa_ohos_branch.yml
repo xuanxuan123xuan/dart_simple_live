@@ -22,7 +22,7 @@ on:
       ref:
         description: "要构建的 git ref，默认当前分支"
         required: false
-        default: "feat/ohos-1.12.7"
+        default: "dev"
       signed:
         description: "签名构建（需配好证书 secrets，否则请留空产出未签名 IPA）"
         type: boolean
