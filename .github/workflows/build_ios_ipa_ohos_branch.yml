@@ -271,8 +271,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ios-${{ steps.appver.outputs.version }}-${{ inputs.signed && 'signed' || 'unsigned' }}
-          name: Simple Live iOS ${{ steps.appver.outputs.version }} (${{ inputs.signed && '签名' || '未签名' }})
+          tag_name: ios-dev
+          name: Simple Live iOS dev ${{ steps.appver.outputs.version }} (${{ inputs.signed && '签名' || '未签名' }})
           body: |
             iOS IPA 构建产物（${{ inputs.signed && '已签名' || '未签名，需 AltStore / Sideloadly 侧载' }}）。
 
