@@ -927,3 +927,57 @@ jobs:
 
             下载后可用 `SHA256SUMS.txt` 校验文件完整性。
           files: release-assets/*
+
+      - name: 发布 iOS IPA 源（更新 apps-stable.json + 发固定 tag）
+        if: ${{ needs.prepare.outputs.publish_release == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          # 分支对应：dev → ios-dev 源（apps.json）；stable 及其他 → ios-stable 源（apps-stable.json）
+          if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
+            SOURCE_FILE="ipa-source/apps.json"
+            IOS_TAG="ios-dev"
+          else
+            SOURCE_FILE="ipa-source/apps-stable.json"
+            IOS_TAG="ios-stable"
+          fi
+
+          # 1) 复制 iOS 产物为固定名（供源 downloadURL）
+          ipa_src="$(ls release-assets/simple-live-*-ios-*.ipa 2>/dev/null | head -1)"
+          if [[ -z "$ipa_src" ]]; then
+            echo "::warning::未找到 iOS IPA 产物，跳过 iOS 源更新。"
+            exit 0
+          fi
+          cp "$ipa_src" "$RUNNER_TEMP/simple-live.ipa"
+
+          # 2) 更新源里的 version 字段并提交（源 URL 指向 raw.githubusercontent，必须提交才生效）
+          git fetch origin "$GITHUB_REF_NAME" || true
+          git checkout -B "$GITHUB_REF_NAME" "origin/$GITHUB_REF_NAME" 2>/dev/null || git checkout "$GITHUB_REF_NAME"
+          python3 - "$SOURCE_FILE" "$VERSION" <<'PY'
+          import json, sys, datetime
+          p, v = sys.argv[1], sys.argv[2]
+          d = json.load(open(p, encoding="utf-8"))
+          d["apps"][0]["version"] = v
+          d["apps"][0]["versionDate"] = datetime.date.today().isoformat()
+          json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          print("updated", p, "->", v)
+          PY
+          git add "$SOURCE_FILE"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore: update IPA source to $VERSION" || echo "无版本变化，跳过提交"
+          git pull --rebase origin "$GITHUB_REF_NAME" || true
+          git push origin "HEAD:$GITHUB_REF_NAME"
+
+          # 3) 发布固定名 simple-live.ipa 到 ios tag（源 downloadURL 指向该 tag）
+          if gh release view "$IOS_TAG" >/dev/null 2>&1; then
+            gh release upload "$IOS_TAG" "$RUNNER_TEMP/simple-live.ipa" --clobber
+          else
+            gh release create "$IOS_TAG" "$RUNNER_TEMP/simple-live.ipa" \
+              --title "Simple Live iOS ($IOS_TAG)" \
+              --notes "自动发布自全平台构建（$VERSION）。AltStore/LiveContainer 源：\`$SOURCE_FILE\`"
+          fi
+          echo "iOS 源已更新：$IOS_TAG / $VERSION"
