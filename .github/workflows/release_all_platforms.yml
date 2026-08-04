@@ -897,7 +897,7 @@ jobs:
           if [[ -n "$TAG" ]]; then
             prev_tag="$(git -C "$GITHUB_WORKSPACE" tag --sort=-v:refname | grep -v "^$TAG\$" | head -1 || true)"
             if [[ -n "$prev_tag" ]]; then
-              commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges "$prev_tag..HEAD" | head -80)"
+              commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges --max-count=80 "$prev_tag..HEAD")"
             fi
           fi
           if [[ -z "$commits" ]]; then
