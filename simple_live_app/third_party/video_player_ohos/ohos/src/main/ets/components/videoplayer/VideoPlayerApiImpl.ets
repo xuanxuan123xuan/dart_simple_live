@@ -10,6 +10,7 @@ import Log from '@ohos/flutter_ohos/src/main/ets/util/Log';
 import { FlutterRenderer } from '@ohos/flutter_ohos/src/main/ets/embedding/engine/renderer/FlutterRenderer';
 import { SurfaceTextureEntry } from '@ohos/flutter_ohos/src/main/ets/view/TextureRegistry';
 import { VideoPlayer } from './VideoPlayer';
+import { VideoItem } from './VideoItem';
 import { VideoPlayerApi } from './VideoPlayerApi';
 import { CommonConstants } from './constants/CommonConstants';
 import { CreateMessage, LoopingMessage,
@@ -79,6 +80,7 @@ export class VideoPlayerApiImpl {
   async create(arg: CreateMessage): Promise<TextureMessage> {
     let windowClass = await window.getLastWindow(this.getContext())
     GlobalContext.getContext().setObject("windowClass", windowClass)
+    GlobalContext.getContext().setObject("globalVideoList", new Array<VideoItem>())
     Log.i(TAG, "enter create");
     if (this.flutterState == null) {
       throw new Error("Illegal flutterState null.");
@@ -265,6 +267,9 @@ export class VideoPlayerApiImpl {
             api.create(createMsg).then((textureMessage: TextureMessage) => {
               wrapped.push(textureMessage);
               reply.reply(wrapped);
+            }).catch((err: Error) => {
+              let wrappedError = wrapError(err);
+              reply.reply(wrappedError);
             });
           } catch (err) {
             let wrappedError = wrapError(err);

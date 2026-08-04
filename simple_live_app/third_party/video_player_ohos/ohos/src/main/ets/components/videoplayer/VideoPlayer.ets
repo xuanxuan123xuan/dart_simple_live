@@ -157,13 +157,16 @@ export class VideoPlayer {
           this.sendCompleted();
           this.duration = PlayConstants.PLAYER_DURATION;
           if (!this.loop) {
-            let curIndex = this.index + PlayConstants.PLAYER_NEXT;
-            let globalVideoList = GlobalContext.getContext().getObject('globalVideoList') as VideoItem[];
-            this.index = (curIndex === globalVideoList.length) ? PlayConstants.PLAYER_FIRST : curIndex;
-            if (this.url) {
-              this.url = globalVideoList[this.index].iSrc;
-            } else {
-              this.rawFile = globalVideoList[this.index].src;
+            let globalVideoListObj = GlobalContext.getContext().getObject('globalVideoList');
+            if (globalVideoListObj != null && (globalVideoListObj as VideoItem[]).length > 0) {
+              let globalVideoList = globalVideoListObj as VideoItem[];
+              let curIndex = this.index + PlayConstants.PLAYER_NEXT;
+              this.index = (curIndex === globalVideoList.length) ? PlayConstants.PLAYER_FIRST : curIndex;
+              if (this.url) {
+                this.url = globalVideoList[this.index].iSrc;
+              } else {
+                this.rawFile = globalVideoList[this.index].src;
+              }
             }
           }
           break;
@@ -314,7 +317,11 @@ export class VideoPlayer {
       return;
     }
     this.playerModel.playSpeed = PlayConstants.PLAY_SPEED;
-    let globalVideoList = GlobalContext.getContext().getObject('globalVideoList') as VideoItem[];
+    let globalVideoListObj = GlobalContext.getContext().getObject('globalVideoList');
+    if (globalVideoListObj == null || (globalVideoListObj as VideoItem[]).length === 0) {
+      return;
+    }
+    let globalVideoList = globalVideoListObj as VideoItem[];
     let curIndex = this.index - PlayConstants.CONTROL_NEXT;
     this.index = (curIndex === -PlayConstants.CONTROL_NEXT) ?
       (globalVideoList.length - PlayConstants.CONTROL_NEXT) : curIndex;
@@ -337,7 +344,11 @@ export class VideoPlayer {
       return;
     }
     this.playerModel.playSpeed = PlayConstants.PLAY_SPEED;
-    let globalVideoList = GlobalContext.getContext().getObject('globalVideoList') as VideoItem[];
+    let globalVideoListObj = GlobalContext.getContext().getObject('globalVideoList');
+    if (globalVideoListObj == null || (globalVideoListObj as VideoItem[]).length === 0) {
+      return;
+    }
+    let globalVideoList = globalVideoListObj as VideoItem[];
     let curIndex = this.index + PlayConstants.CONTROL_NEXT;
     this.index = (curIndex === globalVideoList.length) ?
     PlayConstants.CONTROL_FIRST : curIndex;

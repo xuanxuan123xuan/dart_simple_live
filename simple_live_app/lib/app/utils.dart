@@ -539,7 +539,7 @@ class Utils {
   /// 检查文件权限
   static Future<bool> checkStorgePermission() async {
     try {
-      if (!Platform.isAndroid) {
+      if (!Platform.isAndroid || Utils.isOhos) {
         return true;
       }
       Permission permission = Permission.storage;

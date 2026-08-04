@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 import 'package:auto_orientation_v2/auto_orientation_v2.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -243,6 +241,10 @@ mixin PlayerStateMixin on PlayerMixin {
   /// 是否处于全屏状态
   RxBool fullScreenState = false.obs;
   RxBool ohosFullscreenTransition = false.obs;
+
+  /// 鸿蒙全屏过渡期间收到退出请求时置位，待过渡结束后立即消费执行退出。
+  /// 避免过渡中 exitFull 直接返回导致 fullScreenState/方向/系统栏残留。
+  bool _pendingExitFullscreen = false;
 
   bool get showOhosFullscreenSurface =>
       Utils.isOhos && (fullScreenState.value || ohosFullscreenTransition.value);
@@ -580,6 +582,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       if (ohosFullscreenTransition.value) {
         return;
       }
+      // 开始新一轮进入全屏：清掉上次可能残留的待处理退出请求。
+      _pendingExitFullscreen = false;
       ohosFullscreenTransition.value = true;
       // 立即切全屏布局，方向同步转：过渡期间画面在竖屏窗口里等比
       // letterbox（黑边），方向就绪后恢复横屏满屏。比"先转方向再全屏"
@@ -611,6 +615,12 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         await _waitForOhosViewport(portrait: false);
       }
       ohosFullscreenTransition.value = false;
+      // 过渡期间若有退出请求（如关闭直播间），此时立即接续执行完整退出，
+      // 避免 fullScreenState/方向/系统栏停留残留。
+      if (_pendingExitFullscreen) {
+        _pendingExitFullscreen = false;
+        await exitFull();
+      }
     } else if (Platform.isAndroid || Platform.isIOS) {
       fullScreenState.value = true;
       // 开关开启（默认）时全屏总是横屏：iPad 竖屏系统强制显示状态栏，
@@ -692,6 +702,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
     if (Utils.isOhos) {
       if (ohosFullscreenTransition.value) {
+        // 全屏过渡中：不要直接 return（会导致全屏/方向/系统栏残留），
+        // 置待处理标记，由 enterFullScreen 过渡结束后接续执行退出，
+        // 或由 closePlayerResources 的兜底逻辑强制恢复系统状态。
+        _pendingExitFullscreen = true;
         return;
       }
       // Keep the fullscreen surface alive until HarmonyOS reports a portrait
@@ -1100,20 +1114,17 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         if (nativeImage != null && nativeImage.isNotEmpty) {
           return nativeImage;
         }
-      } catch (e, stackTrace) {
-        Log.e("鸿蒙原生窗口截图失败，回退 Flutter 截图：$e", stackTrace);
-      }
-
-      if (renderObject is! RenderRepaintBoundary) {
+        // 原生截图未返回有效数据：视频由原生 AVPlayer 纹理渲染，不在
+        // Flutter 渲染树中，回退 renderObject.toImage() 只会得到黑底图。
+        // 直接提示失败并返回，不调用保存逻辑。
+        Log.e("鸿蒙原生窗口截图未返回数据，放弃 Flutter 回退", StackTrace.current);
+        SmartDialog.showToast("截图失败");
         return null;
-      }
-      final flutterImage = await renderObject.toImage(pixelRatio: pixelRatio);
-      try {
-        final byteData =
-            await flutterImage.toByteData(format: ui.ImageByteFormat.png);
-        return byteData?.buffer.asUint8List();
-      } finally {
-        flutterImage.dispose();
+      } catch (e, stackTrace) {
+        // 原生截图失败：同样不再回退 Flutter 截图，避免保存黑屏图。
+        Log.e("鸿蒙原生窗口截图失败：$e", stackTrace);
+        SmartDialog.showToast("截图失败");
+        return null;
       }
     } finally {
       ohosScreenshotInProgress.value = false;
@@ -2179,6 +2190,23 @@ class PlayerController extends BaseController
       } catch (e) {
         Log.logPrint("鸿蒙应用亮度恢复失败: $e");
       }
+      // 最终兜底：无论是否处于全屏过渡（此时 exitFull 只会置
+      // _pendingExitFullscreen 标记而无法真正退出），都无条件强制恢复
+      // 屏幕方向与系统栏，避免 fullScreenState 残留横屏锁死/系统栏消失。
+      fullScreenState.value = false;
+      ohosFullscreenTransition.value = false;
+      _pendingExitFullscreen = false;
+      await _runOhosSystemUiOperation(
+        SystemChrome.setPreferredOrientations(DeviceOrientation.values),
+        "强制恢复屏幕方向",
+      );
+      await _runOhosSystemUiOperation(
+        SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.manual,
+          overlays: SystemUiOverlay.values,
+        ),
+        "强制恢复系统栏",
+      );
       _ohosVideoController = null;
       disposeDanmakuController();
       return;
