@@ -668,12 +668,10 @@ class MyApp extends StatelessWidget {
         lightColorScheme = lightDynamic;
         darkColorScheme = darkDynamic;
       } else {
-        lightColorScheme = ColorScheme.fromSeed(
-          seedColor: styleColor,
-          brightness: Brightness.light,
-        );
-        darkColorScheme = ColorScheme.fromSeed(
-            seedColor: styleColor, brightness: Brightness.dark);
+        // 复用按 seed 缓存的 ColorScheme：切换深色/浅色/跟随系统不重算。
+        final cached = AppColors.cachedSchemes(styleColor);
+        lightColorScheme = cached.light;
+        darkColorScheme = cached.dark;
       }
       return GetMaterialApp(
         title: "Simple Live",
