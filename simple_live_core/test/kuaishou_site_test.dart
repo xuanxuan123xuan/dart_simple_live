@@ -253,4 +253,27 @@ void main() {
     expect(qualities, hasLength(1));
     expect(qualities.single.data, ['https://example.com/live.flv']);
   });
+
+  group('KuaishouSite.isImageUrl', () {
+    test('无扩展名的 http(s) URL 视为图片（快手实时截图）', () {
+      expect(
+        KuaishouSite.isImageUrl(
+          'https://live3.static.yximgs.com/live/game/screenshot/9tFQiiOLSg8~1785822457911~1',
+        ),
+        isTrue,
+      );
+    });
+
+    test('常规图片扩展名视为图片', () {
+      expect(KuaishouSite.isImageUrl('https://x.com/a.png'), isTrue);
+      expect(KuaishouSite.isImageUrl('https://x.com/a.jpg'), isTrue);
+      expect(KuaishouSite.isImageUrl('https://x.com/a.jpg?v=1'), isTrue);
+    });
+
+    test('非图片扩展名与空串不是图片', () {
+      expect(KuaishouSite.isImageUrl('https://x.com/a.html'), isFalse);
+      expect(KuaishouSite.isImageUrl('https://x.com/a.js'), isFalse);
+      expect(KuaishouSite.isImageUrl(''), isFalse);
+    });
+  });
 }

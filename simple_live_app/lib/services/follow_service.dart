@@ -455,7 +455,9 @@ class FollowService extends GetxService {
     }
     final title = resolvedDetail.title.trim();
     final cover = resolvedDetail.cover.trim();
-    if (title.isNotEmpty) {
+    // 标题只补空：保留关注时的真标题残留（快手主播页无真标题，
+    // detail.title 可能是分区名/主播名兜底，不能覆盖已存标题）。
+    if (title.isNotEmpty && item.roomTitle.isEmpty) {
       item.roomTitle = title;
     }
     if (cover.isNotEmpty) {
@@ -817,7 +819,8 @@ class FollowService extends GetxService {
           } else {
             final title = detail.title.trim();
             final cover = detail.cover.trim();
-            if (title.isNotEmpty && title != item.roomTitle) {
+            // 标题只补空：保留关注时的真标题残留，不被分区名/主播名兜底覆盖。
+            if (title.isNotEmpty && item.roomTitle.isEmpty) {
               item.roomTitle = title;
               changed = true;
             }

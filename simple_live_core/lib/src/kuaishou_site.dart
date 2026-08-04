@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:dio/dio.dart';
@@ -311,7 +311,7 @@ class KuaishouSite extends LiveSite {
     var items = <LiveRoomItem>[];
     for (var item in result["data"]["list"] ?? []) {
       var cover = item['poster']?.toString() ?? '';
-      if (cover.isNotEmpty && !_isImage(cover)) {
+      if (cover.isNotEmpty && !isImageUrl(cover)) {
         cover = '$cover.jpg';
       }
       items.add(
@@ -530,7 +530,7 @@ class KuaishouSite extends LiveSite {
         item["coverUrl"]?.toString() ??
         gameInfo["poster"]?.toString() ??
         '';
-    if (cover.isNotEmpty && !_isImage(cover)) {
+    if (cover.isNotEmpty && !isImageUrl(cover)) {
       cover = '$cover.jpg';
     }
 
@@ -713,7 +713,7 @@ class KuaishouSite extends LiveSite {
       var cover = liveStream["poster"]?.toString() ??
           selected["poster"]?.toString() ??
           '';
-      if (cover.isNotEmpty && !_isImage(cover)) {
+      if (cover.isNotEmpty && !isImageUrl(cover)) {
         cover = '$cover.jpg';
       }
 
@@ -1113,9 +1113,16 @@ class KuaishouSite extends LiveSite {
 
   // ==================== 工具方法 ====================
 
-  bool _isImage(String url) {
+  static bool isImageUrl(String url) {
     if (url.isEmpty) return false;
-    var ext = url.split('.').last.toLowerCase();
+    final lastSegment = url.split('?').first.split('/').last;
+    // 无扩展名的 http(s) URL（如快手 live3.static.yximgs.com 实时截图
+    // "...~1785822457911~1"）是有效的动态图片，直接可用；
+    // 若按"无扩展名"处理会拼出 404 的 .jpg，封面失效。
+    if (!lastSegment.contains('.')) {
+      return true;
+    }
+    var ext = lastSegment.split('.').last.toLowerCase();
     return _imageExtensions.contains(ext);
   }
 
@@ -1174,3 +1181,4 @@ class _KuaishouWebsocketInfo {
     return _KuaishouWebsocketInfo(token: '', websocketUrls: <String>[]);
   }
 }
+
