@@ -581,6 +581,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         return;
       }
       ohosFullscreenTransition.value = true;
+      // 立即切全屏布局，方向同步转：过渡期间画面在竖屏窗口里等比
+      // letterbox（黑边），方向就绪后恢复横屏满屏。比"先转方向再全屏"
+      // 响应更快（用户选择黑边过渡）。
+      fullScreenState.value = true;
       showControls();
       await WidgetsBinding.instance.endOfFrame;
       unawaited(
@@ -606,10 +610,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         );
         await _waitForOhosViewport(portrait: false);
       }
-      // 方向切换完成后再切全屏布局：transition 期间保持原页面布局，
-      // 避免竖屏窗口 + 横屏视频 letterbox（画面被压成细长横条）持续到
-      // 方向切换结束。
-      fullScreenState.value = true;
       ohosFullscreenTransition.value = false;
     } else if (Platform.isAndroid || Platform.isIOS) {
       fullScreenState.value = true;
