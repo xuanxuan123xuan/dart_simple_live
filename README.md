@@ -120,7 +120,7 @@
 | 构建目标 | Flutter 版本 | 说明 |
 |---|---|---|
 | **本分支所有目标** | **3.41.x** | dev，升级线 |
-| 鸿蒙 HAP | oh-3.41.9-release（OHOS fork） | `tool/build_ohos_hap.ps1` 自带 |
+| 鸿蒙 HAP | oh-3.41.9-release（[GitHub 镜像](https://github.com/xuanxuan123xuan/flutter_flutter_ohos)） | runner 预装 |
 
 本分支已随升级适配：`intl` 0.20.2、`onPopInvokedWithResult`、workflow 版本校验更新；遗留的 deprecated（`RadioListTile.groupValue`、`Color.value`、`withOpacity` 等）已全部清理。
 

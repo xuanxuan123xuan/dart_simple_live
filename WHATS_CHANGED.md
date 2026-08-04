@@ -16,7 +16,7 @@
 
 ### Flutter 升级（dev 分支）
 - 全平台 Flutter 3.22 → 3.41.x：intl 0.19.0 → 0.20.2、onPopInvoked → onPopInvokedWithResult
-- 鸿蒙可同步升级（CPF-Flutter 维护 oh-3.41.9-release 分支）
+- 鸿蒙可同步升级（[flutter_flutter_ohos](https://github.com/xuanxuan123xuan/flutter_flutter_ohos) 镜像 oh-3.41.9-release 分支）
 - workflow 版本校验、VS/Xcode 注释同步更新
 
 ### 构建与发布

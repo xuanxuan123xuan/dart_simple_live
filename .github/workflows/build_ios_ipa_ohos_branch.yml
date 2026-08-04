@@ -8,7 +8,7 @@ name: 构建 iOS IPA
 # 依赖与 pubspec 保持一致。
 #
 # 注意：不读 simple_live_app/.fvmrc。HarmonyOS hap 走 build_ohos_hap.ps1 里
-# 自带的 OHOS Flutter fork（oh-3.41.9-release 线），也不读 .fvmrc。
+# 自带的 OHOS Flutter fork（oh-3.41.9-release 线，GitHub 镜像），也不读 .fvmrc。
 #
 # Xcode 15.4 在 macos-14 镜像上默认提供；3.41 亦兼容，仍显式指定避免
 # 镜像默认版本变动后静默走到 16.x。
