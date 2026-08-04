@@ -1,10 +1,10 @@
 <p align="center">
     <img width="128" src="/assets/logo.png" alt="Simple Live logo">
 </p>
-<h2 align="center">Simple Live — dev 开发版</h2>
+<h2 align="center">Simple Live — 稳定版</h2>
 
 <p align="center">
-简简单单的看直播 · <code>v1.14.0</code> · 分支 <code>dev</code>
+简简单单的看直播 · <code>v1.13.0</code> · 分支 <code>stable</code>
 </p>
 
 ![浅色模式](/assets/screenshot_light.jpg)
@@ -13,43 +13,32 @@
 
 > **Release 资产**：本仓库提供阶段性 `Release` 安装包与压缩包，见 [GitHub Releases](https://github.com/xuanxuan123xuan/dart_simple_live/releases) 页面。
 
-## ⚠️ 开发版说明
-
-本分支是 **dev 开发版**（Flutter 3.41 升级线），用于验证新功能与修复，**可能存在不稳定或未完成的功能**，适合尝鲜测试，日常使用请用 [stable 稳定版](https://github.com/xuanxuan123xuan/dart_simple_live/tree/stable)。
-
 ## 📦 IPA 源（AltStore / LiveContainer）
 
-本分支为 dev 测试版，推荐添加 dev 测试版源：
+本分支为**稳定版**，推荐添加稳定版源：
 
 | 版本 | 源 URL |
 |---|---|
-| **dev 测试版（本分支）** | `https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps.json` |
-| 稳定版 | `https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/stable/ipa-source/apps-stable.json` |
+| **稳定版（推荐）** | `https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/stable/ipa-source/apps-stable.json` |
+| dev 测试版 | `https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps.json` |
 
 用法：**LiveContainer（或 AltStore/SideStore）→ 源 → 添加源**，粘贴 URL 即可。构建发布后源内点更新拿到最新 IPA。
 
-> dev 测试版源对应 `ios-dev` 标签；稳定版源对应 `ios-stable` 标签。
+> 稳定版源对应 `ios-stable` 标签；dev 测试版源对应 `ios-dev` 标签。
 
 ---
 
 ## 这个分支是什么
 
-本仓库 fork 自 [June6699/dart_simple_live](https://github.com/June6699/dart_simple_live)。`dev` 是**开发分支**：把 [stable 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/stable) 的 Flutter 从 3.22 升级到 **3.41**，并验证新功能与修复，稳定后合入 stable。
+本仓库 fork 自 [June6699/dart_simple_live](https://github.com/June6699/dart_simple_live)。`stable` 是**长期维护的稳定分支**，重点维护三部分：
 
-**本分支与 stable 的差异**：
+1. **鸿蒙 NEXT 适配**：完整的 OHOS 端口，包含 ArkTS 原生插件层（播放器、截图、扫码、Cookie、文件管理、PIP、网络信息）、服务卡片（关注主播开播状态）、后台开播检查（WorkScheduler + 用户开关）、以及 QuickJS FFI 签名桥接（抖音）。
+2. **多开同屏**：在同一窗口内播放 2～4 个直播间，支持均分/主次布局、聚焦、聊天区、独立暂停与音频控制，以及自动画质调节。
+3. **移动播放稳定性**：统一管理常亮锁和全屏系统栏，改善 iOS 状态栏隐藏、前后台恢复、播放器刷新及资源释放。
 
-| 项 | stable | dev（本分支） |
-|---|---|---|
-| Flutter | 3.22.x（鸿蒙适配钉死） | **3.41.x**（含 Scene Lifecycle / iOS 26 适配） |
-| Dart | 3.4.x | **3.11.x** |
-| intl | 0.19.0 | **0.20.2** |
-| 版本号 | 1.13.x | **1.14.0**（独立版本线，避免 release tag 冲突） |
-| 定位 | 稳定版 | 测试版（新功能验证） |
+> 开发中的新功能在 [dev 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/dev)（Flutter 3.41 升级线），验证稳定后合入本分支。
 
-**dev 分支正在验证的内容**：
-- **iOS 26 状态栏隐藏**：3.41 引擎的 scene-based 状态栏管理（签名版 SystemChrome 生效；LiveContainer 容器环境受限）
-- **弹窗防穿透**：所有弹窗（右侧/底部/居中/菜单）加遮罩防穿透窗口，修复"打开即关闭"
-- **依赖解锁**：volume_controller / screen_brightness 可升级到新版（3.41 才有 Scene Lifecycle API）
+鸿蒙端口的代价是 **Flutter 版本钉死在 3.22 线**（`pubspec.yaml` 有 7 处依赖与 3.22 对齐），与 dev 分支的 Flutter 3.41 互斥，无法直接合并。
 
 ---
 
@@ -72,6 +61,21 @@
 - **桌面端**（Windows / macOS）仍可优先使用多个独立系统窗口，失败或其他平台则退回单窗口同屏。
 - 鸿蒙暂不支持多开：该平台不初始化 media_kit，播放走 `video_player_ohos`。
 
+### 鸿蒙 NEXT
+
+| 能力 | 实现方式 |
+|---|---|
+| 直播播放 | `video_player_ohos` / AVPlayer，非 media_kit |
+| 弹幕 | 平台无关，复用 `simple_live_core` WebSocket |
+| 截图 | 原生 `ohos_media` 通道，用户取消正确处理为"取消保存"而非报错 |
+| 扫码 | 原生 `ohos_scan` 通道（`@kit.ScanKit`） |
+| 抖音搜索 | QuickJS FFI 桥接，`.so` 预编译 |
+| 服务卡片 | `FollowFormAbility` + `OhosWidgetPlugin`，关注主播开播状态一目了然 |
+| 后台开播提醒 | `FollowCheckExtension`（WorkScheduler），用户可在设置中开关 |
+| Cookie 管理 | 原生 `ohos_web_cookie` 通道 |
+| PIP 画中画 | 原生 `ohos_pip` 通道 |
+| 文件管理 | 原生 `ohos_documents` 通道 |
+
 ### 通用功能
 
 - 虎牙、斗鱼、哔哩哔哩、抖音、快手五大平台直播
@@ -82,21 +86,6 @@
 - 配置导入导出（设置、关注、标签、历史、弹幕屏蔽词）
 - 桌面端小窗 / 画中画
 - 实时字幕（桌面端，需本地 Whisper 模型）
-
----
-
-## 更新计划（Roadmap）
-
-> 保持"简简单单看直播"的初心，只做克制、不打扰的功能。以下为已确认的待做计划，按优先级排序：
-
-| 功能 | 说明 | 状态 |
-|---|---|---|
-| 弹幕热词统计 | 进房实时统计弹幕高频词，看节奏/吃瓜；点击热词可一键加屏蔽词 | 待做 |
-| 观看统计 | 本地静默统计观看时长/平台分布/常看主播（hive 存储，不打扰使用） | 待做 |
-| 音量统一 | 多开时各格音量归一化，任一格调音量同步到全部 | 待做 |
-| 跨平台聚合搜索 | 一个搜索框同时搜五大平台，结果按平台分区聚合展示 | 待做（工程量较大） |
-| 竖屏直播弹幕 | 竖屏直播左下角弹幕列表：从下往上、≤半屏、背景透明、长文本自动换行、上滑可回看历史、底部避让控制栏；弹幕模式跟随视频方向（横屏看竖屏流也用） | 待做（大更新，不急） |
-| 全屏方向跟随视频方向 | 竖屏直播全屏保持竖屏（`fullScreenForceLandscape` 默认关闭） | 待做 |
 
 ---
 
@@ -111,7 +100,7 @@
 | Linux | ✅ | zip / deb |
 | Android TV | ✅ | 拆分 APK（按 ABI） |
 | TV-windows | ✅ | TV 的 UI 在 Windows 上运行，支持多开 |
-| HarmonyOS NEXT | ✅ | 随全平台升级（runner 需换 oh-3.41.9-release） |
+| HarmonyOS NEXT | ✅ | 本分支 `stable`，见下方构建 |
 
 ---
 
@@ -119,43 +108,16 @@
 
 | 构建目标 | Flutter 版本 | 说明 |
 |---|---|---|
-| **本分支所有目标** | **3.41.x** | dev，升级线 |
-| 鸿蒙 HAP | oh-3.41.9-release（[GitHub 镜像](https://github.com/xuanxuan123xuan/flutter_flutter_ohos)） | runner 预装 |
+| **本分支所有目标** | **3.22.x** | `stable`，pubspec 钉死 |
+| 鸿蒙 HAP | 3.22 线 OHOS fork | `tool/build_ohos_hap.ps1` 自带 |
 
-### 鸿蒙 HAP 构建
+本分支的 `pubspec.yaml` 有 7 处依赖按 Flutter 3.22 钉死（`intl`、`archive`、`lottie`、`package_info_plus`、`window_manager`、`shelf`、`dynamic_color`），换用更新的 Flutter 会在 `flutter_localizations` 的 `intl` 传递依赖上解析失败，需连同这些依赖一起升级。
 
-**前置条件**：Flutter OHOS（oh-3.41.9-release）、HarmonyOS SDK（API 12+）、JDK 17。
-
-```bash
-# 1. 克隆 Flutter OHOS 到本地
-git clone --depth 1 --branch oh-3.41.9-release https://github.com/xuanxuan123xuan/flutter_flutter_ohos.git flutter_ohos
-
-# 2. 设置环境变量（路径按实际修改）
-export FLUTTER_OHOS_ROOT="$(pwd)/flutter_ohos"
-export HOS_SDK_HOME="$HOME/HarmonyOS/Sdk"    # 或 DevEco 安装路径
-export JAVA_HOME="/path/to/jdk-17"
-
-# 3. 检出项目源码
-git clone -b dev https://github.com/xuanxuan123xuan/dart_simple_live.git
-cd dart_simple_live
-
-# 4. 构建 HAP（签名版）
-$FLUTTER_OHOS_ROOT/bin/flutter.bat pub get -C simple_live_app
-$FLUTTER_OHOS_ROOT/bin/flutter.bat build hap --release \
-  --dart-define=OHOS_SIGNING=true \
-  --release-sks "$HOME/.ohos/release_signing.p12" \
-  --release-key-password "YOUR_KEY_PASSWORD"
-```
-
-产物路径：`simple_live_app/build/hap/hap/simple_live_app-release-signed.hap`
-
-详细签名配置参见 `build_ohos_hap.yml` workflow（`secrets.OHOS_SIGNING_DIR`）。
-
-本分支已随升级适配：`intl` 0.20.2、`onPopInvokedWithResult`、workflow 版本校验更新；遗留的 deprecated（`RadioListTile.groupValue`、`Color.value`、`withOpacity` 等）已全部清理。
+注意：`simple_live_app/.fvmrc` 里写的 `3.38.3` 与本目录 pubspec 并不匹配，所有构建流程均不读取它。
 
 ### 版本号维护
 
-应用版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。当前版本为 `1.14.0+11400`（dev 独立版本线），构建号规则为：
+应用版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。当前版本为 `1.13.0+11300`，构建号规则为：
 
 ```text
 major × 10000 + minor × 100 + patch
@@ -164,8 +126,8 @@ major × 10000 + minor × 100 + patch
 修改版本后在 `simple_live_app` 目录执行：
 
 ```bash
-# 直接设置版本并同步所有派生文件
-dart run tool/app_version.dart set 1.14
+# 直接设置版本并同步所有派生文件；1.13 会自动规范为 1.13.0
+dart run tool/app_version.dart set 1.13
 ```
 
 ---
