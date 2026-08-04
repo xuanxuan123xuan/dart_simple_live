@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/web_socket_util.dart';
-import 'package:simple_live_core/src/danmaku/common_emoji_assets.dart';
+import 'package:simple_live_core/src/danmaku/douyu_emoji_assets.dart';
 
 import '../common/binary_writer.dart';
 
@@ -12,12 +12,12 @@ class DouyuDanmaku implements LiveDanmaku {
   @override
   int heartbeatTime = 45 * 1000;
 
-  /// 弹幕文本中的通用表情片段（[表情名] → Twemoji 图）。
+  /// 弹幕文本中的斗鱼表情片段（优先斗鱼原版映射，回退通用 Twemoji）。
   List<LiveMessageSpan> _emojiSpans(String content) =>
-      buildCommonEmojiSpans(content);
+      buildDouyuEmojiSpans(content);
 
   List<String>? _emojiImageUrls(String content) {
-    final urls = buildCommonEmojiSpans(content)
+    final urls = buildDouyuEmojiSpans(content)
         .where((s) => s.isImage)
         .map((s) => s.imageUrl!.trim())
         .toSet()
