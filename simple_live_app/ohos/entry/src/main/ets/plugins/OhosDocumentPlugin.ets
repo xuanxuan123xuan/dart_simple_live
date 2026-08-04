@@ -9,6 +9,7 @@ import {
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { systemShare } from '@kit.ShareKit';
+import { util } from '@kit.ArkTS';
 import fileuri from '@ohos.file.fileuri';
 import fs from '@ohos.file.fs';
 import picker from '@ohos.file.picker';
@@ -48,6 +49,10 @@ export default class OhosDocumentPlugin implements FlutterPlugin, MethodCallHand
     }
     if (call.method === 'saveBytes') {
       this.saveBytes(call, result);
+      return;
+    }
+    if (call.method === 'pickText') {
+      this.pickText(call, result);
       return;
     }
     result.notImplemented();
@@ -94,6 +99,39 @@ export default class OhosDocumentPlugin implements FlutterPlugin, MethodCallHand
       .then(() => result.success(null))
       .catch((error: BusinessError) => {
         result.error('share_failed', `${error.code}: ${error.message}`, null);
+      });
+  }
+
+  private pickText(call: MethodCall, result: MethodResult): void {
+    const options = new picker.DocumentSelectOptions();
+    options.maxSelectNumber = 1;
+    options.fileSuffixFilters = ['.json'];
+    const documentPicker = new picker.DocumentViewPicker(this.context);
+    documentPicker.select(options)
+      .then((uris: Array<string>) => {
+        if (uris.length === 0) {
+          result.success(null);
+          return;
+        }
+        const file = fs.openSync(uris[0], fs.OpenMode.READ_ONLY);
+        try {
+          const stat = fs.statSync(file.fd);
+          const buffer = new ArrayBuffer(stat.size);
+          fs.readSync(file.fd, buffer);
+          const text = util.TextDecoder.create('utf-8')
+            .decodeToString(new Uint8Array(buffer));
+          result.success(text);
+        } finally {
+          fs.closeSync(file.fd);
+        }
+      })
+      .catch((error: BusinessError) => {
+        // 用户取消选择：某些版本报 13900042（同 saveBytes）。
+        if (error.code === 13900042) {
+          result.success(null);
+          return;
+        }
+        result.error('pick_failed', `${error.code}: ${error.message}`, null);
       });
   }
 

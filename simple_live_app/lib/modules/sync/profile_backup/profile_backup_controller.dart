@@ -67,13 +67,10 @@ class ProfileBackupController extends BaseController {
         cancel: "不覆盖",
       );
       if (Utils.isOhos) {
-        final content = await Utils.showEditTextDialog(
-          "",
-          title: "粘贴配置包",
-          hintText: "粘贴完整的 Simple Live 配置 JSON",
-        );
+        // 与导出一致：调用鸿蒙文件管理器选择配置包，而非粘贴 JSON。
+        final content = await OhosDocumentService.pickText();
         if (content == null || content.trim().isEmpty) {
-          return;
+          return; // 用户取消选择
         }
         SyncProgressDialog.show(const SyncProgress(stage: "正在导入配置包"));
         final summary = await ProfileBackupService.instance.importProfileJson(

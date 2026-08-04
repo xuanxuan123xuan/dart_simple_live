@@ -74,6 +74,16 @@ class OhosDocumentService {
     );
   }
 
+  /// 打开 HarmonyOS 文件选择器选一个 JSON 文件并返回其文本内容。
+  /// 用户取消选择时返回 null。
+  static Future<String?> pickText() async {
+    if (!Utils.isOhos) {
+      throw UnsupportedError(
+          'HarmonyOS document picker is only available on OHOS');
+    }
+    return _channel.invokeMethod<String>('pickText');
+  }
+
   static String _extensionOf(String fileName) {
     final index = fileName.lastIndexOf('.');
     return index < 0 ? '' : fileName.substring(index + 1);
