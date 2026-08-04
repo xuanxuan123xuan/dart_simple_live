@@ -30,7 +30,11 @@ class JsRuntime {
             ? JavascriptCoreRuntime()
             : QuickJsRuntime2(
                 stackSize: maxStackSize ?? 512 * 1024,
-                memoryLimit: memoryLimit,
+                // 不传 memoryLimit：flutter_js 的 ffi.dart 对 jsSetMemoryLimit
+                // 是惰性 dlsym，仅在 memoryLimit > 0 时访问。鸿蒙 fastdev
+                // QuickJS（libfastdev_quickjs_runtime.so）未导出该符号，传入
+                // 会导致 dlsym 抛异常、签名初始化失败（抖音/斗鱼列表加载失败）。
+                // memoryLimit 仅为防御性上限，不设置不影响签名执行。
               );
 
   final JavascriptRuntime _runtime;
