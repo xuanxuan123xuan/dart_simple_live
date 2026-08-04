@@ -824,7 +824,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       builder: (context, constraints) {
         final fullScreen = controller.fullScreenState.value;
         final padding = fullScreen ? mediaQuery.viewPadding : EdgeInsets.zero;
-        final compact = !fullScreen && constraints.maxWidth < 520;
+        // 底栏在窄屏/横屏全屏时会把清晰度、线路、时长等全部撑开导致横向
+        // overflow。compact 不再排除全屏：只要可用宽度不足就收起次要文本与
+        // 弹幕设置按钮（"更多功能"菜单里仍可访问），避免 Row 溢出。
+        final compact = constraints.maxWidth < 520;
         return Container(
           height: 48 + padding.bottom,
           padding: EdgeInsets.only(
@@ -861,7 +864,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   color: Colors.white,
                 ),
               ),
-              if (!compact || fullScreen)
+              if (!compact)
                 IconButton(
                   tooltip: "弹幕设置",
                   onPressed: () => showDanmakuSettings(controller),
@@ -871,7 +874,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                     color: Colors.white,
                   ),
                 ),
-              if (!compact || fullScreen)
+              if (!compact)
                 Padding(
                   padding: const EdgeInsets.only(left: 8),
                   child: Text(
@@ -894,7 +897,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                     color: Colors.white,
                   ),
                 ),
-              if (fullScreen && controller.qualites.isNotEmpty)
+              if (fullScreen && !compact && controller.qualites.isNotEmpty)
                 TextButton(
                   onPressed: () => showQualitesInfo(controller),
                   child: Text(
@@ -905,7 +908,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                     ),
                   ),
                 ),
-              if (fullScreen && controller.playUrls.isNotEmpty)
+              if (fullScreen && !compact && controller.playUrls.isNotEmpty)
                 TextButton(
                   onPressed: () => showLinesInfo(controller),
                   child: Text(

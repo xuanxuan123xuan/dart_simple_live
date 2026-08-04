@@ -14,6 +14,7 @@ import { PipSurfaceRegistry } from './PipSurfaceRegistry';
 
 const TAG: string = 'OhosPipManager';
 const CHANNEL_NAME: string = 'simple_live/ohos_pip';
+const PIP_START_TIMEOUT_MS: number = 5000;
 
 export class OhosPipManager implements MethodCallHandler {
   private context: common.UIAbilityContext;
@@ -25,6 +26,7 @@ export class OhosPipManager implements MethodCallHandler {
   private pipActive: boolean = false;
   private pipStarting: boolean = false;
   private autoStartEnabled: boolean = false;
+  private pipStartTimer: number | undefined = undefined;
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
@@ -121,10 +123,12 @@ export class OhosPipManager implements MethodCallHandler {
       this.autoStartEnabled = false;
       if (!this.pipActive && !this.pipStarting) {
         this.pipStarting = true;
+        this.schedulePiPTimeout();
         await controller.startPiP();
       }
       result.success(true);
     } catch (error) {
+      this.clearPiPTimeout();
       this.restorePlayerSurface();
       this.pipStarting = false;
       result.error('pip_start_failed', `${error}`, null);
@@ -226,12 +230,14 @@ export class OhosPipManager implements MethodCallHandler {
       return;
     }
     if (state === PiPWindow.PiPState.STARTED) {
+      this.clearPiPTimeout();
       this.pipStarting = false;
       this.pipActive = true;
       this.channel?.invokeMethod('stateChanged', { 'enabled': true });
       return;
     }
     if (state === PiPWindow.PiPState.STOPPED || state === PiPWindow.PiPState.ERROR) {
+      this.clearPiPTimeout();
       this.restorePlayerSurface();
       this.pipStarting = false;
       this.pipActive = false;
@@ -262,6 +268,7 @@ export class OhosPipManager implements MethodCallHandler {
         await controller.stopPiP();
       }
     } finally {
+      this.clearPiPTimeout();
       this.restorePlayerSurface();
       this.pipActive = false;
       this.pipStarting = false;
@@ -279,5 +286,23 @@ export class OhosPipManager implements MethodCallHandler {
     this.controller = undefined;
     this.controllerPlayer = undefined;
     this.controllerSurface = undefined;
+  }
+
+  private schedulePiPTimeout(): void {
+    this.clearPiPTimeout();
+    this.pipStartTimer = setTimeout(() => {
+      this.pipStartTimer = undefined;
+      if (this.pipStarting) {
+        Log.w(TAG, 'PiP STARTED event was not received within timeout, resetting pipStarting to allow retry');
+        this.pipStarting = false;
+      }
+    }, PIP_START_TIMEOUT_MS);
+  }
+
+  private clearPiPTimeout(): void {
+    if (this.pipStartTimer !== undefined) {
+      clearTimeout(this.pipStartTimer);
+      this.pipStartTimer = undefined;
+    }
   }
 }

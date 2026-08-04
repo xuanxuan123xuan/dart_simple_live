@@ -6,6 +6,8 @@ import {
   MethodChannel,
   MethodResult
 } from '@ohos/flutter_ohos';
+import AbilityAware from '@ohos/flutter_ohos/src/main/ets/embedding/engine/plugins/ability/AbilityAware';
+import { AbilityPluginBinding } from '@ohos/flutter_ohos/src/main/ets/embedding/engine/plugins/ability/AbilityPluginBinding';
 import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fileuri from '@ohos.file.fileuri';
@@ -14,18 +16,25 @@ import window from '@ohos.window';
 
 const CHANNEL_NAME = 'simple_live/ohos_media';
 
-export default class OhosMediaPlugin implements FlutterPlugin, MethodCallHandler {
+export default class OhosMediaPlugin implements FlutterPlugin, MethodCallHandler, AbilityAware {
   private channel?: MethodChannel;
-  private context?: common.Context;
+  private context?: common.UIAbilityContext;
 
   getUniqueClassName(): string {
     return 'OhosMediaPlugin';
   }
 
   onAttachedToEngine(binding: FlutterPluginBinding): void {
-    this.context = binding.getApplicationContext();
     this.channel = new MethodChannel(binding.getBinaryMessenger(), CHANNEL_NAME);
     this.channel.setMethodCallHandler(this);
+  }
+
+  onAttachedToAbility(binding: AbilityPluginBinding): void {
+    this.context = binding.getAbility().context;
+  }
+
+  onDetachedFromAbility(): void {
+    this.context = undefined;
   }
 
   onDetachedFromEngine(binding: FlutterPluginBinding): void {
@@ -60,32 +69,36 @@ export default class OhosMediaPlugin implements FlutterPlugin, MethodCallHandler
       return;
     }
 
-    window.getLastWindow(context)
-      .then((appWindow: window.Window) => appWindow.snapshot())
-      .then(async (pixelMap: image.PixelMap) => {
-        const packer = image.createImagePacker();
-        try {
-          const info = await pixelMap.getImageInfo();
-          const x = Math.max(0, Math.min(Math.round(requestedX), info.size.width - 1));
-          const y = Math.max(0, Math.min(Math.round(requestedY), info.size.height - 1));
-          const width = Math.max(1, Math.min(Math.round(requestedWidth), info.size.width - x));
-          const height = Math.max(1, Math.min(Math.round(requestedHeight), info.size.height - y));
-          await pixelMap.crop({ x: x, y: y, size: { width: width, height: height } });
-          const bytes = await packer.packing(pixelMap, {
-            format: 'image/png',
-            quality: 100
-          });
-          result.success(new Uint8Array(bytes));
-        } catch (error) {
+    try {
+      window.getLastWindow(context)
+        .then((appWindow: window.Window) => appWindow.snapshot())
+        .then(async (pixelMap: image.PixelMap) => {
+          const packer = image.createImagePacker();
+          try {
+            const info = await pixelMap.getImageInfo();
+            const x = Math.max(0, Math.min(Math.round(requestedX), info.size.width - 1));
+            const y = Math.max(0, Math.min(Math.round(requestedY), info.size.height - 1));
+            const width = Math.max(1, Math.min(Math.round(requestedWidth), info.size.width - x));
+            const height = Math.max(1, Math.min(Math.round(requestedHeight), info.size.height - y));
+            await pixelMap.crop({ x: x, y: y, size: { width: width, height: height } });
+            const bytes = await packer.packing(pixelMap, {
+              format: 'image/png',
+              quality: 100
+            });
+            result.success(new Uint8Array(bytes));
+          } catch (error) {
+            result.error('capture_failed', `${error}`, null);
+          } finally {
+            await pixelMap.release();
+            await packer.release();
+          }
+        })
+        .catch((error: Error) => {
           result.error('capture_failed', `${error}`, null);
-        } finally {
-          await pixelMap.release();
-          await packer.release();
-        }
-      })
-      .catch((error: Error) => {
-        result.error('capture_failed', `${error}`, null);
-      });
+        });
+    } catch (error) {
+      result.error('capture_failed', `${error}`, null);
+    }
   }
 
   private saveImage(call: MethodCall, result: MethodResult): void {

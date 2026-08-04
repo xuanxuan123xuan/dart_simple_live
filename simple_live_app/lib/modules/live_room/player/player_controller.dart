@@ -1862,6 +1862,11 @@ class PlayerController extends BaseController
   }
 
   void _setKeepScreenAwake(bool enabled) {
+    // HarmonyOS 没有可用的屏幕常亮机制：wakelock_plus 在鸿蒙侧未实现
+    // （FlutterPlaybackDisplayGateway 通过 _isSupportedMobile 排除了 OHOS），
+    // 仓库中也没有 keepScreenOn / WindowFlag 类的鸿蒙接入。直接 return
+    // 避免 MissingPluginException，保持现状即可；若后续鸿蒙 SDK 提供
+    // 保持唤醒能力，再在 PlaybackDisplayGateway 内按平台接入。
     if (!Utils.isOhos) {
       _playbackDisplayLease?.setKeepScreenAwake(enabled);
     }

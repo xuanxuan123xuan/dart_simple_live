@@ -70,10 +70,24 @@ export default class OhosBackgroundPlaybackPlugin implements FlutterPlugin, Meth
   private async ensureSession(): Promise<void> {
     if (this.session !== undefined) return;
     const session = await avSession.createAVSession(this.context, 'simple_live_playback', 'video');
-    session.on('play', () => this.channel?.invokeMethod('play', null));
-    session.on('pause', () => this.channel?.invokeMethod('pause', null));
-    await session.setAVMetadata(this.metadata);
-    await session.activate();
+    try {
+      session.on('play', () => this.channel?.invokeMethod('play', null));
+      session.on('pause', () => this.channel?.invokeMethod('pause', null));
+      await session.setAVMetadata(this.metadata);
+      await session.activate();
+    } catch (error) {
+      // Session was created but not fully initialized; tear it down so no
+      // half-activated session is left dangling.
+      try {
+        await session.deactivate();
+      } catch (_error) {
+      }
+      try {
+        await session.destroy();
+      } catch (_error) {
+      }
+      throw error;
+    }
     this.session = session;
   }
 
@@ -138,6 +152,9 @@ export default class OhosBackgroundPlaybackPlugin implements FlutterPlugin, Meth
       this.running = true;
       result.success(null);
     } catch (error) {
+      // The session may already be created/activated before the background
+      // task starts; reclaim it so no activated session is left dangling.
+      await this.releaseResources().catch((_error: Error) => {});
       result.error('background_start_failed', `${error}`, null);
     }
   }

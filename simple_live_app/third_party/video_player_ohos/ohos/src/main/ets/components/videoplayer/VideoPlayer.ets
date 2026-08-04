@@ -34,6 +34,7 @@ const FORMAT_OTHER: String = 'other';
 const OPERATE_ERROR: number = 801;
 const AVPLAYER_STATE_ERROR: number = 5400102;
 const AVPLAYER_IO_ERROR: number = 5400103;
+const MAX_ERROR_COUNT: number = 3;
 
 const TAG = 'VideoPlayer'
 export class VideoPlayer {
@@ -53,7 +54,8 @@ export class VideoPlayer {
   private eventChannel: EventChannel | null = null;
   private eventSink: QueuingEventSink | null = null;
   private interruptMode: audio.InterruptMode = audio.InterruptMode.INDEPENDENT_MODE;
-  private fd: number | null = null;
+  private fd: number = -1;
+  private errorCount: number = 0;
   private headers: Record<string, string> | null;
 
   constructor(playerModel: PlayerModel, textureEntry: SurfaceTextureEntry, rawFile: resourceManager.RawFileDescriptor | null, url: string | null, eventChannel: EventChannel, AudioFocus: Boolean, headers: Record<string, string> | null) {
@@ -136,6 +138,7 @@ export class VideoPlayer {
           this.avPlayer.prepare();
           break;
         case AvplayerStatus.PREPARED:
+          this.errorCount = 0;
           this.avPlayer.videoScaleType = 0;
           this.avPlayer.audioInterruptMode = this.interruptMode;
           this.setVideoSize();
@@ -171,7 +174,7 @@ export class VideoPlayer {
           }
           break;
         case AvplayerStatus.RELEASED:
-          this.avPlayer.release();
+          this.avPlayer = null;
           this.status = CommonConstants.STATUS_STOP;
           this.watchStatus();
           Log.i(TAG, '[PlayVideoModel] state released called')
@@ -206,6 +209,13 @@ export class VideoPlayer {
         return;
       }
       Log.e(TAG, "avPlayer Events.ERROR: " + JSON.stringify(err));
+      this.errorCount++;
+      if (this.errorCount > MAX_ERROR_COUNT) {
+        Log.e(TAG, "avPlayer consecutive errors exceed limit, stop retrying");
+        this.avPlayer?.release();
+        this.sendError(err);
+        return;
+      }
       this.avPlayer?.reset();
       this.sendError(err);
     })
@@ -219,8 +229,8 @@ export class VideoPlayer {
       this.avPlayer.release();
       this.eventChannel?.setStreamHandler(null);
     }
-    if (this.fd != null) {
-      fs.closeSync(this.fd!);
+    if (this.fd >= 0) {
+      fs.closeSync(this.fd);
     }
   }
 
@@ -621,8 +631,16 @@ export class VideoPlayer {
     let iUrl = this.url;
     const ohosFilePrefix = 'file://';
     if (iUrl != null && iUrl.startsWith(ohosFilePrefix)) {
+      if (this.fd >= 0) {
+        try {
+          fs.closeSync(this.fd);
+        } catch (error) {
+          Log.e(TAG, "close previous fd failed: " + JSON.stringify(error));
+        }
+        this.fd = -1;
+      }
       this.fd = fs.openSync(iUrl, fs.OpenMode.READ_ONLY).fd;
-      iUrl = `fd://${this.fd!.toString()}`;
+      iUrl = `fd://${this.fd.toString()}`;
     }
     return iUrl ?? '';
   }

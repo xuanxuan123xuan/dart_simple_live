@@ -186,6 +186,18 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
       if (!_isCurrent(generation, controller)) {
         return;
       }
+      // 初始化超时/失败后 AVPlayer 可能仍挂在 native 侧：必须像开头释放旧
+      // controller 一样把它 detach 并 dispose，避免悬挂的原生播放器泄漏。
+      final failedListener = _controllerListener;
+      if (failedListener != null) {
+        controller.removeListener(failedListener);
+      }
+      _controllerListener = null;
+      if (identical(_controller, controller)) {
+        _controller = null;
+      }
+      widget.onControllerDisposed?.call(controller);
+      unawaited(controller.dispose());
       _reportError(
         e is TimeoutException ? '播放器初始化超时，请检查网络或切换线路' : e.toString(),
       );

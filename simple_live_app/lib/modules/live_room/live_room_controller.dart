@@ -3826,6 +3826,14 @@ ${errorStackTrace ?? ""}''');
             Log.d("$reason 后恢复鸿蒙播放器失败，准备重新加载: $e");
           }
         } else {
+          // 仍在"播放"不代表流健康：断流后 HLS 直播窗口停滞，AVPlayer 可能
+          // 停在最后一个 GOP 长时间无进度。先检测断流（异常/长时间无进度），
+          // 命中就走 setPlayer(refreshUrls) 重连，避免 play() 造成假播放。
+          if (_ohosPlaybackLooksStalled(controller)) {
+            Log.d("$reason 后鸿蒙播放器疑似断流，重新加载");
+            await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+            return;
+          }
           return;
         }
       }
@@ -3857,6 +3865,25 @@ ${errorStackTrace ?? ""}''');
     }
     Log.d("$reason 后检测到播放停滞，尝试恢复");
     await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+  }
+
+  /// 返回前台时判定鸿蒙 AVPlayer 是否已断流：出错或长时间无进度推进。
+  ///
+  /// 允许后台继续播放时，断流后 HLS 直播窗口会停滞，position 不再推进；
+  /// 与 [updateOhosVideoState] 维护的最后健康进度对比即可发现假播放。
+  /// 从未有过进度时保守视为健康（交给正常 play() 路径）。
+  bool _ohosPlaybackLooksStalled(VideoPlayerController controller) {
+    final value = controller.value;
+    if (value.hasError) {
+      return true;
+    }
+    if (!value.isPlaying || _lastOhosPlaybackPosition <= Duration.zero) {
+      return false;
+    }
+    return !didOhosPlaybackTimelineProgress(
+      current: value.position,
+      previous: _lastOhosPlaybackPosition,
+    );
   }
 
   @override
