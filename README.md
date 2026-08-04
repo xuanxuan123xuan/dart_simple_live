@@ -122,6 +122,35 @@
 | **本分支所有目标** | **3.41.x** | dev，升级线 |
 | 鸿蒙 HAP | oh-3.41.9-release（[GitHub 镜像](https://github.com/xuanxuan123xuan/flutter_flutter_ohos)） | runner 预装 |
 
+### 鸿蒙 HAP 构建
+
+**前置条件**：Flutter OHOS（oh-3.41.9-release）、HarmonyOS SDK（API 12+）、JDK 17。
+
+```bash
+# 1. 克隆 Flutter OHOS 到本地
+git clone --depth 1 --branch oh-3.41.9-release https://github.com/xuanxuan123xuan/flutter_flutter_ohos.git flutter_ohos
+
+# 2. 设置环境变量（路径按实际修改）
+export FLUTTER_OHOS_ROOT="$(pwd)/flutter_ohos"
+export HOS_SDK_HOME="$HOME/HarmonyOS/Sdk"    # 或 DevEco 安装路径
+export JAVA_HOME="/path/to/jdk-17"
+
+# 3. 检出项目源码
+git clone -b dev https://github.com/xuanxuan123xuan/dart_simple_live.git
+cd dart_simple_live
+
+# 4. 构建 HAP（签名版）
+$FLUTTER_OHOS_ROOT/bin/flutter.bat pub get -C simple_live_app
+$FLUTTER_OHOS_ROOT/bin/flutter.bat build hap --release \
+  --dart-define=OHOS_SIGNING=true \
+  --release-sks "$HOME/.ohos/release_signing.p12" \
+  --release-key-password "YOUR_KEY_PASSWORD"
+```
+
+产物路径：`simple_live_app/build/hap/hap/simple_live_app-release-signed.hap`
+
+详细签名配置参见 `build_ohos_hap.yml` workflow（`secrets.OHOS_SIGNING_DIR`）。
+
 本分支已随升级适配：`intl` 0.20.2、`onPopInvokedWithResult`、workflow 版本校验更新；遗留的 deprecated（`RadioListTile.groupValue`、`Color.value`、`withOpacity` 等）已全部清理。
 
 ### 版本号维护
