@@ -169,9 +169,11 @@ jobs:
           full_version="$(dart run simple_live_app/tool/app_version.dart print full)"
           sha="$(git rev-parse HEAD)"
           # dev 分支用固定 tag（v-dev），避免与 stable 分支同名版本（v1.13.0）冲突；
-          # 其他分支仍用 v$version。
+          # 其他分支 prerelease 时用 v{version}-pre（不占正式 tag，正式发布不冲突）
           if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
             tag="v-dev"
+          elif [[ "${{ steps.settings.outputs.prerelease }}" == "true" ]]; then
+            tag="v${version}-pre"
           else
             tag="v$version"
           fi
