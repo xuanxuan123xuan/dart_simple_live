@@ -43,6 +43,10 @@ class BackgroundPlaybackService {
   void detachOhosController(VideoPlayerController controller) {
     if (identical(_ohosController, controller)) {
       _ohosController = null;
+      // Stop routing native notification-bar play/pause events once the
+      // controller is detached; leaving the handler registered would keep
+      // firing _handleNativeControl even though there is nothing to control.
+      _channel.setMethodCallHandler(null);
     }
   }
 

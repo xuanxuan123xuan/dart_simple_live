@@ -14,9 +14,10 @@ class OhosPipService {
 
   final MethodChannel _channel;
   final bool Function() _isOhos;
-  final StreamController<bool> _stateController =
+  StreamController<bool> _stateController =
       StreamController<bool>.broadcast(sync: true);
   bool _initialized = false;
+  bool _disposed = false;
   bool _enabled = false;
 
   Stream<bool> get stateChanges => _stateController.stream;
@@ -25,6 +26,12 @@ class OhosPipService {
   void initialize() {
     if (_initialized || !_isOhos()) {
       return;
+    }
+    // Allow re-initialization after dispose() by recreating the closed
+    // StreamController instead of emitting into a closed one (StateError).
+    if (_disposed) {
+      _stateController = StreamController<bool>.broadcast(sync: true);
+      _disposed = false;
     }
     _initialized = true;
     _channel.setMethodCallHandler(_onMethodCall);
@@ -88,6 +95,10 @@ class OhosPipService {
       _initialized = false;
     }
     await _stateController.close();
+    // Mark disposed so that a later initialize()/isAvailable() recreates the
+    // StreamController instead of emitting into the closed one (StateError).
+    _disposed = true;
+    _enabled = false;
   }
 
   Map<String, int> _size(double width, double height) {

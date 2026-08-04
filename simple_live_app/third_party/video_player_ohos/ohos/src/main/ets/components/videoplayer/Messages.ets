@@ -255,7 +255,7 @@ export class PlaybackSpeedMessage {
     let pigeonResult: PlaybackSpeedMessage = new PlaybackSpeedMessage();
     let textureId = list[0] as Number ?? 0;
     pigeonResult.setTextureId(textureId);
-    let speed = list[1] as media.PlaybackSpeed;
+    let speed = list[1] as Number;
     pigeonResult.setSpeed(speed);
     return pigeonResult;
   }

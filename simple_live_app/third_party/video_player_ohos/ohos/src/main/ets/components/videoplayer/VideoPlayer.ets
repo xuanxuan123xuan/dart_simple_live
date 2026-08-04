@@ -438,6 +438,11 @@ export class VideoPlayer {
     let totalSeconds = Math.floor(this.duration / CommonConstants.A_THOUSAND);
     this.playerModel.currentTime = DateFormatUtil.secondToTime(nowSeconds);
     this.playerModel.totalTime = DateFormatUtil.secondToTime(totalSeconds);
+    // 直播流 duration 为 0 时，totalSeconds<=0 会导致除零产生 NaN，进度条直接置 0。
+    if (totalSeconds <= 0) {
+      this.playerModel.progressVal = 0;
+      return;
+    }
     this.playerModel.progressVal = Math.floor(nowSeconds * CommonConstants.ONE_HUNDRED / totalSeconds);
   }
 
@@ -611,6 +616,13 @@ export class VideoPlayer {
       event.set("event", "bufferingEnd");
     } else if (infoType == media.BufferingInfoType.CACHED_DURATION) {
       event.set("event", "cachedDuration");
+      // 与 bufferingUpdate 保持一致，带上实际缓存时长（毫秒）。
+      let range: ArrayList<number> = new ArrayList<number>();
+      range.add(0);
+      range.add(bufferingPosition);
+      let valuesList: ArrayList<ArrayList<number>> = new ArrayList<ArrayList<number>>();
+      valuesList.add(range);
+      event.set("values", valuesList);
     } else {
       event.set("event", "bufferingUpdate");
       let range: ArrayList<number> = new ArrayList<number>();

@@ -6,21 +6,22 @@ import {
   MethodChannel,
   MethodResult
 } from '@ohos/flutter_ohos';
-import { WantAgent, wantAgent } from '@kit.AbilityKit';
+import AbilityAware from '@ohos/flutter_ohos/src/main/ets/embedding/engine/plugins/ability/AbilityAware';
+import { AbilityPluginBinding } from '@ohos/flutter_ohos/src/main/ets/embedding/engine/plugins/ability/AbilityPluginBinding';
+import { WantAgent, wantAgent, common } from '@kit.AbilityKit';
 import { notificationManager } from '@kit.NotificationKit';
 
 const CHANNEL_NAME = 'simple_live/live_notifications';
-const BUNDLE_NAME = 'com.simplelive.app';
-const ABILITY_NAME = 'EntryAbility';
 
 export interface LiveNotificationTarget {
   roomId: string;
   siteId: string;
 }
 
-export default class OhosNotificationPlugin implements FlutterPlugin, MethodCallHandler {
+export default class OhosNotificationPlugin implements FlutterPlugin, MethodCallHandler, AbilityAware {
   private channel?: MethodChannel;
   private pendingTarget?: LiveNotificationTarget;
+  private context?: common.UIAbilityContext;
 
   constructor(initialTarget?: LiveNotificationTarget) {
     this.pendingTarget = initialTarget;
@@ -38,6 +39,15 @@ export default class OhosNotificationPlugin implements FlutterPlugin, MethodCall
   onDetachedFromEngine(binding: FlutterPluginBinding): void {
     this.channel?.setMethodCallHandler(null);
     this.channel = undefined;
+    this.context = undefined;
+  }
+
+  onAttachedToAbility(binding: AbilityPluginBinding): void {
+    this.context = binding.getAbility().context;
+  }
+
+  onDetachedFromAbility(): void {
+    this.context = undefined;
   }
 
   onMethodCall(call: MethodCall, result: MethodResult): void {
@@ -96,11 +106,16 @@ export default class OhosNotificationPlugin implements FlutterPlugin, MethodCall
       result.error('invalid_arguments', 'Live notification data is incomplete', null);
       return;
     }
+    const context = this.context;
+    if (context === undefined) {
+      result.error('no_context', 'Ability context is unavailable', null);
+      return;
+    }
 
     const agentInfo: wantAgent.WantAgentInfo = {
       wants: [{
-        bundleName: BUNDLE_NAME,
-        abilityName: ABILITY_NAME,
+        bundleName: context.abilityInfo.bundleName,
+        abilityName: context.abilityInfo.name,
         parameters: {
           roomId: roomId,
           siteId: siteId
