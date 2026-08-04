@@ -10,6 +10,7 @@ import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
@@ -916,8 +917,15 @@ Widget buildDanmuView(BuildContext context, LiveRoomController controller) {
       : Utils.isOhos
               ? EdgeInsets.zero
               : MediaQuery.of(context).padding;
+  // 平板（短边 ≥ 600）横屏全屏时顶部有系统栏，弹幕整体往下移固定距离，
+  // 避开状态栏、视觉上往屏幕中间靠。手机/竖屏不受影响。
+  final tabletLandscapeFullscreen = controller.fullScreenState.value &&
+      MediaQuery.orientationOf(context) == Orientation.landscape &&
+      MediaQuery.sizeOf(context).shortestSide >=
+          PlatformUtils.multiRoomMinShortestSide;
+  final extraTopInset = tabletLandscapeFullscreen ? 32.0 : 0.0;
   return Positioned.fill(
-    top: padding.top,
+    top: padding.top + extraTopInset,
     bottom: padding.bottom,
     child: Obx(
       () {
