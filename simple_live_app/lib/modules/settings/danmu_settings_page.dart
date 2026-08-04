@@ -10,6 +10,7 @@ import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_menu.dart';
 import 'package:simple_live_app/widgets/settings/settings_number.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
+import 'package:simple_live_app/widgets/staggered_children.dart';
 
 class DanmuSettingsPage extends StatelessWidget {
   const DanmuSettingsPage({Key? key}) : super(key: key);
@@ -106,9 +107,7 @@ class DanmuSettingsView extends GetView<AppSettingsController> {
       );
     }
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return StaggeredChildren(
       children: [
         Padding(
           padding: AppStyle.edgeInsetsA12.copyWith(top: 0),
