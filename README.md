@@ -4,7 +4,7 @@
 <h2 align="center">Simple Live — 稳定版</h2>
 
 <p align="center">
-简简单单的看直播 · <code>v1.13.0</code> · 分支 <code>stable</code>
+简简单单的看直播 · <code>v1.13.1</code> · 分支 <code>stable</code>
 </p>
 
 ![浅色模式](/assets/screenshot_light.jpg)
@@ -36,9 +36,7 @@
 2. **多开同屏**：在同一窗口内播放 2～4 个直播间，支持均分/主次布局、聚焦、聊天区、独立暂停与音频控制，以及自动画质调节。
 3. **移动播放稳定性**：统一管理常亮锁和全屏系统栏，改善 iOS 状态栏隐藏、前后台恢复、播放器刷新及资源释放。
 
-> 开发中的新功能在 [dev 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/dev)（Flutter 3.41 升级线），验证稳定后合入本分支。
-
-鸿蒙端口的代价是 **Flutter 版本钉死在 3.22 线**（`pubspec.yaml` 有 7 处依赖与 3.22 对齐），与 dev 分支的 Flutter 3.41 互斥，无法直接合并。
+> 开发中的新功能在 [dev 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/dev)，稳定后合入本分支（两分支同处 Flutter 3.41 线）。
 
 ---
 
@@ -108,16 +106,16 @@
 
 | 构建目标 | Flutter 版本 | 说明 |
 |---|---|---|
-| **本分支所有目标** | **3.22.x** | `stable`，pubspec 钉死 |
-| 鸿蒙 HAP | 3.22 线 OHOS fork | `tool/build_ohos_hap.ps1` 自带 |
+| **本分支所有目标** | **3.41.x** | `stable`，随 dev 升级线 |
+| 鸿蒙 HAP | oh-3.41.9-release（[GitHub 镜像](https://github.com/xuanxuan123xuan/flutter_flutter_ohos)） | runner 预装 |
 
-本分支的 `pubspec.yaml` 有 7 处依赖按 Flutter 3.22 钉死（`intl`、`archive`、`lottie`、`package_info_plus`、`window_manager`、`shelf`、`dynamic_color`），换用更新的 Flutter 会在 `flutter_localizations` 的 `intl` 传递依赖上解析失败，需连同这些依赖一起升级。
+本分支与 dev 同为 Flutter 3.41.x 线（Dart 3.11.x、intl 0.20.2、`onPopInvokedWithResult` 适配），不再有 3.22 依赖钉死。
 
-注意：`simple_live_app/.fvmrc` 里写的 `3.38.3` 与本目录 pubspec 并不匹配，所有构建流程均不读取它。
+注意：`simple_live_app/.fvmrc` 不被任何构建流程读取。
 
 ### 版本号维护
 
-应用版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。当前版本为 `1.13.0+11300`，构建号规则为：
+应用版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。当前版本为 `1.13.1+11301`，构建号规则为：
 
 ```text
 major × 10000 + minor × 100 + patch
@@ -126,8 +124,8 @@ major × 10000 + minor × 100 + patch
 修改版本后在 `simple_live_app` 目录执行：
 
 ```bash
-# 直接设置版本并同步所有派生文件；1.13 会自动规范为 1.13.0
-dart run tool/app_version.dart set 1.13
+# 直接设置版本并同步所有派生文件
+dart run tool/app_version.dart set 1.13.1
 ```
 
 ---
