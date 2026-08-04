@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/convert_helper.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/douyin_partition_images.dart';
 import 'package:simple_live_core/src/scripts/douyin_sign.dart';
 
 class DouyinSite implements LiveSite {
@@ -155,7 +156,11 @@ class DouyinSite implements LiveSite {
           parentId: id,
           pic:
               _pickPartitionImageUrl(subItem["partition"]) ??
-              _pickPartitionImageUrl(item["partition"]),
+              _pickPartitionImageUrl(item["partition"]) ??
+              _partitionImageFallback(
+                '${subItem["partition"]["id_str"]}',
+              ) ??
+              _partitionImageFallback('${item["partition"]["id_str"]}'),
         );
         subs.add(subCategory);
       }
@@ -171,7 +176,9 @@ class DouyinSite implements LiveSite {
           id: category.id,
           name: category.name,
           parentId: category.id,
-          pic: _pickPartitionImageUrl(item["partition"]),
+          pic:
+              _pickPartitionImageUrl(item["partition"]) ??
+              _partitionImageFallback('${item["partition"]["id_str"]}'),
         ),
       );
       categories.add(category);
@@ -179,13 +186,20 @@ class DouyinSite implements LiveSite {
     return categories;
   }
 
+  /// 抖音分区无官方图片，用 [douyinPartitionImages] 静态映射兜底
+  /// （借 B站分区封面，key 为分区 id_str）。
+  String? _partitionImageFallback(String partitionIdStr) =>
+      douyinPartitionImages[partitionIdStr];
+
   String? _pickPartitionImageUrl(dynamic data) {
     if (data == null) {
       return null;
     }
     if (data is String) {
       final value = data.trim();
-      return value.isEmpty ? null : value;
+      // 只接受 http(s) 图片地址；分区数据里常有无意义字符串
+      // （如 id_str 的 "101"），不能当作图片 URL 返回。
+      return isHttpImageUrl(value) ? value : null;
     }
     if (data is List) {
       for (final item in data) {
