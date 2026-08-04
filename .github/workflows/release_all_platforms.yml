@@ -173,10 +173,10 @@ jobs:
           build_number="$(dart run simple_live_app/tool/app_version.dart print build-number)"
           full_version="$(dart run simple_live_app/tool/app_version.dart print full)"
           sha="$(git rev-parse HEAD)"
-          # dev 分支用固定 tag（v-dev），避免与 stable 分支同名版本（v1.13.0）冲突；
-          # 其他分支 prerelease 时用 v{version}-pre（不占正式 tag，正式发布不冲突）
+          # dev 分支用 v{version}-dev（带版本号，方便区分；-dev 后缀避免与
+          # stable 正式 tag 冲突）；其他分支 prerelease 时用 v{version}-pre
           if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
-            tag="v-dev"
+            tag="v${version}-dev"
           elif [[ "${{ steps.settings.outputs.prerelease }}" == "true" ]]; then
             tag="v${version}-pre"
           else
