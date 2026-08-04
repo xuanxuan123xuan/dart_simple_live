@@ -581,7 +581,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         return;
       }
       ohosFullscreenTransition.value = true;
-      fullScreenState.value = true;
       showControls();
       await WidgetsBinding.instance.endOfFrame;
       unawaited(
@@ -607,6 +606,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         );
         await _waitForOhosViewport(portrait: false);
       }
+      // 方向切换完成后再切全屏布局：transition 期间保持原页面布局，
+      // 避免竖屏窗口 + 横屏视频 letterbox（画面被压成细长横条）持续到
+      // 方向切换结束。
+      fullScreenState.value = true;
       ohosFullscreenTransition.value = false;
     } else if (Platform.isAndroid || Platform.isIOS) {
       fullScreenState.value = true;
@@ -760,7 +763,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Future<void> _waitForOhosViewport({required bool portrait}) async {
-    final deadline = DateTime.now().add(const Duration(milliseconds: 450));
+    // 鸿蒙方向切换实际耗时可达 1s 左右，450ms 超时会在方向未就绪时
+    // 提前切布局（画面被压成细长横条/拉伸填满）。放宽到 1.5s。
+    final deadline = DateTime.now().add(const Duration(milliseconds: 1500));
     while (DateTime.now().isBefore(deadline)) {
       final views = WidgetsBinding.instance.platformDispatcher.views;
       if (views.isNotEmpty) {

@@ -911,10 +911,9 @@ Widget buildGestureTip(LiveRoomController controller) {
 }
 
 Widget buildDanmuView(BuildContext context, LiveRoomController controller) {
-  var padding =
-      controller.showOhosFullscreenSurface || controller.fullScreenState.value
-          ? _fullScreenControlPadding(context)
-          : Utils.isOhos
+  var padding = controller.fullScreenState.value
+      ? _fullScreenControlPadding(context)
+      : Utils.isOhos
               ? EdgeInsets.zero
               : MediaQuery.of(context).padding;
   return Positioned.fill(

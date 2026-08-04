@@ -320,8 +320,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           ),
         );
       }
-      if (controller.showOhosFullscreenSurface ||
-          controller.fullScreenState.value) {
+      if (controller.fullScreenState.value) {
         return PopScope(
           canPop: false,
           onPopInvokedWithResult: (didPop, result) {
@@ -630,7 +629,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         child: Obx(() {
           final revision = controller.ohosPlayerRevision.value;
           controller.ohosScaleRevision.value;
-          final fullScreen = controller.showOhosFullscreenSurface;
+          final fullScreen = controller.fullScreenState.value;
           if (controller.showOfflineOverlay) {
             return Stack(
               fit: StackFit.expand,
@@ -823,7 +822,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     final mediaQuery = MediaQuery.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final fullScreen = controller.showOhosFullscreenSurface;
+        final fullScreen = controller.fullScreenState.value;
         final padding = fullScreen ? mediaQuery.viewPadding : EdgeInsets.zero;
         final compact = !fullScreen && constraints.maxWidth < 520;
         return Container(
