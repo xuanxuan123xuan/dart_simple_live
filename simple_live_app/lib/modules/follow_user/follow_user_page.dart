@@ -106,59 +106,79 @@ class FollowUserPage extends GetView<FollowUserController> {
               ),
             ),
           ],
-          IconButton(
-            onPressed: () {
-              Utils.showRightDialog(
-                title: "更多",
-                width: 320,
-                useSystem: false,
-                child: ListView(
-                  padding: AppStyle.edgeInsetsV12,
+          PopupMenuButton<String>(
+            tooltip: "更多",
+            onSelected: (value) {
+              switch (value) {
+                case "exportFile":
+                  FollowService.instance.exportFile();
+                  break;
+                case "importFile":
+                  FollowService.instance.inputFile();
+                  break;
+                case "exportText":
+                  FollowService.instance.exportText();
+                  break;
+                case "importText":
+                  FollowService.instance.inputText();
+                  break;
+                case "tags":
+                  showTagsManager();
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: "exportFile",
+                child: Row(
                   children: [
-                    ListTile(
-                      leading: const Icon(Remix.save_2_line),
-                      title: const Text("导出文件"),
-                      onTap: () {
-                        Utils.hideRightDialog();
-                        FollowService.instance.exportFile();
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Remix.folder_open_line),
-                      title: const Text("导入文件"),
-                      onTap: () {
-                        Utils.hideRightDialog();
-                        FollowService.instance.inputFile();
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Remix.text),
-                      title: const Text("导出文本"),
-                      onTap: () {
-                        Utils.hideRightDialog();
-                        FollowService.instance.exportText();
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Remix.file_text_line),
-                      title: const Text("导入文本"),
-                      onTap: () {
-                        Utils.hideRightDialog();
-                        FollowService.instance.inputText();
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Remix.price_tag_line),
-                      title: const Text("标签管理"),
-                      onTap: () {
-                        Utils.hideRightDialog();
-                        showTagsManager();
-                      },
-                    ),
+                    Icon(Remix.save_2_line),
+                    SizedBox(width: 12),
+                    Text("导出文件"),
                   ],
                 ),
-              );
-            },
+              ),
+              const PopupMenuItem(
+                value: "importFile",
+                child: Row(
+                  children: [
+                    Icon(Remix.folder_open_line),
+                    SizedBox(width: 12),
+                    Text("导入文件"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: "exportText",
+                child: Row(
+                  children: [
+                    Icon(Remix.text),
+                    SizedBox(width: 12),
+                    Text("导出文本"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: "importText",
+                child: Row(
+                  children: [
+                    Icon(Remix.file_text_line),
+                    SizedBox(width: 12),
+                    Text("导入文本"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: "tags",
+                child: Row(
+                  children: [
+                    Icon(Remix.price_tag_line),
+                    SizedBox(width: 12),
+                    Text("标签管理"),
+                  ],
+                ),
+              ),
+            ],
             icon: const Icon(Icons.more_vert),
           ),
         ],
