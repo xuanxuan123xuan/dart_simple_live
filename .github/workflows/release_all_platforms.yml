@@ -872,6 +872,12 @@ jobs:
             exit 1
           fi
 
+      - name: 检出源码（iOS 源更新需要 git 历史）
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+
       - name: 下载全部发布产物
         uses: actions/download-artifact@v4
         with:
