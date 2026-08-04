@@ -158,6 +158,11 @@ jobs:
             simple_live_app/ohos/AppScope/app.json5 \
             simple_live_app/lib/generated/app_version.g.dart
           git commit -m "chore: release v$version"
+          # 推送前先 fetch + rebase：避免远端有并发提交时 non-fast-forward 被拒
+          # （如另一个 workflow/手动 push 先到）。版本文件冲突概率低，冲突则失败留人工处理。
+          git fetch origin "$GITHUB_REF_NAME" || true
+          git pull --rebase origin "$GITHUB_REF_NAME" || \
+            { echo "::warning::远端有新提交且 rebase 冲突，推送可能失败。" >&2; }
           git push origin "HEAD:$GITHUB_REF_NAME"
 
       - name: 解析发布元数据
