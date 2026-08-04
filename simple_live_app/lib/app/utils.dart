@@ -1007,10 +1007,8 @@ class _SafeBottomSheetRoute<T> extends PopupRoute<T> {
     return Align(
       alignment: alignment,
       child: Container(
-        // isScrollControlled 时避让软键盘（键盘弹出对话框上移，不溢出）。
-        margin: isScrollControlled
-            ? EdgeInsets.only(bottom: mediaQuery.viewInsets.bottom)
-            : null,
+        // 不做键盘避让（不按 viewInsets 上移）：输入框在屏幕中间，
+        // 键盘一般比它矮不会遮挡，保持位置稳定。
         constraints: BoxConstraints(
           maxWidth: constraints?.maxWidth ?? double.infinity,
           maxHeight: maxHeight,
