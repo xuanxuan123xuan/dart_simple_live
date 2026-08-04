@@ -121,6 +121,14 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   bool _completionReported = false;
   VideoPlayerValue? _previousValue;
 
+  /// 首次有效视频宽高比缓存。
+  ///
+  /// 方向切换（竖↔横）期间 OHOS 会把 surface size 误报为横屏窗口尺寸
+  /// （如 800x360），若用实时的 value.size 渲染，FittedBox 会把画面压成
+  /// 细长横条或拉伸填满，直到方向切换完成后 ~1s 才恢复。缓存首次有效的
+  /// 固有比例，方向切换时画面等比缩放（letterbox），不再变形。
+  double? _cachedAspectRatio;
+
   @override
   void initState() {
     super.initState();
@@ -153,6 +161,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     _ready = false;
     _errorReported = false;
     _error = null;
+    _cachedAspectRatio = null;
     _resetPlaybackHealth();
     if (mounted) {
       setState(() {});
@@ -203,6 +212,11 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
       return;
     }
     final value = controller.value;
+    if (_cachedAspectRatio == null &&
+        value.size.width > 0 &&
+        value.size.height > 0) {
+      _cachedAspectRatio = value.size.width / value.size.height;
+    }
     widget.onValueChanged?.call(value);
     if (looksLikeOhosPlaybackCompleted(
           current: value,
@@ -346,20 +360,28 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final intrinsicRatio = controller.value.aspectRatio > 0
-        ? controller.value.aspectRatio
-        : 16 / 9;
-    final displayRatio = widget.forcedAspectRatio ?? intrinsicRatio;
-    final size = controller.value.size;
-    final width = size.width > 0 ? size.width : displayRatio * 100;
-    final height = size.height > 0 ? size.height : 100.0;
+    // 方向切换期间 OHOS 的 value.size 不可靠（见 _cachedAspectRatio 注释），
+    // 因此绕开 VideoPlayer widget 内部基于实时 size 的 AspectRatio，改用
+    // Texture 直出 + 缓存的固有比例 + FittedBox 等比缩放。
+    final displayRatio =
+        widget.forcedAspectRatio ?? _cachedAspectRatio ?? 16 / 9;
+    final rotation = controller.value.rotationCorrection;
+    // textureId 虽标了 @visibleForTesting（官方包限制），运行时可用；
+    // 用它直出 Texture 以绕开 VideoPlayer widget 内部基于实时 size 的比例。
+    // ignore: invalid_use_of_visible_for_testing_member
+    Widget texture = Texture(textureId: controller.textureId);
+    if (rotation == 90 || rotation == 270) {
+      texture = RotatedBox(
+        quarterTurns: (rotation ~/ 90) % 4,
+        child: texture,
+      );
+    }
     final video = ClipRect(
       child: FittedBox(
         fit: widget.fit,
-        child: SizedBox(
-          width: width,
-          height: height,
-          child: VideoPlayer(controller),
+        child: AspectRatio(
+          aspectRatio: displayRatio,
+          child: texture,
         ),
       ),
     );
