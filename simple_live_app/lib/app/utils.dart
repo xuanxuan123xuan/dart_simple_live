@@ -63,14 +63,15 @@ class Utils {
   }) async {
     var result = await showDialogSafe<bool>(
       context: Get.context!,
-      builder: (_) => AlertDialog(
-        // scrollable: 鸿蒙上（或系统字体缩放/键盘弹出时）对话框内容+按钮
-        // 高度超出约束会报 BOTTOM OVERFLOWED 并把按钮压缩出屏。
-        scrollable: true,
+      builder: (dialogContext) => AlertDialog(
         title: Text(title),
         content: Container(
-          constraints: const BoxConstraints(
-            maxHeight: 400,
+          constraints: BoxConstraints(
+            // 屏幕 30% 高（clamp 160-420）：鸿蒙字体缩放/小屏下 content
+            // 过高会把 actions 挤出（BOTTOM OVERFLOWED 27px）。
+            // content 内部 SingleChildScrollView 滚动看全文，按钮固定。
+            maxHeight: (MediaQuery.sizeOf(dialogContext).height * 0.3)
+                .clamp(160.0, 420.0),
           ),
           child: SingleChildScrollView(
             child: Padding(
@@ -294,11 +295,12 @@ class Utils {
     required BuildContext context,
     required WidgetBuilder builder,
     bool dismissByBarrier = true,
+    bool isScrollControlled = false,
   }) {
     final navigator = Navigator.of(context, rootNavigator: true);
     final route = _SafeBottomSheetRoute<T>(
       builder: builder,
-      isScrollControlled: false,
+      isScrollControlled: isScrollControlled,
       showDragHandle: false,
       useSafeArea: false,
       constraints: null,
@@ -343,10 +345,9 @@ class Utils {
         TextEditingController(text: content);
     var result = await showDialogSafe<String>(
       context: Get.context!,
+      // 键盘避让：输入框弹键盘时对话框上移，不再溢出。
+      isScrollControlled: true,
       builder: (_) => AlertDialog(
-        // scrollable: 鸿蒙上（或系统字体缩放/键盘弹出时）对话框内容+按钮
-        // 高度超出约束会报 BOTTOM OVERFLOWED 并把按钮压缩出屏。
-        scrollable: true,
         title: Text(title),
         content: Padding(
           padding: AppStyle.edgeInsetsT12,
@@ -1004,6 +1005,10 @@ class _SafeBottomSheetRoute<T> extends PopupRoute<T> {
     return Align(
       alignment: alignment,
       child: Container(
+        // isScrollControlled 时避让软键盘（键盘弹出对话框上移，不溢出）。
+        margin: isScrollControlled
+            ? EdgeInsets.only(bottom: mediaQuery.viewInsets.bottom)
+            : null,
         constraints: BoxConstraints(
           maxWidth: constraints?.maxWidth ?? double.infinity,
           maxHeight: maxHeight,
