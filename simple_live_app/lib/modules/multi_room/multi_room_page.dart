@@ -48,8 +48,13 @@ class MultiRoomPage extends GetView<MultiRoomController> {
         onTap: controller.toggleOverlay,
         child: Stack(
           children: [
-            // 画面网格
-            LayoutBuilder(
+            // 画面网格：顶部留出系统栏高度，避免第一行格子（及其弹幕）
+            // 与状态栏重叠。多开页面无 AppBar、全屏黑底。
+            Padding(
+              padding: EdgeInsets.only(
+                top: MediaQuery.viewPaddingOf(context).top,
+              ),
+              child: LayoutBuilder(
               builder: (context, constraints) => Obx(
                 () {
                   final rooms = controller.rooms.toList();
@@ -118,6 +123,7 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                   );
                 },
               ),
+            ),
             ),
             // 顶部覆盖层：点击画面切换显隐，8 秒自动隐藏，尺寸与播放器全屏控件一致
             Obx(
