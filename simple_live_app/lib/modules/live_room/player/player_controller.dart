@@ -702,7 +702,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       unawaited(
         _runOhosSystemUiOperation(
           SystemChrome.setEnabledSystemUIMode(
-            SystemUiMode.edgeToEdge,
+            // 与 enterFullScreen 的 manual+[] 对称：flutter_ohos 对
+            // SystemUiMode.edgeToEdge 支持不完整（channel 永不 reply，
+            // 650ms 超时报"恢复系统栏失败"，退出全屏后系统栏不恢复）。
+            SystemUiMode.manual,
             overlays: SystemUiOverlay.values,
           ),
           "恢复系统栏",
