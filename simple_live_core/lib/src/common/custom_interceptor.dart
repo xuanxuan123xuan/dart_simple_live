@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import 'core_log.dart';
+import 'http_log_sanitizer.dart';
 
 class CustomInterceptor extends Interceptor {
   @override
@@ -9,13 +10,15 @@ class CustomInterceptor extends Interceptor {
     if (CoreLog.requestLogType == RequestLogType.all) {
       CoreLog.i(
         '''[HTTP Request] [${options.method}]
-Request URL：${options.uri}
-Request Query：${options.queryParameters}
-Request Data：${options.data}
-Request Headers：${options.headers}''',
+Request URL：${HttpLogSanitizer.redactUri(options.uri)}
+Request Query：${HttpLogSanitizer.redact(options.queryParameters)}
+Request Data：${HttpLogSanitizer.redact(options.data)}
+Request Headers：${HttpLogSanitizer.redact(options.headers)}''',
       );
     } else if (CoreLog.requestLogType == RequestLogType.short) {
-      CoreLog.i("[HTTP Request] [${options.method}] ${options.uri}");
+      CoreLog.i(
+        "[HTTP Request] [${options.method}] ${HttpLogSanitizer.redactUri(options.uri)}",
+      );
     }
 
     super.onRequest(options, handler);
@@ -27,19 +30,19 @@ Request Headers：${options.headers}''',
         DateTime.now().millisecondsSinceEpoch - err.requestOptions.extra["ts"];
     if (CoreLog.requestLogType == RequestLogType.all) {
       CoreLog.e('''[HTTP Error] [${err.type}] [Time:${time}ms]
-${err.message}
+${HttpLogSanitizer.redactText(err.message, requestUri: err.requestOptions.uri)}
 
 Request Method：${err.requestOptions.method}
 Response Code：${err.response?.statusCode}
-Request URL：${err.requestOptions.uri}
-Request Query：${err.requestOptions.queryParameters}
-Request Data：${err.requestOptions.data}
-Request Headers：${err.requestOptions.headers}
-Response Headers：${err.response?.headers.map}
-Response Data：${err.response?.data}''', err.stackTrace);
+Request URL：${HttpLogSanitizer.redactUri(err.requestOptions.uri)}
+Request Query：${HttpLogSanitizer.redact(err.requestOptions.queryParameters)}
+Request Data：${HttpLogSanitizer.redact(err.requestOptions.data)}
+Request Headers：${HttpLogSanitizer.redact(err.requestOptions.headers)}
+Response Headers：${HttpLogSanitizer.redact(err.response?.headers.map)}
+Response Data：${HttpLogSanitizer.redact(err.response?.data)}''', err.stackTrace);
     } else {
       CoreLog.e(
-        "[HTTP Error] [${err.type}] [Time:${time}ms]\n[${err.response?.statusCode}] ${err.requestOptions.uri}",
+        "[HTTP Error] [${err.type}] [Time:${time}ms]\n[${err.response?.statusCode}] ${HttpLogSanitizer.redactUri(err.requestOptions.uri)}",
         err.stackTrace,
       );
     }
@@ -56,16 +59,16 @@ Response Data：${err.response?.data}''', err.stackTrace);
         '''[HTTP Response] [time:${time}ms]
 Request Method：${response.requestOptions.method}
 Request Code：${response.statusCode}
-Request URL：${response.requestOptions.uri}
-Request Query：${response.requestOptions.queryParameters}
-Request Data：${response.requestOptions.data}
-Request Headers：${response.requestOptions.headers}
-Response Headers：${response.headers.map}
-Response Data：${response.data}''',
+Request URL：${HttpLogSanitizer.redactUri(response.requestOptions.uri)}
+Request Query：${HttpLogSanitizer.redact(response.requestOptions.queryParameters)}
+Request Data：${HttpLogSanitizer.redact(response.requestOptions.data)}
+Request Headers：${HttpLogSanitizer.redact(response.requestOptions.headers)}
+Response Headers：${HttpLogSanitizer.redact(response.headers.map)}
+Response Data：${HttpLogSanitizer.redact(response.data)}''',
       );
     } else if (CoreLog.requestLogType == RequestLogType.short) {
       CoreLog.i(
-        "[HTTP Response] [time:${time}ms] [${response.statusCode}] ${response.requestOptions.uri}",
+        "[HTTP Response] [time:${time}ms] [${response.statusCode}] ${HttpLogSanitizer.redactUri(response.requestOptions.uri)}",
       );
     }
     super.onResponse(response, handler);

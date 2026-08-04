@@ -9,6 +9,7 @@ export 'src/douyin_site.dart';
 export 'src/kuaishou_site.dart';
 export 'src/common/core_error.dart';
 export 'src/common/core_log.dart';
+export 'src/common/http_log_sanitizer.dart';
 export 'src/common/douyin_cookie_helper.dart';
 export 'src/common/douyin_follow_refresh_limiter.dart';
 export 'src/common/kuaishou_live_link.dart';
