@@ -295,7 +295,9 @@ class Utils {
     required BuildContext context,
     required WidgetBuilder builder,
     bool dismissByBarrier = true,
-    bool isScrollControlled = false,
+    // 默认开启键盘避让：含 TextField 的对话框（搜索/编辑/粘贴等）
+    // 弹键盘时自动上移，不再被压缩溢出。无键盘对话框无副作用。
+    bool isScrollControlled = true,
   }) {
     final navigator = Navigator.of(context, rootNavigator: true);
     final route = _SafeBottomSheetRoute<T>(
@@ -888,7 +890,7 @@ class _RightSideSheetRoute extends PopupRoute<void> {
           ),
         ),
         child: SafeArea(
-          top: false,
+          top: true,
           bottom: false,
           child: Padding(
             padding: AppStyle.bottomSheetPadding(),
