@@ -107,7 +107,7 @@
 | **本分支所有目标** | **3.41.x** | dev，升级线 |
 | 鸿蒙 HAP | oh-3.41.9-release（OHOS fork） | `tool/build_ohos_hap.ps1` 自带 |
 
-本分支已随升级适配：`intl` 0.20.2、`onPopInvokedWithResult`、workflow 版本校验更新。剩余 deprecated（`RadioListTile.groupValue`、`Color.value` 等）功能正常，待清理。
+本分支已随升级适配：`intl` 0.20.2、`onPopInvokedWithResult`、workflow 版本校验更新；遗留的 deprecated（`RadioListTile.groupValue`、`Color.value`、`withOpacity` 等）已全部清理。
 
 ### 版本号维护
 
