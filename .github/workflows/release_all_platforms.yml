@@ -172,7 +172,12 @@ jobs:
           build_number="$(dart run simple_live_app/tool/app_version.dart print build-number)"
           full_version="$(dart run simple_live_app/tool/app_version.dart print full)"
           sha="$(git rev-parse HEAD)"
-          tag="v$version"
+          # 勾选 prerelease 时用 v{version}-pre，不占正式 tag（正式发布不冲突）
+          if [[ "${{ steps.settings.outputs.prerelease }}" == "true" ]]; then
+            tag="v${version}-pre"
+          else
+            tag="v$version"
+          fi
 
           git fetch --force --tags origin
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
