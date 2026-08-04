@@ -64,6 +64,9 @@ class Utils {
     var result = await showDialogSafe<bool>(
       context: Get.context!,
       builder: (_) => AlertDialog(
+        // scrollable: 鸿蒙上（或系统字体缩放/键盘弹出时）对话框内容+按钮
+        // 高度超出约束会报 BOTTOM OVERFLOWED 并把按钮压缩出屏。
+        scrollable: true,
         title: Text(title),
         content: Container(
           constraints: const BoxConstraints(
@@ -341,6 +344,9 @@ class Utils {
     var result = await showDialogSafe<String>(
       context: Get.context!,
       builder: (_) => AlertDialog(
+        // scrollable: 鸿蒙上（或系统字体缩放/键盘弹出时）对话框内容+按钮
+        // 高度超出约束会报 BOTTOM OVERFLOWED 并把按钮压缩出屏。
+        scrollable: true,
         title: Text(title),
         content: Padding(
           padding: AppStyle.edgeInsetsT12,

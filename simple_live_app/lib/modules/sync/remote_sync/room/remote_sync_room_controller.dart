@@ -122,7 +122,9 @@ class RemoteSyncRoomController extends BaseController {
   void connect() async {
     try {
       listenSignalR();
-      await signalR.connect();
+      // 总超时兜底：鸿蒙（或部分网络）上 IOWebSocketChannel.connect 的
+      // ready 可能长期不完成，避免页面无限停在"连接中"。
+      await signalR.connect().timeout(const Duration(seconds: 20));
       if (signalR.state == SignalRConnectionState.connected) {
         if (roomId.isEmpty) {
           createRoom();
