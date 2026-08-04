@@ -19,6 +19,14 @@ const Map<String, String> douyinPartitionImages = {
   '106': 'https://i0.hdslb.com/bfs/live/c8e6d780a3182c37a96e79f4ed26fcb576f2520a.png', // 文化
   '107': 'https://i0.hdslb.com/bfs/live/fd7a23073b7ff9c7260c2fa8bf50e3738ecdc60a.png', // 生活
   '108': 'https://i0.hdslb.com/bfs/live/828cdd0bdce7dd20d599f1b19521139f1dc05300.png', // 运动
+  // 游戏（103）子分区，id_str 为分区内编号（type 1），借 B站对应类型图：
+  '1': 'https://i0.hdslb.com/bfs/live/34de48c290b2565ed9d5dbf1dba56105788040f6.png', // 射击游戏（CS2）
+  '2': 'https://i0.hdslb.com/bfs/vc/0e808167886ad2299971ea49aade69b3663db9b9.png', // 竞技游戏（英雄联盟）
+  '3': 'https://i0.hdslb.com/bfs/vc/edb636ee59f902e3134a2790545045bddd70978e.png', // 单机游戏（主机游戏）
+  '4': 'https://i0.hdslb.com/bfs/live/4d76208f31b3bc020c633e39cdc5c465a7075b50.png', // 棋牌游戏（棋牌玩法）
+  '5': 'https://i0.hdslb.com/bfs/live/167020f7bf38360f127f4612e82dc25674f0040c.png', // 休闲益智（休闲玩法）
+  '6': 'https://i0.hdslb.com/bfs/vc/32a5b7da3e79feb394f538c9d95a858fea97b113.png', // 角色扮演（最终幻想14）
+  '7': 'https://i0.hdslb.com/bfs/vc/ce83319ab4ebc2f0c357fc101f20c785c655f9e6.png', // 策略卡牌（炉石传说）
 };
 
 /// 判断字符串是否为可加载的 http(s) 图片地址。
