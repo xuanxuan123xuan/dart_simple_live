@@ -8,7 +8,6 @@ simple_live_tv_app/.vscode/settings.json
 # Local release and build artifacts
 release/
 models/
-docs/
 issue_logs/
 experience/
 graphify-out/
@@ -33,3 +32,4 @@ tmp_*.xml
 !README.md
 !**/README.md
 !WHATS_CHANGED.md
+!docs/*.md
