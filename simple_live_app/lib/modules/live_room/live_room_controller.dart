@@ -201,7 +201,6 @@ int? resolveRememberedLiveRoomLineIndex({
   return null;
 }
 
-@visibleForTesting
 String liveRoomLineProtocolLabel(String url) {
   final protocol = classifyLiveStreamProtocol(url);
   return switch (protocol) {
