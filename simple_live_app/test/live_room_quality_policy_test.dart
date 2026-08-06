@@ -63,6 +63,78 @@ void main() {
         2,
       );
     });
+
+    test('restores a line by host and latency tier after URL reordering', () {
+      const preference = LiveRoomQualityPreference(
+        qualityIndex: null,
+        lineIndex: 0,
+        lineSignature: 'preferred.example.com|0',
+        qualityLocked: false,
+      );
+      final urls = [
+        'https://other.example.com/live.m3u8',
+        'https://fallback.example.com/live.flv',
+        'https://preferred.example.com/live.flv',
+      ];
+
+      expect(
+        resolveRememberedLiveRoomLineIndex(
+          urls: urls,
+          preference: preference,
+        ),
+        2,
+      );
+    });
+
+    test('legacy line index remains usable until a manual migration', () {
+      final preference = LiveRoomQualityPreference.fromStoredValue(const {
+        'line': 2,
+      });
+      final urls = [
+        'https://high.example.com/live.m3u8',
+        'https://first.example.com/live.flv',
+        'https://second.example.com/live.flv',
+      ];
+
+      expect(
+        resolveRememberedLiveRoomLineIndex(
+          urls: urls,
+          preference: preference,
+        ),
+        2,
+      );
+    });
+
+    test('a stale signature does not fall back to its old list index', () {
+      const preference = LiveRoomQualityPreference(
+        qualityIndex: null,
+        lineIndex: 1,
+        lineSignature: 'removed.example.com|0',
+        qualityLocked: false,
+      );
+
+      expect(
+        resolveRememberedLiveRoomLineIndex(
+          urls: const [
+            'https://first.example.com/live.flv',
+            'https://second.example.com/live.flv',
+          ],
+          preference: preference,
+        ),
+        isNull,
+      );
+    });
+
+    test('line signature normalizes the host and uses the protocol tier', () {
+      expect(
+        liveRoomLineMemorySignature('https://CDN.example.com/live.flv'),
+        'cdn.example.com|0',
+      );
+      expect(
+        liveRoomLineProtocolLabel('https://cdn.example.com/live.m3u8'),
+        'HLS',
+      );
+    });
   });
 
   group('single room automatic quality buffering', () {

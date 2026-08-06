@@ -494,96 +494,96 @@ Widget _buildFullTopBar(
         behavior: HitTestBehavior.opaque,
         onTap: () {},
         child: Container(
-        height: 48 + padding.top,
-        padding: EdgeInsets.only(
-          left: padding.left + 32,
-          right: padding.right + 32,
-          top: padding.top,
-        ),
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [
-              Colors.transparent,
-              Colors.black87,
+          height: 48 + padding.top,
+          padding: EdgeInsets.only(
+            left: padding.left + 32,
+            right: padding.right + 32,
+            top: padding.top,
+          ),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [
+                Colors.transparent,
+                Colors.black87,
+              ],
+            ),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: () {
+                  if (controller.smallWindowState.value) {
+                    controller.exitSmallWindow();
+                  } else {
+                    controller.exitFull();
+                  }
+                },
+                icon: const Icon(
+                  Icons.arrow_back,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              AppStyle.hGap12,
+              Expanded(
+                child: Text(
+                  displayTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              AppStyle.hGap12,
+              IconButton(
+                onPressed: controller.saveScreenshot,
+                icon: const Icon(
+                  Icons.camera_alt_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              IconButton(
+                onPressed: () => showQuickAccess(controller),
+                icon: const Icon(
+                  Remix.play_list_2_line,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              if (controller.canStartInlineMultiRoom)
+                IconButton(
+                  tooltip: "添加直播间并进入多开",
+                  onPressed: controller.showAddToMultiRoomPanel,
+                  icon: const Icon(
+                    Remix.play_list_add_line,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+              if (Platform.isAndroid || Utils.isOhos)
+                IconButton(
+                  onPressed: controller.enablePIP,
+                  icon: const Icon(
+                    Icons.picture_in_picture,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+              IconButton(
+                onPressed: () => showPlayerSettings(controller),
+                icon: const Icon(
+                  Icons.more_horiz,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
             ],
           ),
-        ),
-        child: Row(
-          children: [
-            IconButton(
-              onPressed: () {
-                if (controller.smallWindowState.value) {
-                  controller.exitSmallWindow();
-                } else {
-                  controller.exitFull();
-                }
-              },
-              icon: const Icon(
-                Icons.arrow_back,
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-            AppStyle.hGap12,
-            Expanded(
-              child: Text(
-                displayTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
-              ),
-            ),
-            AppStyle.hGap12,
-            IconButton(
-              onPressed: controller.saveScreenshot,
-              icon: const Icon(
-                Icons.camera_alt_outlined,
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-            IconButton(
-              onPressed: () => showQuickAccess(controller),
-              icon: const Icon(
-                Remix.play_list_2_line,
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-            if (controller.canStartInlineMultiRoom)
-              IconButton(
-                tooltip: "添加直播间并进入多开",
-                onPressed: controller.showAddToMultiRoomPanel,
-                icon: const Icon(
-                  Remix.play_list_add_line,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-            if (Platform.isAndroid || Utils.isOhos)
-              IconButton(
-                onPressed: controller.enablePIP,
-                icon: const Icon(
-                  Icons.picture_in_picture,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-            IconButton(
-              onPressed: () => showPlayerSettings(controller),
-              icon: const Icon(
-                Icons.more_horiz,
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-          ],
-        ),
         ),
       ),
     );
@@ -610,122 +610,122 @@ Widget _buildFullBottomBar(
         behavior: HitTestBehavior.opaque,
         onTap: () {},
         child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.transparent,
-              Colors.black87,
-            ],
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.transparent,
+                Colors.black87,
+              ],
+            ),
           ),
-        ),
-        padding: EdgeInsets.only(
-          left: padding.left + 32,
-          right: padding.right + 32,
-          bottom: padding.bottom,
-        ),
-        child: Row(
-          children: [
-            IconButton(
-              onPressed: controller.refreshRoom,
-              icon: const Icon(
-                Remix.refresh_line,
-                color: Colors.white,
-              ),
-            ),
-            IconButton(
-              onPressed: () {
-                controller.showDanmakuState.value =
-                    !controller.showDanmakuState.value;
-              },
-              icon: ImageIcon(
-                AssetImage(
-                  showDanmaku
-                      ? 'assets/icons/icon_danmaku_close.png'
-                      : 'assets/icons/icon_danmaku_open.png',
-                ),
-                size: 24,
-                color: Colors.white,
-              ),
-            ),
-            IconButton(
-              onPressed: () => showDanmakuSettings(controller),
-              icon: const ImageIcon(
-                AssetImage('assets/icons/icon_danmaku_setting.png'),
-                size: 24,
-                color: Colors.white,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: Text(
-                controller.liveDuration.value,
-                style: const TextStyle(fontSize: 14, color: Colors.white),
-              ),
-            ),
-            const Expanded(child: SizedBox()),
-            if (!Platform.isAndroid && !Platform.isIOS && !Utils.isOhos)
+          padding: EdgeInsets.only(
+            left: padding.left + 32,
+            right: padding.right + 32,
+            bottom: padding.bottom,
+          ),
+          child: Row(
+            children: [
               IconButton(
-                key: volumeButtonKey,
+                onPressed: controller.refreshRoom,
+                icon: const Icon(
+                  Remix.refresh_line,
+                  color: Colors.white,
+                ),
+              ),
+              IconButton(
                 onPressed: () {
-                  final context = volumeButtonKey.currentContext;
-                  if (context == null) {
-                    return;
-                  }
-                  controller.showVolumeSlider(
-                    context,
-                    keepAlive: true,
-                  );
+                  controller.showDanmakuState.value =
+                      !controller.showDanmakuState.value;
                 },
-                icon: Icon(
-                  controller.mutedState.value
-                      ? Icons.volume_off
-                      : Icons.volume_down,
+                icon: ImageIcon(
+                  AssetImage(
+                    showDanmaku
+                        ? 'assets/icons/icon_danmaku_close.png'
+                        : 'assets/icons/icon_danmaku_open.png',
+                  ),
                   size: 24,
                   color: Colors.white,
                 ),
               ),
-            IconButton(
-              onPressed: controller.toggleMute,
-              icon: Icon(
-                controller.mutedState.value
-                    ? Icons.volume_off
-                    : Icons.volume_up,
-                size: 24,
-                color: Colors.white,
+              IconButton(
+                onPressed: () => showDanmakuSettings(controller),
+                icon: const ImageIcon(
+                  AssetImage('assets/icons/icon_danmaku_setting.png'),
+                  size: 24,
+                  color: Colors.white,
+                ),
               ),
-            ),
-            TextButton(
-              onPressed: () => showQualitesInfo(controller),
-              child: Text(
-                controller.currentQualityInfo.value,
-                style: const TextStyle(color: Colors.white, fontSize: 15),
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Text(
+                  controller.liveDuration.value,
+                  style: const TextStyle(fontSize: 14, color: Colors.white),
+                ),
               ),
-            ),
-            TextButton(
-              onPressed: () => showLinesInfo(controller),
-              child: Text(
-                controller.currentLineInfo.value,
-                style: const TextStyle(color: Colors.white, fontSize: 15),
+              const Expanded(child: SizedBox()),
+              if (!Platform.isAndroid && !Platform.isIOS && !Utils.isOhos)
+                IconButton(
+                  key: volumeButtonKey,
+                  onPressed: () {
+                    final context = volumeButtonKey.currentContext;
+                    if (context == null) {
+                      return;
+                    }
+                    controller.showVolumeSlider(
+                      context,
+                      keepAlive: true,
+                    );
+                  },
+                  icon: Icon(
+                    controller.mutedState.value
+                        ? Icons.volume_off
+                        : Icons.volume_down,
+                    size: 24,
+                    color: Colors.white,
+                  ),
+                ),
+              IconButton(
+                onPressed: controller.toggleMute,
+                icon: Icon(
+                  controller.mutedState.value
+                      ? Icons.volume_off
+                      : Icons.volume_up,
+                  size: 24,
+                  color: Colors.white,
+                ),
               ),
-            ),
-            IconButton(
-              onPressed: () {
-                if (controller.smallWindowState.value) {
-                  controller.exitSmallWindow();
-                } else {
-                  controller.exitFull();
-                }
-              },
-              icon: const Icon(
-                Remix.fullscreen_exit_fill,
-                color: Colors.white,
+              TextButton(
+                onPressed: () => showQualitesInfo(controller),
+                child: Text(
+                  controller.currentQualityInfo.value,
+                  style: const TextStyle(color: Colors.white, fontSize: 15),
+                ),
               ),
-            ),
-          ],
+              TextButton(
+                onPressed: () => showLinesInfo(controller),
+                child: Text(
+                  controller.currentLineInfo.value,
+                  style: const TextStyle(color: Colors.white, fontSize: 15),
+                ),
+              ),
+              IconButton(
+                onPressed: () {
+                  if (controller.smallWindowState.value) {
+                    controller.exitSmallWindow();
+                  } else {
+                    controller.exitFull();
+                  }
+                },
+                icon: const Icon(
+                  Remix.fullscreen_exit_fill,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
       ),
     );
   });
@@ -915,8 +915,8 @@ Widget buildDanmuView(BuildContext context, LiveRoomController controller) {
   var padding = controller.fullScreenState.value
       ? _fullScreenControlPadding(context)
       : Utils.isOhos
-              ? EdgeInsets.zero
-              : MediaQuery.of(context).padding;
+          ? EdgeInsets.zero
+          : MediaQuery.of(context).padding;
   // 平板（短边 ≥ 600）横屏全屏时顶部有系统栏，弹幕整体往下移固定距离，
   // 避开状态栏、视觉上往屏幕中间靠。手机/竖屏不受影响。
   final tabletLandscapeFullscreen = controller.fullScreenState.value &&
@@ -1019,7 +1019,7 @@ void showLinesInfo(LiveRoomController controller) {
                   padding: AppStyle.edgeInsetsH4,
                   margin: AppStyle.edgeInsetsL8,
                   child: Text(
-                    controller.playUrls[i].contains(".flv") ? "FLV" : "HLS",
+                    liveRoomLineProtocolLabel(controller.playUrls[i]),
                     style: const TextStyle(
                       fontSize: 12,
                     ),
@@ -1077,6 +1077,7 @@ void showQualitesInfo(LiveRoomController controller) {
           minLeadingWidth: 16,
           onTap: () {
             Utils.hideRightDialog();
+            controller.markQualitySelectionAsManual();
             controller.qualityLocked.value = true;
             controller.currentQuality = i - 1;
             controller.saveQualityMemory();
@@ -1174,8 +1175,7 @@ void showPlayerSettings(LiveRoomController controller) {
           ),
           AppStyle.divider,
           SwitchListTile(
-            value: AppSettingsController
-                .instance.autoSelectFastestLine.value,
+            value: AppSettingsController.instance.autoSelectFastestLine.value,
             onChanged: (e) {
               AppSettingsController.instance.setAutoSelectFastestLine(e);
             },
@@ -1185,8 +1185,8 @@ void showPlayerSettings(LiveRoomController controller) {
             secondary: const Icon(Icons.speed),
           ),
           SwitchListTile(
-            value: AppSettingsController
-                .instance.fullScreenForceLandscape.value,
+            value:
+                AppSettingsController.instance.fullScreenForceLandscape.value,
             onChanged: (e) {
               AppSettingsController.instance.setFullScreenForceLandscape(e);
             },

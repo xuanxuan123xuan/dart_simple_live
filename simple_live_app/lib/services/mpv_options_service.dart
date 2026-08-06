@@ -7,12 +7,28 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 
 class MpvOptionsService {
   static const Map<String, String> profileLabels = {
     "performance": "流畅",
     "balanced": "均衡",
     "quality": "画质",
+  };
+
+  static const Map<String, String> liveLatencyModeLabels = {
+    "off": "关闭",
+    "auto": "自动（推荐）",
+    "aggressive": "激进",
+  };
+
+  static const Map<String, String> _defaultLiveLatencyOptions = {
+    "cache": "yes",
+    "cache-on-disk": "yes",
+    "cache-secs": "10",
+    "demuxer-readahead-secs": "1",
+    "cache-pause": "yes",
+    "audio-buffer": "0.2",
   };
 
   static const Map<String, Map<String, String>> desktopProfiles = {
@@ -141,6 +157,99 @@ class MpvOptionsService {
     }
   }
 
+  /// Returns the live-stream buffering profile for a protocol.
+  ///
+  /// FLV/RTMP can safely use a smaller client-side queue. HLS/fMP4 needs a
+  /// larger conservative queue because the stream itself is segmented.
+  static Map<String, String> liveLatencyOptions(
+    String mode,
+    LiveStreamProtocol protocol,
+  ) {
+    if (mode == "off") {
+      return Map<String, String>.unmodifiable(_defaultLiveLatencyOptions);
+    }
+
+    final isLowLatencyProtocol = protocol == LiveStreamProtocol.flv ||
+        protocol == LiveStreamProtocol.rtmp;
+    if (mode == "aggressive" && isLowLatencyProtocol) {
+      return const {
+        "cache": "yes",
+        "cache-on-disk": "no",
+        "cache-secs": "0.5",
+        "demuxer-readahead-secs": "0.5",
+        "cache-pause": "no",
+        "audio-buffer": "0",
+      };
+    }
+
+    if (mode == "aggressive") {
+      return const {
+        "cache": "yes",
+        "cache-on-disk": "no",
+        "cache-secs": "0.5",
+        "demuxer-readahead-secs": "0.5",
+        "cache-pause": "no",
+        "audio-buffer": "0.05",
+      };
+    }
+
+    if (isLowLatencyProtocol) {
+      return const {
+        "cache": "yes",
+        "cache-on-disk": "no",
+        "cache-secs": "0.5",
+        "demuxer-readahead-secs": "0.5",
+        "cache-pause": "no",
+        "audio-buffer": "0.05",
+      };
+    }
+
+    return const {
+      "cache": "yes",
+      "cache-on-disk": "no",
+      "cache-secs": "1",
+      "demuxer-readahead-secs": "1",
+      "cache-pause": "no",
+      "audio-buffer": "0.1",
+    };
+  }
+
+  /// Applies the protocol-aware buffering profile immediately before opening
+  /// a URL. Advanced options and imported mpv.conf keep higher precedence.
+  static Future<void> applyLiveLatencyOptions(
+    Player player,
+    LiveStreamProtocol protocol,
+  ) async {
+    if (Platform.isIOS || player.platform is! NativePlayer) {
+      return;
+    }
+    final settings = AppSettingsController.instance;
+    final options = Map<String, String>.from(
+      liveLatencyOptions(settings.mpvLiveLatencyMode.value, protocol),
+    );
+    final advanced = parseOptions(settings.mpvAdvancedOptions.value);
+    final conf = parseConfFile(settings.importedMpvConfPath.value);
+    for (final key in options.keys.toList()) {
+      if (advanced.containsKey(key)) {
+        options[key] = advanced[key]!;
+      }
+      if (conf.containsKey(key)) {
+        options[key] = conf[key]!;
+      }
+    }
+    for (final entry in options.entries) {
+      try {
+        await (player.platform as dynamic).setProperty(entry.key, entry.value);
+      } catch (e) {
+        Log.d("live latency option skipped: ${entry.key}=${entry.value} $e");
+      }
+    }
+    Log.d(
+      "live latency profile=${settings.mpvLiveLatencyMode.value} "
+      "protocol=${protocol.label} options=${options.length}",
+    );
+  }
+
   static Map<String, String> _profileOptionsForPlatform(String profile) {
     if (profile == "balanced") {
       return Platform.isWindows
@@ -172,6 +281,7 @@ class MpvOptionsService {
 
     return "profile=${AppSettingsController.instance.mpvProfile.value}, "
         "hardwareDecode=${AppSettingsController.instance.hardwareDecode.value}, "
+        "liveLatency=${AppSettingsController.instance.mpvLiveLatencyMode.value}, "
         "vo=${value("vo")}, hwdec=${value("hwdec")}, "
         "mpvOptions=${options.length}";
   }

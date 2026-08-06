@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:video_player/video_player.dart';
@@ -18,6 +20,34 @@ VideoPlayerValue _value({
 }
 
 void main() {
+  test('OHOS URL sources always receive the API 12 live buffer strategy', () {
+    final nativePlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
+
+    expect(
+      nativePlayer,
+      contains('const LIVE_PREFERRED_BUFFER_DURATION_SECONDS: number = 1;'),
+    );
+    expect(
+      nativePlayer,
+      contains(
+        'preferredBufferDuration: LIVE_PREFERRED_BUFFER_DURATION_SECONDS,',
+      ),
+    );
+    expect(nativePlayer, contains('this.headers ?? {}'));
+    expect(
+      RegExp(r'await this\.setNetworkMediaSource\(\);')
+          .allMatches(nativePlayer)
+          .length,
+      2,
+    );
+    expect(nativePlayer, isNot(contains('if (!this.headers)')));
+    const legacyUrlAssignment = 'this.avPlayer.url = this.getIUri();';
+    expect(nativePlayer, isNot(contains(legacyUrlAssignment)));
+  });
+
   test('reports continuous buffering after eight seconds', () {
     final started = DateTime(2026, 7, 14, 12);
     final value = _value(position: Duration.zero, buffering: true);

@@ -20,6 +20,7 @@ import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/memory_pressure_monitor.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 
 class MultiRoomController extends GetxController with WidgetsBindingObserver {
   final List<MultiRoomItem> initialRooms;
@@ -493,11 +494,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         !_appActive ||
         _adaptiveEvaluationRunning ||
         isRefreshingAll.value ||
-        openingSingleRoom.value ||
-        !AppSettingsController.instance.multiRoomAdaptiveQuality.value ||
-        // 自动调节只在主次布局（有主画面保护概念）下生效；
-        // 普通布局所有格子等大，不自动降级，避免干扰用户观看。
-        !isMainSubLayoutActive) {
+        openingSingleRoom.value) {
       return;
     }
     _adaptiveEvaluationRunning = true;
@@ -512,16 +509,22 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         final room = roomSnapshot[i];
         final player = _existingPlayerFor(room);
         if (player == null) continue;
-        samples.add(
-          await player.sampleTelemetry(
-            sampledAt: now,
-            isPrimary: i == 0 && isMainSubLayoutActive,
-            isFocused: room.key == focusKey,
-            isChatTarget: room.key == chatKey,
-          ),
+        final sample = await player.sampleTelemetry(
+          sampledAt: now,
+          isPrimary: i == 0 && isMainSubLayoutActive,
+          isFocused: room.key == focusKey,
+          isChatTarget: room.key == chatKey,
         );
+        samples.add(sample);
+        _logLiveLatencyTelemetry(room, player, sample);
       }
       if (_closing || isClosed || !_appActive) return;
+      if (!AppSettingsController.instance.multiRoomAdaptiveQuality.value ||
+          // 自动调节只在主次布局（有主画面保护概念）下生效；
+          // 普通布局所有格子等大，不自动降级，避免干扰用户观看。
+          !isMainSubLayoutActive) {
+        return;
+      }
       final bandwidthBudgetMbps = PlatformUtils.isMobileApp ? 24.0 : 48.0;
       final decision = _adaptiveQuality.evaluate(
         now: now,
@@ -552,6 +555,32 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     } finally {
       _adaptiveEvaluationRunning = false;
     }
+  }
+
+  void _logLiveLatencyTelemetry(
+    MultiRoomItem room,
+    MultiRoomPlayerController player,
+    MultiRoomPlaybackTelemetry sample,
+  ) {
+    final urls = player.playUrls;
+    final lineIndex = player.lineIndex;
+    final protocol = lineIndex >= 0 && lineIndex < urls.length
+        ? classifyLiveStreamProtocol(urls[lineIndex])
+        : LiveStreamProtocol.unknown;
+    final cacheLabel = sample.demuxerCacheDurationSeconds == null
+        ? 'unsupported'
+        : '${sample.demuxerCacheDurationSeconds!.toStringAsFixed(3)}s';
+    final openedAt = sample.lastOpenedAt;
+    final elapsedLabel = openedAt == null
+        ? 'unknown'
+        : '${(sample.sampledAt.difference(openedAt).inMilliseconds / 1000).toStringAsFixed(1)}s';
+    Log.writeLog(
+      '[live-latency] mode=multi target=${room.site.id}/${room.roomId} '
+      'line=${lineIndex + 1}/${urls.length} protocol=${protocol.label} '
+      'elapsed=$elapsedLabel demuxerCache=$cacheLabel '
+      'buffering=${sample.isBuffering} bufferCount=${sample.bufferingCount} '
+      'bufferDuration=${(sample.bufferingDuration.inMilliseconds / 1000).toStringAsFixed(1)}s',
+    );
   }
 
   Future<void> _recoverDesiredPlayers(int generation) async {

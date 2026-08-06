@@ -22,6 +22,8 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
+import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
+import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
@@ -93,6 +95,45 @@ mixin PlayerMixin {
   /// 当前平台是否存在可用的 media_kit 播放器。
   bool get hasMpvPlayer => !Utils.isOhos;
 
+  late final MpvLiveLatencyChaseService _liveLatencyChaser =
+      MpvLiveLatencyChaseService(
+    writeSpeed: _writeLiveLatencyChaseSpeed,
+    readSpeed: _readLiveLatencyChaseSpeed,
+    onWriteError: (error) => Log.d('live latency chase speed skipped: $error'),
+  );
+  Timer? _liveLatencyChaseTimer;
+  StreamSubscription<bool>? _liveLatencyChaseBufferingSubscription;
+  bool _liveLatencyChaseSampling = false;
+  bool _liveLatencyChaseBuffering = false;
+  String? _liveLatencyChaseSource;
+  int _liveLatencyChaseGeneration = 0;
+
+  Future<void> _writeLiveLatencyChaseSpeed(double speed) async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) {
+      return;
+    }
+    final dynamic native = platform;
+    await native.setProperty('speed', speed.toStringAsFixed(3));
+  }
+
+  Future<double?> _readLiveLatencyChaseSpeed() async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) {
+      return null;
+    }
+    try {
+      final dynamic native = platform;
+      final dynamic value = await native.getProperty('speed');
+      final speed = value is num
+          ? value.toDouble()
+          : double.tryParse(value?.toString() ?? '');
+      return speed != null && speed.isFinite && speed > 0 ? speed : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 初始化播放器并设置静态 mpv 参数。
   ///
   /// OHOS 上没有 media_kit，直接返回；播放由 [ohosVideoController] 负责。
@@ -116,6 +157,88 @@ mixin PlayerMixin {
     if (Platform.isAndroid) {
       await nativePlayer.setProperty('force-seekable', 'yes');
     }
+    _startLiveLatencyChaseSampling();
+  }
+
+  void _startLiveLatencyChaseSampling() {
+    if (player.platform is! NativePlayer || _liveLatencyChaseTimer != null) {
+      return;
+    }
+    _liveLatencyChaseBufferingSubscription =
+        player.stream.buffering.listen((isBuffering) {
+      _liveLatencyChaseBuffering = isBuffering;
+      if (isBuffering) {
+        unawaited(_liveLatencyChaser.protect());
+      }
+    });
+    _liveLatencyChaseTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_sampleLiveLatencyChase()),
+    );
+  }
+
+  Future<void> _sampleLiveLatencyChase() async {
+    final generation = _liveLatencyChaseGeneration;
+    if (_liveLatencyChaseSampling || !player.state.playing) {
+      return;
+    }
+    final playlist = player.state.playlist;
+    if (playlist.medias.isEmpty ||
+        playlist.index < 0 ||
+        playlist.index >= playlist.medias.length) {
+      return;
+    }
+    _liveLatencyChaseSampling = true;
+    try {
+      final dynamic media = playlist.medias[playlist.index];
+      final source = media.uri?.toString() ?? '';
+      if (source.isEmpty) {
+        return;
+      }
+      if (generation != _liveLatencyChaseGeneration) {
+        return;
+      }
+      if (_liveLatencyChaseSource != source) {
+        _liveLatencyChaseSource = source;
+        await _liveLatencyChaser.start(
+          latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
+          protocol: classifyLiveStreamProtocol(source),
+        );
+      }
+      if (generation != _liveLatencyChaseGeneration) {
+        return;
+      }
+      final cacheDurationSeconds = await sampleMpvDemuxerCacheDuration(player);
+      if (generation != _liveLatencyChaseGeneration) {
+        return;
+      }
+      await _liveLatencyChaser.observe(
+        cacheDurationSeconds: cacheDurationSeconds,
+        isBuffering: _liveLatencyChaseBuffering,
+      );
+    } catch (error) {
+      Log.d('live latency chase sample skipped: $error');
+      await _liveLatencyChaser.protect();
+    } finally {
+      _liveLatencyChaseSampling = false;
+    }
+  }
+
+  Future<void> resetLiveLatencyChase() async {
+    _liveLatencyChaseGeneration += 1;
+    _liveLatencyChaseSource = null;
+    await _liveLatencyChaser.reset();
+  }
+
+  Future<void> stopLiveLatencyChase() async {
+    _liveLatencyChaseGeneration += 1;
+    _liveLatencyChaseTimer?.cancel();
+    _liveLatencyChaseTimer = null;
+    await _liveLatencyChaseBufferingSubscription?.cancel();
+    _liveLatencyChaseBufferingSubscription = null;
+    _liveLatencyChaseBuffering = false;
+    _liveLatencyChaseSource = null;
+    await _liveLatencyChaser.stop();
   }
 
   late final VideoController _mpvVideoController = VideoController(
@@ -632,21 +755,43 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       }
       await restoreFullScreenSystemUi();
     } else {
-      fullScreenState.value = true;
-      _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
-      await _applyWindowsFullScreenChrome();
-      await windowManager.setFullScreen(true);
-      await _waitForWindowsFullScreenState(true);
-      await _applyWindowsFullScreenChrome();
-      unawaited(
-        Future.delayed(const Duration(milliseconds: 900), () async {
-          if (!fullScreenState.value || smallWindowState.value) {
-            return;
-          }
+      await _serializeDesktopWindowModeTransition(() async {
+        if (fullScreenState.value || smallWindowState.value) {
+          return;
+        }
+        Log.d('Desktop fullscreen: enter start');
+        fullScreenState.value = true;
+        try {
+          _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
           await _applyWindowsFullScreenChrome();
-        }),
-      );
-      await Future.delayed(const Duration(milliseconds: 32));
+          await windowManager
+              .setFullScreen(true)
+              .timeout(const Duration(seconds: 2));
+          await _waitForWindowsFullScreenState(true);
+          await _applyWindowsFullScreenChrome();
+          unawaited(
+            Future.delayed(const Duration(milliseconds: 900), () async {
+              if (!fullScreenState.value || smallWindowState.value) {
+                return;
+              }
+              await _applyWindowsFullScreenChrome();
+            }),
+          );
+          await Future.delayed(const Duration(milliseconds: 32));
+          Log.d('Desktop fullscreen: enter complete');
+        } catch (e, stackTrace) {
+          fullScreenState.value = false;
+          try {
+            await windowManager
+                .setFullScreen(false)
+                .timeout(const Duration(seconds: 2));
+            await _restoreWindowsWindowChrome();
+          } catch (rollbackError) {
+            Log.d('Desktop fullscreen: enter rollback failed: $rollbackError');
+          }
+          Log.e('Desktop fullscreen: enter failed: $e', stackTrace);
+        }
+      });
     }
     //danmakuController?.clear();
   }
@@ -662,7 +807,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         isPlayerClosing) {
       return;
     }
-    Log.d('SystemUi: restoreFullScreenSystemUi enter fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
+    Log.d(
+        'SystemUi: restoreFullScreenSystemUi enter fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
     _playbackDisplayLease?.setImmersiveSystemUi(true);
     await PlaybackDisplayCoordinator.instance.settle();
     if (Platform.isIOS) {
@@ -674,7 +820,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         if (!fullScreenState.value ||
             smallWindowState.value ||
             isPlayerClosing) {
-          Log.d('SystemUi: restoreFullScreenSystemUi abort at ${ms}ms fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
+          Log.d(
+              'SystemUi: restoreFullScreenSystemUi abort at ${ms}ms fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
           return;
         }
         Log.d('SystemUi: reapply hidden at ${ms}ms');
@@ -749,15 +896,32 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       await resetPreferredOrientation();
       await Future.delayed(const Duration(milliseconds: 32));
     } else {
-      await windowManager.setFullScreen(false);
-      await _waitForWindowsFullScreenState(false);
-      await _restoreWindowsWindowChrome();
-      await _refreshWindowsWindowBounds();
-      if (_windowMaximizedBeforeFullScreen) {
-        await windowManager.maximize();
-        await _waitForWindowMaximizedState(true);
-      }
-      _windowMaximizedBeforeFullScreen = false;
+      await _serializeDesktopWindowModeTransition(() async {
+        if (!fullScreenState.value || smallWindowState.value) {
+          return;
+        }
+        Log.d('Desktop fullscreen: exit start');
+        try {
+          await windowManager
+              .setFullScreen(false)
+              .timeout(const Duration(seconds: 2));
+          await _waitForWindowsFullScreenState(false);
+          await _restoreWindowsWindowChrome();
+          await _refreshWindowsWindowBounds();
+          if (_windowMaximizedBeforeFullScreen) {
+            await windowManager.maximize();
+            await _waitForWindowMaximizedState(true);
+          }
+          Log.d('Desktop fullscreen: exit complete');
+        } catch (e, stackTrace) {
+          Log.e('Desktop fullscreen: exit failed: $e', stackTrace);
+        } finally {
+          _windowMaximizedBeforeFullScreen = false;
+          fullScreenState.value = false;
+        }
+      });
+      onPlayerWindowModeExited();
+      return;
     }
     fullScreenState.value = false;
     onPlayerWindowModeExited();
@@ -796,8 +960,25 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   Size? _lastWindowSize;
   Offset? _lastWindowPosition;
+  Future<void>? _desktopWindowModeTransition;
   bool _windowMaximizedBeforeFullScreen = false;
   bool _windowMaximizedBeforeSmallWindow = false;
+
+  Future<void> _serializeDesktopWindowModeTransition(
+    Future<void> Function() operation,
+  ) async {
+    while (_desktopWindowModeTransition != null) {
+      await _desktopWindowModeTransition;
+    }
+    final completer = Completer<void>();
+    _desktopWindowModeTransition = completer.future;
+    try {
+      await operation();
+    } finally {
+      _desktopWindowModeTransition = null;
+      completer.complete();
+    }
+  }
 
   Future<void> _waitForWindowMaximizedState(bool value) async {
     if (!Platform.isWindows) {
@@ -871,7 +1052,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
 
     try {
-      await _windowsChromeChannel.invokeMethod<void>('apply');
+      await _windowsChromeChannel
+          .invokeMethod<void>('apply')
+          .timeout(const Duration(seconds: 2));
     } catch (e) {
       Log.logPrint(e);
     }
@@ -884,7 +1067,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
 
     try {
-      await _windowsChromeChannel.invokeMethod<void>('restore');
+      await _windowsChromeChannel
+          .invokeMethod<void>('restore')
+          .timeout(const Duration(seconds: 2));
     } catch (e) {
       Log.logPrint(e);
     }
@@ -1413,7 +1598,8 @@ mixin PlayerGestureControlMixin
     on PlayerStateMixin, PlayerMixin, PlayerSystemMixin {
   /// 单击显示/隐藏控制器
   void onTap() {
-    Log.d('PlayerGesture: onTap showControls=${showControlsState.value} lock=${lockControlsState.value} fullScreen=${fullScreenState.value}');
+    Log.d(
+        'PlayerGesture: onTap showControls=${showControlsState.value} lock=${lockControlsState.value} fullScreen=${fullScreenState.value}');
     if (lockControlsState.value && fullScreenState.value) {
       return;
     }
@@ -1921,6 +2107,7 @@ class PlayerController extends BaseController
         Log.i("正在重启解码器...");
         await player.pause();
         await Future.delayed(const Duration(milliseconds: 200));
+        await resetLiveLatencyChase();
         await player.open(currentMedia);
       }
     } catch (e, stackTrace) {
@@ -2217,6 +2404,7 @@ class PlayerController extends BaseController
       return;
     }
     await stopBackgroundPlaybackService();
+    await stopLiveLatencyChase();
     await player.stop();
     if (smallWindowState.value) {
       await exitSmallWindow();

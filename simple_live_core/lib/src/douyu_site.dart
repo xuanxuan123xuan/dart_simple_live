@@ -19,6 +19,18 @@ import 'package:simple_live_core/src/model/live_category_result.dart';
 import 'package:html_unescape/html_unescape.dart';
 import 'package:simple_live_core/src/scripts/douyu_sign.dart';
 
+class _DouyuPlayUrlAttempt {
+  const _DouyuPlayUrlAttempt.success(this.url)
+      : error = null,
+        stackTrace = null;
+
+  const _DouyuPlayUrlAttempt.failure(this.error, this.stackTrace) : url = '';
+
+  final String url;
+  final Object? error;
+  final StackTrace? stackTrace;
+}
+
 class DouyuSite implements LiveSite {
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
@@ -26,6 +38,7 @@ class DouyuSite implements LiveSite {
         ? LiveStatusState.live
         : LiveStatusState.offline;
   }
+
   @override
   String id = "douyu";
 
@@ -145,11 +158,29 @@ class DouyuSite implements LiveSite {
     var args = detail.data.toString();
     var data = quality.data as DouyuPlayData;
 
-    List<String> urls = [];
-    for (var item in data.cdns) {
-      var url = await getPlayUrl(detail.roomId, args, data.rate, item);
-      if (url.isNotEmpty) {
-        urls.add(url);
+    // CDN 签名请求之间没有依赖。Future.wait 保留输入顺序，单条失败不应
+    // 让其余可用线路也丢失。
+    final attempts = await Future.wait(
+      data.cdns.map((cdn) async {
+        try {
+          final url = await getPlayUrl(detail.roomId, args, data.rate, cdn);
+          return _DouyuPlayUrlAttempt.success(url);
+        } catch (error, stackTrace) {
+          return _DouyuPlayUrlAttempt.failure(error, stackTrace);
+        }
+      }),
+    );
+    final urls = attempts
+        .map((attempt) => attempt.url)
+        .where((url) => url.isNotEmpty)
+        .toList();
+    if (urls.isEmpty) {
+      for (final attempt in attempts) {
+        final error = attempt.error;
+        final stackTrace = attempt.stackTrace;
+        if (error != null && stackTrace != null) {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
       }
     }
     return LivePlayUrl(urls: urls);

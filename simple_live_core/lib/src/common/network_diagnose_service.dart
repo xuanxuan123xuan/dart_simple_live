@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'live_stream_protocol.dart';
+
 /// 单个目标主机的诊断结果。
 class NetworkDiagnosisResult {
   final String host;
@@ -87,11 +89,11 @@ class NetworkDiagnoseService {
     );
   }
 
-  /// 从一组播放线路 URL 中选出 TCP 延迟最低的线路索引。
+  /// 从最低延迟协议档的一组播放线路 URL 中选出 TCP 延迟最低的线路索引。
   ///
-  /// [urls] 为直播流地址；取各自 host 测延迟。全部失败返回 0。
-  /// 测速有总时间预算（[totalBudget]），超时直接返回 0（默认第一条线路），
-  /// 不会阻塞播放启动太久。
+  /// [urls] 为直播流地址；先根据协议延迟档筛选，再取各自 host 测延迟。
+  /// 档内全部失败时返回该档第一条，避免较高延迟协议因 TCP 探测失败被选中。
+  /// 测速有总时间预算（[totalBudget]），超时返回最低延迟协议档的默认线路。
   static Future<int> findFastestLine(
     List<String> urls, {
     int samples = 1,
@@ -101,39 +103,48 @@ class NetworkDiagnoseService {
     if (urls.length <= 1) {
       return 0;
     }
-    final hosts = <String>[];
-    final indexByHost = <String, int>{};
-    final portByHost = <String, int>{};
-    for (var i = 0; i < urls.length; i += 1) {
+
+    final candidateIndices = lowestLatencyLineIndices(urls);
+    if (candidateIndices.length <= 1) {
+      return candidateIndices.isEmpty ? 0 : candidateIndices.first;
+    }
+
+    final endpoints = <(String, int)>[];
+    final indexByEndpoint = <(String, int), int>{};
+    for (final i in candidateIndices) {
       final uri = Uri.tryParse(urls[i]);
-      final host = uri?.host ?? "";
+      final host = uri?.host.toLowerCase() ?? "";
       if (host.isEmpty) continue;
-      if (!indexByHost.containsKey(host)) {
-        indexByHost[host] = i;
-        hosts.add(host);
-        // 按线路实际 scheme/port 测速（http=80 / https=443 / 显式端口）；
-        // 无法解析（如 rtmp）时回退 443，与旧行为一致。
-        portByHost[host] = uri!.port > 0 ? uri.port : 443;
+      // URI provides defaults for HTTP(S). RTMP has no Dart URI default.
+      final port = uri!.port > 0
+          ? uri.port
+          : uri.scheme.toLowerCase() == 'rtmp'
+              ? 1935
+              : 443;
+      final endpoint = (host, port);
+      if (!indexByEndpoint.containsKey(endpoint)) {
+        indexByEndpoint[endpoint] = i;
+        endpoints.add(endpoint);
       }
     }
-    if (hosts.length <= 1) {
-      return 0;
+    if (endpoints.length <= 1) {
+      return candidateIndices.first;
     }
     List<NetworkDiagnosisResult> results;
     try {
       results = await Future.wait(
-        hosts.map(
-          (host) => diagnoseHost(
-            host,
+        endpoints.map(
+          (endpoint) => diagnoseHost(
+            endpoint.$1,
             samples: samples,
             timeout: timeout,
-            port: portByHost[host]!,
+            port: endpoint.$2,
           ),
         ),
       ).timeout(totalBudget);
     } on TimeoutException {
-      // 总测速超时：不阻塞播放，走默认第一条线路。
-      return 0;
+      // 总测速超时：走最低延迟协议档的默认线路。
+      return candidateIndices.first;
     }
     var bestIndex = 0;
     var bestLatency = double.infinity;
@@ -148,9 +159,9 @@ class NetworkDiagnoseService {
       }
     }
     if (bestLatency == double.infinity) {
-      return 0;
+      return candidateIndices.first;
     }
-    return indexByHost[hosts[bestIndex]] ?? 0;
+    return indexByEndpoint[endpoints[bestIndex]] ?? candidateIndices.first;
   }
 
   /// 汇总判断：网络是否健康。

@@ -35,6 +35,8 @@ const OPERATE_ERROR: number = 801;
 const AVPLAYER_STATE_ERROR: number = 5400102;
 const AVPLAYER_IO_ERROR: number = 5400103;
 const MAX_ERROR_COUNT: number = 3;
+// API 12 accepts seconds here; one second is the conservative live target.
+const LIVE_PREFERRED_BUFFER_DURATION_SECONDS: number = 1;
 
 const TAG = 'VideoPlayer'
 export class VideoPlayer {
@@ -90,21 +92,26 @@ export class VideoPlayer {
 
       await this.bindState();
 
-      /// 同时使用avPlayer.url和avPlayer.setMediaSource会导致直播视频无法正确播放
-      if (!this.headers) {
-        if (this.url) {
-          this.avPlayer.url = this.getIUri();
-        } else {
-          this.avPlayer.fdSrc = this.rawFile!;
-        }
+      /// URL sources must always use setMediaSource so the live strategy is
+      /// applied whether Flutter supplied HTTP headers or not.
+      if (this.url) {
+        await this.setNetworkMediaSource();
       } else {
-        let mediaSource: media.MediaSource = media.createMediaSourceWithUrl(this.url, this.headers);
-        /// 网络直播视频必须设置之后才能正常缓存
-        let playbackStrategy: media.PlaybackStrategy = {};
-        // 设置媒体来源和播放策略
-        await this.avPlayer.setMediaSource(mediaSource, playbackStrategy);
+        this.avPlayer.fdSrc = this.rawFile!;
       }
     }
+  }
+
+  private async setNetworkMediaSource(): Promise<void> {
+    if (this.avPlayer == null || this.url == null) {
+      return;
+    }
+    let mediaSource: media.MediaSource = media.createMediaSourceWithUrl(
+      this.getIUri(), this.headers ?? {});
+    let playbackStrategy: media.PlaybackStrategy = {
+      preferredBufferDuration: LIVE_PREFERRED_BUFFER_DURATION_SECONDS,
+    };
+    await this.avPlayer.setMediaSource(mediaSource, playbackStrategy);
   }
 
   /**
@@ -128,7 +135,7 @@ export class VideoPlayer {
         case AvplayerStatus.IDLE:
           this.resetProgress();
           if (this.url) {
-            this.avPlayer.url = this.getIUri();
+            await this.setNetworkMediaSource();
           } else {
             this.avPlayer.fdSrc = this.rawFile!;
           }

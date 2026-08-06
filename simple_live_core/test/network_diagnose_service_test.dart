@@ -104,6 +104,18 @@ void main() {
       );
     });
 
+    test('先选择最低延迟协议档，再比较 TCP RTT', () async {
+      // 即使 HLS 排在列表最前且与 FLV 共用同一 host，低延迟档的 FLV
+      // 也必须被选中；这同时覆盖了跨协议档不再按 host 折叠的约束。
+      expect(
+        await NetworkDiagnoseService.findFastestLine([
+          'https://cdn.example.com/live.m3u8',
+          'https://cdn.example.com/live.flv',
+        ]),
+        1,
+      );
+    });
+
     // 注：不在本地模拟"两个都可达时的延迟差"——loopback 的 TCP 握手
     // RTT 由内核决定（微秒级），server 端 sleep 无法延迟 connect 完成时间，
     // 因此该分支无法稳定构造。选快逻辑 = lost 过滤（下两测）+ avg 最小
@@ -158,10 +170,26 @@ void main() {
       }
     });
 
+    test('同 host 不同 port 作为独立端点测速', () async {
+      final dead = await _deadPort();
+      final reachable = await _startServer();
+      try {
+        final idx = await NetworkDiagnoseService.findFastestLine(
+          [
+            'http://127.0.0.1:$dead/a.flv',
+            'http://127.0.0.1:${reachable.port}/b.flv',
+          ],
+          samples: 1,
+        );
+        expect(idx, 1);
+      } finally {
+        await reachable.close();
+      }
+    });
+
     test('总测速超时返回 0，不阻塞播放启动', () async {
       // 挂起不响应的 server（accept 后不 close），配合小总预算触发超时。
-      final hanging =
-          await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final hanging = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       hanging.listen((_) {});
       final dead = await _deadPort();
       try {

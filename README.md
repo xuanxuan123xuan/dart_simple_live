@@ -4,7 +4,7 @@
 <h2 align="center">Simple Live — dev 开发版</h2>
 
 <p align="center">
-简简单单的看直播 · <code>v1.14.0</code> · 分支 <code>dev</code>
+简简单单的看直播 · <code>v1.13.2</code> · 分支 <code>dev</code>
 </p>
 
 ![浅色模式](/assets/screenshot_light.jpg)
@@ -15,7 +15,7 @@
 
 ## ⚠️ 开发版说明
 
-本分支是 **dev 开发版**（Flutter 3.41 升级线），用于验证新功能与修复，**可能存在不稳定或未完成的功能**，适合尝鲜测试，日常使用请用 [stable 稳定版](https://github.com/xuanxuan123xuan/dart_simple_live/tree/stable)。
+本分支是 **dev 开发版**，用于验证新功能与修复，**可能存在不稳定或未完成的功能**，适合尝鲜测试，日常使用请用 [stable 稳定版](https://github.com/xuanxuan123xuan/dart_simple_live/tree/stable)。`stable` 已完成 Flutter 3.41 验证并同步升级。
 
 ## 📦 IPA 源（AltStore / LiveContainer）
 
@@ -34,21 +34,22 @@
 
 ## 这个分支是什么
 
-本仓库 fork 自 [June6699/dart_simple_live](https://github.com/June6699/dart_simple_live)。`dev` 是**开发分支**：把 [stable 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/stable) 的 Flutter 从 3.22 升级到 **3.41**，并验证新功能与修复，稳定后合入 stable。
+本仓库 fork 自 [June6699/dart_simple_live](https://github.com/June6699/dart_simple_live)。`dev` 是**开发分支**，用于先行验证新功能与修复，稳定后合入 [stable 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/stable)。Flutter 3.41 升级已经过 dev 验证并同步到 stable。
 
 **本分支与 stable 的差异**：
 
 | 项 | stable | dev（本分支） |
 |---|---|---|
-| Flutter | 3.22.x（鸿蒙适配钉死） | **3.41.x**（含 Scene Lifecycle / iOS 26 适配） |
-| Dart | 3.4.x | **3.11.x** |
-| intl | 0.19.0 | **0.20.2** |
-| 版本号 | 1.13.x | **1.14.0**（独立版本线，避免 release tag 冲突） |
+| Flutter | **3.41.x** | **3.41.x** |
+| Dart | **3.11.x** | **3.11.x** |
+| intl | **0.20.2** | **0.20.2** |
+| 版本号 | 1.13.x | **1.13.2** |
 | 定位 | 稳定版 | 测试版（新功能验证） |
 
 **dev 分支正在验证的内容**：
 - **iOS 26 状态栏隐藏**：3.41 引擎的 scene-based 状态栏管理（签名版 SystemChrome 生效；LiveContainer 容器环境受限）
 - **弹窗防穿透**：所有弹窗（右侧/底部/居中/菜单）加遮罩防穿透窗口，修复"打开即关闭"
+- **直播延迟优化**：协议感知缓存档位、mpv 追帧、自动选线、线路记忆迁移和播放遥测已接入，正在进行长时与弱网验收
 - **依赖解锁**：volume_controller / screen_brightness 可升级到新版（3.41 才有 Scene Lifecycle API）
 
 ---
@@ -91,7 +92,7 @@
 
 | 功能 | 说明 | 状态 | 设计文档 |
 |---|---|---|---|
-| 直播延迟优化 | 相比各平台官方 App 延迟高 5–10s，涉及选流协议、线路选择、播放器缓冲三处 | 待做 | [直播延迟优化设计](docs/直播延迟优化设计.md) |
+| 直播延迟优化 | 协议感知缓存、mpv 追帧、自动选线、线路记忆和播放遥测 | 已实施，待长时/弱网验收 | [直播延迟优化设计](docs/直播延迟优化设计.md) |
 | 弹幕热词统计 | 进房实时统计弹幕高频词，看节奏/吃瓜；点击热词可一键加屏蔽词 | 待做 | [弹幕热词统计设计](docs/弹幕热词统计设计.md) |
 | 观看统计 | 本地静默统计观看时长/平台分布/常看主播（hive 存储，不打扰使用） | 待做 | [观看统计设计](docs/观看统计设计.md) |
 | 音量记忆保持 | 切房间/切平台后音量应保持，不依赖系统音量；`resetRoom` 原地换房未重新施加音量（鸿蒙最可能暴露） | 待做（可随鸿蒙播放器改动搭车） | [音量统一设计](docs/音量统一设计.md)（A 部分） |
@@ -121,7 +122,7 @@
 
 | 构建目标 | Flutter 版本 | 说明 |
 |---|---|---|
-| **本分支所有目标** | **3.41.x** | dev，升级线 |
+| **本分支所有目标** | **3.41.x** | dev / stable 共用工具链 |
 | 鸿蒙 HAP | oh-3.41.9-release（[GitHub 镜像](https://github.com/xuanxuan123xuan/flutter_flutter_ohos)） | runner 预装 |
 
 ### 鸿蒙 HAP 构建
@@ -157,7 +158,7 @@ $FLUTTER_OHOS_ROOT/bin/flutter.bat build hap --release \
 
 ### 版本号维护
 
-应用版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。当前版本为 `1.14.0+11400`（dev 独立版本线），构建号规则为：
+应用版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。当前版本为 `1.13.2+11302`，构建号规则为：
 
 ```text
 major × 10000 + minor × 100 + patch

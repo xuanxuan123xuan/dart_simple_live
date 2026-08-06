@@ -36,7 +36,8 @@ class LocalStorageService extends GetxService {
   static const String kMultiRoomLowMemoryDegrade = "MultiRoomLowMemoryDegrade";
   static const String kMultiRoomSingleAudio = "MultiRoomSingleAudio";
   static const String kMultiRoomAdaptiveQuality = "MultiRoomAdaptiveQuality";
-  static const String kFullScreenForceLandscape = "FullScreenForceLandscape";  static const String kAutoSelectFastestLine = "AutoSelectFastestLine";
+  static const String kFullScreenForceLandscape = "FullScreenForceLandscape";
+  static const String kAutoSelectFastestLine = "AutoSelectFastestLine";
   static const String kRoomQualityMemory = "RoomQualityMemory";
   static const String kMultiRoomLayout = "MultiRoomLayout";
   static const String kThemeMode = "ThemeMode";
@@ -114,6 +115,7 @@ class LocalStorageService extends GetxService {
   static const String kVideoHardwareDecoder = "VideoHardwareDecoder";
   static const String kAudioOutputDriver = "AudioOutputDriver";
   static const String kMpvProfile = "MpvProfile";
+  static const String kMpvLiveLatencyMode = "MpvLiveLatencyMode";
   static const String kMpvAdvancedOptions = "MpvAdvancedOptions";
   static const String kImportedMpvConfPath = "ImportedMpvConfPath";
   static const String kAutoUpdateFollowEnable = "AutoUpdateFollowEnable";

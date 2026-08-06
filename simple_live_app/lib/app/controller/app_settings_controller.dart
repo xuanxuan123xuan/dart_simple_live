@@ -266,6 +266,8 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kCustomPlayerOutput, false);
     mpvProfile.value = LocalStorageService.instance
         .getValue(LocalStorageService.kMpvProfile, "balanced");
+    mpvLiveLatencyMode.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kMpvLiveLatencyMode, "auto");
     mpvAdvancedOptions.value = LocalStorageService.instance
         .getValue(LocalStorageService.kMpvAdvancedOptions, "");
     importedMpvConfPath.value = LocalStorageService.instance
@@ -2511,6 +2513,13 @@ class AppSettingsController extends GetxController {
   void setMpvProfile(String e) {
     mpvProfile.value = e;
     LocalStorageService.instance.setValue(LocalStorageService.kMpvProfile, e);
+  }
+
+  var mpvLiveLatencyMode = "auto".obs;
+  void setMpvLiveLatencyMode(String e) {
+    mpvLiveLatencyMode.value = e;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kMpvLiveLatencyMode, e);
   }
 
   var mpvAdvancedOptions = "".obs;

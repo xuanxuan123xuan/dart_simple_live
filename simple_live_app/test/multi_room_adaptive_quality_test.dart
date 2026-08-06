@@ -41,15 +41,43 @@ void main() {
   test('parses finite native telemetry properties', () {
     final parsed = parseMpvTelemetryProperties({
       mpvCacheSpeedProperty: ' 1250000.5 ',
+      mpvDemuxerCacheDurationProperty: ' 12.5 ',
       mpvVideoWidthProperty: '1920',
       mpvVideoHeightProperty: '1080',
       mpvEstimatedFpsProperty: '29.97003',
     });
 
     expect(parsed.bandwidthBytesPerSecond, 1250000.5);
+    expect(parsed.demuxerCacheDurationSeconds, 12.5);
     expect(parsed.width, 1920);
     expect(parsed.height, 1080);
     expect(parsed.framesPerSecond, 29.97003);
+  });
+
+  test('keeps unavailable demuxer cache duration unknown', () {
+    expect(mpvDemuxerCacheDurationProperty, 'demuxer-cache-duration');
+    for (final raw in <String?>[
+      'unsupported',
+      'N/A',
+      null,
+      '-0.001',
+      'NaN',
+      'Infinity',
+    ]) {
+      final parsed = parseMpvTelemetryProperties({
+        mpvDemuxerCacheDurationProperty: raw,
+      });
+      expect(
+        parsed.demuxerCacheDurationSeconds,
+        isNull,
+        reason: 'Expected null for $raw',
+      );
+    }
+
+    final zero = parseMpvTelemetryProperties({
+      mpvDemuxerCacheDurationProperty: '0',
+    });
+    expect(zero.demuxerCacheDurationSeconds, 0);
   });
 
   test('keeps unavailable or malformed native properties unknown', () {

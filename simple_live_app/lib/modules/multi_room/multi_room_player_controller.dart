@@ -12,6 +12,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_adaptive_quality.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/player_mutation_queue.dart';
+import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -195,12 +196,47 @@ class MultiRoomPlayerController extends GetxController {
   Duration _bufferingDuration = Duration.zero;
   DateTime? _bufferingSince;
   DateTime? _lastOpenedAt;
+  late final MpvLiveLatencyChaseService _liveLatencyChaser =
+      MpvLiveLatencyChaseService(
+    writeSpeed: _writeLiveLatencyChaseSpeed,
+    readSpeed: _readLiveLatencyChaseSpeed,
+    onWriteError: (error) => Log.d(
+      'multi-room live latency chase speed skipped: '
+      '${item.site.id}/${item.roomId} $error',
+    ),
+  );
   int? _userQualityIndex;
   int? _memoryPressureQualityIndex;
 
   /// 上次会话的画质/线路索引（布局恢复用，load 后应用）。
   int? _restoreQualityIndex;
   int? _restoreLineIndex;
+
+  Future<void> _writeLiveLatencyChaseSpeed(double speed) async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) {
+      return;
+    }
+    final dynamic native = platform;
+    await native.setProperty('speed', speed.toStringAsFixed(3));
+  }
+
+  Future<double?> _readLiveLatencyChaseSpeed() async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) {
+      return null;
+    }
+    try {
+      final dynamic native = platform;
+      final dynamic value = await native.getProperty('speed');
+      final speed = value is num
+          ? value.toDouble()
+          : double.tryParse(value?.toString() ?? '');
+      return speed != null && speed.isFinite && speed > 0 ? speed : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// 当前格子的可选清晰度列表。
   List<LivePlayQuality> get qualities => _qualities;
@@ -281,6 +317,7 @@ class MultiRoomPlayerController extends GetxController {
       _isBuffering = true;
       _bufferingCount += 1;
       _bufferingSince = now;
+      unawaited(_liveLatencyChaser.protect(sampledAt: now));
     } else if (!value && _isBuffering) {
       _finishBuffering(now);
     }
@@ -298,6 +335,7 @@ class MultiRoomPlayerController extends GetxController {
   MultiRoomPlaybackTelemetry telemetrySnapshot({
     DateTime? sampledAt,
     double? bandwidthBytesPerSecond,
+    double? demuxerCacheDurationSeconds,
     int? width,
     int? height,
     double? framesPerSecond,
@@ -322,6 +360,7 @@ class MultiRoomPlayerController extends GetxController {
       // Keep this null when the backend cannot expose libmpv's raw-input-rate;
       // unknown bandwidth must not be interpreted as zero.
       bandwidthBytesPerSecond: bandwidthBytesPerSecond,
+      demuxerCacheDurationSeconds: demuxerCacheDurationSeconds,
       width: width,
       height: height,
       framesPerSecond: framesPerSecond,
@@ -355,6 +394,7 @@ class MultiRoomPlayerController extends GetxController {
     final raw = <String, String?>{};
     for (final property in const [
       mpvCacheSpeedProperty,
+      mpvDemuxerCacheDurationProperty,
       mpvVideoWidthProperty,
       mpvVideoHeightProperty,
       mpvEstimatedFpsProperty,
@@ -362,9 +402,18 @@ class MultiRoomPlayerController extends GetxController {
       raw[property] = await _readNativeProperty(platform, property);
     }
     final native = parseMpvTelemetryProperties(raw);
+    await _liveLatencyChaser.observe(
+      cacheDurationSeconds: native.demuxerCacheDurationSeconds,
+      isBuffering: _isBuffering ||
+          paused.value ||
+          !liveStatus.value ||
+          !player.state.playing,
+      sampledAt: now,
+    );
     return telemetrySnapshot(
       sampledAt: now,
       bandwidthBytesPerSecond: native.bandwidthBytesPerSecond,
+      demuxerCacheDurationSeconds: native.demuxerCacheDurationSeconds,
       width: native.width,
       height: native.height,
       framesPerSecond: native.framesPerSecond,
@@ -452,6 +501,7 @@ class MultiRoomPlayerController extends GetxController {
       _restoreLineIndex = _lineIndex;
     }
     try {
+      await _liveLatencyChaser.stop();
       await player.stop();
       if (_disposed) return;
       // 重新加载前断开旧连接，避免刷新后同一格挂着两条长连接。
@@ -522,18 +572,27 @@ class MultiRoomPlayerController extends GetxController {
     if (playUrl.urls.isEmpty) {
       throw Exception("无法读取播放地址");
     }
-    _playUrls = playUrl.urls;
+    _playUrls = sortLiveStreamUrlsByLatency(playUrl.urls);
     _playHeaders = playUrl.headers;
-    // 优先恢复上次会话的线路；否则自动测速选最快的。
     final restore = _restoreLineIndex;
     _restoreLineIndex = null;
-    if (restore != null && restore >= 0 && restore < _playUrls.length) {
+    final bestLineIndices = lowestLatencyLineIndices(_playUrls);
+    final autoSelect =
+        AppSettingsController.instance.autoSelectFastestLine.value;
+    _lineIndex = bestLineIndices.first;
+    if (!autoSelect &&
+        restore != null &&
+        restore >= 0 &&
+        restore < _playUrls.length &&
+        bestLineIndices.contains(restore)) {
       _lineIndex = restore;
-    } else if (AppSettingsController.instance.autoSelectFastestLine.value &&
-        _playUrls.length > 1) {
-      _lineIndex = await NetworkDiagnoseService.findFastestLine(_playUrls);
-    } else {
-      _lineIndex = 0;
+    } else if (autoSelect && bestLineIndices.length > 1) {
+      final candidates = [
+        for (final index in bestLineIndices) _playUrls[index],
+      ];
+      final fastest = await NetworkDiagnoseService.findFastestLine(candidates);
+      final candidateIndex = fastest.clamp(0, candidates.length - 1).toInt();
+      _lineIndex = bestLineIndices[candidateIndex];
     }
     lineInfo.value = "线路${_lineIndex + 1}";
   }
@@ -544,6 +603,12 @@ class MultiRoomPlayerController extends GetxController {
     if (AppSettingsController.instance.playerForceHttps.value) {
       url = url.replaceAll("http://", "https://");
     }
+    final protocol = classifyLiveStreamProtocol(url);
+    await MpvOptionsService.applyLiveLatencyOptions(player, protocol);
+    await _liveLatencyChaser.start(
+      latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
+      protocol: protocol,
+    );
     _playbackDesired = true;
     _lastOpenedAt = DateTime.now();
     await player.open(
@@ -972,6 +1037,7 @@ class MultiRoomPlayerController extends GetxController {
       if (_isBuffering) _finishBuffering(DateTime.now());
       try {
         await _stopDanmaku();
+        await _liveLatencyChaser.stop();
         await player.stop();
         await player.dispose();
         _playerDisposed = true;
@@ -1003,6 +1069,7 @@ class MultiRoomPlayerController extends GetxController {
     danmakuController = null;
     // 等当前串行的 open/load 收尾后再释放 Player，避免异步回调操作已释放实例。
     unawaited(_operationChain.whenComplete(() async {
+      await _liveLatencyChaser.stop();
       if (!_playerDisposed) {
         await player.stop();
         await player.dispose();
