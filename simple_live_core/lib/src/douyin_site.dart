@@ -14,6 +14,7 @@ class DouyinSite implements LiveSite {
         ? LiveStatusState.live
         : LiveStatusState.offline;
   }
+
   @override
   String id = "douyin";
 
@@ -53,6 +54,12 @@ class DouyinSite implements LiveSite {
     _logDebug("$label 耗时 ${stopwatch.elapsedMilliseconds}ms");
   }
 
+  void _throwIfCancelled(CoreCancellation? cancellation) {
+    if (cancellation?.isCancelled ?? false) {
+      throw CoreCancelledError();
+    }
+  }
+
   Map<String, dynamic> headers = {
     "Authority": kDefaultAuthority,
     "Referer": kDefaultReferer,
@@ -71,6 +78,9 @@ class DouyinSite implements LiveSite {
       headers["cookie"] = kDefaultCookie;
       return headers;
     } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
       CoreLog.error(e);
       if (!(headers["cookie"]?.toString().isNotEmpty ?? false)) {
         headers["cookie"] = kDefaultCookie;
@@ -79,14 +89,21 @@ class DouyinSite implements LiveSite {
     }
   }
 
-  Future<String> _getDanmakuCookie(String webRid) async {
+  Future<String> _getDanmakuCookie(
+    String webRid, {
+    CoreCancellation? cancellation,
+  }) async {
+    _throwIfCancelled(cancellation);
     final stopwatch = Stopwatch()..start();
     final requestHeaders = await getRequestHeaders();
+    _throwIfCancelled(cancellation);
     final baseCookie = requestHeaders["cookie"]?.toString() ?? "";
     try {
       final webCookie = await _getWebCookie(
         webRid,
+        cancellation: cancellation,
       ).timeout(const Duration(seconds: 5));
+      _throwIfCancelled(cancellation);
       final merged = _mergeCookieValues(
         baseCookie,
         webCookie,
@@ -95,6 +112,9 @@ class DouyinSite implements LiveSite {
       _logElapsed("_getDanmakuCookie($webRid)", stopwatch);
       return merged;
     } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
       CoreLog.error(e);
       _logElapsed("_getDanmakuCookie($webRid) fallback", stopwatch);
       return baseCookie;
@@ -154,8 +174,7 @@ class DouyinSite implements LiveSite {
           id: '${subItem["partition"]["id_str"]},${subItem["partition"]["type"]}',
           name: asT<String?>(subItem["partition"]["title"]) ?? "",
           parentId: id,
-          pic:
-              _pickPartitionImageUrl(subItem["partition"]) ??
+          pic: _pickPartitionImageUrl(subItem["partition"]) ??
               _pickPartitionImageUrl(item["partition"]) ??
               _partitionImageFallback(
                 '${subItem["partition"]["id_str"]}',
@@ -176,8 +195,7 @@ class DouyinSite implements LiveSite {
           id: category.id,
           name: category.name,
           parentId: category.id,
-          pic:
-              _pickPartitionImageUrl(item["partition"]) ??
+          pic: _pickPartitionImageUrl(item["partition"]) ??
               _partitionImageFallback('${item["partition"]["id_str"]}'),
         ),
       );
@@ -280,20 +298,18 @@ class DouyinSite implements LiveSite {
     final room = roomData is Map ? roomData : <String, dynamic>{};
     final partitionRoadMap =
         room["partition_road_map"] ?? room["partitionRoadMap"];
-    final partition =
-        room["partition"] ??
+    final partition = room["partition"] ??
         room["room_partition"] ??
         room["partitionInfo"] ??
         (partitionRoadMap is List && partitionRoadMap.isNotEmpty
             ? partitionRoadMap.last
             : null);
-    final parentPartition =
-        room["parent_partition"] ??
+    final parentPartition = room["parent_partition"] ??
         room["partition_parent"] ??
         (partition is Map
             ? partition["parent_partition"] ??
-                  partition["partition_parent"] ??
-                  partition["parent"]
+                partition["partition_parent"] ??
+                partition["parent"]
             : null) ??
         (partitionRoadMap is List && partitionRoadMap.length > 1
             ? partitionRoadMap.first
@@ -323,8 +339,7 @@ class DouyinSite implements LiveSite {
         "name",
         "partition_title",
       ]),
-      "categoryPic":
-          _pickPartitionImageUrl(partition) ??
+      "categoryPic": _pickPartitionImageUrl(partition) ??
           _pickPartitionImageUrl(parentPartition),
     };
   }
@@ -453,8 +468,7 @@ class DouyinSite implements LiveSite {
         title: item["room"]["title"].toString(),
         cover: item["room"]["cover"]["url_list"][0].toString(),
         userName: item["room"]["owner"]["nickname"].toString(),
-        online:
-            int.tryParse(
+        online: int.tryParse(
               item["room"]["room_view_stats"]["display_value"].toString(),
             ) ??
             0,
@@ -509,8 +523,7 @@ class DouyinSite implements LiveSite {
         title: item["room"]["title"].toString(),
         cover: item["room"]["cover"]["url_list"][0].toString(),
         userName: item["room"]["owner"]["nickname"].toString(),
-        online:
-            int.tryParse(
+        online: int.tryParse(
               item["room"]["room_view_stats"]["display_value"].toString(),
             ) ??
             0,
@@ -618,6 +631,9 @@ class DouyinSite implements LiveSite {
       _logElapsed("getRoomDetailByWebRid($webRid) api", stopwatch);
       return result;
     } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
       CoreLog.error(e);
       if (e is CoreError && e.statusCode == 444) {
         rethrow;
@@ -783,14 +799,22 @@ class DouyinSite implements LiveSite {
       var webInfo = await _getRoomDataByHtml(webRid);
       return resolveUserUniqueIdFromRoomData(webInfo);
     } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
       return generateRandomNumber(12).toString();
     }
   }
 
   /// 进入直播间前需要先获取cookie
   /// - [webRid] 直播间RID
-  Future<String> _getWebCookie(String webRid) async {
+  Future<String> _getWebCookie(
+    String webRid, {
+    CoreCancellation? cancellation,
+  }) async {
+    _throwIfCancelled(cancellation);
     final requestHeaders = Map<String, dynamic>.from(await getRequestHeaders());
+    _throwIfCancelled(cancellation);
     final baseCookie = _getCookieHeaderValue(requestHeaders);
     final cacheKey = "$webRid|${baseCookie.hashCode}";
     final cachedAt = _webCookieCacheAt[cacheKey];
@@ -808,8 +832,12 @@ class DouyinSite implements LiveSite {
       headResp = await HttpClient.instance.head(
         "https://live.douyin.com/$webRid",
         header: requestHeaders,
+        cancellation: cancellation,
       );
     } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
       if (baseCookie.isNotEmpty) {
         _logDebug("获取直播间 Web Cookie 的 HEAD 请求失败，使用已保存 Cookie 继续：$e");
         _webCookieCache[cacheKey] = baseCookie;
@@ -819,8 +847,9 @@ class DouyinSite implements LiveSite {
       }
       rethrow;
     }
+    _throwIfCancelled(cancellation);
     if (headResp.statusCode == 444) {
-      throw CoreError("", statusCode: 444);
+      throw CoreError("", statusCode: 444, kind: CoreErrorKind.http);
     }
     var dyCookie = "";
     if (baseCookie.isNotEmpty) {
@@ -846,9 +875,14 @@ class DouyinSite implements LiveSite {
 
   /// 通过webRid获取直播间Web信息
   /// - [webRid] 直播间RID
-  Future<Map> _getRoomDataByHtml(String webRid) async {
+  Future<Map> _getRoomDataByHtml(
+    String webRid, {
+    CoreCancellation? cancellation,
+  }) async {
     final stopwatch = Stopwatch()..start();
-    var dyCookie = await _getWebCookie(webRid);
+    var dyCookie = await _getWebCookie(webRid, cancellation: cancellation);
+    // HEAD has completed; avoid beginning the HTML GET after cancellation.
+    _throwIfCancelled(cancellation);
     final requestStopwatch = Stopwatch()..start();
     var result = await HttpClient.instance.getText(
       "https://live.douyin.com/$webRid",
@@ -859,33 +893,49 @@ class DouyinSite implements LiveSite {
         "Cookie": dyCookie,
         "User-Agent": kDefaultUserAgent,
       },
+      cancellation: cancellation,
     );
+    _throwIfCancelled(cancellation);
     _logElapsed("_getRoomDataByHtml($webRid) request", requestStopwatch);
     final parseStopwatch = Stopwatch()..start();
     if (result.trim().isEmpty) {
-      throw CoreError("抖音直播间页面返回为空，请稍后再试");
+      throw CoreError("抖音直播间页面返回为空，请稍后再试", kind: CoreErrorKind.response);
     }
     if (!result.contains(r'\"state\"')) {
-      throw CoreError("抖音直播间页面数据不可用，可能是访问受限或页面结构已变化");
+      throw CoreError(
+        "抖音直播间页面数据不可用，可能是访问受限或页面结构已变化",
+        kind: CoreErrorKind.response,
+      );
     }
 
-    var renderData =
-        RegExp(
+    var renderData = RegExp(
           r'\{\\"state\\":\{\\"appStore.*?\]\\n',
         ).firstMatch(result)?.group(0) ??
         "";
     if (renderData.isEmpty) {
-      throw CoreError("抖音直播间页面数据解析失败，请稍后再试");
+      throw CoreError("抖音直播间页面数据解析失败，请稍后再试", kind: CoreErrorKind.response);
     }
     var str = renderData
         .trim()
         .replaceAll('\\"', '"')
         .replaceAll(r"\\", r"\")
         .replaceAll(']\\n', "");
-    final renderDataJson = json.decode(str);
+    dynamic renderDataJson;
+    try {
+      renderDataJson = json.decode(str);
+    } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
+      throw CoreError(
+        "抖音直播间页面数据解析失败，请稍后再试",
+        kind: CoreErrorKind.response,
+        cause: e,
+      );
+    }
     final state = renderDataJson["state"];
     if (state is! Map) {
-      throw CoreError("抖音直播间页面状态数据异常");
+      throw CoreError("抖音直播间页面状态数据异常", kind: CoreErrorKind.response);
     }
     _logElapsed("_getRoomDataByHtml($webRid) parse", parseStopwatch);
     _logElapsed("_getRoomDataByHtml($webRid)", stopwatch);
@@ -994,10 +1044,10 @@ class DouyinSite implements LiveSite {
       var streamData = pullData["stream_data"]?.toString() ?? "";
 
       if (!streamData.startsWith('{')) {
-        var flvList = (detail.data["flv_pull_url"] as Map).values
-            .cast<String>()
-            .toList();
-        var hlsList = (detail.data["hls_pull_url_map"] as Map).values
+        var flvList =
+            (detail.data["flv_pull_url"] as Map).values.cast<String>().toList();
+        var hlsList = (detail.data["hls_pull_url_map"] as Map)
+            .values
             .cast<String>()
             .toList();
         for (var quality in qulityList) {
@@ -1026,14 +1076,14 @@ class DouyinSite implements LiveSite {
         for (var quality in qulityList) {
           List<String> urls = [];
 
-          var flvUrl = qualityData[quality["sdk_key"]]?["main"]?["flv"]
-              ?.toString();
+          var flvUrl =
+              qualityData[quality["sdk_key"]]?["main"]?["flv"]?.toString();
 
           if (flvUrl != null && flvUrl.isNotEmpty) {
             urls.add(flvUrl);
           }
-          var hlsUrl = qualityData[quality["sdk_key"]]?["main"]?["hls"]
-              ?.toString();
+          var hlsUrl =
+              qualityData[quality["sdk_key"]]?["main"]?["hls"]?.toString();
 
           if (hlsUrl != null && hlsUrl.isNotEmpty) {
             urls.add(hlsUrl);
@@ -1050,6 +1100,9 @@ class DouyinSite implements LiveSite {
         }
       }
     } catch (e, stackTrace) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
       CoreLog.error(e);
       CoreLog.error(stackTrace);
     }
@@ -1078,7 +1131,9 @@ class DouyinSite implements LiveSite {
   Future<LiveSearchRoomResult> searchRooms(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
+    _throwIfCancelled(cancellation);
     String serverUrl = "https://www.douyin.com/aweme/v1/web/live/search/";
     var uri = Uri.parse(serverUrl).replace(
       scheme: "https",
@@ -1132,14 +1187,21 @@ class DouyinSite implements LiveSite {
       headResp = await HttpClient.instance.head(
         'https://live.douyin.com',
         header: requestHeaders,
+        cancellation: cancellation,
       );
     } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
       if (dyCookie.isEmpty) {
         rethrow;
       }
       _logDebug("抖音搜索预取 Cookie 的 HEAD 请求失败，使用已保存 Cookie 继续：$e");
     }
     if (headResp != null) {
+      if (headResp.statusCode == 444) {
+        throw CoreError("", statusCode: 444, kind: CoreErrorKind.http);
+      }
       headResp.headers["set-cookie"]?.forEach((element) {
         var cookie = element.split(";")[0];
         if (cookie.contains("ttwid")) {
@@ -1150,6 +1212,8 @@ class DouyinSite implements LiveSite {
         }
       });
     }
+    // HEAD has completed; do not begin the search GET after cancellation.
+    _throwIfCancelled(cancellation);
 
     var result = await HttpClient.instance.getJson(
       requlestUrl,
@@ -1171,16 +1235,55 @@ class DouyinSite implements LiveSite {
         'sec-fetch-site': 'same-origin',
         'user-agent': kDefaultUserAgent,
       },
+      cancellation: cancellation,
     );
+    _throwIfCancelled(cancellation);
     if (result == "" || result == 'blocked') {
-      throw Exception("抖音直播搜索被限制，请稍后再试");
+      throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
     }
-    if (result is Map && result["status_code"] == 2483) {
-      throw Exception("抖音搜索需要登录，请在账号管理中通过网页登录或手动配置完整抖音 Cookie");
+    if (result is! Map) {
+      throw _invalidDouyinSearchResponse();
+    }
+    final statusCode = int.tryParse(result["status_code"]?.toString() ?? "");
+    if (statusCode == 2483) {
+      throw CoreError(
+        "抖音搜索需要登录，请在账号管理中通过网页登录或手动配置完整抖音 Cookie",
+        kind: CoreErrorKind.search,
+      );
+    }
+    if (statusCode != null && statusCode != 0) {
+      throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
+    }
+    final data = result["data"];
+    if (data is! List) {
+      throw _invalidDouyinSearchResponse();
     }
     var items = <LiveRoomItem>[];
-    for (var item in result["data"] ?? []) {
-      var itemData = json.decode(item["lives"]["rawdata"].toString());
+    for (final item in data.take(10)) {
+      if (item is! Map || item["lives"] is! Map) {
+        throw _invalidDouyinSearchResponse();
+      }
+      final rawData = item["lives"]["rawdata"];
+      if (rawData is! String || rawData.isEmpty) {
+        throw _invalidDouyinSearchResponse();
+      }
+      dynamic itemData;
+      try {
+        itemData = json.decode(rawData);
+      } catch (e) {
+        if (e is CoreCancelledError) {
+          rethrow;
+        }
+        throw _invalidDouyinSearchResponse(e);
+      }
+      if (itemData is! Map ||
+          itemData["owner"] is! Map ||
+          itemData["cover"] is! Map ||
+          itemData["stats"] is! Map ||
+          itemData["cover"]["url_list"] is! List ||
+          (itemData["cover"]["url_list"] as List).isEmpty) {
+        throw _invalidDouyinSearchResponse();
+      }
       var roomItem = LiveRoomItem(
         roomId: itemData["owner"]["web_rid"].toString(),
         title: itemData["title"].toString(),
@@ -1207,12 +1310,26 @@ class DouyinSite implements LiveSite {
     return "$cookie;";
   }
 
+  CoreError _invalidDouyinSearchResponse([Object? cause]) {
+    return CoreError(
+      "抖音直播搜索响应格式异常",
+      kind: CoreErrorKind.response,
+      cause: cause,
+    );
+  }
+
   @override
   Future<LiveSearchAnchorResult> searchAnchors(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
-    final result = await searchRooms(keyword, page: page);
+    final result = await searchRooms(
+      keyword,
+      page: page,
+      cancellation: cancellation,
+    );
+    _throwIfCancelled(cancellation);
     final lowerKeyword = keyword.trim().toLowerCase();
     final rooms = result.items.toList()
       ..sort((a, b) {
@@ -1224,17 +1341,25 @@ class DouyinSite implements LiveSite {
         return b.online.compareTo(a.online);
       });
     return LiveSearchAnchorResult(
-      hasMore: result.hasMore,
       items: rooms
+          .take(10)
           .map(
             (room) => LiveAnchorItem(
               roomId: room.roomId,
               userName: room.userName,
-              avatar: room.cover,
+              avatar: "",
               liveStatus: true,
             ),
           )
           .toList(),
+      metadata: LiveSearchMetadata(
+        continuation: result.metadata.continuation,
+        origin: SearchOrigin.derived,
+        fieldSources: const <String, SearchFieldSource>{
+          "avatar": SearchFieldSource.unavailable,
+          "liveStatus": SearchFieldSource.derived,
+        },
+      ),
     );
   }
 
@@ -1259,6 +1384,9 @@ class DouyinSite implements LiveSite {
       }
       return resolvedDetail.status;
     } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
       if (e is CoreError && e.statusCode == 444) {
         rethrow;
       }
@@ -1285,6 +1413,9 @@ class DouyinSite implements LiveSite {
       try {
         return await attempts[i]();
       } catch (e) {
+        if (e is CoreCancelledError) {
+          rethrow;
+        }
         if (e is CoreError && e.statusCode == 444) {
           rethrow;
         }
@@ -1410,33 +1541,33 @@ class DouyinSite implements LiveSite {
     final requestHeader = await getRequestHeaders();
     requestHeader["Referer"] = "https://live.douyin.com/$webRid";
 
-    final uri = Uri.parse("https://live.douyin.com/webcast/ranklist/audience/")
-        .replace(
-          queryParameters: {
-            "aid": "6383",
-            "app_name": "douyin_web",
-            "live_id": "1",
-            "device_platform": "web",
-            "language": "zh-CN",
-            "enter_from": "link_share",
-            "cookie_enabled": "true",
-            "screen_width": "1920",
-            "screen_height": "1080",
-            "browser_language": "zh-CN",
-            "browser_platform": "Win32",
-            "browser_name": "Chrome",
-            "browser_version": "125.0.0.0",
-            "os_name": "Windows",
-            "os_version": "10",
-            "webcast_sdk_version": "2450",
-            "room_id": realRoomId,
-            "anchor_id": anchorId,
-            "sec_anchor_id": secAnchorId,
-            "ignoreToast": "true",
-            "rank_type": "30",
-            "msToken": "",
-          },
-        );
+    final uri =
+        Uri.parse("https://live.douyin.com/webcast/ranklist/audience/").replace(
+      queryParameters: {
+        "aid": "6383",
+        "app_name": "douyin_web",
+        "live_id": "1",
+        "device_platform": "web",
+        "language": "zh-CN",
+        "enter_from": "link_share",
+        "cookie_enabled": "true",
+        "screen_width": "1920",
+        "screen_height": "1080",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Chrome",
+        "browser_version": "125.0.0.0",
+        "os_name": "Windows",
+        "os_version": "10",
+        "webcast_sdk_version": "2450",
+        "room_id": realRoomId,
+        "anchor_id": anchorId,
+        "sec_anchor_id": secAnchorId,
+        "ignoreToast": "true",
+        "rank_type": "30",
+        "msToken": "",
+      },
+    );
     final requestUrl = DouyinSign.getAbogusUrl(
       uri.toString(),
       kDefaultUserAgent,
@@ -1478,9 +1609,8 @@ class DouyinSite implements LiveSite {
             scoreText: scoreText,
             scoreDetail: scoreDetail,
             userLevel: userLevel,
-            userLevelText: userLevel == null || userLevel <= 0
-                ? null
-                : "财富 $userLevel",
+            userLevelText:
+                userLevel == null || userLevel <= 0 ? null : "财富 $userLevel",
             userLevelIcon: _firstImageUrl(payGrade["new_im_icon_with_level"]),
             fansLevel: fansLevel,
             fansName: fansData["club_name"]?.toString(),

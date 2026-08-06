@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:simple_live_core/src/common/core_cancellation.dart';
 import 'package:simple_live_core/src/common/convert_helper.dart';
 import 'package:simple_live_core/src/common/core_error.dart';
 import 'package:simple_live_core/src/common/core_log.dart';
@@ -27,6 +28,7 @@ class BiliBiliSite implements LiveSite {
         ? LiveStatusState.live
         : LiveStatusState.offline;
   }
+
   @override
   String id = "bilibili";
 
@@ -51,9 +53,11 @@ class BiliBiliSite implements LiveSite {
     0,
   );
 
-  Future<Map<String, String>> getHeader() async {
+  Future<Map<String, String>> getHeader({
+    CoreCancellation? cancellation,
+  }) async {
     if (buvid3.isEmpty) {
-      var buvidInfo = await getBuvid();
+      var buvidInfo = await getBuvid(cancellation: cancellation);
       buvid3 = buvidInfo["b_3"] ?? "";
       buvid4 = buvidInfo["b_4"] ?? "";
     }
@@ -122,8 +126,7 @@ class BiliBiliSite implements LiveSite {
     var hasMore = data.length >= 30;
     var items = <LiveRoomItem>[];
     for (var item in data) {
-      var cover =
-          item["cover"]?.toString() ??
+      var cover = item["cover"]?.toString() ??
           item["user_cover"]?.toString() ??
           item["system_cover"]?.toString() ??
           "";
@@ -156,8 +159,8 @@ class BiliBiliSite implements LiveSite {
     final playUrl = _readBilibiliPlayUrl(result, detail.roomId);
     var qualitiesMap = <int, String>{};
     for (var item in (playUrl["g_qn_desc"] as List?) ?? const []) {
-      qualitiesMap[int.tryParse(item["qn"].toString()) ?? 0] = item["desc"]
-          .toString();
+      qualitiesMap[int.tryParse(item["qn"].toString()) ?? 0] =
+          item["desc"].toString();
     }
 
     final streams = (playUrl["stream"] as List?) ?? const [];
@@ -372,8 +375,8 @@ class BiliBiliSite implements LiveSite {
     }
 
     //var buvid = await getBuvid();
-    String? liveStartTime = roomInfo["room_info"]?["live_start_time"]
-        ?.toString();
+    String? liveStartTime =
+        roomInfo["room_info"]?["live_start_time"]?.toString();
 
     return LiveRoomDetail(
       roomId: realRoomId,
@@ -420,6 +423,7 @@ class BiliBiliSite implements LiveSite {
   Future<LiveSearchRoomResult> searchRooms(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
     var result = await HttpClient.instance.getJson(
       "https://api.bilibili.com/x/web-interface/search/type?context=&search_type=live&cover_type=user_cover",
@@ -433,30 +437,47 @@ class BiliBiliSite implements LiveSite {
         "single_column": 0,
         "page": page,
       },
-      header: await getHeader(),
+      header: await getHeader(cancellation: cancellation),
+      cancellation: cancellation,
     );
 
     var items = <LiveRoomItem>[];
     for (var item in result["data"]["result"]["live_room"] ?? []) {
-      var title = item["title"].toString();
+      if (item is! Map) {
+        throw CoreError("哔哩哔哩搜索房间响应格式错误", kind: CoreErrorKind.response);
+      }
+      final roomId = item["roomid"]?.toString().trim() ?? "";
+      if (roomId.isEmpty || roomId == "null") {
+        throw CoreError("哔哩哔哩搜索房间缺少 roomid", kind: CoreErrorKind.response);
+      }
+      var title = item["title"]?.toString() ?? "";
       //移除title中的<em></em>标签
       title = title.replaceAll(RegExp(r"<.*?em.*?>"), "");
       var roomItem = LiveRoomItem(
-        roomId: item["roomid"].toString(),
+        roomId: roomId,
         title: title,
-        cover: "https:${item["cover"]}@400w.jpg",
-        userName: item["uname"].toString(),
+        cover: _searchImageUrl(item["cover"]?.toString()),
+        userName: item["uname"]?.toString() ?? "",
         online: int.tryParse(item["online"].toString()) ?? 0,
       );
       items.add(roomItem);
     }
-    return LiveSearchRoomResult(hasMore: items.length >= 40, items: items);
+    final hasMore = items.length >= 40;
+    return LiveSearchRoomResult(
+      items: items,
+      metadata: LiveSearchMetadata(
+        continuation:
+            hasMore ? SearchContinuation.more : SearchContinuation.done,
+        origin: SearchOrigin.native,
+      ),
+    );
   }
 
   @override
   Future<LiveSearchAnchorResult> searchAnchors(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
     var result = await HttpClient.instance.getJson(
       "https://api.bilibili.com/x/web-interface/search/type?context=&search_type=live_user&cover_type=user_cover",
@@ -470,23 +491,48 @@ class BiliBiliSite implements LiveSite {
         "single_column": 0,
         "page": page,
       },
-      header: await getHeader(),
+      header: await getHeader(cancellation: cancellation),
+      cancellation: cancellation,
     );
 
     var items = <LiveAnchorItem>[];
     for (var item in result["data"]["result"] ?? []) {
-      var uname = item["uname"].toString();
+      if (item is! Map) {
+        throw CoreError("哔哩哔哩搜索主播响应格式错误", kind: CoreErrorKind.response);
+      }
+      final roomId = item["roomid"]?.toString().trim() ?? "";
+      if (roomId.isEmpty || roomId == "null") {
+        throw CoreError("哔哩哔哩搜索主播缺少 roomid", kind: CoreErrorKind.response);
+      }
+      var uname = item["uname"]?.toString() ?? "";
       //移除title中的<em></em>标签
       uname = uname.replaceAll(RegExp(r"<.*?em.*?>"), "");
       var anchorItem = LiveAnchorItem(
-        roomId: item["roomid"].toString(),
-        avatar: "https:${item["uface"]}@400w.jpg",
+        roomId: roomId,
+        avatar: _searchImageUrl(item["uface"]?.toString()),
         userName: uname,
-        liveStatus: item["is_live"],
+        liveStatus: item["is_live"] == 1 || item["is_live"] == true,
       );
       items.add(anchorItem);
     }
-    return LiveSearchAnchorResult(hasMore: items.length >= 40, items: items);
+    final hasMore = items.length >= 40;
+    return LiveSearchAnchorResult(
+      items: items,
+      metadata: LiveSearchMetadata(
+        continuation:
+            hasMore ? SearchContinuation.more : SearchContinuation.done,
+        origin: SearchOrigin.native,
+      ),
+    );
+  }
+
+  String _searchImageUrl(String? value) {
+    final image = value?.trim() ?? "";
+    if (image.isEmpty || image == "null") {
+      return "";
+    }
+    final normalized = image.startsWith("//") ? "https:$image" : image;
+    return "$normalized@400w.jpg";
   }
 
   @override
@@ -534,9 +580,8 @@ class BiliBiliSite implements LiveSite {
     LiveRoomDetail? detail,
   }) async {
     final roomInfo = await getRoomInfo(roomId: roomId);
-    final roomRankItems =
-        (roomInfo["room_rank_info"]?["user_rank_entry"]?["user_contribution_rank_entry"]?["item"]
-            as List?) ??
+    final roomRankItems = (roomInfo["room_rank_info"]?["user_rank_entry"]
+            ?["user_contribution_rank_entry"]?["item"] as List?) ??
         const [];
     if (roomRankItems.isNotEmpty) {
       return roomRankItems.map(_mapContributionRankItem).toList();
@@ -572,24 +617,20 @@ class BiliBiliSite implements LiveSite {
 
     return LiveContributionRankItem(
       rank: int.tryParse(item["rank"].toString()) ?? 0,
-      userName:
-          item["name"]?.toString() ??
+      userName: item["name"]?.toString() ??
           item["uinfo"]?["base"]?["name"]?.toString() ??
           "",
-      avatar:
-          item["face"]?.toString() ??
+      avatar: item["face"]?.toString() ??
           item["uinfo"]?["base"]?["face"]?.toString() ??
           "",
       scoreText: item["score"]?.toString() ?? "0",
       userLevel: wealthLevel,
-      userLevelText: wealthLevel == null || wealthLevel <= 0
-          ? null
-          : "财富 $wealthLevel",
+      userLevelText:
+          wealthLevel == null || wealthLevel <= 0 ? null : "财富 $wealthLevel",
       fansLevel: int.tryParse(
         (medalInfo?["level"] ?? medalInfo?["medal_level"]).toString(),
       ),
-      fansName:
-          medalInfo?["name"]?.toString() ??
+      fansName: medalInfo?["name"]?.toString() ??
           medalInfo?["medal_name"]?.toString(),
       scoreDetail: guardLevel > 0 ? "舰队 $guardLevel" : null,
     );
@@ -603,7 +644,7 @@ class BiliBiliSite implements LiveSite {
   ///   "b_4": "buvid4",
   /// }
   /// ```
-  Future<Map> getBuvid() async {
+  Future<Map> getBuvid({CoreCancellation? cancellation}) async {
     try {
       if (cookie.contains("buvid3")) {
         return {
@@ -620,9 +661,13 @@ class BiliBiliSite implements LiveSite {
           "referer": kDefaultReferer,
           "cookie": cookie,
         },
+        cancellation: cancellation,
       );
       return result["data"];
     } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
       return {"b_3": "", "b_4": ""};
     }
   }

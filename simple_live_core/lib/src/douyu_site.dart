@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/common/core_cancellation.dart';
+import 'package:simple_live_core/src/common/core_error.dart';
 import 'package:simple_live_core/src/danmaku/douyu_danmaku.dart';
 import 'package:simple_live_core/src/interface/live_danmaku.dart';
 import 'package:simple_live_core/src/interface/live_site.dart';
@@ -273,21 +275,17 @@ class DouyuSite implements LiveSite {
       url: "https://www.douyu.com/$roomId",
       isRecord: roomInfo["videoLoop"] == 1,
       showTime: showTime,
-      categoryId:
-          roomInfo["cate2Id"]?.toString() ??
+      categoryId: roomInfo["cate2Id"]?.toString() ??
           roomInfo["cate_id"]?.toString() ??
           roomInfo["cid1"]?.toString(),
-      categoryName:
-          roomInfo["cate2Name"]?.toString() ??
+      categoryName: roomInfo["cate2Name"]?.toString() ??
           roomInfo["game_name"]?.toString() ??
           roomInfo["cate_name"]?.toString(),
       categoryParentId:
           roomInfo["cate1Id"]?.toString() ?? roomInfo["cid2"]?.toString(),
-      categoryParentName:
-          roomInfo["cate1Name"]?.toString() ??
+      categoryParentName: roomInfo["cate1Name"]?.toString() ??
           roomInfo["parent_cate_name"]?.toString(),
-      categoryPic:
-          roomInfo["game_icon"]?.toString() ??
+      categoryPic: roomInfo["game_icon"]?.toString() ??
           roomInfo["game_icon_url"]?.toString(),
     );
   }
@@ -296,6 +294,7 @@ class DouyuSite implements LiveSite {
   Future<LiveSearchRoomResult> searchRooms(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
     var did = generateRandomString(32);
     var result = await HttpClient.instance.getJson(
@@ -307,23 +306,65 @@ class DouyuSite implements LiveSite {
         'referer': 'https://www.douyu.com/search/',
         'Cookie': 'dy_did=$did;acf_did=$did',
       },
+      cancellation: cancellation,
     );
-    if (result['error'] != 0) {
-      throw Exception(result['msg']);
-    }
-    var items = <LiveRoomItem>[];
-    for (var item in result["data"]["relateShow"]) {
-      var roomItem = LiveRoomItem(
-        roomId: item["rid"].toString(),
-        title: item["roomName"].toString(),
-        cover: item["roomSrc"].toString(),
-        userName: item["nickName"].toString(),
-        online: parseHotNum(item["hot"].toString()),
+    try {
+      if (result is! Map) {
+        throw CoreError("斗鱼搜索房间响应格式错误", kind: CoreErrorKind.response);
+      }
+      if (result['error'] != 0) {
+        throw CoreError(
+          result['msg']?.toString() ?? '斗鱼直播间搜索失败',
+          kind: CoreErrorKind.search,
+        );
+      }
+      final data = result['data'];
+      final rawItems = data is Map ? data['relateShow'] : null;
+      if (rawItems is! List) {
+        throw CoreError("斗鱼搜索房间响应格式错误", kind: CoreErrorKind.response);
+      }
+      var items = <LiveRoomItem>[];
+      for (var item in rawItems) {
+        if (item is! Map) {
+          throw CoreError("斗鱼搜索房间响应格式错误", kind: CoreErrorKind.response);
+        }
+        final roomId = item["rid"]?.toString().trim() ?? "";
+        if (roomId.isEmpty || roomId == "null") {
+          throw CoreError("斗鱼搜索房间缺少 rid", kind: CoreErrorKind.response);
+        }
+        var roomItem = LiveRoomItem(
+          roomId: roomId,
+          title: item["roomName"]?.toString() ?? "",
+          cover: item["roomSrc"]?.toString() ?? "",
+          userName: item["nickName"]?.toString() ?? "",
+          online: parseHotNum(item["hot"].toString()),
+        );
+        items.add(roomItem);
+      }
+      final hasMore = rawItems.length == 20;
+      return LiveSearchRoomResult(
+        hasMore: hasMore,
+        items: items,
+        metadata: LiveSearchMetadata(
+          continuation:
+              hasMore ? SearchContinuation.more : SearchContinuation.done,
+          origin: SearchOrigin.native,
+        ),
       );
-      items.add(roomItem);
+    } on CoreCancelledError {
+      rethrow;
+    } on CoreError {
+      rethrow;
+    } catch (error, stackTrace) {
+      Error.throwWithStackTrace(
+        CoreError(
+          "斗鱼搜索房间响应解析失败",
+          kind: CoreErrorKind.response,
+          cause: error,
+        ),
+        stackTrace,
+      );
     }
-    var hasMore = result["data"]["relateShow"].isNotEmpty;
-    return LiveSearchRoomResult(hasMore: hasMore, items: items);
   }
 
   Future<Map> _getRoomInfo(String roomId) async {
@@ -360,6 +401,7 @@ class DouyuSite implements LiveSite {
   Future<LiveSearchAnchorResult> searchAnchors(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
     var did = generateRandomString(32);
     var result = await HttpClient.instance.getJson(
@@ -376,24 +418,69 @@ class DouyuSite implements LiveSite {
         'referer': 'https://www.douyu.com/search/',
         'Cookie': 'dy_did=$did;acf_did=$did',
       },
+      cancellation: cancellation,
     );
 
-    var items = <LiveAnchorItem>[];
-    for (var item in result["data"]["relateUser"]) {
-      var liveStatus =
-          (int.tryParse(item["anchorInfo"]["isLive"].toString()) ?? 0) == 1;
-      var roomType =
-          (int.tryParse(item["anchorInfo"]["roomType"].toString()) ?? 0);
-      var roomItem = LiveAnchorItem(
-        roomId: item["anchorInfo"]["rid"].toString(),
-        avatar: item["anchorInfo"]["avatar"].toString(),
-        userName: item["anchorInfo"]["nickName"].toString(),
-        liveStatus: liveStatus && roomType == 0,
+    try {
+      if (result is! Map) {
+        throw CoreError("斗鱼搜索主播响应格式错误", kind: CoreErrorKind.response);
+      }
+      if (result['error'] != 0) {
+        throw CoreError(
+          result['msg']?.toString() ?? '斗鱼主播搜索失败',
+          kind: CoreErrorKind.search,
+        );
+      }
+      final data = result['data'];
+      final rawItems = data is Map ? data['relateUser'] : null;
+      if (rawItems is! List) {
+        throw CoreError("斗鱼搜索主播响应格式错误", kind: CoreErrorKind.response);
+      }
+      var items = <LiveAnchorItem>[];
+      for (var item in rawItems) {
+        if (item is! Map || item["anchorInfo"] is! Map) {
+          throw CoreError("斗鱼搜索主播响应格式错误", kind: CoreErrorKind.response);
+        }
+        final anchorInfo = item["anchorInfo"] as Map;
+        final roomId = anchorInfo["rid"]?.toString().trim() ?? "";
+        if (roomId.isEmpty || roomId == "null") {
+          throw CoreError("斗鱼搜索主播缺少 rid", kind: CoreErrorKind.response);
+        }
+        var liveStatus =
+            (int.tryParse(anchorInfo["isLive"].toString()) ?? 0) == 1;
+        var roomType = (int.tryParse(anchorInfo["roomType"].toString()) ?? 0);
+        var roomItem = LiveAnchorItem(
+          roomId: roomId,
+          avatar: anchorInfo["avatar"]?.toString() ?? "",
+          userName: anchorInfo["nickName"]?.toString() ?? "",
+          liveStatus: liveStatus && roomType == 0,
+        );
+        items.add(roomItem);
+      }
+      final hasMore = rawItems.length == 20;
+      return LiveSearchAnchorResult(
+        hasMore: hasMore,
+        items: items,
+        metadata: LiveSearchMetadata(
+          continuation:
+              hasMore ? SearchContinuation.more : SearchContinuation.done,
+          origin: SearchOrigin.native,
+        ),
       );
-      items.add(roomItem);
+    } on CoreCancelledError {
+      rethrow;
+    } on CoreError {
+      rethrow;
+    } catch (error, stackTrace) {
+      Error.throwWithStackTrace(
+        CoreError(
+          "斗鱼搜索主播响应解析失败",
+          kind: CoreErrorKind.response,
+          cause: error,
+        ),
+        stackTrace,
+      );
     }
-    var hasMore = result["data"]["relateUser"].isNotEmpty;
-    return LiveSearchAnchorResult(hasMore: hasMore, items: items);
   }
 
   @override

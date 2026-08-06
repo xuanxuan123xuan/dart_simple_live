@@ -1,9 +1,10 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:dio/dio.dart';
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
+import 'package:simple_live_core/src/common/core_cancellation.dart';
 import 'package:simple_live_core/src/common/core_error.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:simple_live_core/src/common/kuaishou_live_link.dart';
@@ -20,6 +21,7 @@ import 'package:simple_live_core/src/model/live_room_item.dart';
 import 'package:simple_live_core/src/model/live_search_result.dart';
 
 class KuaishouSite extends LiveSite {
+  static const int _liveSearchPageSize = 20;
   static const String userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -371,102 +373,166 @@ class KuaishouSite extends LiveSite {
   Future<LiveSearchRoomResult> searchRooms(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
+    Object? primaryError;
     try {
-      var result = await _searchLiveStreams(keyword, page: page);
-      if (result.items.isNotEmpty || page > 1) {
-        return result;
-      }
-    } catch (_) {}
+      final result = await _searchLiveStreams(
+        keyword,
+        page: page,
+        cancellation: cancellation,
+      );
+      return result;
+    } on CoreCancelledError {
+      rethrow;
+    } catch (error) {
+      primaryError = error;
+    }
 
     if (page > 1) {
-      return LiveSearchRoomResult(hasMore: false, items: <LiveRoomItem>[]);
+      throw _searchFailure('直播间', primaryError);
     }
 
     try {
-      return await _searchRoomsByOverview(keyword);
-    } catch (_) {
-      return LiveSearchRoomResult(hasMore: false, items: <LiveRoomItem>[]);
+      return await _searchRoomsByOverview(
+        keyword,
+        cancellation: cancellation,
+      );
+    } on CoreCancelledError {
+      rethrow;
+    } catch (fallbackError) {
+      throw _searchFallbackFailure('直播间', primaryError, fallbackError);
     }
   }
 
   Future<LiveSearchRoomResult> _searchLiveStreams(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    final result = await HttpClient.instance.getJson(
       "https://live.kuaishou.com/live_api/search/liveStream",
-      queryParameters: {"keyword": keyword, "page": page, "ussid": ""},
+      queryParameters: {
+        "keyword": keyword,
+        "page": page,
+        "count": _liveSearchPageSize,
+        "ussid": "",
+      },
       header: _searchHeaders(keyword),
+      cancellation: cancellation,
     );
 
-    var data = result["data"];
-    if (data is! Map || data["result"] != 1) {
-      return LiveSearchRoomResult(hasMore: false, items: <LiveRoomItem>[]);
+    if (result is! Map) {
+      throw _invalidSearchResponse('直播间');
+    }
+    final data = result["data"];
+    if (data is! Map) {
+      throw _invalidSearchResponse('直播间');
+    }
+    if (data["result"] != 1) {
+      throw _searchFailure('直播间', data["message"] ?? data["msg"]);
     }
 
-    var list = (data["list"] as List?) ?? [];
-    var items = <LiveRoomItem>[];
-    for (var item in list) {
-      var room = _parseSearchLiveRoom(item);
+    final list = data["list"];
+    if (list is! List) {
+      throw _invalidSearchResponse('直播间');
+    }
+    final items = <LiveRoomItem>[];
+    for (final item in list) {
+      if (item is! Map) {
+        throw _invalidSearchResponse('直播间');
+      }
+      final room = _parseSearchLiveRoom(item);
       if (room.roomId.isNotEmpty) {
         items.add(room);
       }
     }
 
-    return LiveSearchRoomResult(hasMore: list.isNotEmpty, items: items);
+    return LiveSearchRoomResult(
+      items: items,
+      metadata: LiveSearchMetadata(
+        continuation: _resolveSearchContinuation(
+          data,
+          page: page,
+          pageSize: _liveSearchPageSize,
+        ),
+        origin: SearchOrigin.native,
+      ),
+    );
   }
 
-  Future<LiveSearchRoomResult> _searchRoomsByOverview(String keyword) async {
-    var overview = await _getSearchOverview(keyword);
-    var liveStreams = _findOverviewSectionList(overview, "liveStreams");
-    var items = <LiveRoomItem>[];
-    for (var item in liveStreams) {
-      var room = _parseSearchLiveRoom(item);
+  Future<LiveSearchRoomResult> _searchRoomsByOverview(
+    String keyword, {
+    CoreCancellation? cancellation,
+  }) async {
+    final overview = await _getSearchOverview(
+      keyword,
+      cancellation: cancellation,
+    );
+    final liveStreams = _findOverviewSectionList(overview, "liveStreams");
+    final items = <LiveRoomItem>[];
+    for (final item in liveStreams) {
+      if (item is! Map) {
+        throw _invalidSearchResponse('概览直播间');
+      }
+      final room = _parseSearchLiveRoom(item);
       if (room.roomId.isNotEmpty) {
         items.add(room);
       }
     }
-    return LiveSearchRoomResult(hasMore: false, items: items);
+    return LiveSearchRoomResult(
+      items: items,
+      metadata: LiveSearchMetadata(
+        continuation: items.isEmpty
+            ? SearchContinuation.done
+            : SearchContinuation.unknown,
+        origin: SearchOrigin.fallback,
+      ),
+    );
   }
 
   @override
   Future<LiveSearchAnchorResult> searchAnchors(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
+    Object? primaryError;
     try {
-      var result = await _searchAnchors(keyword, page: page);
-      if (result.items.isNotEmpty || page > 1) {
-        return result;
-      }
-    } catch (_) {}
+      final result = await _searchAnchors(
+        keyword,
+        page: page,
+        cancellation: cancellation,
+      );
+      return result;
+    } on CoreCancelledError {
+      rethrow;
+    } catch (error) {
+      primaryError = error;
+    }
 
     if (page > 1) {
-      return LiveSearchAnchorResult(hasMore: false, items: <LiveAnchorItem>[]);
+      throw _searchFailure('主播', primaryError);
     }
 
     try {
-      var overview = await _getSearchOverview(keyword);
-      var authors = _findOverviewSectionList(overview, "authors");
-      var items = <LiveAnchorItem>[];
-      for (var item in authors) {
-        var anchor = _parseSearchAnchor(item);
-        if (anchor.roomId.isNotEmpty) {
-          items.add(anchor);
-        }
-      }
-      return LiveSearchAnchorResult(hasMore: false, items: items);
-    } catch (_) {
-      return LiveSearchAnchorResult(hasMore: false, items: <LiveAnchorItem>[]);
+      return await _searchAnchorsByOverview(
+        keyword,
+        cancellation: cancellation,
+      );
+    } on CoreCancelledError {
+      rethrow;
+    } catch (fallbackError) {
+      throw _searchFallbackFailure('主播', primaryError, fallbackError);
     }
   }
 
   Future<LiveSearchAnchorResult> _searchAnchors(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    final result = await HttpClient.instance.getJson(
       "https://live.kuaishou.com/live_api/search/author",
       queryParameters: {
         "key": keyword,
@@ -477,46 +543,202 @@ class KuaishouSite extends LiveSite {
         "lssid": "",
       },
       header: _searchHeaders(keyword),
+      cancellation: cancellation,
     );
 
-    var data = result["data"];
-    if (data is! Map || data["result"] != 1) {
-      return LiveSearchAnchorResult(hasMore: false, items: <LiveAnchorItem>[]);
+    if (result is! Map) {
+      throw _invalidSearchResponse('主播');
+    }
+    final data = result["data"];
+    if (data is! Map) {
+      throw _invalidSearchResponse('主播');
+    }
+    if (data["result"] != 1) {
+      throw _searchFailure('主播', data["message"] ?? data["msg"]);
     }
 
-    var list = (data["list"] as List?) ?? [];
-    var items = <LiveAnchorItem>[];
-    for (var item in list) {
-      var anchor = _parseSearchAnchor(item);
+    final list = data["list"];
+    if (list is! List) {
+      throw _invalidSearchResponse('主播');
+    }
+    final items = <LiveAnchorItem>[];
+    for (final item in list) {
+      if (item is! Map) {
+        throw _invalidSearchResponse('主播');
+      }
+      final anchor = _parseSearchAnchor(item);
       if (anchor.roomId.isNotEmpty) {
         items.add(anchor);
       }
     }
 
-    return LiveSearchAnchorResult(hasMore: list.length >= 15, items: items);
+    return LiveSearchAnchorResult(
+      items: items,
+      metadata: LiveSearchMetadata(
+        continuation: _resolveSearchContinuation(
+          data,
+          page: page,
+          pageSize: 15,
+        ),
+        origin: SearchOrigin.native,
+      ),
+    );
   }
 
-  Future<Map> _getSearchOverview(String keyword) async {
-    var result = await HttpClient.instance.getJson(
+  Future<LiveSearchAnchorResult> _searchAnchorsByOverview(
+    String keyword, {
+    CoreCancellation? cancellation,
+  }) async {
+    final overview = await _getSearchOverview(
+      keyword,
+      cancellation: cancellation,
+    );
+    final authors = _findOverviewSectionList(overview, "authors");
+    final items = <LiveAnchorItem>[];
+    for (final item in authors) {
+      if (item is! Map) {
+        throw _invalidSearchResponse('概览主播');
+      }
+      final anchor = _parseSearchAnchor(item);
+      if (anchor.roomId.isNotEmpty) {
+        items.add(anchor);
+      }
+    }
+    return LiveSearchAnchorResult(
+      items: items,
+      metadata: LiveSearchMetadata(
+        continuation: items.isEmpty
+            ? SearchContinuation.done
+            : SearchContinuation.unknown,
+        origin: SearchOrigin.fallback,
+      ),
+    );
+  }
+
+  Future<Map> _getSearchOverview(
+    String keyword, {
+    CoreCancellation? cancellation,
+  }) async {
+    final result = await HttpClient.instance.getJson(
       "https://live.kuaishou.com/live_api/search/overview",
       queryParameters: {"keyword": keyword, "ussid": ""},
       header: _searchHeaders(keyword),
+      cancellation: cancellation,
     );
-    var data = result["data"];
-    return data is Map ? data : <String, dynamic>{};
+    if (result is! Map || result["data"] is! Map) {
+      throw _invalidSearchResponse('概览');
+    }
+    return result["data"] as Map;
+  }
+
+  SearchContinuation _resolveSearchContinuation(
+    Map data, {
+    required int page,
+    int? pageSize,
+  }) {
+    for (final key in const <String>[
+      'hasMore',
+      'hasNext',
+      'hasNextPage',
+    ]) {
+      final value = _parseSearchBoolean(data[key]);
+      if (value != null) {
+        return value ? SearchContinuation.more : SearchContinuation.done;
+      }
+    }
+
+    final nextPage = _parseSearchNonNegativeInt(data['nextPage']);
+    if (nextPage != null) {
+      return nextPage > page
+          ? SearchContinuation.more
+          : SearchContinuation.done;
+    }
+
+    for (final key in const <String>['totalPage', 'pageCount', 'totalPages']) {
+      final totalPages = _parseSearchNonNegativeInt(data[key]);
+      if (totalPages != null) {
+        return page < totalPages
+            ? SearchContinuation.more
+            : SearchContinuation.done;
+      }
+    }
+
+    if (pageSize != null) {
+      for (final key in const <String>['total', 'totalCount', 'totalSize']) {
+        final total = _parseSearchNonNegativeInt(data[key]);
+        if (total != null) {
+          return page * pageSize < total
+              ? SearchContinuation.more
+              : SearchContinuation.done;
+        }
+      }
+    }
+    return SearchContinuation.unknown;
+  }
+
+  bool? _parseSearchBoolean(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) {
+      if (value == 1) return true;
+      if (value == 0) return false;
+    }
+    final normalized = value?.toString().trim().toLowerCase();
+    if (normalized == 'true' || normalized == '1') return true;
+    if (normalized == 'false' || normalized == '0') return false;
+    return null;
+  }
+
+  int? _parseSearchNonNegativeInt(dynamic value) {
+    final parsed = value is int ? value : int.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed >= 0 ? parsed : null;
+  }
+
+  CoreError _invalidSearchResponse(String searchType) {
+    return CoreError(
+      '快手$searchType搜索响应格式错误',
+      kind: CoreErrorKind.response,
+    );
+  }
+
+  CoreError _searchFailure(String searchType, Object? cause) {
+    if (cause is CoreError) return cause;
+    return CoreError(
+      '快手$searchType搜索失败',
+      kind: CoreErrorKind.search,
+      cause: cause,
+    );
+  }
+
+  CoreError _searchFallbackFailure(
+    String searchType,
+    Object primaryError,
+    Object fallbackError,
+  ) {
+    return CoreError(
+      '快手$searchType搜索的主接口和概览备用接口均失败',
+      kind: CoreErrorKind.search,
+      cause: <Object>[primaryError, fallbackError],
+    );
   }
 
   List _findOverviewSectionList(Map overview, String type) {
-    var sections = overview["list"];
+    final sections = overview["list"];
     if (sections is! List) {
-      return [];
+      throw _invalidSearchResponse('概览');
     }
-    for (var section in sections) {
-      if (section is Map && section["type"] == type) {
-        return (section["list"] as List?) ?? [];
+    for (final section in sections) {
+      if (section is! Map) {
+        throw _invalidSearchResponse('概览');
+      }
+      if (section["type"] == type) {
+        final list = section["list"];
+        if (list is! List) {
+          throw _invalidSearchResponse('概览');
+        }
+        return list;
       }
     }
-    return [];
+    return const [];
   }
 
   LiveRoomItem _parseSearchLiveRoom(dynamic item) {
@@ -1181,4 +1403,3 @@ class _KuaishouWebsocketInfo {
     return _KuaishouWebsocketInfo(token: '', websocketUrls: <String>[]);
   }
 }
-

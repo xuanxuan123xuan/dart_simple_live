@@ -20,8 +20,10 @@ import 'package:simple_live_app/modules/sync/remote_sync/webdav/remote_sync_webd
 import 'package:simple_live_app/modules/sync/sync_page.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/room/remote_sync_room_controller.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/room/remote_sync_room_page.dart';
-import 'package:simple_live_app/modules/search/search_controller.dart';
+import 'package:simple_live_app/modules/search/search_aggregate_controller.dart';
 import 'package:simple_live_app/modules/search/search_page.dart';
+import 'package:simple_live_app/modules/search/search_list_controller.dart';
+import 'package:simple_live_app/modules/search/search_site_page.dart';
 import 'package:simple_live_app/modules/sync/local_sync/device/sync_device_controller.dart';
 import 'package:simple_live_app/modules/sync/local_sync/device/sync_device_page.dart';
 import 'package:simple_live_app/modules/sync/local_sync/scan_qr/sync_scan_qr_controller.dart';
@@ -101,8 +103,26 @@ class AppPages {
       name: RoutePath.kSearch,
       page: () => const SearchPage(),
       bindings: [
-        BindingsBuilder.put(() => AppSearchController()),
+        BindingsBuilder.put(() => SearchAggregateController()),
       ],
+    ),
+    // 单站搜索：使用路由 scope，避免依赖全局 site tag。
+    GetPage(
+      name: RoutePath.kSearchSite,
+      page: () => SearchSitePage(
+        args: SearchSiteRouteArgs.from(Get.arguments),
+      ),
+      binding: BindingsBuilder(() {
+        final args = SearchSiteRouteArgs.from(Get.arguments);
+        Get.put(
+          SearchListController(
+            args.site,
+            keyword: args.keyword,
+            mode: args.searchMode,
+          ),
+          tag: args.scopeId,
+        );
+      }),
     ),
     //分类详情
     GetPage(

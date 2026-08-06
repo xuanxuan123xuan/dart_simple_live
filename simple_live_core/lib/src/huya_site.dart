@@ -17,6 +17,7 @@ class HuyaSite implements LiveSite {
         ? LiveStatusState.live
         : LiveStatusState.offline;
   }
+
   static const baseUrl = "https://m.huya.com/";
   static const Map<int, String> _bussTypeNames = {
     1: "网游",
@@ -335,9 +336,8 @@ class HuyaSite implements LiveSite {
     );
 
     var seqId = presenterUid + clacStartTime;
-    final secretHash = md5
-        .convert(utf8.encode('$seqId|$ctype|$platformId'))
-        .toString();
+    final secretHash =
+        md5.convert(utf8.encode('$seqId|$ctype|$platformId')).toString();
 
     final convertUid = rotl64(presenterUid);
     final calcUid = isWap ? presenterUid : convertUid;
@@ -350,8 +350,8 @@ class HuyaSite implements LiveSite {
     final wsSecret = md5.convert(utf8.encode(secretStr)).toString();
 
     final rnd = Random();
-    final ct = ((int.parse(wsTime, radix: 16) + rnd.nextDouble()) * 1000)
-        .toInt();
+    final ct =
+        ((int.parse(wsTime, radix: 16) + rnd.nextDouble()) * 1000).toInt();
     final uuid = (((ct % 1e10) + rnd.nextDouble()) * 1e3 % 0xffffffff)
         .toInt()
         .toString();
@@ -516,8 +516,8 @@ class HuyaSite implements LiveSite {
         .replaceAll(RegExp(r"window\.HNF_GLOBAL_INIT.=."), '')
         .replaceAll("</script>", "")
         .replaceAllMapped(RegExp(r'function.*?\(.*?\).\{[\s\S]*?\}'), (match) {
-          return '""';
-        });
+      return '""';
+    });
 
     var jsonObj = json.decode(jsonText);
     var topSid = int.tryParse(
@@ -588,6 +588,7 @@ class HuyaSite implements LiveSite {
   Future<LiveSearchRoomResult> searchRooms(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
     var resultText = await HttpClient.instance.getJson(
       "https://search.cdn.huya.com/",
@@ -602,11 +603,21 @@ class HuyaSite implements LiveSite {
         "rows": 20,
         "start": (page - 1) * 20,
       },
+      cancellation: cancellation,
     );
-    var result = json.decode(resultText);
+    final searchResult = _parseHuyaSearchResult(
+      resultText,
+      "3",
+      "rooms",
+      page,
+    );
     var items = <LiveRoomItem>[];
-    for (var item in result["response"]["3"]["docs"]) {
-      var cover = item["game_screenshot"].toString();
+    for (final item in searchResult.docs) {
+      final roomId = item["room_id"]?.toString().trim() ?? "";
+      if (roomId.isEmpty || roomId == "null") {
+        throw _invalidHuyaSearchResponse("rooms");
+      }
+      var cover = item["game_screenshot"]?.toString() ?? "";
       if (!cover.contains("?")) {
         cover += "?x-oss-process=style/w338_h190&";
       }
@@ -617,22 +628,26 @@ class HuyaSite implements LiveSite {
       }
 
       var roomItem = LiveRoomItem(
-        roomId: item["room_id"].toString(),
+        roomId: roomId,
         title: title,
         cover: cover,
-        userName: item["game_nick"].toString(),
+        userName: item["game_nick"]?.toString() ?? "",
         online: int.tryParse(item["game_total_count"].toString()) ?? 0,
       );
       items.add(roomItem);
     }
-    var hasMore = result["response"]["3"]["numFound"] > (page * 20);
-    return LiveSearchRoomResult(hasMore: hasMore, items: items);
+    return LiveSearchRoomResult(
+      hasMore: searchResult.continuation == SearchContinuation.more,
+      items: items,
+      metadata: _buildHuyaSearchMetadata(searchResult),
+    );
   }
 
   @override
   Future<LiveSearchAnchorResult> searchAnchors(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
     var resultText = await HttpClient.instance.getJson(
       "https://search.cdn.huya.com/",
@@ -647,20 +662,105 @@ class HuyaSite implements LiveSite {
         "rows": 20,
         "start": (page - 1) * 20,
       },
+      cancellation: cancellation,
     );
-    var result = json.decode(resultText);
+    final searchResult = _parseHuyaSearchResult(
+      resultText,
+      "1",
+      "anchors",
+      page,
+    );
     var items = <LiveAnchorItem>[];
-    for (var item in result["response"]["1"]["docs"]) {
+    for (final item in searchResult.docs) {
+      final roomId = item["room_id"]?.toString().trim() ?? "";
+      if (roomId.isEmpty || roomId == "null") {
+        throw _invalidHuyaSearchResponse("anchors");
+      }
       var anchorItem = LiveAnchorItem(
-        roomId: item["room_id"].toString(),
-        avatar: item["game_avatarUrl180"].toString(),
-        userName: item["game_nick"].toString(),
-        liveStatus: item["gameLiveOn"],
+        roomId: roomId,
+        avatar: item["game_avatarUrl180"]?.toString() ?? "",
+        userName: item["game_nick"]?.toString() ?? "",
+        liveStatus:
+            item["gameLiveOn"] == true || item["gameLiveOn"] == 1,
       );
       items.add(anchorItem);
     }
-    var hasMore = result["response"]["1"]["numFound"] > (page * 20);
-    return LiveSearchAnchorResult(hasMore: hasMore, items: items);
+    return LiveSearchAnchorResult(
+      hasMore: searchResult.continuation == SearchContinuation.more,
+      items: items,
+      metadata: _buildHuyaSearchMetadata(searchResult),
+    );
+  }
+
+  LiveSearchMetadata _buildHuyaSearchMetadata(
+    _HuyaSearchResult result,
+  ) {
+    return LiveSearchMetadata(
+      continuation: result.continuation,
+      origin: SearchOrigin.native,
+    );
+  }
+
+  _HuyaSearchResult _parseHuyaSearchResult(
+    dynamic payload,
+    String responseKey,
+    String searchType,
+    int page,
+  ) {
+    dynamic decoded = payload;
+    if (payload is String) {
+      try {
+        decoded = json.decode(payload);
+      } on FormatException {
+        throw _invalidHuyaSearchResponse(searchType);
+      }
+    }
+    if (decoded is! Map) {
+      throw _invalidHuyaSearchResponse(searchType);
+    }
+
+    final response = decoded["response"];
+    if (response is! Map) {
+      throw _invalidHuyaSearchResponse(searchType);
+    }
+    final section = response[responseKey];
+    if (section is! Map) {
+      throw _invalidHuyaSearchResponse(searchType);
+    }
+    final docs = section["docs"];
+    final total = _parseHuyaSearchTotal(section["numFound"]);
+    if (docs is! List || total == null) {
+      throw _invalidHuyaSearchResponse(searchType);
+    }
+
+    final parsedDocs = <Map<dynamic, dynamic>>[];
+    for (final doc in docs) {
+      if (doc is! Map) {
+        throw _invalidHuyaSearchResponse(searchType);
+      }
+      parsedDocs.add(doc);
+    }
+    return _HuyaSearchResult(
+      docs: parsedDocs,
+      total: total,
+      continuation:
+          total > page * 20 ? SearchContinuation.more : SearchContinuation.done,
+    );
+  }
+
+  int? _parseHuyaSearchTotal(dynamic value) {
+    if (value is int) {
+      return value >= 0 ? value : null;
+    }
+    final parsed = int.tryParse(value?.toString() ?? "");
+    return parsed != null && parsed >= 0 ? parsed : null;
+  }
+
+  CoreError _invalidHuyaSearchResponse(String searchType) {
+    return CoreError(
+      "Huya $searchType search response has an invalid structure",
+      kind: CoreErrorKind.response,
+    );
   }
 
   @override
@@ -764,8 +864,8 @@ class HuyaSite implements LiveSite {
 
     final wsTime = (DateTime.now().millisecondsSinceEpoch ~/ 1000 + 21600)
         .toRadixString(16);
-    final seqId = (DateTime.now().millisecondsSinceEpoch + int.parse(uid))
-        .toString();
+    final seqId =
+        (DateTime.now().millisecondsSinceEpoch + int.parse(uid)).toString();
 
     final fm = utf8.decode(base64.decode(Uri.decodeComponent(query['fm']!)));
     final wsSecretPrefix = fm.split('_').first;
@@ -912,21 +1012,19 @@ class HuyaSite implements LiveSite {
             return null;
           }
 
-          final remainingSeconds = item.iCountDown > 0
-              ? item.iCountDown
-              : item.iTotalSec;
+          final remainingSeconds =
+              item.iCountDown > 0 ? item.iCountDown : item.iTotalSec;
           if (remainingSeconds <= 0) {
             return null;
           }
 
-          final totalSeconds = item.iTotalSec > 0
-              ? item.iTotalSec
-              : remainingSeconds;
+          final totalSeconds =
+              item.iTotalSec > 0 ? item.iTotalSec : remainingSeconds;
           final price = item.iCost > 0
               ? item.iCost
               : item.iCostPay > 0
-              ? max(1, (item.iCostPay / 100).round())
-              : 0;
+                  ? max(1, (item.iCostPay / 100).round())
+                  : 0;
           final endTime = now.add(Duration(seconds: max(1, remainingSeconds)));
           final startTime = endTime.subtract(
             Duration(seconds: max(1, totalSeconds)),
@@ -946,6 +1044,18 @@ class HuyaSite implements LiveSite {
         .whereType<LiveSuperChatMessage>()
         .toList();
   }
+}
+
+class _HuyaSearchResult {
+  final List<Map<dynamic, dynamic>> docs;
+  final int total;
+  final SearchContinuation continuation;
+
+  const _HuyaSearchResult({
+    required this.docs,
+    required this.total,
+    required this.continuation,
+  });
 }
 
 class HuyaUrlDataModel {

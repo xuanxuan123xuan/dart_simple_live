@@ -1,16 +1,11 @@
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:get/get_rx/src/rx_types/rx_types.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
-import 'package:simple_live_tv_app/app/constant.dart';
-import 'package:simple_live_tv_app/app/controller/base_controller.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
+import 'package:simple_live_tv_app/modules/search/search_controller_base.dart';
 
-class SearchAnchorController extends BasePageController<LiveAnchorItemExt> {
-  final String keyword;
-  SearchAnchorController(this.keyword);
-  var siteId = Constant.kBiliBili.obs;
-  var site = Sites.allSites[Constant.kBiliBili]!;
+class SearchAnchorController extends TvSearchController<LiveAnchorItemExt> {
+  SearchAnchorController(super.keyword);
 
   @override
   void onInit() {
@@ -26,24 +21,30 @@ class SearchAnchorController extends BasePageController<LiveAnchorItemExt> {
     }
   }
 
-  void setSite(String id) {
-    siteId.value = id;
-    site = Sites.allSites[id]!;
-    refreshData();
-  }
-
   @override
-  Future<List<LiveAnchorItemExt>> getData(int page, int pageSize) async {
-    var result = await site.liveSite.searchAnchors(keyword, page: page);
-
-    return result.items
-        .map((e) => LiveAnchorItemExt(
-              roomId: e.roomId,
-              avatar: e.avatar,
-              liveStatus: e.liveStatus,
-              userName: e.userName,
-            ))
-        .toList();
+  Future<TvSearchPageResult<LiveAnchorItemExt>> getSearchData(
+    Site site,
+    int page,
+    CoreCancellation cancellation,
+  ) async {
+    final result = await site.liveSite.searchAnchors(
+      keyword,
+      page: page,
+      cancellation: cancellation,
+    );
+    return TvSearchPageResult(
+      items: result.items
+          .map(
+            (item) => LiveAnchorItemExt(
+              roomId: item.roomId,
+              avatar: item.avatar,
+              liveStatus: item.liveStatus,
+              userName: item.userName,
+            ),
+          )
+          .toList(),
+      metadata: result.metadata,
+    );
   }
 
   @override

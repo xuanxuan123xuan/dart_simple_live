@@ -1,15 +1,11 @@
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:get/get_rx/src/rx_types/rx_types.dart';
-import 'package:simple_live_tv_app/app/constant.dart';
-import 'package:simple_live_tv_app/app/controller/base_controller.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/modules/hot_live/hot_live_controller.dart';
+import 'package:simple_live_tv_app/modules/search/search_controller_base.dart';
 
-class SearchRoomController extends BasePageController<LiveRoomItemExt> {
-  final String keyword;
-  SearchRoomController(this.keyword);
-  var siteId = Constant.kBiliBili.obs;
-  var site = Sites.allSites[Constant.kBiliBili]!;
+class SearchRoomController extends TvSearchController<LiveRoomItemExt> {
+  SearchRoomController(super.keyword);
 
   @override
   void onInit() {
@@ -25,25 +21,31 @@ class SearchRoomController extends BasePageController<LiveRoomItemExt> {
     }
   }
 
-  void setSite(String id) {
-    siteId.value = id;
-    site = Sites.allSites[id]!;
-    refreshData();
-  }
-
   @override
-  Future<List<LiveRoomItemExt>> getData(int page, int pageSize) async {
-    var result = await site.liveSite.searchRooms(keyword, page: page);
-
-    return result.items
-        .map((e) => LiveRoomItemExt(
-              roomId: e.roomId,
-              title: e.title,
-              cover: e.cover,
-              userName: e.userName,
-              online: e.online,
-            ))
-        .toList();
+  Future<TvSearchPageResult<LiveRoomItemExt>> getSearchData(
+    Site site,
+    int page,
+    CoreCancellation cancellation,
+  ) async {
+    final result = await site.liveSite.searchRooms(
+      keyword,
+      page: page,
+      cancellation: cancellation,
+    );
+    return TvSearchPageResult(
+      items: result.items
+          .map(
+            (item) => LiveRoomItemExt(
+              roomId: item.roomId,
+              title: item.title,
+              cover: item.cover,
+              userName: item.userName,
+              online: item.online,
+            ),
+          )
+          .toList(),
+      metadata: result.metadata,
+    );
   }
 
   @override

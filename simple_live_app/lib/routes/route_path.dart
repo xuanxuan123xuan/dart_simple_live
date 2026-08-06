@@ -6,6 +6,9 @@ class RoutePath {
   /// 搜索
   static const kSearch = "/search";
 
+  /// 平台搜索
+  static const kSearchSite = "/search/site";
+
   /// 分类详情
   static const kCategoryDetail = "/category/detail";
 
