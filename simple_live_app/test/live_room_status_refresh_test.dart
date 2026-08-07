@@ -167,4 +167,77 @@ void main() {
       );
     });
   });
+
+  group('Kuaishou stable playback recheck', () {
+    test('jittered recheck remains within the 120-180 second boundary', () {
+      expect(
+        resolveKuaishouStableRefreshDelay(jitterSeconds: -999),
+        const Duration(seconds: 120),
+      );
+      expect(
+        resolveKuaishouStableRefreshDelay(jitterSeconds: 999),
+        const Duration(seconds: 180),
+      );
+      expect(
+        resolveKuaishouStableRefreshDelay(jitterSeconds: 0),
+        const Duration(seconds: 150),
+      );
+    });
+
+    test('buffering playback is not considered stable', () {
+      expect(
+        isLiveRoomPlaybackStable(
+          initialized: true,
+          playing: true,
+          buffering: true,
+          hasError: false,
+        ),
+        isFalse,
+      );
+      expect(
+        isLiveRoomPlaybackStable(
+          initialized: true,
+          playing: true,
+          buffering: false,
+          hasError: false,
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('Kuaishou recovery quality retention', () {
+    test('prefers the prior quality name before falling back to its index', () {
+      expect(
+        resolveKuaishouRecoveryQualityIndex(
+          qualities: const ['HD', 'FHD', 'SD'],
+          previousQualityName: 'FHD',
+          previousQualityIndex: 0,
+        ),
+        1,
+      );
+      expect(
+        resolveKuaishouRecoveryQualityIndex(
+          qualities: const ['FHD', 'HD'],
+          previousQualityName: 'missing',
+          previousQualityIndex: 99,
+        ),
+        1,
+      );
+    });
+
+    test('keeps a CDN line by signature after signed URL reordering', () {
+      expect(
+        resolveKuaishouRecoveryLineIndex(
+          urls: const [
+            'https://b.example.com/live.flv?token=new-b',
+            'https://a.example.com/live.flv?token=new-a',
+          ],
+          previousUrl: 'https://a.example.com/live.flv?token=old-a',
+          fallbackIndex: 0,
+        ),
+        1,
+      );
+    });
+  });
 }

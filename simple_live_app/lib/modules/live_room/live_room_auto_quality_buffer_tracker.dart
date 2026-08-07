@@ -7,9 +7,9 @@
 /// - 达到 [requiredBufferStarts] 后返回 true 并清零计数（触发一次动作）。
 class LiveRoomAutoQualityBufferTracker {
   LiveRoomAutoQualityBufferTracker({
-    this.requiredBufferStarts = 3,
+    this.requiredBufferStarts = 2,
     this.bufferingWindow = const Duration(seconds: 30),
-    this.stableResetAfter = const Duration(seconds: 8),
+    this.stableResetAfter = const Duration(seconds: 30),
     this.warmupDuration = const Duration(seconds: 8),
   });
 

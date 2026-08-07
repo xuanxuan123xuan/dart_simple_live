@@ -295,6 +295,29 @@ void main() {
     });
   });
 
+  group('KuaishouSite room detail cache policy', () {
+    test('playback recovery bypasses detail cache like status polling', () {
+      expect(
+        KuaishouSite.roomDetailCacheTtlForSource(
+          KuaishouRequestSource.playbackRecovery,
+        ),
+        isNull,
+      );
+      expect(
+        KuaishouSite.roomDetailCacheTtlForSource(
+          KuaishouRequestSource.roomStatusPolling,
+        ),
+        isNull,
+      );
+      expect(
+        KuaishouSite.roomDetailCacheTtlForSource(
+          KuaishouRequestSource.userEnter,
+        ),
+        const Duration(seconds: 15),
+      );
+    });
+  });
+
   group('KuaishouSite 弹幕冷却注入', () {
     test('getDanmaku 注入协调器冷却检查，冷却时返回 true', () {
       final site = KuaishouSite();

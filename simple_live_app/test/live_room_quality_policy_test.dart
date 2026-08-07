@@ -162,23 +162,21 @@ void main() {
         now: start.add(const Duration(seconds: 3)),
       );
 
-      for (var seconds in const [9, 11]) {
-        expect(
-          tracker.update(
-            buffering: true,
-            now: start.add(Duration(seconds: seconds)),
-          ),
-          isFalse,
-        );
-        tracker.update(
-          buffering: false,
-          now: start.add(Duration(seconds: seconds + 1)),
-        );
-      }
       expect(
         tracker.update(
           buffering: true,
-          now: start.add(const Duration(seconds: 13)),
+          now: start.add(const Duration(seconds: 9)),
+        ),
+        isFalse,
+      );
+      tracker.update(
+        buffering: false,
+        now: start.add(const Duration(seconds: 10)),
+      );
+      expect(
+        tracker.update(
+          buffering: true,
+          now: start.add(const Duration(seconds: 11)),
         ),
         isTrue,
       );
@@ -193,36 +191,24 @@ void main() {
         buffering: false,
         now: start.add(const Duration(seconds: 1)),
       );
+      // Thirty stable seconds reset the previous start.
       expect(
         tracker.update(
           buffering: true,
-          now: start.add(const Duration(seconds: 3)),
+          now: start.add(const Duration(seconds: 31)),
         ),
         isFalse,
       );
       tracker.update(
         buffering: false,
-        now: start.add(const Duration(seconds: 4)),
-      );
-
-      // Eight stable seconds reset the previous two starts.
-      expect(
-        tracker.update(
-          buffering: true,
-          now: start.add(const Duration(seconds: 12)),
-        ),
-        isFalse,
-      );
-      tracker.update(
-        buffering: false,
-        now: start.add(const Duration(seconds: 13)),
+        now: start.add(const Duration(seconds: 32)),
       );
       expect(
         tracker.update(
           buffering: true,
-          now: start.add(const Duration(seconds: 14)),
+          now: start.add(const Duration(seconds: 33)),
         ),
-        isFalse,
+        isTrue,
       );
     });
 
@@ -272,39 +258,31 @@ void main() {
       final tracker = LiveRoomAutoQualityBufferTracker();
       final start = DateTime(2026);
 
-      // 前两次独立缓冲开始（每次以 false 结束）不触发。
-      for (var i = 0; i < 2; i++) {
-        expect(
-          tracker.update(
-            buffering: true,
-            now: start.add(Duration(seconds: i * 2)),
-          ),
-          isFalse,
-        );
-        tracker.update(
-          buffering: false,
-          now: start.add(Duration(seconds: i * 2 + 1)),
-        );
-      }
-      // 第三次独立缓冲开始达到阈值触发。
+      // 第一次独立缓冲开始不触发。
+      expect(tracker.update(buffering: true, now: start), isFalse);
+      tracker.update(
+        buffering: false,
+        now: start.add(const Duration(seconds: 1)),
+      );
+      // 第二次独立缓冲开始达到阈值触发。
       expect(
         tracker.update(
           buffering: true,
-          now: start.add(const Duration(seconds: 5)),
+          now: start.add(const Duration(seconds: 2)),
         ),
         isTrue,
-        reason: '第三次独立缓冲开始达到阈值触发',
+        reason: '第二次独立缓冲开始达到阈值触发',
       );
       // 结束本次缓冲，并验证触发后计数已清零：下一次缓冲从零重新开始，
       // 不应立即再次触发。
       tracker.update(
         buffering: false,
-        now: start.add(const Duration(seconds: 5, milliseconds: 500)),
+        now: start.add(const Duration(seconds: 2, milliseconds: 500)),
       );
       expect(
         tracker.update(
           buffering: true,
-          now: start.add(const Duration(seconds: 6)),
+          now: start.add(const Duration(seconds: 3)),
         ),
         isFalse,
       );

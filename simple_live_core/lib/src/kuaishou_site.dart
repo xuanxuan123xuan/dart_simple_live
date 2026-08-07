@@ -8,6 +8,7 @@ import 'package:simple_live_core/src/common/core_cancellation.dart';
 import 'package:simple_live_core/src/common/core_error.dart';
 import 'package:simple_live_core/src/common/core_log.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/common/kuaishou_cooldown_evidence_tracker.dart';
 import 'package:simple_live_core/src/common/kuaishou_live_link.dart';
 import 'package:simple_live_core/src/common/kuaishou_request_coordinator.dart';
 import 'package:simple_live_core/src/danmaku/kuaishou_danmaku.dart';
@@ -125,6 +126,10 @@ class KuaishouSite extends LiveSite {
   /// 房间详情成功缓存 TTL（短窗口复用，播放地址有效期未核实前取保守值）。
   static const Duration _detailCacheTtl = Duration(seconds: 15);
 
+  /// 403/挑战页的连续凭据拒绝证据，按端点与 Cookie 会话隔离。
+  final KuaishouCooldownEvidenceTracker _cooldownEvidenceTracker =
+      KuaishouCooldownEvidenceTracker();
+
   /// DID 上报去重窗口：同一 DID 窗口内只上报一次。
   static const Duration _didReportWindow = Duration(minutes: 5);
   DateTime? _lastDidReportedAt;
@@ -159,6 +164,7 @@ class KuaishouSite extends LiveSite {
     _lastDidReportedAt = null;
     _lastReportedDid = null;
     _lastErrorClassification = KuaishouErrorClassification.none;
+    _cooldownEvidenceTracker.reset();
     // 协调器中的在途请求/缓存也一并重置，避免旧账号请求结果写回新会话。
     coordinator.reset();
   }
@@ -925,17 +931,32 @@ class KuaishouSite extends LiveSite {
       priority: _priorityForSource(source),
       key: 'room_detail:$roomId',
       logLabel: _maskRoomId(roomId),
-      // 轮询是状态复核手段，不应命中详情缓存（否则主播状态变化发现延迟翻倍）；
-      // 弹幕凭证也必须主动刷新缺失字段；两者仍保留同房 pending 合并。
-      cacheTtl: source == KuaishouRequestSource.roomStatusPolling ||
-              source == KuaishouRequestSource.danmakuCredential
-          ? null
-          : _detailCacheTtl,
+      // 无缓存来源仍由协调器保留同房 pending 合并与原有优先级。
+      cacheTtl: roomDetailCacheTtlForSource(source),
       // 用户主动进房绕过最小间隔，避免用户感知排队延迟；
       // 多开等批量场景不传 bypass，仍受协调器最小间隔约束。
       bypassInterval: source == KuaishouRequestSource.userEnter,
       task: () => _fetchRoomDetailUncoordinated(roomId),
     );
+  }
+
+  /// Returns the detail-cache policy for a request source.
+  ///
+  /// Polling, playback recovery, and credential refresh need a fresh detail
+  /// response, while coordinator pending de-duplication remains active.
+  static Duration? roomDetailCacheTtlForSource(KuaishouRequestSource source) {
+    switch (source) {
+      case KuaishouRequestSource.roomStatusPolling:
+      case KuaishouRequestSource.playbackRecovery:
+      case KuaishouRequestSource.danmakuCredential:
+        return null;
+      case KuaishouRequestSource.userEnter:
+      case KuaishouRequestSource.multiRoom:
+      case KuaishouRequestSource.followStatus:
+      case KuaishouRequestSource.manual:
+      case KuaishouRequestSource.unknown:
+        return _detailCacheTtl;
+    }
   }
 
   /// 把请求来源映射为协调器优先级。
@@ -982,9 +1003,6 @@ class KuaishouSite extends LiveSite {
       if (prefetchedPage != null && prefetchedPage.isNotEmpty) {
         detail = await _parseRoomDetail(prefetchedPage, roomId);
         _ensureCurrentSession(sessionEpoch);
-        if (detail == null && looksLikeChallengePage(prefetchedPage)) {
-          throw _challengePageError();
-        }
       }
       if (detail == null && _currentCookieHeader().isNotEmpty) {
         CoreLog.i(
@@ -1093,13 +1111,14 @@ class KuaishouSite extends LiveSite {
         queryParameters: const {},
         header: headers,
       );
+      _ensureCurrentSession(sessionEpoch);
       final hasInitialState = resultText.contains('window.__INITIAL_STATE__');
       final detail = await _parseRoomDetail(resultText, roomId);
       if (detail == null && looksLikeChallengePage(resultText)) {
-        // Challenge classification opens global cooldown. Do not let an old
-        // page response classify or cool down a newly selected account.
-        _ensureCurrentSession(sessionEpoch);
-        throw _challengePageError();
+        throw const _KuaishouChallengePageException();
+      }
+      if (detail != null) {
+        _recordEndpointSuccess('room_page', sessionEpoch);
       }
       CoreLog.i(
         '[ks-request] done endpoint=room_page room=$maskedRoom '
@@ -1116,9 +1135,12 @@ class KuaishouSite extends LiveSite {
         );
         return null;
       }
-      final statusCode = e is CoreError
-          ? e.statusCode
-          : (e is DioException ? e.response?.statusCode ?? 0 : 0);
+      final isChallengePage = e is _KuaishouChallengePageException;
+      final statusCode = isChallengePage
+          ? 403
+          : e is CoreError
+              ? e.statusCode
+              : (e is DioException ? e.response?.statusCode ?? 0 : 0);
       final errorKind = e is CoreError
           ? e.kind.name
           : e is DioException
@@ -1129,21 +1151,18 @@ class KuaishouSite extends LiveSite {
         'status=$statusCode kind=$errorKind '
         'ms=${stopwatch.elapsedMilliseconds}',
       );
-      // S2-T2：识别限流/风控响应并触发全局冷却。
-      // 仅带 Cookie 的请求参与冷却判断；匿名 403（常为未登录）只分类不冷却。
-      final challengePage =
-          _lastErrorClassification == KuaishouErrorClassification.challengePage;
-      if (!challengePage) {
-        _classifyAndMaybeCooldown(
-          statusCode,
-          e,
-          hasCookie: headers['cookie'] != null,
-        );
-      }
+      _classifyAndMaybeCooldown(
+        statusCode,
+        e,
+        endpoint: 'room_page',
+        sessionEpoch: sessionEpoch,
+        cookieHeader: headers['cookie']?.toString() ?? '',
+        isChallengePage: isChallengePage,
+      );
       // A risk/limit response must terminate this detail attempt. Falling
       // through to an anonymous retry would turn one blocked request into a
       // burst and can also overwrite the useful status classification.
-      if (challengePage || statusCode == 403 || statusCode == 429) {
+      if (isChallengePage || statusCode == 403 || statusCode == 429) {
         if (e is CoreError) {
           rethrow;
         }
@@ -1173,34 +1192,45 @@ class KuaishouSite extends LiveSite {
         html.contains('风控');
   }
 
-  CoreError _challengePageError() {
-    _lastErrorClassification = KuaishouErrorClassification.challengePage;
-    coordinator.beginCooldown(const Duration(minutes: 2));
-    return CoreError(
-      '快手返回安全验证页面，请稍后重试',
-      statusCode: 403,
-      kind: CoreErrorKind.http,
-    );
-  }
-
-  /// 根据响应状态码/异常分类错误，并在明确限流时触发协调器全局冷却。
+  /// 根据响应分类并记录登录会话的连续拒绝证据。
   void _classifyAndMaybeCooldown(
     int statusCode,
     Object error, {
-    bool hasCookie = false,
+    required String endpoint,
+    required int sessionEpoch,
+    required String cookieHeader,
+    bool isChallengePage = false,
   }) {
-    if (statusCode == 429) {
+    final immediateCooldown =
+        KuaishouCooldownEvidenceTracker.immediateCooldownForStatus(statusCode);
+    if (immediateCooldown != null) {
       _lastErrorClassification = KuaishouErrorClassification.rateLimited;
       // 429 明确限流：全局冷却，暂停关注/轮询/凭证后台任务。
-      coordinator.beginCooldown(const Duration(minutes: 5));
+      coordinator.beginCooldown(immediateCooldown);
       return;
     }
     if (statusCode == 403) {
-      _lastErrorClassification = KuaishouErrorClassification.forbidden;
-      // 403：仅带 Cookie 的请求才视为风控/挑战页并短冷却；
-      // 匿名 403 通常是未登录/无权限，只分类不冷却，避免误伤后台任务。
-      if (hasCookie) {
-        coordinator.beginCooldown(const Duration(minutes: 2));
+      _lastErrorClassification = isChallengePage
+          ? KuaishouErrorClassification.challengePage
+          : KuaishouErrorClassification.forbidden;
+      final hasAuthenticatedSession =
+          KuaishouCooldownEvidenceTracker.hasAuthenticatedSession(
+        cookieHeader,
+      );
+      final shouldCooldown = _cooldownEvidenceTracker.recordCredentialRejection(
+        endpoint: endpoint,
+        sessionEpoch: sessionEpoch,
+        hasAuthenticatedSession: hasAuthenticatedSession,
+      );
+      CoreLog.i(
+        '[ks-request] credential_rejection endpoint=$endpoint '
+        'session=$sessionEpoch authenticated=$hasAuthenticatedSession '
+        'cooldown=$shouldCooldown',
+      );
+      if (shouldCooldown) {
+        coordinator.beginCooldown(
+          KuaishouCooldownEvidenceTracker.cooldownDuration,
+        );
       }
       return;
     }
@@ -1215,6 +1245,15 @@ class KuaishouSite extends LiveSite {
       return;
     }
     _lastErrorClassification = KuaishouErrorClassification.none;
+  }
+
+  void _recordEndpointSuccess(String endpoint, int sessionEpoch) {
+    if (sessionEpoch == _sessionEpoch) {
+      _cooldownEvidenceTracker.recordSuccess(
+        endpoint: endpoint,
+        sessionEpoch: sessionEpoch,
+      );
+    }
   }
 
   Future<LiveRoomDetail?> _parseRoomDetail(
@@ -1538,7 +1577,7 @@ class KuaishouSite extends LiveSite {
     final dio = _sessionDio!;
     final cookieJar = _sessionCookieJar!;
     final requestHeaders = _headersWithCookie;
-    final requestHasCookie = requestHeaders['cookie'] != null;
+    final requestCookieHeader = requestHeaders['cookie']?.toString() ?? '';
     try {
       final response = await dio
           .get<String>(
@@ -1551,23 +1590,21 @@ class KuaishouSite extends LiveSite {
           .timeout(const Duration(seconds: 4));
       final responseStatus = response.statusCode ?? 0;
       if (responseStatus == 403 || responseStatus == 429) {
-        _classifyAndMaybeCooldown(
-          responseStatus,
-          CoreError(
-            '快手 Cookie 握手被服务端拒绝',
-            statusCode: responseStatus,
-            kind: CoreErrorKind.http,
-          ),
-          // Cookie handshake is a sensitive endpoint. A 403 here is a
-          // challenge/risk response even when no caller cookie was supplied.
-          hasCookie: true,
-        );
+        // Let the catch block classify this response exactly once.
         throw CoreError(
           '快手 Cookie 握手被服务端拒绝',
           statusCode: responseStatus,
           kind: CoreErrorKind.http,
         );
       }
+      if (looksLikeChallengePage(response.data ?? '')) {
+        // A 200 challenge page is not a successful handshake. Route it
+        // through the catch below so the real response contributes exactly
+        // one endpoint-scoped rejection observation.
+        throw const _KuaishouChallengePageException();
+      }
+      _ensureCurrentSession(sessionEpoch);
+      _recordEndpointSuccess('cookie_handshake', sessionEpoch);
       List<Cookie> cookies = await cookieJar.loadForRequest(Uri.parse(url));
       if (sessionEpoch != _sessionEpoch) {
         CoreLog.i(
@@ -1596,9 +1633,12 @@ class KuaishouSite extends LiveSite {
         );
         return null;
       }
-      final statusCode = e is CoreError
-          ? e.statusCode
-          : (e is DioException ? e.response?.statusCode ?? 0 : 0);
+      final isChallengePage = e is _KuaishouChallengePageException;
+      final statusCode = isChallengePage
+          ? 403
+          : e is CoreError
+              ? e.statusCode
+              : (e is DioException ? e.response?.statusCode ?? 0 : 0);
       final kind = e is DioException ? e.type.name : e.runtimeType.toString();
       CoreLog.i(
         '[ks-request] fail endpoint=cookie_handshake room=$maskedRoom '
@@ -1607,11 +1647,14 @@ class KuaishouSite extends LiveSite {
       _classifyAndMaybeCooldown(
         statusCode,
         e,
-        hasCookie: requestHasCookie || statusCode == 403,
+        endpoint: 'cookie_handshake',
+        sessionEpoch: sessionEpoch,
+        cookieHeader: requestCookieHeader,
+        isChallengePage: isChallengePage,
       );
-      if (statusCode == 403 || statusCode == 429) {
+      if (isChallengePage || statusCode == 403 || statusCode == 429) {
         throw CoreError(
-          '快手 Cookie 握手被服务端拒绝',
+          isChallengePage ? '快手返回安全验证页面，请稍后重试' : '快手 Cookie 握手被服务端拒绝',
           statusCode: statusCode,
           kind: CoreErrorKind.http,
           cause: e,
@@ -1645,9 +1688,10 @@ class KuaishouSite extends LiveSite {
     required String liveStreamId,
   }) async {
     final sessionEpoch = _sessionEpoch;
+    final requestHeaders = _headersWithCookie;
+    final requestCookieHeader = requestHeaders['cookie']?.toString() ?? '';
     try {
       final kww = resolveServerKww(_currentCookieHeader(), customKww);
-      final requestHeaders = _headersWithCookie;
       final result = await HttpClient.instance.getJson(
         "https://live.kuaishou.com/live_api/liveroom/websocketinfo",
         queryParameters: {"liveStreamId": liveStreamId},
@@ -1661,6 +1705,7 @@ class KuaishouSite extends LiveSite {
         },
       );
       _ensureCurrentSession(sessionEpoch);
+      _recordEndpointSuccess('websocket_info', sessionEpoch);
       final data = result["data"];
       if (data is! Map) {
         return _KuaishouWebsocketInfo.empty();
@@ -1689,7 +1734,9 @@ class KuaishouSite extends LiveSite {
       _classifyAndMaybeCooldown(
         statusCode,
         e,
-        hasCookie: _currentCookieHeader().isNotEmpty,
+        endpoint: 'websocket_info',
+        sessionEpoch: sessionEpoch,
+        cookieHeader: requestCookieHeader,
       );
       if (statusCode == 403 || statusCode == 429) {
         rethrow;
@@ -1895,4 +1942,8 @@ class _KuaishouWebsocketInfo {
   factory _KuaishouWebsocketInfo.empty() {
     return _KuaishouWebsocketInfo(token: '', websocketUrls: <String>[]);
   }
+}
+
+class _KuaishouChallengePageException implements Exception {
+  const _KuaishouChallengePageException();
 }

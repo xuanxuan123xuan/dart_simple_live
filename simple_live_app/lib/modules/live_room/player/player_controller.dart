@@ -1902,19 +1902,21 @@ class PlayerController extends BaseController
   DateTime? _lastStreamErrorTime;
   Timer? _surfaceHealthCheckTimer;
 
-  /// 自动网络诊断提示（缓冲 3 次独立开始时触发，显示在画面左上角）。
+  /// 自动网络诊断提示（达到 tracker 阈值的独立缓冲开始时触发，
+  /// 显示在画面左上角）。
   final networkHint = "".obs;
   bool _autoDiagnoseRunning = false;
   Timer? _networkHintTimer;
   DateTime? _lastAutoDiagnoseAt;
+  bool _hasMarkedInitialStreamOpening = false;
 
   /// 自动网络诊断的独立缓冲开始统计器（与自动降画质各持有独立实例，
   /// 只复用同构算法，不共享可变状态）。
   final LiveRoomAutoQualityBufferTracker _autoDiagnosisTracker =
       LiveRoomAutoQualityBufferTracker(
-    requiredBufferStarts: 3,
+    requiredBufferStarts: 2,
     bufferingWindow: const Duration(seconds: 30),
-    stableResetAfter: const Duration(seconds: 8),
+    stableResetAfter: const Duration(seconds: 30),
     warmupDuration: const Duration(seconds: 8),
   );
 
@@ -1930,13 +1932,14 @@ class PlayerController extends BaseController
   ///
   /// 一次性处理：缓冲计数归零、边沿状态归零、诊断冷却清空、
   /// 取消旧提示 Timer、清空 networkHint、递增诊断代次，
-  /// 使旧房间的异步诊断结果只能被丢弃。
+  /// 使旧房间的异步诊断结果只能被丢弃，并恢复到尚未首次开流状态。
   ///
   /// 注意：[_autoDiagnoseRunning]/[_runningDiagnoseGeneration] 故意不在
   /// 此处重置——旧诊断终会经由 _runAutoNetworkDiagnose 的 finally 自清理，
   /// 且代次互斥（[:2055]）保证残留标志不阻塞新房间诊断。
   void resetAutoNetworkDiagnosisSession() {
     _autoDiagnosisTracker.reset();
+    _hasMarkedInitialStreamOpening = false;
     _lastAutoDiagnoseAt = null;
     _networkHintTimer?.cancel();
     _networkHintTimer = null;
@@ -1945,14 +1948,25 @@ class PlayerController extends BaseController
     Log.d("[player-diag] session reset generation=$_diagnosisGeneration");
   }
 
-  /// 标记即将打开新流，并从 `player.open()` 前开始忽略起播缓冲。
+  /// 在诊断会话的首次 `player.open()` 前开始忽略起播缓冲。
   ///
-  /// 调用方应在 `player.open()` 前紧邻调用，确保播放器在 open 期间发出的
-  /// buffering 事件也处于 warmup 窗口内。
-  void markStreamOpening() {
-    _autoDiagnosisTracker.beginWarmup(DateTime.now());
-    Log.d("[player-diag] stream opening, warmup begins");
+  /// 调用方应在真正的 `player.open()` 前紧邻调用。媒体错误、播放结束、
+  /// 切线路或降画质导致的后续重开不会清零诊断计数，也不会重新开始 warmup。
+  /// 返回 true 表示本次确实启动了会话 warmup，false 表示已启动过。
+  bool markStreamOpening({DateTime? now}) {
+    if (_hasMarkedInitialStreamOpening) {
+      Log.d("[player-diag] stream opening ignored (session already warmed up)");
+      return false;
+    }
+    _hasMarkedInitialStreamOpening = true;
+    _autoDiagnosisTracker.beginWarmup(now ?? DateTime.now());
+    Log.d("[player-diag] initial stream opening, warmup begins");
+    return true;
   }
+
+  /// 房间控制器可覆写为 true，让流错误回到房间级重试/刷新流程。
+  /// 默认 false，保持现有平台的播放器内解码器重试行为。
+  bool get shouldDelegateStreamErrorsToRoomController => false;
 
   /// 当前实际播放 URL。子类提供后，诊断会使用其真实 host/port。
   String get currentNetworkDiagnosePlaybackUrl => '';
@@ -1966,9 +1980,22 @@ class PlayerController extends BaseController
         return;
       }
 
-      // Fix Issue #57: 检测流错误并自动重试
+      // Fix Issue #57: 流错误默认由播放器内重试；需要房间级刷新 URL 的平台
+      // 可覆写 shouldDelegateStreamErrorsToRoomController 交回 mediaError。
       if (_isStreamError(event)) {
-        _handleStreamError(event);
+        if (shouldDelegateStreamErrorsToRoomController) {
+          final now = DateTime.now();
+          if (_lastStreamErrorTime != null &&
+              now.difference(_lastStreamErrorTime!) <
+                  const Duration(seconds: 2)) {
+            return;
+          }
+          _lastStreamErrorTime = now;
+          Log.d("[player] delegating stream error to room controller");
+          mediaError(event);
+        } else {
+          _handleStreamError(event);
+        }
         return;
       }
 
