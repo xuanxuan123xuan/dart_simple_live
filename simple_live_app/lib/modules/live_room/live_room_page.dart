@@ -39,7 +39,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
 
   const LiveRoomPage({Key? key}) : super(key: key);
 
-  /// 打开网络诊断弹窗：测试到公共 DNS 的延迟与丢包。
+  /// 打开网络诊断弹窗：测试到公共 DNS 与播放端点的 TCP 连接延迟与连通性。
   void showNetworkDiagnose(LiveRoomController controller) {
     Utils.showModalBottomSheetSafe(
       context: Get.context!,
@@ -1953,7 +1953,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             ListTile(
               leading: const Icon(Icons.network_check_outlined),
               title: const Text("网络诊断"),
-              subtitle: const Text("测试延迟与丢包，判断网络还是平台问题"),
+              subtitle: const Text("测试到播放端点与公共 DNS 的连接，判断网络还是平台问题"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
@@ -2304,8 +2304,8 @@ class _SubtitleModelTile extends StatelessWidget {
   }
 }
 
-/// 网络诊断面板：测试到公共 DNS 的延迟与丢包，帮助判断卡顿是
-/// 网络问题还是平台问题。
+/// 网络诊断面板：测试到公共 DNS 与播放端点的 TCP 连接延迟与连通性，
+/// 帮助判断卡顿是网络问题还是平台问题。
 class _NetworkDiagnosePanel extends StatefulWidget {
   final LiveRoomController controller;
 
@@ -2332,20 +2332,29 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
       _results.clear();
       _summary = "";
     });
-    // 目标：公共 DNS + 当前直播平台页面域名。
-    final roomUrl = widget.controller.detail.value?.url ?? "";
-    final roomHost = Uri.tryParse(roomUrl)?.host ?? "";
-    final targets = <String>[
-      ...NetworkDiagnoseService.defaultTargets,
-      if (roomHost.isNotEmpty) roomHost,
-    ].toList();
-    final results = await NetworkDiagnoseService.diagnose(targets);
+    final externalFuture = NetworkDiagnoseService.diagnose(
+      NetworkDiagnoseService.defaultTargets,
+    );
+    final playbackFuture = NetworkDiagnoseService.diagnosePlaybackUrl(
+      widget.controller.currentNetworkDiagnosePlaybackUrl,
+    );
+    final externalTargets = await externalFuture;
+    final playbackResult = await playbackFuture;
+    final results = [
+      if (playbackResult != null) playbackResult,
+      ...externalTargets,
+    ];
     if (!mounted) return;
+    final summary = NetworkDiagnoseService.summarizeLayered(
+      results,
+      playbackEndpoint: playbackResult,
+      externalTargets: externalTargets,
+    );
     setState(() {
       _results
         ..clear()
         ..addAll(results);
-      _summary = NetworkDiagnoseService.summarize(results);
+      _summary = summary;
       _running = false;
     });
   }
@@ -2402,16 +2411,18 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: r.lossRate > 20 || r.lost == r.samples
+                          color: r.lost == r.samples
                               ? Colors.red
-                              : r.avgMs > 250
+                              : r.lost > 0 || r.avgMs > 250
                                   ? Colors.orange
                                   : Colors.green,
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        "丢包 ${r.lossRate.toStringAsFixed(0)}%",
+                        r.lost > 0
+                            ? "连接失败 ${r.lost}/${r.samples}"
+                            : "连接正常",
                         style: const TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                       const SizedBox(width: 8),

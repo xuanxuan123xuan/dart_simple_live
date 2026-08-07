@@ -6,6 +6,7 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
@@ -489,6 +490,20 @@ class MultiRoomPlayerController extends GetxController {
     return result;
   }
 
+  /// 读取多开格子房间详情。
+  ///
+  /// 快手请求通过 [KuaishouRequestTrace] 标记为多开来源，保留高优先级但
+  /// 仍遵守协调器最小间隔，避免多个格子形成突发请求；其他平台不标记来源。
+  Future<LiveRoomDetail> _fetchRoomDetail() {
+    if (item.site.id != Constant.kKuaishou) {
+      return item.site.liveSite.getRoomDetail(roomId: item.roomId);
+    }
+    return KuaishouRequestTrace.run(
+      KuaishouRequestSource.multiRoom,
+      () => item.site.liveSite.getRoomDetail(roomId: item.roomId),
+    );
+  }
+
   Future<void> _loadInternal() async {
     loading.value = true;
     errorText.value = "";
@@ -508,8 +523,7 @@ class MultiRoomPlayerController extends GetxController {
       await _stopDanmaku();
       chatMessages.clear();
       _recentDanmuFingerprints.clear();
-      final roomDetail =
-          await item.site.liveSite.getRoomDetail(roomId: item.roomId);
+      final roomDetail = await _fetchRoomDetail();
       if (_disposed) {
         return;
       }

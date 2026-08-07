@@ -52,6 +52,11 @@ import 'package:url_launcher/url_launcher_string.dart';
 import 'package:video_player/video_player.dart';
 import 'package:window_manager/window_manager.dart';
 
+export 'live_room_auto_quality_buffer_tracker.dart'
+    show LiveRoomAutoQualityBufferTracker;
+
+import 'live_room_auto_quality_buffer_tracker.dart';
+
 @visibleForTesting
 bool shouldAcceptOfflineRoomRefresh({
   required bool playbackActive,
@@ -59,6 +64,50 @@ bool shouldAcceptOfflineRoomRefresh({
   int requiredReports = 3,
 }) {
   return !playbackActive && consecutiveOfflineReports >= requiredReports;
+}
+
+/// 在线状态轮询的退避间隔（S2-T1）。
+///
+/// [state] 为当前房间直播状态，[failures] 为连续失败（unknown）次数。
+/// 规则：
+/// - live：10s（恢复常态，重置退避）；
+/// - offline：45s（低频确认，配合离线遮罩）；
+/// - unknown/失败：按 10s → 30s → 60s → 120s → 240s 指数增长，封顶 300s。
+@visibleForTesting
+Duration resolveOnlineRefreshDelay(
+  LiveStatusState state,
+  int failures,
+) {
+  if (state == LiveStatusState.live) {
+    return const Duration(seconds: 10);
+  }
+  if (state == LiveStatusState.offline) {
+    return const Duration(seconds: 45);
+  }
+  final step = (failures + 1).clamp(0, 6).toInt();
+  // step=1 -> 10s, 2 -> 30s, 3 -> 60s, 4 -> 120s, 5 -> 240s, 6+ -> 300s(封顶)
+  final delaySeconds = step <= 1 ? 10 : 15 * (1 << (step - 1));
+  final capped = delaySeconds > 300 ? 300 : delaySeconds;
+  return Duration(seconds: capped);
+}
+
+/// 根据本次状态响应更新连续 unknown/失败次数。
+///
+/// 请求异常同样会转换为 [LiveStatusState.unknown] 后走此入口，因此调用方
+/// 不应在 catch 中再次累加。明确 live 会恢复基础间隔；offline 使用独立的
+/// 45 秒复核间隔，不参与 unknown 退避计数。
+@visibleForTesting
+int resolveOnlineRefreshFailureCount({
+  required LiveStatusState incomingState,
+  required int currentFailures,
+}) {
+  if (incomingState == LiveStatusState.live) {
+    return 0;
+  }
+  if (incomingState == LiveStatusState.unknown) {
+    return currentFailures + 1;
+  }
+  return currentFailures;
 }
 
 @immutable
@@ -244,82 +293,6 @@ bool isCurrentLiveRoomPlaybackRequest({
 }) {
   return roomGeneration == expectedRoomGeneration &&
       requestRevision == latestRequestRevision;
-}
-
-@visibleForTesting
-class LiveRoomAutoQualityBufferTracker {
-  final int requiredBufferStarts;
-  final Duration bufferingWindow;
-  final Duration stableResetAfter;
-  final Duration warmupDuration;
-
-  int _bufferingStarts = 0;
-  bool _isBuffering = false;
-  DateTime? _lastBufferingStartedAt;
-  DateTime? _stableSince;
-  DateTime? _warmupUntil;
-
-  LiveRoomAutoQualityBufferTracker({
-    this.requiredBufferStarts = 3,
-    this.bufferingWindow = const Duration(seconds: 30),
-    this.stableResetAfter = const Duration(seconds: 8),
-    this.warmupDuration = const Duration(seconds: 8),
-  });
-
-  void beginWarmup(DateTime now) {
-    reset();
-    _warmupUntil = now.add(warmupDuration);
-  }
-
-  void reset() {
-    _bufferingStarts = 0;
-    _isBuffering = false;
-    _lastBufferingStartedAt = null;
-    _stableSince = null;
-  }
-
-  /// Returns true after enough distinct buffering starts occur close together.
-  bool update({required bool buffering, required DateTime now}) {
-    if (!buffering) {
-      if (_isBuffering) {
-        _stableSince = now;
-      }
-      _isBuffering = false;
-      return false;
-    }
-    // A stream may emit the same buffering value more than once. Count only
-    // transitions into buffering.
-    if (_isBuffering) {
-      return false;
-    }
-    _isBuffering = true;
-
-    final warmupUntil = _warmupUntil;
-    if (warmupUntil != null && now.isBefore(warmupUntil)) {
-      return false;
-    }
-
-    final stableSince = _stableSince;
-    final lastStartedAt = _lastBufferingStartedAt;
-    if ((stableSince != null &&
-            now.difference(stableSince) >= stableResetAfter) ||
-        (lastStartedAt != null &&
-            now.difference(lastStartedAt) > bufferingWindow)) {
-      _bufferingStarts = 0;
-      _lastBufferingStartedAt = null;
-    }
-
-    _stableSince = null;
-    _lastBufferingStartedAt = now;
-    _bufferingStarts += 1;
-    if (_bufferingStarts < requiredBufferStarts) {
-      return false;
-    }
-
-    _bufferingStarts = 0;
-    _lastBufferingStartedAt = null;
-    return true;
-  }
 }
 
 class LiveRoomController extends PlayerController
@@ -523,6 +496,17 @@ class LiveRoomController extends PlayerController
   var currentLineIndex = -1;
   var currentLineInfo = "".obs;
 
+  @override
+  String get currentNetworkDiagnosePlaybackUrl {
+    if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) {
+      return '';
+    }
+    final url = playUrls[currentLineIndex];
+    return AppSettingsController.instance.playerForceHttps.value
+        ? url.replaceAll('http://', 'https://')
+        : url;
+  }
+
   String lineDisplayName(int index) {
     final lineName = "线路${index + 1}";
     if (index < 0 || index >= playUrls.length) {
@@ -596,6 +580,9 @@ class LiveRoomController extends PlayerController
   bool _liveLatencyTelemetryInFlight = false;
   bool _hasActivePlaybackSession = false;
   bool _playbackBootstrapInFlight = false;
+
+  /// 连续轮询失败（含 unknown/offline）次数，用于指数退避。
+  int _onlineRefreshFailures = 0;
   DateTime? _ohosHealthyPlaybackSince;
   Duration _lastOhosPlaybackPosition = Duration.zero;
   bool _autoPipAttempting = false;
@@ -1355,16 +1342,73 @@ class LiveRoomController extends PlayerController
       !_hasActivePlaybackSession &&
       !_hasActivePlaybackForRoomStatus;
 
+  /// 读取房间详情。快手请求通过 [KuaishouRequestTrace] 标记来源，
+  /// 供 core 侧按来源汇总请求量；其他平台不带来源标记。
+  Future<LiveRoomDetail> _fetchRoomDetailWithSource({
+    KuaishouRequestSource? source,
+  }) {
+    if (source == null) {
+      return site.liveSite.getRoomDetail(roomId: roomId);
+    }
+    return KuaishouRequestTrace.run(
+      source,
+      () => site.liveSite.getRoomDetail(roomId: roomId),
+    );
+  }
+
   void _restartOnlineRefreshTimer() {
     _onlineRefreshTimer?.cancel();
     _onlineRefreshTimer = null;
     if (_roomDisposed) {
       return;
     }
+
+    // 快手：正在稳定播放时不轮询详情（S2-T1）。
+    // 播放状态作为主信号；确需复核时用分钟级低频，避免稳定观看期间
+    // 持续以 10s 周期抓取完整房间页面（频率限制设计 9.1）。
+    if (site.id == Constant.kKuaishou && _isStablyPlaying()) {
+      Log.d("[ks-poll] skip online refresh timer (stably playing) "
+          "state=${roomLiveState.value.name}");
+      return;
+    }
+
     final delay = showOfflineOverlay
         ? const Duration(seconds: 45)
-        : const Duration(seconds: 10);
+        : _resolveOnlineRefreshDelay();
     _onlineRefreshTimer = Timer(delay, _refreshRoomStatus);
+  }
+
+  /// 取消在线状态轮询定时器（播放建立后调用）。
+  void _cancelOnlineRefreshTimer() {
+    _onlineRefreshTimer?.cancel();
+    _onlineRefreshTimer = null;
+  }
+
+  /// 是否正在稳定播放（作为快手轮询主信号）。
+  bool _isStablyPlaying() {
+    if (_hasActivePlaybackSession || _hasActivePlaybackForRoomStatus) {
+      return true;
+    }
+    if (Utils.isOhos) {
+      final value = ohosVideoController?.value;
+      return value != null &&
+          value.isInitialized &&
+          !value.hasError &&
+          (value.isPlaying || value.isBuffering);
+    }
+    return player.state.playing;
+  }
+
+  /// 根据当前状态决定下次轮询间隔：unknown/失败走指数退避。
+  ///
+  /// 连续失败次数由 [_onlineRefreshFailures] 记录；失败时按
+  /// 10s → 30s → 60s → 120s → 240s 指数增长，封顶 300s；
+  /// 恢复到 live 后重置为 10s。
+  Duration _resolveOnlineRefreshDelay() {
+    return resolveOnlineRefreshDelay(
+      roomLiveState.value,
+      _onlineRefreshFailures,
+    );
   }
 
   Future<void> _refreshRoomStatus() async {
@@ -1376,9 +1420,11 @@ class LiveRoomController extends PlayerController
     final refreshGeneration = _loadGeneration;
     try {
       final roomDetail = _sanitizeRoomDetail(
-        await site.liveSite
-            .getRoomDetail(roomId: roomId)
-            .timeout(const Duration(seconds: 8)),
+        await _fetchRoomDetailWithSource(
+          source: site.id == Constant.kKuaishou
+              ? KuaishouRequestSource.roomStatusPolling
+              : null,
+        ).timeout(const Duration(seconds: 8)),
       );
       if (!_isCurrentLoad(refreshGeneration)) {
         return;
@@ -1395,6 +1441,9 @@ class LiveRoomController extends PlayerController
       }
     } catch (e) {
       Log.d("刷新${site.name}直播状态失败，保留当前状态: $e");
+      if (!_isCurrentLoad(refreshGeneration)) {
+        return;
+      }
       _applyRoomLiveState(LiveStatusState.unknown);
     } finally {
       _onlineRefreshInFlight = false;
@@ -1405,6 +1454,10 @@ class LiveRoomController extends PlayerController
   }
 
   void _applyRoomLiveState(LiveStatusState incomingState) {
+    _onlineRefreshFailures = resolveOnlineRefreshFailureCount(
+      incomingState: incomingState,
+      currentFailures: _onlineRefreshFailures,
+    );
     final decision = resolveRoomLiveRefresh(
       currentState: roomLiveState.value,
       incomingState: incomingState,
@@ -1922,8 +1975,15 @@ class LiveRoomController extends PlayerController
       rebuildDanmakuView();
       addSysMsg("正在读取直播间信息");
       final detailStopwatch = Stopwatch()..start();
+      final detailRequest = _fetchRoomDetailWithSource(
+        source: site.id == Constant.kKuaishou
+            ? KuaishouRequestSource.userEnter
+            : null,
+      );
       final roomDetail = _sanitizeRoomDetail(
-        await site.liveSite.getRoomDetail(roomId: roomId),
+        site.id == Constant.kKuaishou
+            ? await detailRequest.timeout(const Duration(seconds: 12))
+            : await detailRequest,
       );
       detailStopwatch.stop();
       Log.i(
@@ -2009,10 +2069,26 @@ class LiveRoomController extends PlayerController
         return;
       }
       if (site.id == Constant.kKuaishou) {
-        roomLiveState.value = LiveStatusState.unknown;
-        offlineConfirmations.value = 0;
-        loadError.value = false;
-        _restartOnlineRefreshTimer();
+        // S2-T3：详情失败与播放地址未就绪分离。
+        // 明确限流/风控（403/429）显示可重试错误；其他失败静默恢复轮询，
+        // 避免黑屏转圈（保持冷启动方案 5.1 的恢复语义）。
+        final isHttpLimit = e is CoreError &&
+            (e.kind == CoreErrorKind.http) &&
+            (e.statusCode == 403 || e.statusCode == 429);
+        if (isHttpLimit) {
+          roomLiveState.value = LiveStatusState.unknown;
+          offlineConfirmations.value = 0;
+          loadError.value = true;
+          error = e;
+          errorStackTrace = stackTrace;
+          Log.w("快手详情请求被限流(${e.statusCode})，显示可重试错误");
+        } else {
+          roomLiveState.value = LiveStatusState.unknown;
+          offlineConfirmations.value = 0;
+          loadError.value = true;
+          error = e;
+          errorStackTrace = stackTrace;
+        }
       } else {
         loadError.value = true;
         error = e;
@@ -2367,6 +2443,8 @@ class LiveRoomController extends PlayerController
         return;
       }
 
+      // Warmup 必须覆盖 player.open() 期间产生的起播 buffering 事件。
+      markStreamOpening();
       await player.open(
         Media(
           finalUrl,
@@ -2381,6 +2459,12 @@ class LiveRoomController extends PlayerController
       }
       _hasActivePlaybackSession = true;
       waitingForPlaybackUrl.value = false;
+      // 播放已建立：快手取消挂起的在线状态轮询（不再需要 10s 全量轮询，
+      // 播放状态作为主信号；见 _restartOnlineRefreshTimer）。
+      // 其他平台保持原有轮询逻辑，不受影响。
+      if (site.id == Constant.kKuaishou) {
+        _cancelOnlineRefreshTimer();
+      }
       openStopwatch.stop();
       Log.i(
         "播放器打开完成：${site.id}/$roomId ${openStopwatch.elapsedMilliseconds}ms "
@@ -2556,6 +2640,9 @@ class LiveRoomController extends PlayerController
     // 依次尝试剩余线路，全部失败后再判定为已下播。
     if (playUrls.length - 1 == currentLineIndex) {
       _hasActivePlaybackSession = false;
+      // S2-T1 修复：播放中断后恢复状态轮询，重新以详情确认直播状态
+      // （此前稳定播放期取消了轮询，若不恢复则下播/复播都无法被发现）。
+      _restartOnlineRefreshTimer();
       if (Utils.isOhos) {
         // AVPlayer completion is not sufficient evidence that a live room is
         // offline. Keep the room active; the independent room-status polling
@@ -2609,6 +2696,8 @@ class LiveRoomController extends PlayerController
 
     if (playUrls.length - 1 == currentLineIndex) {
       _hasActivePlaybackSession = false;
+      // S2-T1 修复：播放失败后恢复状态轮询，重新以详情确认直播状态。
+      _restartOnlineRefreshTimer();
       if (site.id == Constant.kHuya) {
         // 已判定下播或已达重试上限时停止重试，走切房/播放失败处理，
         // 避免主播下播/断流后无限回退重试。重试计数不清零，保证有界。
@@ -3931,6 +4020,7 @@ class LiveRoomController extends PlayerController
         CurrentRoomService.instance.setRoom(currentSite, currentRoomId);
         _roomDisposed = false;
         _loadGeneration += 1;
+        _onlineRefreshFailures = 0;
         tempMutedUsers.clear();
         danmakuViewportHeight.value = 0;
 
@@ -3955,6 +4045,15 @@ class LiveRoomController extends PlayerController
         if (!Utils.isOhos) {
           await player.stop();
         }
+
+        // 换房清理网络诊断与自动降画质会话（S3-T2）：
+        // 诊断计数/冷却/提示/Timer 与诊断代次一起重置，旧房间异步结果不得串房；
+        // 降画质 3 次计数与降档冷却一并清零，新流打开时的 beginWarmup 语义保留。
+        if (!Utils.isOhos) {
+          resetAutoNetworkDiagnosisSession();
+        }
+        _autoQualityBufferTracker.reset();
+        _lastAutoQualityDownAt = null;
 
         // 重新拉取房间信息
         loadData();

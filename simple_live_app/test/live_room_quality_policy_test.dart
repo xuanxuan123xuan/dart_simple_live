@@ -245,6 +245,96 @@ void main() {
         isFalse,
       );
     });
+
+    test('repeated true without false counts as a single buffering start', () {
+      final tracker = LiveRoomAutoQualityBufferTracker();
+      final start = DateTime(2026);
+
+      tracker.update(buffering: true, now: start);
+      // 同一段缓冲内重复广播 true：不新增计数。
+      expect(
+        tracker.update(
+          buffering: true,
+          now: start.add(const Duration(seconds: 1)),
+        ),
+        isFalse,
+      );
+      expect(
+        tracker.update(
+          buffering: true,
+          now: start.add(const Duration(seconds: 2)),
+        ),
+        isFalse,
+      );
+    });
+
+    test('trigger threshold resets so the next start starts a fresh count', () {
+      final tracker = LiveRoomAutoQualityBufferTracker();
+      final start = DateTime(2026);
+
+      // 前两次独立缓冲开始（每次以 false 结束）不触发。
+      for (var i = 0; i < 2; i++) {
+        expect(
+          tracker.update(
+            buffering: true,
+            now: start.add(Duration(seconds: i * 2)),
+          ),
+          isFalse,
+        );
+        tracker.update(
+          buffering: false,
+          now: start.add(Duration(seconds: i * 2 + 1)),
+        );
+      }
+      // 第三次独立缓冲开始达到阈值触发。
+      expect(
+        tracker.update(
+          buffering: true,
+          now: start.add(const Duration(seconds: 5)),
+        ),
+        isTrue,
+        reason: '第三次独立缓冲开始达到阈值触发',
+      );
+      // 结束本次缓冲，并验证触发后计数已清零：下一次缓冲从零重新开始，
+      // 不应立即再次触发。
+      tracker.update(
+        buffering: false,
+        now: start.add(const Duration(seconds: 5, milliseconds: 500)),
+      );
+      expect(
+        tracker.update(
+          buffering: true,
+          now: start.add(const Duration(seconds: 6)),
+        ),
+        isFalse,
+      );
+    });
+
+    test('reset clears counts for a new room session', () {
+      final tracker = LiveRoomAutoQualityBufferTracker();
+      final start = DateTime(2026);
+
+      tracker.update(buffering: true, now: start);
+      tracker.update(
+        buffering: false,
+        now: start.add(const Duration(seconds: 1)),
+      );
+      tracker.update(
+        buffering: true,
+        now: start.add(const Duration(seconds: 2)),
+      );
+
+      tracker.reset();
+
+      expect(
+        tracker.update(
+          buffering: true,
+          now: start.add(const Duration(seconds: 3)),
+        ),
+        isFalse,
+        reason: '换房重置后旧房间计数不残留，第一次缓冲不再触发',
+      );
+    });
   });
 
   group('live room playback request revision', () {

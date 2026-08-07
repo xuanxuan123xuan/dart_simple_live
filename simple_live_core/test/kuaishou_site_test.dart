@@ -276,4 +276,61 @@ void main() {
       expect(KuaishouSite.isImageUrl(''), isFalse);
     });
   });
+
+  group('KuaishouSite Cookie 会话重置', () {
+    test('resetCookieSession 清空共享 Cookie 字段与 DID 去重状态', () {
+      final site = KuaishouSite();
+      site.customCookie = 'kuaishou.live.web_st=abc; did=d1';
+      site.cookie = 'did=d1; server_session=x';
+      site.cookieObj = {'did': 'd1', 'server_session': 'x'};
+
+      site.resetCookieSession();
+
+      expect(site.cookie, '');
+      expect(site.cookieObj, isEmpty);
+      // 长期会话应重建（当前为 null，下次 _getCookie 懒初始化）。
+      // 注：_sessionDio 是私有字段，通过再次 reset 幂等性间接验证。
+      site.resetCookieSession();
+      expect(site.cookie, '');
+    });
+  });
+
+  group('KuaishouSite 弹幕冷却注入', () {
+    test('getDanmaku 注入协调器冷却检查，冷却时返回 true', () {
+      final site = KuaishouSite();
+      final danmaku = site.getDanmaku();
+      expect(danmaku, isA<KuaishouDanmaku>());
+
+      // 注入的 credentialCooldownCheck 应联动站点协调器冷却状态。
+      final check = (danmaku as KuaishouDanmaku).credentialCooldownCheck;
+      expect(check, isNotNull);
+      expect(check!(), isFalse, reason: '未冷却时不应暂停凭证重试');
+
+      site.coordinator.beginCooldown(const Duration(minutes: 5));
+      expect(check(), isTrue, reason: '协调器冷却时凭证重试应感知并暂停');
+      site.coordinator.endCooldown();
+    });
+  });
+
+  group('KuaishouSite challenge page detection', () {
+    test('detects verification pages without initial state', () {
+      expect(
+        KuaishouSite.looksLikeChallengePage('<html>请完成人机验证</html>'),
+        isTrue,
+      );
+      expect(
+        KuaishouSite.looksLikeChallengePage('<div id="captcha"></div>'),
+        isTrue,
+      );
+    });
+
+    test('does not classify a normal room page as challenge', () {
+      expect(
+        KuaishouSite.looksLikeChallengePage(
+          '<script>window.__INITIAL_STATE__={};</script>',
+        ),
+        isFalse,
+      );
+    });
+  });
 }

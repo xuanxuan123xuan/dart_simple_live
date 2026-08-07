@@ -21,6 +21,7 @@ import 'package:simple_live_app/app/custom_throttle.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_tracker.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
@@ -1901,13 +1902,60 @@ class PlayerController extends BaseController
   DateTime? _lastStreamErrorTime;
   Timer? _surfaceHealthCheckTimer;
 
-  /// 自动网络诊断提示（缓冲 2 次以上触发，显示在画面左上角）。
+  /// 自动网络诊断提示（缓冲 3 次独立开始时触发，显示在画面左上角）。
   final networkHint = "".obs;
-  int _bufferingCount = 0;
-  DateTime? _lastBufferingTime;
   bool _autoDiagnoseRunning = false;
   Timer? _networkHintTimer;
   DateTime? _lastAutoDiagnoseAt;
+
+  /// 自动网络诊断的独立缓冲开始统计器（与自动降画质各持有独立实例，
+  /// 只复用同构算法，不共享可变状态）。
+  final LiveRoomAutoQualityBufferTracker _autoDiagnosisTracker =
+      LiveRoomAutoQualityBufferTracker(
+    requiredBufferStarts: 3,
+    bufferingWindow: const Duration(seconds: 30),
+    stableResetAfter: const Duration(seconds: 8),
+    warmupDuration: const Duration(seconds: 8),
+  );
+
+  /// 诊断会话代次：换房重置时递增；旧房间的异步诊断结果返回后，
+  /// 若代次不匹配则只能丢弃，不得写入新房间的 networkHint。
+  int _diagnosisGeneration = 0;
+
+  /// 当前正在执行的诊断所属代次（与 [_autoDiagnoseRunning] 配合，
+  /// 使换房后的旧诊断不再阻塞新房间诊断）。
+  int? _runningDiagnoseGeneration;
+
+  /// 重置自动网络诊断会话（换房时由 LiveRoomController 调用）。
+  ///
+  /// 一次性处理：缓冲计数归零、边沿状态归零、诊断冷却清空、
+  /// 取消旧提示 Timer、清空 networkHint、递增诊断代次，
+  /// 使旧房间的异步诊断结果只能被丢弃。
+  ///
+  /// 注意：[_autoDiagnoseRunning]/[_runningDiagnoseGeneration] 故意不在
+  /// 此处重置——旧诊断终会经由 _runAutoNetworkDiagnose 的 finally 自清理，
+  /// 且代次互斥（[:2055]）保证残留标志不阻塞新房间诊断。
+  void resetAutoNetworkDiagnosisSession() {
+    _autoDiagnosisTracker.reset();
+    _lastAutoDiagnoseAt = null;
+    _networkHintTimer?.cancel();
+    _networkHintTimer = null;
+    networkHint.value = "";
+    _diagnosisGeneration += 1;
+    Log.d("[player-diag] session reset generation=$_diagnosisGeneration");
+  }
+
+  /// 标记即将打开新流，并从 `player.open()` 前开始忽略起播缓冲。
+  ///
+  /// 调用方应在 `player.open()` 前紧邻调用，确保播放器在 open 期间发出的
+  /// buffering 事件也处于 warmup 窗口内。
+  void markStreamOpening() {
+    _autoDiagnosisTracker.beginWarmup(DateTime.now());
+    Log.d("[player-diag] stream opening, warmup begins");
+  }
+
+  /// 当前实际播放 URL。子类提供后，诊断会使用其真实 host/port。
+  String get currentNetworkDiagnosePlaybackUrl => '';
 
   void initStream() {
     _errorSubscription = player.stream.error.listen((event) {
@@ -1982,55 +2030,93 @@ class PlayerController extends BaseController
     // Fix Issue #57: 启动Surface健康检查
     _startSurfaceHealthCheck();
 
-    // 缓冲转圈 2 次以上自动触发网络诊断提示。
+    // 缓冲边沿计数：按 false->true 计数独立缓冲开始，达到阈值自动触发网络诊断。
     _bufferingSubscription = player.stream.buffering.listen((buffering) {
-      if (!buffering || isPlayerClosing) {
+      Log.d("[player-diag] buffering event=$buffering");
+      if (isPlayerClosing) {
         return;
       }
       final now = DateTime.now();
-      if (_lastBufferingTime != null &&
-          now.difference(_lastBufferingTime!) <
-              const Duration(milliseconds: 300)) {
+      final shouldDiagnose = _autoDiagnosisTracker.update(
+        buffering: buffering,
+        now: now,
+      );
+      if (!shouldDiagnose) {
         return;
       }
-      _lastBufferingTime = now;
-      _bufferingCount += 1;
-      if (_bufferingCount >= 2 && networkHint.value.isEmpty) {
-        // 两次诊断之间至少间隔 30 秒，避免持续缓冲时反复触发网络诊断。
-        if (_lastAutoDiagnoseAt != null &&
-            now.difference(_lastAutoDiagnoseAt!) <
-                const Duration(seconds: 30)) {
-          return;
-        }
-        _lastAutoDiagnoseAt = now;
-        unawaited(_runAutoNetworkDiagnose());
+      // 两次诊断之间至少间隔 30 秒，避免持续缓冲时反复触发网络诊断。
+      if (_lastAutoDiagnoseAt != null &&
+          now.difference(_lastAutoDiagnoseAt!) < const Duration(seconds: 30)) {
+        Log.d("[player-diag] diagnose skipped (cooldown 30s)");
+        return;
       }
+      _lastAutoDiagnoseAt = now;
+      unawaited(_runAutoNetworkDiagnose());
     });
   }
 
-  /// 自动网络诊断：缓冲 2 次以上时测延迟/丢包，提示显示在画面左上角，
-  /// 8 秒后自动消失。
+  /// 自动网络诊断：缓冲 [LiveRoomAutoQualityBufferTracker.requiredBufferStarts]
+  /// 次独立开始时测连接，提示显示在画面左上角，8 秒后自动消失。
+  /// 结果写入前校验诊断代次，防止旧房间结果串房。
   Future<void> _runAutoNetworkDiagnose() async {
-    if (_autoDiagnoseRunning) {
+    final generation = _diagnosisGeneration;
+    // 同一代次内并发诊断互斥；换房（代次变化）后旧诊断不再阻塞新房间诊断。
+    if (_autoDiagnoseRunning && _runningDiagnoseGeneration == generation) {
+      Log.d("[player-diag] diagnose skipped (already running)");
       return;
     }
     _autoDiagnoseRunning = true;
+    _runningDiagnoseGeneration = generation;
     networkHint.value = "网络检测中…";
-    final results = await NetworkDiagnoseService.diagnose(
-      NetworkDiagnoseService.defaultTargets,
-      samples: 3,
-    );
-    _autoDiagnoseRunning = false;
-    if (isPlayerClosing) {
-      return;
-    }
-    networkHint.value = NetworkDiagnoseService.summarize(results);
-    _networkHintTimer?.cancel();
-    _networkHintTimer = Timer(const Duration(seconds: 8), () {
-      if (networkHint.value.isNotEmpty) {
+    Log.d(
+        "[player-diag] diagnose start targets=${NetworkDiagnoseService.defaultTargets.length} samples=3 generation=$generation");
+    try {
+      final externalFuture = NetworkDiagnoseService.diagnose(
+        NetworkDiagnoseService.defaultTargets,
+        samples: 3,
+      );
+      final playbackFuture = NetworkDiagnoseService.diagnosePlaybackUrl(
+        currentNetworkDiagnosePlaybackUrl,
+        samples: 3,
+      );
+      final results = await externalFuture;
+      final playbackResult = await playbackFuture;
+      final allResults = [
+        if (playbackResult != null) playbackResult,
+        ...results,
+      ];
+      Log.d(
+          "[player-diag] diagnose done ${allResults.map((r) => '${r.host}:lost=${r.lost}/${r.samples}').join(' ')} generation=$generation");
+      // 旧房间诊断结果：代次不匹配或已换房，丢弃。
+      if (isPlayerClosing || generation != _diagnosisGeneration) {
+        Log.d("[player-diag] diagnose result dropped (stale generation)");
+        return;
+      }
+      networkHint.value = NetworkDiagnoseService.summarizeLayered(
+        allResults,
+        playbackEndpoint: playbackResult,
+        externalTargets: results,
+      );
+      _networkHintTimer?.cancel();
+      _networkHintTimer = Timer(const Duration(seconds: 8), () {
+        if (generation == _diagnosisGeneration &&
+            networkHint.value.isNotEmpty) {
+          networkHint.value = "";
+        }
+      });
+    } catch (e) {
+      // 诊断失败：清空"网络检测中…"残留，避免卡住提示。
+      if (generation == _diagnosisGeneration) {
         networkHint.value = "";
       }
-    });
+      Log.d("[player-diag] diagnose error generation=$generation: $e");
+    } finally {
+      // 仅当仍是当前运行代次时释放标志，避免旧代次 finally 误清新代次状态。
+      if (_runningDiagnoseGeneration == generation) {
+        _autoDiagnoseRunning = false;
+        _runningDiagnoseGeneration = null;
+      }
+    }
   }
 
   void disposeStream() {

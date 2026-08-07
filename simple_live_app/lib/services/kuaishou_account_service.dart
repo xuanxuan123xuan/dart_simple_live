@@ -41,8 +41,9 @@ class KuaishouAccountService extends GetxService {
     if (site is KuaishouSite) {
       site.customCookie = cookie;
       site.customKww = kww;
-      site.cookie = "";
-      site.cookieObj = {};
+      // 账号切换 / Cookie 变化：显式清空长期会话与共享 Cookie 字段，
+      // 避免旧账号 Cookie 污染新账号。
+      site.resetCookieSession();
     }
   }
 

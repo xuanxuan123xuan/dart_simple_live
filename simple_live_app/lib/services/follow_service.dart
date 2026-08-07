@@ -345,6 +345,7 @@ class FollowService extends GetxService {
     FollowUser item, {
     int? generation,
     DouyinFollowRefreshLimiter? douyinLimiter,
+    KuaishouFollowRefreshLimiter? kuaishouLimiter,
     int workerIndex = 0,
     bool pauseRemainingOnLimited = false,
   }) async {
@@ -353,6 +354,12 @@ class FollowService extends GetxService {
     try {
       if (item.siteId == Constant.kDouyin && douyinLimiter != null) {
         await douyinLimiter.beforeRequest(workerIndex);
+      }
+      if (item.siteId == Constant.kKuaishou && kuaishouLimiter != null) {
+        // 快手状态请求按 1 路串行执行（worker 层限速），不沿用通用并发。
+        // core 协调器负责全局串行、最小间隔、同房合并与短缓存，并保证
+        // 用户主动进房（userEnter）优先，本 gate 只限速关注刷新自身。
+        await kuaishouLimiter.beforeRequest(workerIndex);
       }
       var site = Sites.allSites[item.siteId]!;
       // Status is the latency-sensitive path. Metadata is refreshed in a
@@ -372,6 +379,9 @@ class FollowService extends GetxService {
       }
       if (item.siteId == Constant.kDouyin && douyinLimiter != null) {
         douyinLimiter.onSuccess();
+      }
+      if (item.siteId == Constant.kKuaishou && kuaishouLimiter != null) {
+        kuaishouLimiter.onSuccess();
       }
       item.liveStatus.value = nextStatus;
       if (!isLiving) {
@@ -407,6 +417,14 @@ class FollowService extends GetxService {
           );
         }
       }
+      if (item.siteId == Constant.kKuaishou &&
+          kuaishouLimiter != null &&
+          _isKuaishouLimited(item, e)) {
+        // 协调器冷却（KuaishouCooldownError）视为限流信号：关注刷新让路
+        // 降速，且不把直播间状态误置为"未直播"（冷却后恢复再刷新状态）。
+        limited = true;
+        kuaishouLimiter.onLimited();
+      }
       Log.logPrint(e);
       if (limited) {
         if (pauseRemainingOnLimited) {
@@ -418,8 +436,9 @@ class FollowService extends GetxService {
           );
         }
         return const _FollowRefreshItemResult(
-          _FollowRefreshItemOutcome.failed,
+          _FollowRefreshItemOutcome.deferred,
           limited: true,
+          keepPending: true,
         );
       }
       item.liveStatus.value = 0;
@@ -495,6 +514,11 @@ class FollowService extends GetxService {
     return item.siteId == Constant.kDouyin &&
         error is CoreError &&
         error.statusCode == 444;
+  }
+
+  /// 快手协调器冷却（[KuaishouCooldownError]）视为限流信号。
+  bool _isKuaishouLimited(FollowUser item, Object error) {
+    return item.siteId == Constant.kKuaishou && error is KuaishouCooldownError;
   }
 
   void _handleDouyinLimited({required bool pauseRemainingOnLimited}) {
@@ -1048,6 +1072,13 @@ class FollowService extends GetxService {
       final douyinLimiter = douyinTargetCount > 0
           ? DouyinFollowRefreshLimiter.forTargetCount(douyinTargetCount)
           : null;
+      final kuaishouTargetCount = filteredTargets.allowedTargets
+          .where((item) => item.siteId == Constant.kKuaishou)
+          .length;
+      // 快手状态请求固定 1 路串行，不沿用通用并发（见类注释）。
+      final kuaishouLimiter = kuaishouTargetCount > 0
+          ? KuaishouFollowRefreshLimiter.forTargetCount(kuaishouTargetCount)
+          : null;
 
       final resumedSuccessCount = persistedTask?.successCount ?? 0;
       final resumedFailedCount = persistedTask?.failedCount ?? 0;
@@ -1127,6 +1158,7 @@ class FollowService extends GetxService {
               item,
               generation: generation,
               douyinLimiter: douyinLimiter,
+              kuaishouLimiter: kuaishouLimiter,
               workerIndex: workerId,
               pauseRemainingOnLimited: scope.includeAllNormals,
             );
@@ -1218,6 +1250,18 @@ class FollowService extends GetxService {
         final summary = douyinLimiter.finish(douyinTargetCount);
         Log.logPrint(
           "抖音关注刷新总结 scope=${scope.scopeKey} target=${summary.targetCount} "
+          "startConcurrency=${summary.initialConcurrency} "
+          "startInterval=${summary.initialInterval.inMilliseconds}ms "
+          "finalInterval=${summary.finalInterval.inMilliseconds}ms "
+          "success=${summary.successCount} limited=${summary.limitedCount} "
+          "cooldown=${summary.cooledDown} elapsed=${summary.elapsed.inMilliseconds}ms "
+          "failed=$failedCount deferred=$deferredCount limitedObserved=$limitedCount",
+        );
+      }
+      if (kuaishouLimiter != null) {
+        final summary = kuaishouLimiter.finish(kuaishouTargetCount);
+        Log.logPrint(
+          "快手关注刷新总结 scope=${scope.scopeKey} target=${summary.targetCount} "
           "startConcurrency=${summary.initialConcurrency} "
           "startInterval=${summary.initialInterval.inMilliseconds}ms "
           "finalInterval=${summary.finalInterval.inMilliseconds}ms "
@@ -1423,8 +1467,7 @@ class FollowService extends GetxService {
     var content = generateJson();
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) => 
-      AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text("导出为文本"),
         content: TextField(
           controller: TextEditingController(text: content),
@@ -1717,6 +1760,106 @@ class DouyinFollowRefreshSummary {
   final Duration elapsed;
 
   const DouyinFollowRefreshSummary({
+    required this.targetCount,
+    required this.initialConcurrency,
+    required this.initialInterval,
+    required this.finalInterval,
+    required this.successCount,
+    required this.limitedCount,
+    required this.cooledDown,
+    required this.elapsed,
+  });
+}
+
+/// 快手关注刷新站点级限速器。
+///
+/// 快手没有轻量状态接口，`getLiveStatusState` 直接走完整 `getRoomDetail`
+/// （网页详情抓取）。core 的 [KuaishouRequestCoordinator] 已按
+/// `followRefresh` 优先级对快手请求做全局串行、最小间隔、同房 in-flight
+/// 合并与短 TTL 缓存，并保证用户主动进房（`userEnter`）优先且不受最小
+/// 间隔约束。本 limiter 只负责关注刷新自身的 worker 层并发：快手状态
+/// 请求固定 1 路串行提交，杜绝冷启动时多路 worker 同时抓取快手网页详情；
+/// 它不影响用户进房（进房请求不经过关注刷新的 worker 与 gate）。
+class KuaishouFollowRefreshLimiter {
+  final int initialConcurrency;
+  final Duration initialInterval;
+  Duration _currentInterval;
+  final Stopwatch _stopwatch = Stopwatch()..start();
+  Future<void> _gate = Future.value();
+  DateTime? _lastRequestAt;
+  int _successCount = 0;
+  int _limitedCount = 0;
+  bool _cooledDown = false;
+
+  KuaishouFollowRefreshLimiter._({
+    required this.initialConcurrency,
+    required this.initialInterval,
+  }) : _currentInterval = initialInterval;
+
+  factory KuaishouFollowRefreshLimiter.forTargetCount(int targetCount) {
+    // 快手状态请求固定 1 路串行。真正的平台级最小间隔由 core 协调器
+    // （300ms + jitter）主导，本层 150ms 间隔作为 worker 级冗余兜底
+    // （协调器全局间隔恒覆盖它），只保证关注刷新自身不并发提交。
+    return KuaishouFollowRefreshLimiter._(
+      initialConcurrency: 1,
+      initialInterval: const Duration(milliseconds: 150),
+    );
+  }
+
+  Future<void> beforeRequest(int workerIndex) {
+    final next = _gate.then((_) async {
+      final lastRequestAt = _lastRequestAt;
+      if (lastRequestAt != null) {
+        final elapsed = DateTime.now().difference(lastRequestAt);
+        if (elapsed < _currentInterval) {
+          await Future.delayed(_currentInterval - elapsed);
+        }
+      }
+      _lastRequestAt = DateTime.now();
+    });
+    _gate = next.catchError((_) {});
+    return next;
+  }
+
+  void onSuccess() {
+    _successCount++;
+  }
+
+  void onLimited() {
+    _limitedCount++;
+    _cooledDown = true;
+    final nextMs = (_currentInterval.inMilliseconds * 1.8).round();
+    _currentInterval = Duration(
+      milliseconds: nextMs.clamp(300, 2600).toInt(),
+    );
+  }
+
+  KuaishouFollowRefreshSummary finish(int targetCount) {
+    _stopwatch.stop();
+    return KuaishouFollowRefreshSummary(
+      targetCount: targetCount,
+      initialConcurrency: initialConcurrency,
+      initialInterval: initialInterval,
+      finalInterval: _currentInterval,
+      successCount: _successCount,
+      limitedCount: _limitedCount,
+      cooledDown: _cooledDown,
+      elapsed: _stopwatch.elapsed,
+    );
+  }
+}
+
+class KuaishouFollowRefreshSummary {
+  final int targetCount;
+  final int initialConcurrency;
+  final Duration initialInterval;
+  final Duration finalInterval;
+  final int successCount;
+  final int limitedCount;
+  final bool cooledDown;
+  final Duration elapsed;
+
+  const KuaishouFollowRefreshSummary({
     required this.targetCount,
     required this.initialConcurrency,
     required this.initialInterval,

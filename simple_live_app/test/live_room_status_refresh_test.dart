@@ -86,4 +86,85 @@ void main() {
       expect(decision.liveStatus, isTrue);
     });
   });
+
+  group('online refresh backoff', () {
+    test('normal unknown responses increment the backoff exactly once', () {
+      final firstFailure = resolveOnlineRefreshFailureCount(
+        incomingState: LiveStatusState.unknown,
+        currentFailures: 0,
+      );
+      final secondFailure = resolveOnlineRefreshFailureCount(
+        incomingState: LiveStatusState.unknown,
+        currentFailures: firstFailure,
+      );
+
+      expect(firstFailure, 1);
+      expect(secondFailure, 2);
+      expect(
+        resolveOnlineRefreshDelay(
+          LiveStatusState.unknown,
+          firstFailure,
+        ),
+        const Duration(seconds: 30),
+      );
+    });
+
+    test('live clears failures while offline preserves the existing count', () {
+      expect(
+        resolveOnlineRefreshFailureCount(
+          incomingState: LiveStatusState.live,
+          currentFailures: 5,
+        ),
+        0,
+      );
+      expect(
+        resolveOnlineRefreshFailureCount(
+          incomingState: LiveStatusState.offline,
+          currentFailures: 5,
+        ),
+        5,
+      );
+    });
+
+    test('live state resets to the 10s base interval', () {
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.live, 5),
+        const Duration(seconds: 10),
+      );
+    });
+
+    test('offline uses the low-frequency 45s interval', () {
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.offline, 0),
+        const Duration(seconds: 45),
+      );
+    });
+
+    test('unknown backoff grows exponentially and caps at 300s', () {
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 0),
+        const Duration(seconds: 10),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 1),
+        const Duration(seconds: 30),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 2),
+        const Duration(seconds: 60),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 3),
+        const Duration(seconds: 120),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 4),
+        const Duration(seconds: 240),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 100),
+        const Duration(seconds: 300),
+      );
+    });
+  });
 }

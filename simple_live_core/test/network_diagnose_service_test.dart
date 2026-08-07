@@ -73,6 +73,29 @@ void main() {
     });
   });
 
+  group('diagnosePlaybackUrl', () {
+    test('uses the explicit playback URL port', () async {
+      final server = await _startServer();
+      try {
+        final result = await NetworkDiagnoseService.diagnosePlaybackUrl(
+          'http://127.0.0.1:${server.port}/live.flv',
+          samples: 1,
+        );
+        expect(result, isNotNull);
+        expect(result!.lost, 0);
+      } finally {
+        await server.close();
+      }
+    });
+
+    test('invalid playback URL has no endpoint result', () async {
+      expect(
+        await NetworkDiagnoseService.diagnosePlaybackUrl('not-a-url'),
+        isNull,
+      );
+    });
+  });
+
   group('latencyLabel 边界', () {
     test('60ms 以下为优秀', () {
       expect(_r(59, 0, 5).latencyLabel, '优秀');
@@ -231,11 +254,13 @@ void main() {
     test('全部不通', () {
       final s = NetworkDiagnoseService.summarize([_r(0, 5, 5), _r(0, 5, 5)]);
       expect(s, contains('无法连接'));
+      expect(s, contains('无法据此判断本地网络'));
     });
 
-    test('高丢包', () {
-      final s = NetworkDiagnoseService.summarize([_r(40, 2, 5), _r(40, 2, 5)]);
-      expect(s, contains('丢包率偏高'));
+    test('部分目标完全不可达（不冒充丢包率）', () {
+      final s = NetworkDiagnoseService.summarize([_r(40, 5, 5), _r(40, 0, 5)]);
+      expect(s, contains('完全不可达'));
+      expect(s, isNot(contains('丢包')));
     });
 
     test('高延迟', () {
@@ -249,22 +274,65 @@ void main() {
       expect(s, contains('网络状态良好'));
     });
 
-    test('一般', () {
+    test('偶发少量失败（1/5）不误报为网络异常', () {
+      // 失败占比 2/10=20%，未超过阈值且无目标完全不可达 → 不触发不稳定分支，
+      // 按延迟继续判断（少量偶发失败不归因为网络异常）。
       final s =
           NetworkDiagnoseService.summarize([_r(150, 1, 5), _r(150, 1, 5)]);
-      expect(s, contains('网络状态一般'));
+      expect(s, isNot(contains('不稳定')));
+      expect(s, isNot(contains('丢包')));
+    });
+
+    test('失败占比显著（>20%）提示探测不稳定', () {
+      final s =
+          NetworkDiagnoseService.summarize([_r(150, 3, 5), _r(150, 3, 5)]);
+      expect(s, contains('不稳定'));
     });
 
     test('全 lost 目标不拉低平均延迟数值（修复验证）', () {
-      // 8 个 40ms 可达 + 2 个全 lost：avgLoss=20% 不触发丢包分支，
-      // 修复前 avgAvg=(8*40+0+0)/10=32ms，修复后=40ms（只统计可达目标）。
+      // 8 个 40ms 可达 + 2 个全 lost：修复前 avgLoss 平均会把结果拉到低位；
+      // 修复后分层汇总只统计可达目标延迟。
       final results = [
         for (var i = 0; i < 8; i++) _r(40, 0, 5),
         _r(0, 5, 5),
         _r(0, 5, 5),
       ];
       final s = NetworkDiagnoseService.summarize(results);
-      expect(s, contains('40'));
+      expect(s, contains('外部目标可达'));
+    });
+
+    test('播放端点失败但外部对照成功 → 提示线路/CDN 问题', () {
+      final playback = _r(0, 5, 5); // 播放端点全 lost
+      final externals = [_r(50, 0, 5), _r(60, 0, 5)]; // 外部可达
+      final s = NetworkDiagnoseService.summarizeLayered(
+        [playback, ...externals],
+        playbackEndpoint: playback,
+        externalTargets: externals,
+      );
+      expect(s, contains('线路'));
+    });
+
+    test('播放端点与外部对照均失败 → 提示本地网络', () {
+      final playback = _r(0, 5, 5);
+      final externals = [_r(0, 5, 5), _r(0, 5, 5)];
+      final s = NetworkDiagnoseService.summarizeLayered(
+        [playback, ...externals],
+        playbackEndpoint: playback,
+        externalTargets: externals,
+      );
+      expect(s, contains('本地网络'));
+    });
+
+    test('播放端点可达但外部对照全 lost → 不归因本地断网', () {
+      final playback = _r(80, 0, 5);
+      final externals = [_r(0, 5, 5), _r(0, 5, 5)];
+      final s = NetworkDiagnoseService.summarizeLayered(
+        [playback, ...externals],
+        playbackEndpoint: playback,
+        externalTargets: externals,
+      );
+      expect(s, contains('测速目标被屏蔽'));
+      expect(s, isNot(contains('本地网络异常')));
     });
   });
 }
