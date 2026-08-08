@@ -7,7 +7,49 @@ import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:simple_live_core/src/douyin_partition_images.dart';
 import 'package:simple_live_core/src/scripts/douyin_sign.dart';
 
+typedef DouyinAbogusSigner = String Function(String url, String userAgent);
+
+enum DouyinSearchAuthFailureReason {
+  missingCookie,
+  onlyTtwid,
+  incompleteCookie,
+  expired,
+  rejected,
+}
+
+class DouyinSearchAuthError extends CoreError {
+  DouyinSearchAuthError(this.reason)
+      : super(
+          _messageFor(reason),
+          kind: CoreErrorKind.search,
+        );
+
+  final DouyinSearchAuthFailureReason reason;
+
+  static const int platformStatusCode = 2483;
+
+  static String _messageFor(DouyinSearchAuthFailureReason reason) {
+    switch (reason) {
+      case DouyinSearchAuthFailureReason.missingCookie:
+        return "未配置抖音 Cookie，请前往账号管理配置完整登录 Cookie";
+      case DouyinSearchAuthFailureReason.onlyTtwid:
+        return "当前仅配置了 ttwid，房间或主播搜索需要完整登录 Cookie";
+      case DouyinSearchAuthFailureReason.incompleteCookie:
+        return "当前抖音 Cookie 未检测到完整登录态，请重新获取完整 Cookie";
+      case DouyinSearchAuthFailureReason.expired:
+        return "抖音 Cookie 已过期，请重新获取";
+      case DouyinSearchAuthFailureReason.rejected:
+        return "已配置 Cookie，但抖音仍拒绝搜索；可能是 Cookie 失效或触发风控，请稍后重试或重新获取 Cookie";
+    }
+  }
+}
+
 class DouyinSite implements LiveSite {
+  DouyinSite({DouyinAbogusSigner? abogusSigner})
+      : _abogusSigner = abogusSigner ?? DouyinSign.getAbogusUrl;
+
+  final DouyinAbogusSigner _abogusSigner;
+
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
     return await getLiveStatus(roomId: roomId)
@@ -145,7 +187,10 @@ class DouyinSite implements LiveSite {
       if (separatorIndex <= 0) {
         continue;
       }
-      final key = item.substring(0, separatorIndex).trim();
+      final rawKey = item.substring(0, separatorIndex).trim();
+      final lowerKey = rawKey.toLowerCase();
+      final key =
+          lowerKey == "ttwid" || lowerKey == "__ac_nonce" ? lowerKey : rawKey;
       final value = item.substring(separatorIndex + 1).trim();
       if (key.isNotEmpty) {
         cookieMap[key] = value;
@@ -1174,8 +1219,6 @@ class DouyinSite implements LiveSite {
         "webid": "7382872326016435738",
       },
     );
-    //var requlestUrl = await getAbogusUrl(uri.toString());
-    var requlestUrl = uri.toString();
     final requestHeaders = await getRequestHeaders();
     var dyCookie = "";
     final savedCookie = _getCookieHeaderValue(requestHeaders);
@@ -1202,21 +1245,41 @@ class DouyinSite implements LiveSite {
       if (headResp.statusCode == 444) {
         throw CoreError("", statusCode: 444, kind: CoreErrorKind.http);
       }
+      final headCookies = <String>[];
       headResp.headers["set-cookie"]?.forEach((element) {
-        var cookie = element.split(";")[0];
-        if (cookie.contains("ttwid")) {
-          dyCookie += "$cookie;";
+        final headCookie = element.split(";").first.trim();
+        final separatorIndex = headCookie.indexOf("=");
+        if (separatorIndex <= 0) {
+          return;
         }
-        if (cookie.contains("__ac_nonce")) {
-          dyCookie += "$cookie;";
+        final cookieName =
+            headCookie.substring(0, separatorIndex).trim().toLowerCase();
+        if (cookieName == "ttwid" || cookieName == "__ac_nonce") {
+          headCookies.add(headCookie);
         }
       });
+      dyCookie = _mergeCookieValues(
+        savedCookie,
+        headCookies.join("; "),
+        preferBase: cookie.trim().isNotEmpty,
+      );
     }
     // HEAD has completed; do not begin the search GET after cancellation.
     _throwIfCancelled(cancellation);
+    late final String requestUrl;
+    try {
+      requestUrl = _abogusSigner(uri.toString(), kDefaultUserAgent);
+    } catch (error) {
+      throw CoreError(
+        "抖音直播搜索请求签名失败",
+        kind: CoreErrorKind.search,
+        cause: error,
+      );
+    }
+    _throwIfCancelled(cancellation);
 
     var result = await HttpClient.instance.getJson(
-      requlestUrl,
+      requestUrl,
       queryParameters: {},
       header: {
         "Authority": 'www.douyin.com',
@@ -1246,10 +1309,7 @@ class DouyinSite implements LiveSite {
     }
     final statusCode = int.tryParse(result["status_code"]?.toString() ?? "");
     if (statusCode == 2483) {
-      throw CoreError(
-        "抖音搜索需要登录，请在账号管理中通过网页登录或手动配置完整抖音 Cookie",
-        kind: CoreErrorKind.search,
-      );
+      throw _douyinSearchAuthError();
     }
     if (statusCode != null && statusCode != 0) {
       throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
@@ -1308,6 +1368,30 @@ class DouyinSite implements LiveSite {
       return cookie;
     }
     return "$cookie;";
+  }
+
+  DouyinSearchAuthError _douyinSearchAuthError() {
+    final configuredCookie = cookie.trim();
+    if (configuredCookie.isEmpty) {
+      return DouyinSearchAuthError(
+        DouyinSearchAuthFailureReason.missingCookie,
+      );
+    }
+    if (DouyinCookieHelper.isOnlyTtwid(configuredCookie)) {
+      return DouyinSearchAuthError(
+        DouyinSearchAuthFailureReason.onlyTtwid,
+      );
+    }
+    if (!DouyinCookieHelper.hasLoginSession(configuredCookie)) {
+      return DouyinSearchAuthError(
+        DouyinSearchAuthFailureReason.incompleteCookie,
+      );
+    }
+    final expiry = DouyinCookieHelper.parseExpiry(configuredCookie);
+    if (expiry != null && !expiry.isAfter(DateTime.now())) {
+      return DouyinSearchAuthError(DouyinSearchAuthFailureReason.expired);
+    }
+    return DouyinSearchAuthError(DouyinSearchAuthFailureReason.rejected);
   }
 
   CoreError _invalidDouyinSearchResponse([Object? cause]) {

@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/modules/mine/account/douyin_cookie_display.dart';
+import 'package:simple_live_app/routes/account_route_target.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
@@ -28,6 +30,14 @@ class AccountController extends GetxController {
       const Duration(minutes: 1),
       (_) => douyinCookieCountdownTick.value++,
     );
+  }
+
+  @override
+  void onReady() {
+    super.onReady();
+    if (Get.arguments == AccountRouteTarget.douyinCookieConfig) {
+      doDouyinCookieConfig();
+    }
   }
 
   @override
@@ -540,11 +550,9 @@ class AccountController extends GetxController {
       final cookie = DouyinCookieHelper.normalizeInput(input);
       DouyinAccountService.instance.setCookie(cookie);
       douyinCookieCountdownTick.value++;
-      if (DouyinCookieHelper.isOnlyTtwid(cookie)) {
-        SmartDialog.showToast("已导入 ttwid；搜索仍可能需要完整登录 Cookie");
-      } else {
-        SmartDialog.showToast("已从文件导入抖音 Cookie");
-      }
+      SmartDialog.showToast(
+        DouyinCookieDisplay.savedMessage(cookie, imported: true),
+      );
     } catch (e) {
       SmartDialog.showToast("导入 Cookie 失败：$e");
     }
@@ -571,7 +579,7 @@ class AccountController extends GetxController {
 
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) =>       AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text("配置抖音 Cookie"),
         content: SingleChildScrollView(
           child: Column(
@@ -639,11 +647,9 @@ class AccountController extends GetxController {
                 var cookie = DouyinCookieHelper.normalizeInput(input);
                 DouyinAccountService.instance.setCookie(cookie);
                 douyinCookieCountdownTick.value++;
-                if (DouyinCookieHelper.isOnlyTtwid(cookie)) {
-                  SmartDialog.showToast("已保存 ttwid；搜索仍可能需要完整登录 Cookie");
-                } else {
-                  SmartDialog.showToast("抖音 Cookie 已保存");
-                }
+                SmartDialog.showToast(
+                  DouyinCookieDisplay.savedMessage(cookie),
+                );
               }
             },
             child: const Text("确定"),
@@ -662,18 +668,7 @@ class AccountController extends GetxController {
     douyinCookieCountdownTick.value;
     DouyinAccountService.instance.hasCookie.value;
     final cookie = DouyinAccountService.instance.cookie;
-    if (cookie.isEmpty) {
-      return "使用默认 ttwid，搜索受限时可配置完整 Cookie";
-    }
-    final expiry = _parseDouyinCookieExpiry(cookie);
-    if (expiry == null) {
-      return "已自定义（${cookie.length} 字符），有效期无法判断";
-    }
-    final remain = expiry.difference(DateTime.now());
-    if (remain.isNegative) {
-      return "已自定义（${cookie.length} 字符），可解析有效期已过";
-    }
-    return "已自定义（${cookie.length} 字符），预计剩余 ${_formatDurationShort(remain)}";
+    return DouyinCookieDisplay.summary(cookie);
   }
 
   String _getDouyinCookieExpiryText(String input) {
@@ -687,7 +682,11 @@ class AccountController extends GetxController {
       return "当前仅为 ttwid，无法判断搜索登录态有效期；主播 / 房间搜索仍可能需要完整 Cookie。";
     }
 
-    final expiry = _parseDouyinCookieExpiry(cookie);
+    if (!DouyinCookieHelper.hasLoginSession(cookie)) {
+      return "未检测到登录字段；房间 / 主播搜索仍不可用，请重新复制登录后的完整 Cookie。";
+    }
+
+    final expiry = DouyinCookieHelper.parseExpiry(cookie);
     if (expiry == null) {
       return "未从 Cookie 中解析到到期时间；Request Headers 不包含标准 Expires，实际有效期以抖音服务端为准。";
     }
@@ -698,38 +697,6 @@ class AccountController extends GetxController {
       return "可解析到期时间已过：$expireAt；如果搜索失败，请重新获取 Cookie。";
     }
     return "Cookie 预计剩余 ${_formatDurationShort(remain)}，到期时间 $expireAt；退出登录、改密或风控可能提前失效。";
-  }
-
-  DateTime? _parseDouyinCookieExpiry(String input) {
-    final cookie =
-        (DouyinCookieHelper.extractCookieFromHeaderText(input) ?? input).trim();
-    final cookieMap = _parseCookieMap(cookie);
-    final sidGuard = cookieMap["sid_guard"];
-    if (sidGuard == null || sidGuard.isEmpty) {
-      return null;
-    }
-
-    final decoded = _decodeCookieComponent(sidGuard);
-    final parts = decoded.split("|");
-    if (parts.length >= 3) {
-      final loginTime = int.tryParse(parts[1]);
-      final maxAgeSeconds = int.tryParse(parts[2]);
-      if (loginTime != null && maxAgeSeconds != null) {
-        final loginAt = loginTime > 1000000000000
-            ? DateTime.fromMillisecondsSinceEpoch(loginTime, isUtc: true)
-            : DateTime.fromMillisecondsSinceEpoch(
-                loginTime * 1000,
-                isUtc: true,
-              );
-        return loginAt.add(Duration(seconds: maxAgeSeconds)).toLocal();
-      }
-    }
-
-    if (parts.length >= 4) {
-      return _tryParseCookieDate(parts[3]);
-    }
-
-    return null;
   }
 
   Map<String, String> _parseCookieMap(String cookie) {
@@ -805,27 +772,6 @@ class AccountController extends GetxController {
       }
     }
     return text;
-  }
-
-  String _decodeCookieComponent(String value) {
-    try {
-      return Uri.decodeQueryComponent(value);
-    } catch (_) {
-      try {
-        return Uri.decodeComponent(value);
-      } catch (_) {
-        return value;
-      }
-    }
-  }
-
-  DateTime? _tryParseCookieDate(String value) {
-    final normalized = value.replaceAll("+", " ").replaceAll("-", " ");
-    try {
-      return HttpDate.parse(normalized).toLocal();
-    } catch (_) {
-      return DateTime.tryParse(normalized)?.toLocal();
-    }
   }
 
   String _formatDurationShort(Duration duration) {

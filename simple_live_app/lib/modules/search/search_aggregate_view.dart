@@ -1,13 +1,14 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/modules/search/search_aggregate_error_presentation.dart';
 import 'package:simple_live_app/modules/search/search_aggregate_models.dart';
 import 'package:simple_live_app/modules/search/search_list_view.dart';
 import 'package:simple_live_app/modules/search/search_site_page.dart';
+import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/live_room_card.dart';
 import 'package:simple_live_app/widgets/live_room_grid_layout.dart';
@@ -52,6 +53,13 @@ class _SiteSection extends StatelessWidget {
 
   final SearchAggregateSiteState state;
   final SearchAggregateQuery query;
+
+  bool get isDouyinAuthFailure =>
+      SearchAggregateErrorPresentation.offersDouyinCookieConfig(
+        state.site.id,
+        state.error,
+      );
+
   void openSite() {
     Get.toNamed(
       RoutePath.kSearchSite,
@@ -113,7 +121,10 @@ class _SiteSection extends StatelessWidget {
         else if (state.hasError)
           _SectionStatus(
             icon: Icons.error_outline,
-            message: _searchErrorMessage(state.error),
+            message: SearchAggregateErrorPresentation.message(state.error),
+            actionLabel: isDouyinAuthFailure ? "去配置" : null,
+            onAction:
+                isDouyinAuthFailure ? AppNavigator.toDouyinCookieConfig : null,
           )
         else if (query.searchMode == 0)
           MasonryGridView.count(
@@ -156,24 +167,18 @@ class _SiteSection extends StatelessWidget {
   }
 }
 
-String _searchErrorMessage(Object? error) {
-  if (error is TimeoutException) {
-    return "请求超时";
-  }
-  if (error is CoreError) {
-    final message = error.toString().trim();
-    if (message.isNotEmpty) {
-      return message;
-    }
-  }
-  return "加载失败";
-}
-
 class _SectionStatus extends StatelessWidget {
-  const _SectionStatus({required this.icon, required this.message});
+  const _SectionStatus({
+    required this.icon,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
 
   final IconData icon;
   final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -186,11 +191,14 @@ class _SectionStatus extends StatelessWidget {
           Expanded(
             child: Text(
               message,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ),
+          if (actionLabel != null && onAction != null)
+            TextButton(
+              onPressed: onAction,
+              child: Text(actionLabel!),
+            ),
         ],
       ),
     );
