@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -7,14 +8,18 @@ import 'package:get/get.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/modules/mine/account/account_controller.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:webview_flutter/webview_flutter.dart' as ohos_webview;
 
 class DouyinWebLoginController extends BaseController {
   static const _loginUrl = 'https://www.douyin.com/';
-  static const _userAgent =
+  static const _desktopChromeUserAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0';
+  static const _desktopSafariUserAgent =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+      'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
   static const _ohosWebCookieChannel =
       MethodChannel('simple_live/ohos_web_cookie');
 
@@ -52,7 +57,7 @@ class DouyinWebLoginController extends BaseController {
   void _initializeOhosWebView() {
     final controller = ohos_webview.WebViewController()
       ..setJavaScriptMode(ohos_webview.JavaScriptMode.unrestricted)
-      ..setUserAgent(_userAgent)
+      ..setUserAgent(userAgent)
       ..setNavigationDelegate(
         ohos_webview.NavigationDelegate(
           onProgress: (value) => progress.value = value / 100,
@@ -104,6 +109,7 @@ class DouyinWebLoginController extends BaseController {
     _pageReady = true;
     progress.value = 1;
     unawaited(saveCookie(silent: true));
+    unawaited(_checkPageRendered());
   }
 
   void onReceivedError(
@@ -115,6 +121,42 @@ class DouyinWebLoginController extends BaseController {
       progress.value = 1;
       errorMessage.value = error.description;
     }
+  }
+
+  void onReceivedHttpError(
+    InAppWebViewController controller,
+    WebResourceRequest request,
+    WebResourceResponse response,
+  ) {
+    if (request.isForMainFrame == true) {
+      progress.value = 1;
+      errorMessage.value = 'HTTP ${response.statusCode ?? '-'}';
+    }
+  }
+
+  /// onLoadStop 后延迟检查页面是否渲染出可见内容，为空则提示降级到 Cookie 登录。
+  Future<void> _checkPageRendered() async {
+    await Future.delayed(const Duration(milliseconds: 1500));
+    if (isClosed || !_pageReady) {
+      return;
+    }
+    try {
+      final result = await webViewController?.evaluateJavascript(
+        source:
+            "(document.body ? document.body.innerText.trim().length : 0) > 0 ? '1' : '0'",
+      );
+      if (result?.toString() != '1' && errorMessage.value.isEmpty) {
+        errorMessage.value = '页面加载异常（可能被抖音拦截），请改用「Cookie 登录」';
+      }
+    } catch (_) {
+      // 页面已跳转或销毁时 evaluateJavascript 可能抛异常，忽略即可。
+    }
+  }
+
+  /// 从网页登录降级到「Cookie 登录」：返回账号页并弹出配置 Cookie 对话框。
+  void fallbackToCookieLogin() {
+    Get.back();
+    Get.find<AccountController>().doDouyinCookieConfig();
   }
 
   Future<void> reload() async {
@@ -200,7 +242,8 @@ class DouyinWebLoginController extends BaseController {
     }
   }
 
-  String get userAgent => _userAgent;
+  String get userAgent =>
+      Platform.isIOS ? _desktopSafariUserAgent : _desktopChromeUserAgent;
 }
 
 bool hasDouyinAuthenticatedSession(String cookie) {
