@@ -743,19 +743,13 @@ class LiveRoomController extends PlayerController
       return;
     }
     final now = DateTime.now();
-    final recoverNow = _kuaishouPlaybackRecoveryTracker.updateBuffering(
+    _kuaishouPlaybackRecoveryTracker.updateBuffering(
       buffering: buffering,
       now: now,
     );
     if (!buffering) {
       _kuaishouContinuousBufferingTimer?.cancel();
       _kuaishouContinuousBufferingTimer = null;
-      return;
-    }
-    if (recoverNow) {
-      _kuaishouContinuousBufferingTimer?.cancel();
-      _kuaishouContinuousBufferingTimer = null;
-      unawaited(_recoverKuaishouPlaybackAfterBuffering());
       return;
     }
     if (_kuaishouPlaybackRecoveryTracker.recoveryInFlight ||

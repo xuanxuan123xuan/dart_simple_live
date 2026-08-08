@@ -8,12 +8,9 @@ void main() {
       final start = DateTime(2026);
 
       tracker.beginWarmup(start);
-      expect(
-        tracker.updateBuffering(
-          buffering: true,
-          now: start.add(const Duration(seconds: 7)),
-        ),
-        isFalse,
+      tracker.updateBuffering(
+        buffering: true,
+        now: start.add(const Duration(seconds: 7)),
       );
       expect(
         tracker.triggerContinuousBufferingRecovery(
@@ -50,26 +47,32 @@ void main() {
       );
     });
 
-    test('recovers on the second independent buffering edge in 30 seconds', () {
+    test('does not recover from repeated short buffering edges', () {
       final tracker = KuaishouPlaybackRecoveryTracker();
       final start = DateTime(2026);
 
-      expect(tracker.updateBuffering(buffering: true, now: start), isFalse);
-      expect(
-        tracker.updateBuffering(
-          buffering: true,
-          now: start.add(const Duration(seconds: 1)),
-        ),
-        isFalse,
+      tracker.updateBuffering(buffering: true, now: start);
+      tracker.updateBuffering(
+        buffering: true,
+        now: start.add(const Duration(seconds: 1)),
       );
       tracker.updateBuffering(
         buffering: false,
         now: start.add(const Duration(seconds: 2)),
       );
+      tracker.updateBuffering(
+        buffering: true,
+        now: start.add(const Duration(seconds: 3)),
+      );
       expect(
-        tracker.updateBuffering(
-          buffering: true,
-          now: start.add(const Duration(seconds: 3)),
+        tracker.triggerContinuousBufferingRecovery(
+          start.add(const Duration(seconds: 7)),
+        ),
+        isFalse,
+      );
+      expect(
+        tracker.triggerContinuousBufferingRecovery(
+          start.add(const Duration(seconds: 8)),
         ),
         isTrue,
       );
@@ -97,12 +100,9 @@ void main() {
         buffering: false,
         now: start.add(const Duration(seconds: 7)),
       );
-      expect(
-        tracker.updateBuffering(
-          buffering: true,
-          now: start.add(const Duration(seconds: 10)),
-        ),
-        isFalse,
+      tracker.updateBuffering(
+        buffering: true,
+        now: start.add(const Duration(seconds: 10)),
       );
       expect(
         tracker.triggerContinuousBufferingRecovery(

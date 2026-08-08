@@ -6,20 +6,17 @@ class KuaishouPlaybackRecoveryTracker {
   KuaishouPlaybackRecoveryTracker({
     this.warmupDuration = const Duration(seconds: 8),
     this.continuousBufferingThreshold = const Duration(seconds: 5),
-    this.independentBufferingWindow = const Duration(seconds: 30),
     this.cooldown = const Duration(seconds: 30),
   });
 
   final Duration warmupDuration;
   final Duration continuousBufferingThreshold;
-  final Duration independentBufferingWindow;
   final Duration cooldown;
 
   bool _buffering = false;
   bool _recoveryInFlight = false;
   DateTime? _warmupUntil;
   DateTime? _cooldownUntil;
-  DateTime? _firstIndependentBufferingAt;
   DateTime? _bufferingStartedAt;
 
   bool get isBuffering => _buffering;
@@ -44,7 +41,6 @@ class KuaishouPlaybackRecoveryTracker {
 
   void beginWarmup(DateTime now) {
     _buffering = false;
-    _firstIndependentBufferingAt = null;
     _bufferingStartedAt = null;
     _warmupUntil = now.add(warmupDuration);
   }
@@ -54,37 +50,27 @@ class KuaishouPlaybackRecoveryTracker {
     _recoveryInFlight = false;
     _warmupUntil = null;
     _cooldownUntil = null;
-    _firstIndependentBufferingAt = null;
     _bufferingStartedAt = null;
   }
 
-  /// Records a buffering transition. A true result means the second
-  /// independent buffering start within the configured window should recover.
-  bool updateBuffering({required bool buffering, required DateTime now}) {
+  /// Records a buffering transition.
+  ///
+  /// Short, independent buffering edges are deliberately not treated as a
+  /// recovery signal. Reopening a live FLV stream can resume from an older CDN
+  /// keyframe and look like playback moved backwards. Recovery is therefore
+  /// reserved for buffering that remains continuous for the configured
+  /// threshold, or for explicit media errors handled by the controller.
+  void updateBuffering({required bool buffering, required DateTime now}) {
     if (!buffering) {
       _buffering = false;
       _bufferingStartedAt = null;
-      return false;
+      return;
     }
     if (_buffering) {
-      return false;
+      return;
     }
     _buffering = true;
     _bufferingStartedAt = now;
-    final warmupUntil = _warmupUntil;
-    if (warmupUntil != null && now.isBefore(warmupUntil)) {
-      return false;
-    }
-    if (!_canRecover(now)) {
-      return false;
-    }
-
-    final first = _firstIndependentBufferingAt;
-    if (first != null && now.difference(first) <= independentBufferingWindow) {
-      return _startRecovery(now);
-    }
-    _firstIndependentBufferingAt = now;
-    return false;
   }
 
   /// Called by the controller's cancellable continuous-buffering timer.
@@ -123,7 +109,6 @@ class KuaishouPlaybackRecoveryTracker {
   bool _startRecovery(DateTime now) {
     _recoveryInFlight = true;
     _cooldownUntil = now.add(cooldown);
-    _firstIndependentBufferingAt = null;
     return true;
   }
 }
