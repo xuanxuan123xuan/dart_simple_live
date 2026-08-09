@@ -171,7 +171,7 @@ void main() {
           .snapshot(at: _base.add(const Duration(seconds: 2)))
           ?.metrics
           .eligibleWindow,
-      const Duration(seconds: 1),
+      const Duration(seconds: 2),
     );
 
     expect(
