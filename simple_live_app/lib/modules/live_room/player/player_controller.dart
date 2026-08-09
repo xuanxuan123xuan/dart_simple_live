@@ -2096,21 +2096,14 @@ class PlayerController extends BaseController
     _runningDiagnoseGeneration = generation;
     networkHint.value = "网络检测中…";
     Log.d(
-        "[player-diag] diagnose start targets=${NetworkDiagnoseService.defaultTargets.length} samples=3 generation=$generation");
+        "[player-diag] playback endpoint diagnose start samples=3 generation=$generation");
     try {
-      final externalFuture = NetworkDiagnoseService.diagnose(
-        NetworkDiagnoseService.defaultTargets,
-        samples: 3,
-      );
-      final playbackFuture = NetworkDiagnoseService.diagnosePlaybackUrl(
+      final playbackResult = await NetworkDiagnoseService.diagnosePlaybackUrl(
         currentNetworkDiagnosePlaybackUrl,
         samples: 3,
       );
-      final results = await externalFuture;
-      final playbackResult = await playbackFuture;
       final allResults = [
         if (playbackResult != null) playbackResult,
-        ...results,
       ];
       Log.d(
           "[player-diag] diagnose done ${allResults.map((r) => '${r.host}:lost=${r.lost}/${r.samples}').join(' ')} generation=$generation");
@@ -2119,11 +2112,8 @@ class PlayerController extends BaseController
         Log.d("[player-diag] diagnose result dropped (stale generation)");
         return;
       }
-      networkHint.value = NetworkDiagnoseService.summarizeLayered(
-        allResults,
-        playbackEndpoint: playbackResult,
-        externalTargets: results,
-      );
+      networkHint.value =
+          NetworkDiagnoseService.summarizePlaybackEndpoint(playbackResult);
       _networkHintTimer?.cancel();
       _networkHintTimer = Timer(const Duration(seconds: 8), () {
         if (generation == _diagnosisGeneration &&

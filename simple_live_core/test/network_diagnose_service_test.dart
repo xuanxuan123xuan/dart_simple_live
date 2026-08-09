@@ -335,4 +335,35 @@ void main() {
       expect(s, isNot(contains('本地网络异常')));
     });
   });
+
+  group('summarizePlaybackEndpoint', () {
+    test('没有播放 URL 时不评价整体网络', () {
+      final summary = NetworkDiagnoseService.summarizePlaybackEndpoint(null);
+      expect(summary, contains('没有可检测'));
+      expect(summary, isNot(contains('丢包')));
+    });
+
+    test('播放端点完全不可达时只描述当前线路', () {
+      final summary =
+          NetworkDiagnoseService.summarizePlaybackEndpoint(_r(0, 3, 3));
+      expect(summary, contains('当前直播线路不可达'));
+      expect(summary, isNot(contains('丢包')));
+      expect(summary, isNot(contains('总失败')));
+    });
+
+    test('部分建连失败使用连接失败口径', () {
+      final summary =
+          NetworkDiagnoseService.summarizePlaybackEndpoint(_r(80, 1, 3));
+      expect(summary, contains('1 次连接失败'));
+      expect(summary, isNot(contains('丢包')));
+      expect(summary, isNot(contains('总失败')));
+    });
+
+    test('可达时报告当前线路连接耗时', () {
+      final summary =
+          NetworkDiagnoseService.summarizePlaybackEndpoint(_r(42, 0, 3));
+      expect(summary, contains('当前直播线路可连接'));
+      expect(summary, contains('42ms'));
+    });
+  });
 }

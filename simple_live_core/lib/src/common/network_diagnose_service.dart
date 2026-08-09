@@ -46,7 +46,11 @@ class NetworkDiagnosisResult {
 class NetworkDiagnoseService {
   NetworkDiagnoseService._();
 
-  /// 常用测速目标（公共 DNS，稳定可达）。
+  /// 旧版公共 DNS TCP 443 探测目标。
+  ///
+  /// 公共 DNS 不保证开放 TCP 443，不能作为网络质量或丢包依据。
+  /// 新代码应只探测当前播放 URL 的真实端点。
+  @Deprecated('Use diagnosePlaybackUrl for the current playback endpoint.')
   static const List<String> defaultTargets = [
     "223.5.5.5", // 阿里 DNS
     "114.114.114.114", // 114 DNS
@@ -122,6 +126,25 @@ class NetworkDiagnoseService {
       samples: samples,
       timeout: timeout,
     );
+  }
+
+  /// 汇总当前播放端点的 TCP 建连结果。
+  ///
+  /// 这里只描述当前直播线路是否可连接及连接耗时，不把 TCP 建连失败
+  /// 表述为数据包丢失，也不据此评价用户的整体网络质量。
+  static String summarizePlaybackEndpoint(NetworkDiagnosisResult? result) {
+    if (result == null) {
+      return "当前没有可检测的直播线路。";
+    }
+    if (result.lost >= result.samples) {
+      return "当前直播线路不可达，可尝试切换线路或清晰度。";
+    }
+    if (result.lost > 0) {
+      return "当前直播线路可连接，但 ${result.samples} 次探测中有 "
+          "${result.lost} 次连接失败，可稍后重试或切换线路。";
+    }
+    return "当前直播线路可连接，连接耗时约 "
+        "${result.avgMs.toStringAsFixed(0)}ms。";
   }
 
   /// 从最低延迟协议档的一组播放线路 URL 中选出 TCP 延迟最低的线路索引。

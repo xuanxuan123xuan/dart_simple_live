@@ -39,7 +39,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
 
   const LiveRoomPage({Key? key}) : super(key: key);
 
-  /// 打开网络诊断弹窗：测试到公共 DNS 与播放端点的 TCP 连接延迟与连通性。
+  /// 打开网络诊断弹窗：测试当前播放端点的 TCP 连接耗时与可达性。
   void showNetworkDiagnose(LiveRoomController controller) {
     Utils.showModalBottomSheetSafe(
       context: Get.context!,
@@ -2304,8 +2304,7 @@ class _SubtitleModelTile extends StatelessWidget {
   }
 }
 
-/// 网络诊断面板：测试到公共 DNS 与播放端点的 TCP 连接延迟与连通性，
-/// 帮助判断卡顿是网络问题还是平台问题。
+/// 网络诊断面板：测试当前播放端点的 TCP 连接耗时与可达性。
 class _NetworkDiagnosePanel extends StatefulWidget {
   final LiveRoomController controller;
 
@@ -2332,24 +2331,15 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
       _results.clear();
       _summary = "";
     });
-    final externalFuture = NetworkDiagnoseService.diagnose(
-      NetworkDiagnoseService.defaultTargets,
-    );
-    final playbackFuture = NetworkDiagnoseService.diagnosePlaybackUrl(
+    final playbackResult = await NetworkDiagnoseService.diagnosePlaybackUrl(
       widget.controller.currentNetworkDiagnosePlaybackUrl,
     );
-    final externalTargets = await externalFuture;
-    final playbackResult = await playbackFuture;
     final results = [
       if (playbackResult != null) playbackResult,
-      ...externalTargets,
     ];
     if (!mounted) return;
-    final summary = NetworkDiagnoseService.summarizeLayered(
-      results,
-      playbackEndpoint: playbackResult,
-      externalTargets: externalTargets,
-    );
+    final summary =
+        NetworkDiagnoseService.summarizePlaybackEndpoint(playbackResult);
     setState(() {
       _results
         ..clear()
@@ -2406,7 +2396,7 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                       ),
                       Text(
                         r.lost == r.samples
-                            ? "不通"
+                            ? "不可达"
                             : "${r.avgMs.toStringAsFixed(0)}ms",
                         style: TextStyle(
                           fontSize: 13,
@@ -2427,7 +2417,7 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        r.latencyLabel,
+                        r.lost == r.samples ? "不可达" : r.latencyLabel,
                         style: const TextStyle(fontSize: 12),
                       ),
                     ],
