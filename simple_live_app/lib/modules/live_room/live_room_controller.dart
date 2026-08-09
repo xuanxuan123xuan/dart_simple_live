@@ -4387,6 +4387,7 @@ class LiveRoomController extends PlayerController
 
         // 重新拉取房间信息
         loadData();
+        await restoreUserIntentPlayerVolumeForRoom();
 
         final pendingSite = _pendingRoomSite;
         final pendingRoomId = _pendingRoomId;

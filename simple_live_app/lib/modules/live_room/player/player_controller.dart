@@ -22,6 +22,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_tracker.dart';
+import 'package:simple_live_app/modules/live_room/player/player_volume_session_policy.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
@@ -266,6 +267,9 @@ mixin PlayerMixin {
   final RxBool ohosPlaying = false.obs;
   final RxBool ohosBuffering = true.obs;
   final RxBool ohosScreenshotInProgress = false.obs;
+
+  /// Native OHOS 0..1 mirror. Persisted 0..100 user intent remains
+  /// [AppSettingsController.playerVolume] and is the source of truth.
   final RxDouble ohosVolume = 1.0.obs;
   final RxDouble ohosAspectRatio = (16 / 9).obs;
   final RxInt ohosScaleRevision = 0.obs;
@@ -343,7 +347,7 @@ mixin PlayerStateMixin on PlayerMixin {
   RxBool showDanmakuState = false.obs;
 
   RxBool mutedState = false.obs;
-  double _volumeBeforeMute = 100.0;
+  double _volumeBeforeMute = 0.0;
 
   void onPlayerWindowModeExited() {}
 
@@ -1171,9 +1175,12 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   Future<void> toggleMute() async {
     if (Utils.isOhos) {
       if (mutedState.value) {
-        final restoreVolume = _volumeBeforeMute <= 0
-            ? AppSettingsController.instance.playerVolume.value
-            : _volumeBeforeMute;
+        final restoreVolume =
+            PlayerVolumeSessionPolicy.volumeToRestoreAfterMute(
+          lastAudibleVolume: _volumeBeforeMute,
+          userIntentVolume:
+              AppSettingsController.instance.playerVolume.value,
+        );
         await setSessionPlayerVolume(restoreVolume);
       } else {
         _volumeBeforeMute = ohosVolume.value * 100;
@@ -1183,15 +1190,28 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
     if (mutedState.value) {
       final restoreVolume =
-          _volumeBeforeMute <= 0 ? 100.0 : _volumeBeforeMute.clamp(0.0, 100.0);
+          PlayerVolumeSessionPolicy.volumeToRestoreAfterMute(
+        lastAudibleVolume: _volumeBeforeMute,
+        userIntentVolume: AppSettingsController.instance.playerVolume.value,
+      );
       await setSessionPlayerVolume(restoreVolume);
       return;
     }
     _volumeBeforeMute = player.state.volume <= 0
         ? AppSettingsController.instance.playerVolume.value
         : player.state.volume;
-    mutedState.value = true;
-    await player.setVolume(0);
+    await setSessionPlayerVolume(0);
+  }
+
+  /// Ends transient mute state and reapplies the persisted user volume intent.
+  Future<void> restoreUserIntentPlayerVolumeForRoom() async {
+    final state = PlayerVolumeSessionPolicy.forNewRoom(
+      userIntentVolume: AppSettingsController.instance.playerVolume.value,
+      lastAudibleVolume: _volumeBeforeMute,
+    );
+    _volumeBeforeMute = state.lastAudibleVolume;
+    mutedState.value = state.muted;
+    await setSessionPlayerVolume(state.outputVolume);
   }
 
   Future<void> setSessionPlayerVolume(
@@ -1868,8 +1888,7 @@ class PlayerController extends BaseController
   @override
   void onInit() {
     if (Utils.isOhos) {
-      ohosVolume.value =
-          AppSettingsController.instance.playerVolume.value / 100;
+      unawaited(restoreUserIntentPlayerVolumeForRoom());
       if (AppSettingsController.instance.autoFullScreen.value) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!isPlayerClosing && !fullScreenState.value) {
@@ -1877,15 +1896,13 @@ class PlayerController extends BaseController
           }
         });
       }
-      mutedState.value = ohosVolume.value <= 0;
       showControls();
       super.onInit();
       return;
     }
     initSystem();
     initStream();
-    //设置音量
-    player.setVolume(AppSettingsController.instance.playerVolume.value);
+    unawaited(restoreUserIntentPlayerVolumeForRoom());
     super.onInit();
   }
 

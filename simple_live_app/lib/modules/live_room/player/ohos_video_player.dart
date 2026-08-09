@@ -84,7 +84,7 @@ class OhosVideoPlayer extends StatefulWidget {
     this.onCompleted,
     this.fit = BoxFit.contain,
     this.forcedAspectRatio,
-    this.initialVolume = 1.0,
+    required this.initialVolume,
   });
 
   final String url;
@@ -97,6 +97,11 @@ class OhosVideoPlayer extends StatefulWidget {
   final VoidCallback? onCompleted;
   final BoxFit fit;
   final double? forcedAspectRatio;
+
+  /// Current session volume on the native 0..1 scale.
+  ///
+  /// The owning controller keeps the persisted user intent on a 0..100 scale;
+  /// every native controller reconstruction must receive its current value.
   final double initialVolume;
 
   @override
