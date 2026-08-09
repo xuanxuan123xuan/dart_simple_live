@@ -1,6 +1,9 @@
 import 'package:media_kit/media_kit.dart';
 
 const mpvDemuxerCacheDurationProperty = 'demuxer-cache-duration';
+const mpvCacheSpeedProperty = 'cache-speed';
+const mpvVideoBitrateProperty = 'video-bitrate';
+const mpvAudioBitrateProperty = 'audio-bitrate';
 const mpvSpeedProperty = 'speed';
 const mpvAvsyncProperty = 'avsync';
 const mpvDecoderFrameDropCountProperty = 'decoder-frame-drop-count';
@@ -65,6 +68,20 @@ class MpvLiveLatencyProperties {
         voDelayedFrameCount = const MpvTelemetryValue.unsupported();
 }
 
+class MpvLiveHealthThroughputProperties {
+  const MpvLiveHealthThroughputProperties({
+    required this.receiveBytesPerSecond,
+    required this.estimatedMediaBitsPerSecond,
+  });
+
+  const MpvLiveHealthThroughputProperties.unsupported()
+      : receiveBytesPerSecond = null,
+        estimatedMediaBitsPerSecond = null;
+
+  final double? receiveBytesPerSecond;
+  final double? estimatedMediaBitsPerSecond;
+}
+
 class LiveLatencyTelemetrySample {
   final DateTime wallClock;
   final Duration position;
@@ -127,6 +144,53 @@ class LiveLatencyTelemetryTracker {
 double? parseMpvDemuxerCacheDuration(String? raw) {
   final value = MpvTelemetryValue.parse(raw).value;
   return value != null && value >= 0 ? value : null;
+}
+
+MpvLiveHealthThroughputProperties parseMpvLiveHealthThroughputProperties({
+  required Object? cacheSpeed,
+  required Object? videoBitrate,
+  required Object? audioBitrate,
+}) {
+  final receiveBytesPerSecond = _parseFiniteNonNegative(cacheSpeed);
+  final videoBitsPerSecond = _parseFinitePositive(videoBitrate);
+  final audioBitsPerSecond = _parseFinitePositive(audioBitrate);
+  return MpvLiveHealthThroughputProperties(
+    receiveBytesPerSecond: receiveBytesPerSecond,
+    estimatedMediaBitsPerSecond:
+        videoBitsPerSecond == null || audioBitsPerSecond == null
+            ? null
+            : videoBitsPerSecond + audioBitsPerSecond,
+  );
+}
+
+double? _parseFiniteNonNegative(Object? raw) {
+  final value = MpvTelemetryValue.parse(raw).value;
+  return value != null && value >= 0 ? value : null;
+}
+
+double? _parseFinitePositive(Object? raw) {
+  final value = MpvTelemetryValue.parse(raw).value;
+  return value != null && value > 0 ? value : null;
+}
+
+Future<MpvLiveHealthThroughputProperties> sampleMpvLiveHealthThroughput(
+  Player player,
+) async {
+  final platform = player.platform;
+  if (platform is! NativePlayer) {
+    return const MpvLiveHealthThroughputProperties.unsupported();
+  }
+  final dynamic native = platform;
+  final values = await Future.wait([
+    _sampleMpvProperty(native, mpvCacheSpeedProperty),
+    _sampleMpvProperty(native, mpvVideoBitrateProperty),
+    _sampleMpvProperty(native, mpvAudioBitrateProperty),
+  ]);
+  return parseMpvLiveHealthThroughputProperties(
+    cacheSpeed: values[0].value,
+    videoBitrate: values[1].value,
+    audioBitrate: values[2].value,
+  );
 }
 
 Future<MpvLiveLatencyProperties> sampleMpvLiveLatencyProperties(

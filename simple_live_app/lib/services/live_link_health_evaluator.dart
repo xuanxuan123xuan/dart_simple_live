@@ -68,7 +68,15 @@ class LiveLinkHealthEvaluator {
         ? events
             .where((event) => event.type == LiveLinkEventType.cdnReconnect)
             .length
-        : 0;
+        : null;
+    final automaticReconnectReasons =
+        input.capabilities.automaticReconnectEvents
+            ? events
+                .where((event) => event.type == LiveLinkEventType.cdnReconnect)
+                .map((event) => event.reconnectReason)
+                .whereType<LiveReconnectReason>()
+                .toList(growable: false)
+            : const <LiveReconnectReason>[];
     final progress = _progressMetrics(shortSamples);
 
     final intakeAvailable = longSamples.any(
@@ -105,9 +113,10 @@ class LiveLinkHealthEvaluator {
       normalizedProgressRatio: progress.normalizedRatio,
       progressWindow: progress.observedDuration,
     );
-    final recoveryPenalty = automaticReconnectCount >= 2
+    final reconnectCount = automaticReconnectCount ?? 0;
+    final recoveryPenalty = reconnectCount >= 2
         ? 10
-        : automaticReconnectCount == 1
+        : reconnectCount == 1
             ? 5
             : 0;
     final penalties = LiveLinkHealthPenalties(
@@ -151,6 +160,7 @@ class LiveLinkHealthEvaluator {
       bufferingRatio: buffering.ratio,
       longestBuffering: buffering.longest,
       automaticReconnectCount: automaticReconnectCount,
+      automaticReconnectReasons: automaticReconnectReasons,
       normalizedProgressRatio: progress.normalizedRatio,
       longestProgressStall: progress.longestStall,
       playbackEndpointReachable: endpointReachable,

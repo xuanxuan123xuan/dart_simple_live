@@ -28,6 +28,37 @@ void main() {
     });
   });
 
+  group('parseMpvLiveHealthThroughputProperties', () {
+    test('keeps MPV byte and bit units without fabricating values', () {
+      final properties = parseMpvLiveHealthThroughputProperties(
+        cacheSpeed: '125000',
+        videoBitrate: 900000,
+        audioBitrate: '100000',
+      );
+
+      expect(properties.receiveBytesPerSecond, 125000);
+      expect(properties.estimatedMediaBitsPerSecond, 1000000);
+    });
+
+    test('missing or malformed inputs remain unsupported', () {
+      final missingBitrate = parseMpvLiveHealthThroughputProperties(
+        cacheSpeed: 0,
+        videoBitrate: 900000,
+        audioBitrate: null,
+      );
+      final malformedReceive = parseMpvLiveHealthThroughputProperties(
+        cacheSpeed: 'NaN',
+        videoBitrate: 900000,
+        audioBitrate: 100000,
+      );
+
+      expect(missingBitrate.receiveBytesPerSecond, 0);
+      expect(missingBitrate.estimatedMediaBitsPerSecond, isNull);
+      expect(malformedReceive.receiveBytesPerSecond, isNull);
+      expect(malformedReceive.estimatedMediaBitsPerSecond, 1000000);
+    });
+  });
+
   group('LiveLatencyTelemetryTracker', () {
     test('calculates adjacent wall clock and position progress', () {
       final tracker = LiveLatencyTelemetryTracker();

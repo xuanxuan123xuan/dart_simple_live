@@ -26,6 +26,7 @@ import 'package:simple_live_app/modules/live_room/player/player_volume_session_p
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart';
+import 'package:simple_live_app/services/live_link_health_media_kit_adapter.dart';
 import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/live_link_health_tracker.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
@@ -110,7 +111,14 @@ mixin PlayerMixin {
     onWriteError: (error) => Log.d('live latency chase speed skipped: $error'),
   );
   final LiveLinkHealthShadowCollector _liveLinkHealthCollector =
-      LiveLinkHealthShadowCollector();
+      LiveLinkHealthShadowCollector(
+    tracker: LiveLinkHealthTracker(
+      capabilities: LiveLinkHealthCapabilities(
+        audioUnderrunEvents: !Utils.isOhos,
+        automaticReconnectEvents: true,
+      ),
+    ),
+  );
   Timer? _livePlaybackLightweightTimer;
   StreamSubscription<bool>? _livePlaybackBufferingSubscription;
   int? _livePlaybackSamplingGeneration;
@@ -270,7 +278,10 @@ mixin PlayerMixin {
         return;
       }
       final sampledAt = DateTime.now();
-      final cacheDurationSeconds = await sampleMpvDemuxerCacheDuration(player);
+      final cacheDurationFuture = sampleMpvDemuxerCacheDuration(player);
+      final throughputFuture = sampleMpvLiveHealthThroughput(player);
+      final cacheDurationSeconds = await cacheDurationFuture;
+      final throughput = await throughputFuture;
       if (generation != _livePlaybackGeneration ||
           source != _livePlaybackSource) {
         return;
@@ -285,6 +296,9 @@ mixin PlayerMixin {
           playbackSpeed: _liveLatencyChaser.currentSpeed,
           streamActive: state.playing || state.buffering,
           demuxerCacheSeconds: cacheDurationSeconds,
+          receiveBytesPerSecond: throughput.receiveBytesPerSecond,
+          estimatedMediaBitsPerSecond:
+              throughput.estimatedMediaBitsPerSecond,
         ),
       );
       if (state.playing) {
@@ -331,12 +345,14 @@ mixin PlayerMixin {
   void recordLiveLinkHealthEvent(
     LiveLinkEventType type, {
     DateTime? at,
+    LiveReconnectReason? reconnectReason,
   }) {
     _liveLinkHealthCollector.addEvent(
       LiveLinkHealthEvent(
         generation: _livePlaybackGeneration,
         occurredAt: at ?? DateTime.now(),
         type: type,
+        reconnectReason: reconnectReason,
       ),
     );
   }
@@ -2167,6 +2183,13 @@ class PlayerController extends BaseController
       }
     });
     _logSubscription = player.stream.log.listen((event) {
+      final eventType = classifyMpvLiveLinkLog(
+        prefix: event.prefix,
+        text: event.text,
+      );
+      if (eventType != null) {
+        recordLiveLinkHealthEvent(eventType);
+      }
       Log.d("播放器日志：$event");
     });
     _widthSubscription = player.stream.width.listen((event) {
@@ -2359,6 +2382,10 @@ class PlayerController extends BaseController
         await player.pause();
         await Future.delayed(const Duration(milliseconds: 200));
         await resetLiveLatencyChase();
+        recordLiveLinkHealthEvent(
+          LiveLinkEventType.cdnReconnect,
+          reconnectReason: LiveReconnectReason.mediaError,
+        );
         await player.open(currentMedia);
         final source = currentMedia.uri.toString();
         if (source.isNotEmpty) {

@@ -121,7 +121,9 @@ class LiveLinkHealthTracker {
         _events.add(event);
         break;
       case LiveLinkEventType.cdnReconnect:
-        if (_isEligible(event.occurredAt)) {
+        // A reconnect attempt is reliable session evidence even when its
+        // subsequent stream-open warmup excludes playback samples.
+        if (!_pausedByUser && !_backgrounded) {
           _events.add(event);
         }
         break;

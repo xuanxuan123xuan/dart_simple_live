@@ -481,7 +481,7 @@ class LiveRoomController extends PlayerController
     if (target != currentQuality) {
       currentQuality = target;
       currentQualityInfo.value = qualites[target].quality;
-      await getPlayUrl();
+      await getPlayUrl(userInitiatedQualityChange: true);
     }
   }
 
@@ -825,6 +825,14 @@ class LiveRoomController extends PlayerController
           return;
         }
         await initPlaylist(requestRevision: requestRevision);
+        if (recoverySessionRevision == _kuaishouRecoverySessionRevision &&
+            _isCurrentPlaybackRequest(requestRevision, loadGeneration) &&
+            _hasActivePlaybackSession) {
+          recordLiveLinkHealthEvent(
+            LiveLinkEventType.cdnReconnect,
+            reconnectReason: LiveReconnectReason.sustainedBuffering,
+          );
+        }
       });
     } catch (e, stackTrace) {
       Log.e('快手缓冲恢复失败: $e', stackTrace);
@@ -2556,7 +2564,7 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  Future<void> getPlayUrl() async {
+  Future<void> getPlayUrl({bool userInitiatedQualityChange = false}) async {
     final requestRevision = ++_playbackRequestRevision;
     final loadGeneration = _loadGeneration;
     playUrls.clear();
@@ -2581,6 +2589,9 @@ class LiveRoomController extends PlayerController
     mediaErrorRetryCount = 0;
     await initPlaylist(requestRevision: requestRevision);
     if (_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+      if (userInitiatedQualityChange && _hasActivePlaybackSession) {
+        recordLiveLinkHealthEvent(LiveLinkEventType.qualityChangedByUser);
+      }
       _scheduleAutoSelectFastestLine(
         requestRevision: requestRevision,
         loadGeneration: loadGeneration,
@@ -2588,7 +2599,12 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  Future<void> changePlayLine(int index, {bool persist = true}) async {
+  Future<void> changePlayLine(
+    int index, {
+    bool persist = true,
+    LiveReconnectReason? reconnectReason,
+  }) async {
+    final loadGeneration = _loadGeneration;
     if (persist) {
       _manualLineSelectionRevision += 1;
     }
@@ -2598,7 +2614,13 @@ class LiveRoomController extends PlayerController
     }
     // 切线时同样重置重试次数
     mediaErrorRetryCount = 0;
-    await setPlayer();
+    final reopened = await setPlayer(reconnectReason: reconnectReason);
+    if (!reopened || !_isCurrentLoad(loadGeneration)) {
+      return;
+    }
+    if (persist) {
+      recordLiveLinkHealthEvent(LiveLinkEventType.lineChangedByUser);
+    }
   }
 
   void _scheduleAutoSelectFastestLine({
@@ -2891,39 +2913,71 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  Future<void> setPlayer({
+  Future<bool> setPlayer({
     bool refreshUrls = false,
     bool rotateOhosLine = false,
+    LiveReconnectReason? reconnectReason,
   }) async {
     final requestRevision = ++_playbackRequestRevision;
     final loadGeneration = _loadGeneration;
-    if (refreshUrls) {
-      final previousLineIndex = currentLineIndex;
-      final reloaded = site.id == Constant.kKuaishou
-          ? await _reloadKuaishouPlaybackUrls(
-              requestRevision: requestRevision,
-            )
-          : await _reloadPlayUrls(
-              requestRevision: requestRevision,
-              silent: true,
-            );
-      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
-        return;
+    var playbackUrlRefreshed = false;
+    try {
+      if (refreshUrls) {
+        final previousLineIndex = currentLineIndex;
+        final reloaded = site.id == Constant.kKuaishou
+            ? await _reloadKuaishouPlaybackUrls(
+                requestRevision: requestRevision,
+              )
+            : await _reloadPlayUrls(
+                requestRevision: requestRevision,
+                silent: true,
+              );
+        if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+          return false;
+        }
+        if (!reloaded) {
+          // The old source is still worth reopening when the platform API is
+          // temporarily unavailable. Returning here leaves the errored widget
+          // on screen forever and prevents the next watchdog retry.
+          Log.d("刷新播放地址失败，回退为重新打开当前线路");
+        } else if (rotateOhosLine && Utils.isOhos && playUrls.length > 1) {
+          playbackUrlRefreshed = true;
+          // A fresh URL from the same CDN can still point to the unhealthy edge
+          // node. On the second retry, move to another source before reopening.
+          currentLineIndex = (previousLineIndex + 1) % playUrls.length;
+          currentLineInfo.value = lineDisplayName(currentLineIndex);
+          Log.d("鸿蒙播放恢复切换到线路${currentLineIndex + 1}");
+        } else {
+          playbackUrlRefreshed = true;
+        }
       }
-      if (!reloaded) {
-        // The old source is still worth reopening when the platform API is
-        // temporarily unavailable. Returning here leaves the errored widget
-        // on screen forever and prevents the next watchdog retry.
-        Log.d("刷新播放地址失败，回退为重新打开当前线路");
-      } else if (rotateOhosLine && Utils.isOhos && playUrls.length > 1) {
-        // A fresh URL from the same CDN can still point to the unhealthy edge
-        // node. On the second retry, move to another source before reopening.
-        currentLineIndex = (previousLineIndex + 1) % playUrls.length;
-        currentLineInfo.value = lineDisplayName(currentLineIndex);
-        Log.d("鸿蒙播放恢复切换到线路${currentLineIndex + 1}");
+      if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) {
+        return false;
       }
+      _hasActivePlaybackSession = false;
+      await initPlaylist(requestRevision: requestRevision);
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration) ||
+          !_hasActivePlaybackSession) {
+        return false;
+      }
+      final recordedReason = reconnectReason ??
+          (playbackUrlRefreshed
+              ? LiveReconnectReason.playbackUrlRefresh
+              : null);
+      if (recordedReason != null) {
+        recordLiveLinkHealthEvent(
+          LiveLinkEventType.cdnReconnect,
+          reconnectReason: recordedReason,
+        );
+      }
+      return true;
+    } catch (e, stackTrace) {
+      if (_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        _hasActivePlaybackSession = false;
+      }
+      Log.e("重新打开播放器失败: $e", stackTrace);
+      return false;
     }
-    await initPlaylist(requestRevision: requestRevision);
   }
 
   bool get _shouldRefreshUrlsOnPlaybackRetry =>
@@ -2963,6 +3017,7 @@ class LiveRoomController extends PlayerController
       await setPlayer(
         refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
         rotateOhosLine: rotateOhosLine,
+        reconnectReason: LiveReconnectReason.mediaEnd,
       );
       return;
     }
@@ -2994,13 +3049,20 @@ class LiveRoomController extends PlayerController
         // 仍判定直播中且未达重试上限：回退到线路 0 并刷新 URL 重试一次。
         currentLineIndex = 0;
         mediaErrorRetryCount += 1;
-        await setPlayer(refreshUrls: true);
+        await setPlayer(
+          refreshUrls: true,
+          reconnectReason: LiveReconnectReason.mediaEnd,
+        );
         return;
       }
       errorMsg.value = "直播流已中断，正在确认直播状态";
       await _tryAutoSwitchToNextLiveRoom(reason: "live_end");
     } else {
-      await changePlayLine(currentLineIndex + 1, persist: false);
+      await changePlayLine(
+        currentLineIndex + 1,
+        persist: false,
+        reconnectReason: LiveReconnectReason.automaticLineFailover,
+      );
 
       //setPlayer();
     }
@@ -3041,6 +3103,7 @@ class LiveRoomController extends PlayerController
       await setPlayer(
         refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
         rotateOhosLine: rotateOhosLine,
+        reconnectReason: LiveReconnectReason.mediaError,
       );
       return;
     }
@@ -3062,7 +3125,10 @@ class LiveRoomController extends PlayerController
         // 仍判定直播中且未达重试上限：回退到线路 0 并刷新 URL 重试一次。
         currentLineIndex = 0;
         mediaErrorRetryCount += 1;
-        await setPlayer(refreshUrls: true);
+        await setPlayer(
+          refreshUrls: true,
+          reconnectReason: LiveReconnectReason.mediaError,
+        );
         return;
       }
       errorMsg.value = "播放失败";
@@ -3071,7 +3137,11 @@ class LiveRoomController extends PlayerController
     } else {
       //currentLineIndex += 1;
       //setPlayer();
-      await changePlayLine(currentLineIndex + 1, persist: false);
+      await changePlayLine(
+        currentLineIndex + 1,
+        persist: false,
+        reconnectReason: LiveReconnectReason.automaticLineFailover,
+      );
     }
   }
 
@@ -3408,7 +3478,7 @@ class LiveRoomController extends PlayerController
             currentQuality = v ?? 0;
             currentQualityInfo.value = qualites[currentQuality].quality;
             saveQualityMemory();
-            getPlayUrl();
+            getPlayUrl(userInitiatedQualityChange: true);
           }
         },
         child: ListView.builder(

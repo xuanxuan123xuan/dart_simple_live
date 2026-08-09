@@ -130,6 +130,7 @@ class LiveLinkHealthMetrics {
     required this.bufferingRatio,
     required this.longestBuffering,
     required this.automaticReconnectCount,
+    required this.automaticReconnectReasons,
     required this.normalizedProgressRatio,
     required this.longestProgressStall,
     required this.playbackEndpointReachable,
@@ -147,7 +148,8 @@ class LiveLinkHealthMetrics {
   final Duration bufferingDuration;
   final double bufferingRatio;
   final Duration longestBuffering;
-  final int automaticReconnectCount;
+  final int? automaticReconnectCount;
+  final List<LiveReconnectReason> automaticReconnectReasons;
   final double? normalizedProgressRatio;
   final Duration longestProgressStall;
   final bool? playbackEndpointReachable;

@@ -70,6 +70,7 @@ LiveLinkHealthSnapshot _snapshotWithScore(int score) {
     bufferingRatio: 0,
     longestBuffering: Duration.zero,
     automaticReconnectCount: 0,
+    automaticReconnectReasons: <LiveReconnectReason>[],
     normalizedProgressRatio: 1,
     longestProgressStall: Duration.zero,
     playbackEndpointReachable: true,
@@ -152,6 +153,7 @@ void main() {
     expect(snapshot.metrics.throughputRatio, isNull);
     expect(snapshot.metrics.noDataDuration, isNull);
     expect(snapshot.metrics.audioUnderrunCount, isNull);
+    expect(snapshot.metrics.automaticReconnectCount, isNull);
   });
 
   test('each fault domain takes its maximum penalty without double counting',
@@ -365,6 +367,69 @@ void main() {
 
     final snapshot = tracker.snapshot(at: _base.add(const Duration(seconds: 1)));
     expect(snapshot.metrics.audioUnderrunCount, 2);
+  });
+
+  test('automatic reconnect survives stream-open warmup', () {
+    final tracker = LiveLinkHealthTracker(
+      capabilities: const LiveLinkHealthCapabilities(
+        automaticReconnectEvents: true,
+      ),
+    );
+    tracker.startGeneration(1, at: _base);
+    tracker.addEvent(_event(
+      LiveLinkEventType.cdnReconnect,
+      millisecond: 1000,
+      reconnectReason: LiveReconnectReason.mediaError,
+    ));
+    tracker.addEvent(_event(
+      LiveLinkEventType.streamOpened,
+      millisecond: 1100,
+    ));
+    tracker.addSample(_sample(second: 2, cache: 0.1));
+
+    final snapshot = tracker.snapshot(at: _base.add(const Duration(seconds: 2)));
+    expect(snapshot.metrics.automaticReconnectCount, 1);
+    expect(tracker.eventCount, 1);
+    expect(tracker.sampleCount, 0);
+  });
+
+  test('automatic reconnect is excluded while paused or backgrounded', () {
+    final tracker = LiveLinkHealthTracker(
+      capabilities: const LiveLinkHealthCapabilities(
+        automaticReconnectEvents: true,
+      ),
+    );
+    tracker.startGeneration(1, at: _base);
+    tracker.addEvent(_event(
+      LiveLinkEventType.playbackPausedByUser,
+      millisecond: 100,
+    ));
+    tracker.addEvent(_event(
+      LiveLinkEventType.cdnReconnect,
+      millisecond: 200,
+      reconnectReason: LiveReconnectReason.mediaError,
+    ));
+    tracker.addEvent(_event(
+      LiveLinkEventType.playbackResumedByUser,
+      millisecond: 300,
+    ));
+    tracker.addEvent(_event(
+      LiveLinkEventType.appBackgrounded,
+      millisecond: 400,
+    ));
+    tracker.addEvent(_event(
+      LiveLinkEventType.cdnReconnect,
+      millisecond: 500,
+      reconnectReason: LiveReconnectReason.playbackUrlRefresh,
+    ));
+
+    expect(tracker.eventCount, 0);
+    expect(
+      tracker.snapshot(at: _base.add(const Duration(seconds: 1)))
+          .metrics
+          .automaticReconnectCount,
+      0,
+    );
   });
 
   test('generation change clears samples events and hysteresis state', () {

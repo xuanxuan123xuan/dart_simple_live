@@ -109,6 +109,9 @@ void main() {
     expect(log, contains('level=unknown'));
     expect(log, contains('cause=insufficientData'));
     expect(log, contains('cache=unknown'));
+    expect(log, contains('throughput=unknown'));
+    expect(log, contains('underruns60s=unknown'));
+    expect(log, contains('reconnects60s=unknown'));
     expect(log, contains('progress=unknown'));
   });
 
@@ -132,6 +135,24 @@ void main() {
     expect(sampleMethod, contains('demuxerCacheSeconds: cacheDurationSeconds'));
     expect(
         sampleMethod, contains('cacheDurationSeconds: cacheDurationSeconds'));
+    expect(sampleMethod, contains('sampleMpvLiveHealthThroughput(player)'));
+    expect(
+      sampleMethod,
+      contains('receiveBytesPerSecond: throughput.receiveBytesPerSecond'),
+    );
+    expect(
+      sampleMethod,
+      contains('throughput.estimatedMediaBitsPerSecond'),
+    );
+
+    expect(
+      playerController,
+      contains('audioUnderrunEvents: !Utils.isOhos'),
+    );
+    expect(
+      playerController,
+      contains('automaticReconnectEvents: true'),
+    );
   });
 
   test('live playback source uses Uri canonical representation', () {

@@ -95,6 +95,9 @@ String formatLiveLinkHealthShadow({
       'cause=${snapshot.primaryCause.name} '
       'cache=${_formatMetric(metrics.cacheSeconds, suffix: 's')} '
       'slope=${_formatMetric(metrics.cacheSlopeSecondsPerSecond, suffix: 's/s')} '
+      'throughput=${_formatMetric(metrics.throughputRatio)} '
+      'underruns60s=${_formatOptionalValue(metrics.audioUnderrunCount)} '
+      'reconnects60s=${_formatOptionalValue(metrics.automaticReconnectCount)} '
       'buffering=${sample.buffering} '
       'progress=${_formatMetric(metrics.normalizedProgressRatio)}';
 }
@@ -102,3 +105,5 @@ String formatLiveLinkHealthShadow({
 String _formatMetric(double? value, {String suffix = ''}) {
   return value == null ? 'unknown' : '${value.toStringAsFixed(3)}$suffix';
 }
+
+String _formatOptionalValue(Object? value) => value?.toString() ?? 'unknown';
