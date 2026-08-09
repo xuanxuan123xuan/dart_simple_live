@@ -18,6 +18,7 @@ import 'package:simple_live_app/modules/multi_room/multi_room_playback_recovery.
 import 'package:simple_live_app/modules/multi_room/player_mutation_queue.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/memory_pressure_monitor.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -622,6 +623,9 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       if (_closing || isClosed) return;
       _appActive = true;
+      _recordLiveLinkHealthEventForAll(
+        LiveLinkEventType.appForegrounded,
+      );
       _scheduleResumePlayers(delay: Duration.zero);
       if (_danmakuSuspendedForLifecycle) {
         _danmakuSuspendedForLifecycle = false;
@@ -634,12 +638,21 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       _appActive = false;
+      _recordLiveLinkHealthEventForAll(
+        LiveLinkEventType.appBackgrounded,
+      );
       _cancelPlaybackRecovery();
       // 后台挂起：断开所有格子弹幕长连接，省心跳与流量，前台恢复。
       if (!_danmakuSuspendedForLifecycle) {
         _danmakuSuspendedForLifecycle = true;
         _suspendDanmakuAll();
       }
+    }
+  }
+
+  void _recordLiveLinkHealthEventForAll(LiveLinkEventType type) {
+    for (final room in rooms) {
+      _existingPlayerFor(room)?.recordLiveLinkHealthEvent(type);
     }
   }
 

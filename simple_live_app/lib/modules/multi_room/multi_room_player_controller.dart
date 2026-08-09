@@ -11,8 +11,15 @@ import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_adaptive_quality.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_live_link_health.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/player_mutation_queue.dart';
+import 'package:simple_live_app/services/live_latency_telemetry_service.dart'
+    as health_telemetry;
+import 'package:simple_live_app/services/live_link_health_collector.dart'
+    show canonicalizeLivePlaybackSource;
+import 'package:simple_live_app/services/live_link_health_media_kit_adapter.dart';
+import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -112,7 +119,9 @@ class MultiRoomPlayerController extends GetxController {
       title: item.userName,
       logLevel: AppSettingsController.instance.logEnable.value
           ? MPVLogLevel.info
-          : MPVLogLevel.error,
+          // Audio underruns are emitted by libmpv at warning level. Keep this
+          // structured health event available without enabling verbose logs.
+          : MPVLogLevel.warn,
     ),
   );
   late final VideoController videoController = VideoController(
@@ -192,11 +201,14 @@ class MultiRoomPlayerController extends GetxController {
   final PlayerMutationQueue _mutationQueue;
   final bool _ownsMutationQueue;
   StreamSubscription<bool>? _bufferingSubscription;
+  StreamSubscription? _logSubscription;
   bool _isBuffering = false;
   int _bufferingCount = 0;
   Duration _bufferingDuration = Duration.zero;
   DateTime? _bufferingSince;
   DateTime? _lastOpenedAt;
+  final MultiRoomLiveLinkHealthCoordinator _liveLinkHealth =
+      MultiRoomLiveLinkHealthCoordinator();
   late final MpvLiveLatencyChaseService _liveLatencyChaser =
       MpvLiveLatencyChaseService(
     writeSpeed: _writeLiveLatencyChaseSpeed,
@@ -290,6 +302,15 @@ class MultiRoomPlayerController extends GetxController {
     });
     _bufferingSubscription =
         player.stream.buffering.listen(_onBufferingChanged);
+    _logSubscription = player.stream.log.listen((event) {
+      final type = classifyMpvLiveLinkLog(
+        prefix: event.prefix,
+        text: event.text,
+      );
+      if (type != null) {
+        _liveLinkHealth.recordEvent(type);
+      }
+    });
     unawaited(load());
   }
 
@@ -314,6 +335,7 @@ class MultiRoomPlayerController extends GetxController {
   void _onBufferingChanged(bool value) {
     if (_disposed || paused.value) return;
     final now = DateTime.now();
+    _liveLinkHealth.recordBuffering(value, at: now);
     if (value && !_isBuffering) {
       _isBuffering = true;
       _bufferingCount += 1;
@@ -382,6 +404,7 @@ class MultiRoomPlayerController extends GetxController {
     bool isChatTarget = false,
   }) async {
     final now = sampledAt ?? DateTime.now();
+    final healthGeneration = _liveLinkHealth.current;
     final fallback = telemetrySnapshot(
       sampledAt: now,
       isPrimary: isPrimary,
@@ -392,17 +415,56 @@ class MultiRoomPlayerController extends GetxController {
     final platform = player.platform;
     if (platform is! NativePlayer) return fallback;
 
-    final raw = <String, String?>{};
-    for (final property in const [
+    const properties = [
       mpvCacheSpeedProperty,
       mpvDemuxerCacheDurationProperty,
       mpvVideoWidthProperty,
       mpvVideoHeightProperty,
       mpvEstimatedFpsProperty,
-    ]) {
-      raw[property] = await _readNativeProperty(platform, property);
-    }
+      health_telemetry.mpvVideoBitrateProperty,
+      health_telemetry.mpvAudioBitrateProperty,
+      health_telemetry.mpvSpeedProperty,
+    ];
+    final values = await Future.wait([
+      for (final property in properties)
+        _readNativeProperty(platform, property),
+    ]);
+    final raw = <String, String?>{
+      for (var index = 0; index < properties.length; index += 1)
+        properties[index]: values[index],
+    };
     final native = parseMpvTelemetryProperties(raw);
+    final throughput = health_telemetry.parseMpvLiveHealthThroughputProperties(
+      cacheSpeed: raw[mpvCacheSpeedProperty],
+      videoBitrate: raw[health_telemetry.mpvVideoBitrateProperty],
+      audioBitrate: raw[health_telemetry.mpvAudioBitrateProperty],
+    );
+    if (healthGeneration != null &&
+        _isCurrentHealthGeneration(healthGeneration)) {
+      final state = player.state;
+      final speed = double.tryParse(
+            raw[health_telemetry.mpvSpeedProperty]?.trim() ?? '',
+          ) ??
+          _liveLatencyChaser.currentSpeed;
+      final summary = _liveLinkHealth.addSample(
+        generation: healthGeneration,
+        sample: LiveLinkHealthSample(
+          generation: healthGeneration.generation,
+          sampledAt: now,
+          position: state.position,
+          playing: state.playing,
+          buffering: state.buffering,
+          playbackSpeed: speed.isFinite && speed > 0 ? speed : 1,
+          streamActive: state.playing || state.buffering,
+          demuxerCacheSeconds: native.demuxerCacheDurationSeconds,
+          receiveBytesPerSecond: throughput.receiveBytesPerSecond,
+          estimatedMediaBitsPerSecond: throughput.estimatedMediaBitsPerSecond,
+        ),
+      );
+      if (summary != null) {
+        Log.writeLog(summary);
+      }
+    }
     await _liveLatencyChaser.observe(
       cacheDurationSeconds: native.demuxerCacheDurationSeconds,
       isBuffering: _isBuffering ||
@@ -422,6 +484,29 @@ class MultiRoomPlayerController extends GetxController {
       isFocused: isFocused,
       isChatTarget: isChatTarget,
     );
+  }
+
+  bool _isCurrentHealthGeneration(
+    MultiRoomLiveLinkHealthGeneration generation,
+  ) {
+    if (_disposed || _playerDisposed) return false;
+    final current = _liveLinkHealth.current;
+    if (current == null ||
+        current.generation != generation.generation ||
+        current.source != generation.source) {
+      return false;
+    }
+    final playlist = player.state.playlist;
+    if (playlist.medias.isEmpty ||
+        playlist.index < 0 ||
+        playlist.index >= playlist.medias.length) {
+      return false;
+    }
+    final dynamic media = playlist.medias[playlist.index];
+    final source = canonicalizeLivePlaybackSource(
+      media.uri?.toString() ?? '',
+    );
+    return source == generation.source;
   }
 
   Future<String?> _readNativeProperty(
@@ -466,7 +551,9 @@ class MultiRoomPlayerController extends GetxController {
     try {
       await player.pause();
       await Future.delayed(const Duration(milliseconds: 200));
-      await _openCurrentUrl();
+      await _openCurrentUrl(
+        automaticReconnectReason: LiveReconnectReason.mediaError,
+      );
       streamStatus.value = "";
     } catch (e) {
       Log.e("多开重启解码器失败：${item.site.id}/${item.roomId} $e", StackTrace.current);
@@ -516,6 +603,7 @@ class MultiRoomPlayerController extends GetxController {
       _restoreLineIndex = _lineIndex;
     }
     try {
+      _liveLinkHealth.stop();
       await _liveLatencyChaser.stop();
       await player.stop();
       if (_disposed) return;
@@ -611,7 +699,10 @@ class MultiRoomPlayerController extends GetxController {
     lineInfo.value = "线路${_lineIndex + 1}";
   }
 
-  Future<void> _openCurrentUrl() async {
+  Future<void> _openCurrentUrl({
+    LiveLinkEventType? userOperation,
+    LiveReconnectReason? automaticReconnectReason,
+  }) async {
     if (_disposed || _routeTransitionClosed || _playUrls.isEmpty) return;
     var url = _playUrls[_lineIndex];
     if (AppSettingsController.instance.playerForceHttps.value) {
@@ -623,8 +714,16 @@ class MultiRoomPlayerController extends GetxController {
       latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
       protocol: protocol,
     );
+    if (_disposed || _routeTransitionClosed) return;
     _playbackDesired = true;
     _lastOpenedAt = DateTime.now();
+    _liveLinkHealth.beginSource(
+      target: '${item.site.id}/${item.roomId}',
+      source: url,
+      openedAt: _lastOpenedAt,
+      userOperation: userOperation,
+      automaticReconnectReason: automaticReconnectReason,
+    );
     await player.open(
       Media(url, httpHeaders: _playHeaders),
       play: !paused.value,
@@ -696,6 +795,11 @@ class MultiRoomPlayerController extends GetxController {
   Future<void> setPaused(bool value) {
     if (paused.value == value) return Future<void>.value();
     paused.value = value;
+    _liveLinkHealth.recordEvent(
+      value
+          ? LiveLinkEventType.playbackPausedByUser
+          : LiveLinkEventType.playbackResumedByUser,
+    );
     if (value && _isBuffering) {
       _finishBuffering(DateTime.now());
     }
@@ -711,6 +815,10 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> togglePaused() => setPaused(!paused.value);
+
+  void recordLiveLinkHealthEvent(LiveLinkEventType type) {
+    _liveLinkHealth.recordEvent(type);
+  }
 
   /// 切换本格清晰度（独立于其他格）。
   Future<void> changeQuality(
@@ -740,7 +848,10 @@ class MultiRoomPlayerController extends GetxController {
       try {
         await _loadPlayUrls(roomDetail);
         if (_disposed) return;
-        await _openCurrentUrl();
+        await _openCurrentUrl(
+          userOperation:
+              userInitiated ? LiveLinkEventType.qualityChangedByUser : null,
+        );
       } catch (e) {
         Log.e(
             "多开切换清晰度失败：${item.site.id}/${item.roomId} $e", StackTrace.current);
@@ -769,7 +880,9 @@ class MultiRoomPlayerController extends GetxController {
       _lineIndex = index;
       lineInfo.value = "线路${_lineIndex + 1}";
       try {
-        await _openCurrentUrl();
+        await _openCurrentUrl(
+          userOperation: LiveLinkEventType.lineChangedByUser,
+        );
       } catch (e) {
         Log.e("多开切换线路失败：${item.site.id}/${item.roomId} $e", StackTrace.current);
         errorText.value = e.toString();
@@ -1048,6 +1161,7 @@ class MultiRoomPlayerController extends GetxController {
       if (_playerDisposed) return;
       _routeTransitionClosed = true;
       _playbackDesired = false;
+      _liveLinkHealth.stop();
       if (_isBuffering) _finishBuffering(DateTime.now());
       try {
         await _stopDanmaku();
@@ -1069,9 +1183,12 @@ class MultiRoomPlayerController extends GetxController {
   void onClose() {
     _disposed = true;
     _playbackDesired = false;
+    _liveLinkHealth.stop();
     if (_isBuffering) _finishBuffering(DateTime.now());
     unawaited(_bufferingSubscription?.cancel());
     _bufferingSubscription = null;
+    unawaited(_logSubscription?.cancel());
+    _logSubscription = null;
     _danmakuActive = false;
     // 必须断开弹幕长连接，否则移除格子后连接和心跳会泄漏。
     liveDanmaku.onMessage = null;
