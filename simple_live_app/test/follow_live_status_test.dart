@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -7,6 +8,11 @@ void main() {
     expect(followStatusForLiveState(LiveStatusState.live), 2);
     expect(followStatusForLiveState(LiveStatusState.offline), 1);
     expect(followStatusForLiveState(LiveStatusState.unknown), isNull);
+  });
+
+  test('Kuaishou follow refresh never schedules logged-in metadata detail', () {
+    expect(shouldRefreshFollowMetadata(Constant.kKuaishou), isFalse);
+    expect(shouldRefreshFollowMetadata(Constant.kDouyin), isTrue);
   });
 
   group('KuaishouFollowRefreshLimiter', () {

@@ -70,6 +70,28 @@ mixin PlayerMixin {
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
   GlobalKey globalDanmuKey = GlobalKey();
   GlobalKey ohosScreenshotKey = GlobalKey();
+  PlaybackDisplayLease? _playbackDisplayLease;
+
+  void initPlaybackDisplayLease() {
+    _playbackDisplayLease ??= PlaybackDisplayCoordinator.instance.acquire(
+      debugLabel: 'single-live-room',
+    );
+  }
+
+  void _setKeepScreenAwake(bool enabled) {
+    _playbackDisplayLease?.setKeepScreenAwake(enabled);
+  }
+
+  void setPlaybackKeepScreenAwake(bool enabled) {
+    _setKeepScreenAwake(enabled);
+  }
+
+  Future<void> releasePlaybackDisplayLease() async {
+    final displayLease = _playbackDisplayLease;
+    _playbackDisplayLease = null;
+    displayLease?.dispose();
+    await PlaybackDisplayCoordinator.instance.settle();
+  }
 
   /// media_kit 播放器实例。
   ///
@@ -644,6 +666,7 @@ mixin PlayerMixin {
       _liveLatencyChaseSamplingLoop.stop();
       ohosPlaying.value = false;
       ohosBuffering.value = false;
+      _setKeepScreenAwake(false);
     }
   }
 
@@ -651,6 +674,7 @@ mixin PlayerMixin {
     final wasPlaying = ohosPlaying.value;
     ohosPlaying.value = value.isPlaying;
     ohosBuffering.value = value.isBuffering || !value.isInitialized;
+    _setKeepScreenAwake(value.isPlaying);
     if (value.aspectRatio > 0) {
       ohosAspectRatio.value = value.aspectRatio;
     }
@@ -1009,15 +1033,12 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   final pip = Floating();
   StreamSubscription<PiPStatus>? _pipSubscription;
   StreamSubscription<bool>? _ohosPipSubscription;
-  PlaybackDisplayLease? _playbackDisplayLease;
 
   //final VolumeController volumeController = VolumeController();
 
   /// 初始化一些系统状态
   void initSystem() async {
-    _playbackDisplayLease ??= PlaybackDisplayCoordinator.instance.acquire(
-      debugLabel: 'single-live-room',
-    );
+    initPlaybackDisplayLease();
     if (Platform.isAndroid || Platform.isIOS) {
       VolumeController.instance.showSystemUI = false;
     }
@@ -1040,10 +1061,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     _pipSubscription?.cancel();
     _ohosPipSubscription?.cancel();
     //pip.dispose();
-    final displayLease = _playbackDisplayLease;
-    _playbackDisplayLease = null;
-    displayLease?.dispose();
-    await PlaybackDisplayCoordinator.instance.settle();
+    await releasePlaybackDisplayLease();
 
     await resetPreferredOrientation();
     if (Platform.isAndroid ||
@@ -2239,6 +2257,7 @@ class PlayerController extends BaseController
   @override
   void onInit() {
     if (Utils.isOhos) {
+      initPlaybackDisplayLease();
       unawaited(restoreUserIntentPlayerVolumeForRoom());
       if (AppSettingsController.instance.autoFullScreen.value) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2465,26 +2484,32 @@ class PlayerController extends BaseController
     // 缓冲边沿计数：按 false->true 计数独立缓冲开始，达到阈值自动触发网络诊断。
     _bufferingSubscription = player.stream.buffering.listen((buffering) {
       Log.d("[player-diag] buffering event=$buffering");
-      if (isPlayerClosing) {
-        return;
-      }
-      final now = DateTime.now();
-      final shouldDiagnose = _autoDiagnosisTracker.update(
-        buffering: buffering,
-        now: now,
-      );
-      if (!shouldDiagnose) {
-        return;
-      }
-      // 两次诊断之间至少间隔 30 秒，避免持续缓冲时反复触发网络诊断。
-      if (_lastAutoDiagnoseAt != null &&
-          now.difference(_lastAutoDiagnoseAt!) < const Duration(seconds: 30)) {
-        Log.d("[player-diag] diagnose skipped (cooldown 30s)");
-        return;
-      }
-      _lastAutoDiagnoseAt = now;
-      unawaited(_runAutoNetworkDiagnose());
+      observeAutoNetworkDiagnosisBuffering(buffering);
     });
+  }
+
+  void observeAutoNetworkDiagnosisBuffering(bool buffering) {
+    if (isPlayerClosing ||
+        (Utils.isOhos &&
+            !AppSettingsController
+                .instance.ohosNetworkFluctuationNotice.value)) {
+      return;
+    }
+    final now = DateTime.now();
+    final shouldDiagnose = _autoDiagnosisTracker.update(
+      buffering: buffering,
+      now: now,
+    );
+    if (!shouldDiagnose) {
+      return;
+    }
+    if (_lastAutoDiagnoseAt != null &&
+        now.difference(_lastAutoDiagnoseAt!) < const Duration(seconds: 30)) {
+      Log.d("[player-diag] diagnose skipped (cooldown 30s)");
+      return;
+    }
+    _lastAutoDiagnoseAt = now;
+    unawaited(_runAutoNetworkDiagnose());
   }
 
   /// 自动网络诊断：缓冲 [LiveRoomAutoQualityBufferTracker.requiredBufferStarts]
@@ -2553,21 +2578,6 @@ class PlayerController extends BaseController
     _bufferingSubscription?.cancel();
     _networkHintTimer?.cancel();
     _surfaceHealthCheckTimer?.cancel();
-  }
-
-  void _setKeepScreenAwake(bool enabled) {
-    // HarmonyOS 没有可用的屏幕常亮机制：wakelock_plus 在鸿蒙侧未实现
-    // （FlutterPlaybackDisplayGateway 通过 _isSupportedMobile 排除了 OHOS），
-    // 仓库中也没有 keepScreenOn / WindowFlag 类的鸿蒙接入。直接 return
-    // 避免 MissingPluginException，保持现状即可；若后续鸿蒙 SDK 提供
-    // 保持唤醒能力，再在 PlaybackDisplayGateway 内按平台接入。
-    if (!Utils.isOhos) {
-      _playbackDisplayLease?.setKeepScreenAwake(enabled);
-    }
-  }
-
-  void setPlaybackKeepScreenAwake(bool enabled) {
-    _setKeepScreenAwake(enabled);
   }
 
   // Fix Issue #57: 判断是否为流错误（网络/解码错误）
@@ -2923,6 +2933,7 @@ class PlayerController extends BaseController
     }
     _playerClosing = true;
     _setKeepScreenAwake(false);
+    await releasePlaybackDisplayLease();
     if (Utils.isOhos) {
       if (fullScreenState.value) {
         await exitFull();

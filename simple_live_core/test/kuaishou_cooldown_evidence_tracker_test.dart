@@ -153,4 +153,21 @@ void main() {
       isNull,
     );
   });
+
+  group('Asia/Shanghai next midnight', () {
+    test('covers month and year rollover', () {
+      expect(
+        KuaishouCooldownEvidenceTracker.durationUntilNextShanghaiMidnight(
+          DateTime.utc(2026, 11, 30, 15, 59),
+        ),
+        const Duration(minutes: 1),
+      );
+      expect(
+        KuaishouCooldownEvidenceTracker.durationUntilNextShanghaiMidnight(
+          DateTime.utc(2026, 12, 31, 15, 0),
+        ),
+        const Duration(hours: 1),
+      );
+    });
+  });
 }

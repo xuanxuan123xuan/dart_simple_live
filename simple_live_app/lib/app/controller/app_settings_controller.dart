@@ -131,6 +131,10 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kQualityLevel, 1);
     qualityLevelCellular.value = LocalStorageService.instance
         .getValue(LocalStorageService.kQualityLevelCellular, 1);
+    ohosAutoQualityDegrade.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kOhosAutoQualityDegrade, true);
+    ohosNetworkFluctuationNotice.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kOhosNetworkFluctuationNotice, true);
 
     autoExitEnable.value = LocalStorageService.instance
         .getValue(LocalStorageService.kAutoExitEnable, false);
@@ -919,6 +923,20 @@ class AppSettingsController extends GetxController {
     qualityLevelCellular.value = level;
     LocalStorageService.instance
         .setValue(LocalStorageService.kQualityLevelCellular, level);
+  }
+
+  var ohosAutoQualityDegrade = true.obs;
+  void setOhosAutoQualityDegrade(bool value) {
+    ohosAutoQualityDegrade.value = value;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kOhosAutoQualityDegrade, value);
+  }
+
+  var ohosNetworkFluctuationNotice = true.obs;
+  void setOhosNetworkFluctuationNotice(bool value) {
+    ohosNetworkFluctuationNotice.value = value;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kOhosNetworkFluctuationNotice, value);
   }
 
   var autoExitEnable = false.obs;

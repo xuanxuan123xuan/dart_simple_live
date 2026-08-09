@@ -33,6 +33,13 @@ class KuaishouWebLoginController extends BaseController {
   bool _loginPageReady = false;
   bool _autoChecking = false;
 
+  KuaishouAccountSlot get targetSlot => Get.arguments is KuaishouAccountSlot
+      ? Get.arguments as KuaishouAccountSlot
+      : KuaishouAccountSlot.primary;
+
+  String get targetSlotName =>
+      targetSlot == KuaishouAccountSlot.primary ? "主账号" : "备用账号";
+
   @override
   void onInit() {
     super.onInit();
@@ -175,11 +182,18 @@ class KuaishouWebLoginController extends BaseController {
         }
         return;
       }
-      KuaishouAccountService.instance.setCookie(
+      final saved = KuaishouAccountService.instance.setCookieForSlot(
+        targetSlot,
         cookie,
         kww: kww,
         expiresAt: snapshot.expiresAt,
       );
+      if (!saved) {
+        if (!silent || autoClose) {
+          SmartDialog.showToast("主账号和备用账号不能使用相同 Cookie 或 UID");
+        }
+        return;
+      }
       if (kww.isEmpty) {
         if (!silent || autoClose) {
           SmartDialog.showToast("Cookie 已保存，但未获取到 kwfv1；请刷新页面或完成验证后再保存");
@@ -187,7 +201,7 @@ class KuaishouWebLoginController extends BaseController {
         return;
       }
       if (!silent || autoClose) {
-        SmartDialog.showToast("快手 Cookie 已保存，可用于搜索和弹幕");
+        SmartDialog.showToast("快手$targetSlotName Cookie 已保存，可用于搜索和弹幕");
       }
       if (autoClose) {
         Get.back();

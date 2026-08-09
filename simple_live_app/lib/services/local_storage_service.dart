@@ -67,6 +67,9 @@ class LocalStorageService extends GetxService {
   static const String kChatBubbleStyle = "ChatBubbleStyle";
   static const String kQualityLevel = "QualityLevel";
   static const String kQualityLevelCellular = "QualityLevelCellular";
+  static const String kOhosAutoQualityDegrade = "OhosAutoQualityDegrade";
+  static const String kOhosNetworkFluctuationNotice =
+      "OhosNetworkFluctuationNotice";
   static const String kAutoExitEnable = "AutoExitEnable";
   static const String kAutoExitDuration = "AutoExitDuration";
   static const String kRoomAutoExitDuration = "RoomAutoExitDuration";
@@ -106,6 +109,11 @@ class LocalStorageService extends GetxService {
   static const String kKuaishouCookie = "KuaishouCookie";
   static const String kKuaishouKww = "KuaishouKww";
   static const String kKuaishouCookieExpiresAt = "KuaishouCookieExpiresAt";
+  static const String kKuaishouSecondaryCookie = "KuaishouSecondaryCookie";
+  static const String kKuaishouSecondaryKww = "KuaishouSecondaryKww";
+  static const String kKuaishouSecondaryCookieExpiresAt =
+      "KuaishouSecondaryCookieExpiresAt";
+  static const String kKuaishouAccountPoolState = "KuaishouAccountPoolState";
   static const String kStyleColor = "kStyleColor";
   static const String kIsDynamic = "kIsDynamic";
   static const String kBilibiliLoginTip = "BilibiliLoginTip";
@@ -165,7 +173,9 @@ class LocalStorageService extends GetxService {
   T getValue<T>(dynamic key, T defaultValue) {
     try {
       final value = settingsBox.get(key, defaultValue: defaultValue) as T;
-      Log.d("Get LocalStorage: $key\n$value");
+      Log.d(
+        "Get LocalStorage: $key\n${_isSensitiveKey(key) ? '<redacted>' : value}",
+      );
       return value;
     } catch (e) {
       Log.logPrint(e);
@@ -174,7 +184,9 @@ class LocalStorageService extends GetxService {
   }
 
   Future setValue<T>(dynamic key, T value) async {
-    Log.d("Set LocalStorage: $key\n$value");
+    Log.d(
+      "Set LocalStorage: $key\n${_isSensitiveKey(key) ? '<redacted>' : value}",
+    );
     return await settingsBox.put(key, value);
   }
 
@@ -182,4 +194,12 @@ class LocalStorageService extends GetxService {
     Log.d("Remove LocalStorage: $key");
     return await settingsBox.delete(key);
   }
+
+  bool _isSensitiveKey(dynamic key) => const {
+        kKuaishouCookie,
+        kKuaishouKww,
+        kKuaishouSecondaryCookie,
+        kKuaishouSecondaryKww,
+        kKuaishouAccountPoolState,
+      }.contains(key);
 }

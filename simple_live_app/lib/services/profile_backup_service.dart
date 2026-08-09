@@ -20,8 +20,8 @@ class ProfileBackupService extends GetxService {
   static ProfileBackupService get instance => Get.find<ProfileBackupService>();
 
   static const schema = "simple_live_profile";
-  static const schemaVersion = 3;
-  static const Set<int> _supportedSchemaVersions = {1, 2, 3};
+  static const schemaVersion = 4;
+  static const Set<int> _supportedSchemaVersions = {1, 2, 3, 4};
 
   static const Set<String> _excludedSettings = {
     LocalStorageService.kFirstRun,
@@ -32,6 +32,15 @@ class ProfileBackupService extends GetxService {
     LocalStorageService.kWebDAVPassword,
     LocalStorageService.kWebDAVLastUploadTime,
     LocalStorageService.kWebDAVLastRecoverTime,
+    LocalStorageService.kBilibiliCookie,
+    LocalStorageService.kDouyinCookie,
+    LocalStorageService.kKuaishouCookie,
+    LocalStorageService.kKuaishouKww,
+    LocalStorageService.kKuaishouCookieExpiresAt,
+    LocalStorageService.kKuaishouSecondaryCookie,
+    LocalStorageService.kKuaishouSecondaryKww,
+    LocalStorageService.kKuaishouSecondaryCookieExpiresAt,
+    LocalStorageService.kKuaishouAccountPoolState,
   };
 
   Map<String, dynamic> exportProfileMap() {
@@ -271,7 +280,10 @@ class ProfileBackupService extends GetxService {
         onProgress,
       );
     }
-    await _importAccounts(payload["accounts"]);
+    await _importAccounts(
+      payload["accounts"],
+      legacySettings: payload["settings"],
+    );
     if (options.shieldPresets) {
       onProgress?.call(const SyncProgress(stage: "导入屏蔽预设"));
       await _importShieldPresets(
@@ -356,18 +368,7 @@ class ProfileBackupService extends GetxService {
         },
         {
           "siteId": Constant.kKuaishou,
-          "cookie": LocalStorageService.instance.getValue(
-            LocalStorageService.kKuaishouCookie,
-            "",
-          ),
-          "kww": LocalStorageService.instance.getValue(
-            LocalStorageService.kKuaishouKww,
-            "",
-          ),
-          "cookieExpiresAt": LocalStorageService.instance.getValue(
-            LocalStorageService.kKuaishouCookieExpiresAt,
-            0,
-          ),
+          ...KuaishouAccountService.instance.exportBackupMap(),
         },
       ],
     };
@@ -515,14 +516,14 @@ class ProfileBackupService extends GetxService {
     AppSettingsControllerSafe.reloadShields();
   }
 
-  Future<void> _importAccounts(dynamic rawAccounts) async {
-    if (rawAccounts is! Map) {
-      return;
-    }
-    final items = rawAccounts["items"];
-    if (items is! List) {
-      return;
-    }
+  Future<void> _importAccounts(
+    dynamic rawAccounts, {
+    dynamic legacySettings,
+  }) async {
+    final items = rawAccounts is Map && rawAccounts["items"] is List
+        ? rawAccounts["items"] as List
+        : const [];
+    var importedKuaishou = false;
     for (final item in items) {
       if (item is! Map) {
         continue;
@@ -541,20 +542,34 @@ class ProfileBackupService extends GetxService {
           }
           break;
         case Constant.kKuaishou:
-          final kww = item["kww"]?.toString() ?? "";
-          final expiresAtMs = (item["cookieExpiresAt"] as num?)?.toInt() ?? 0;
-          if (cookie.isEmpty) {
-            KuaishouAccountService.instance.clearCookie();
-          } else {
-            KuaishouAccountService.instance.setCookie(
-              cookie,
-              kww: kww.isEmpty ? null : kww,
-              expiresAt: expiresAtMs > 0
-                  ? DateTime.fromMillisecondsSinceEpoch(expiresAtMs)
-                  : null,
-            );
-          }
+          importedKuaishou = true;
+          KuaishouAccountService.instance.importBackupMap(
+            item,
+            legacySettings: legacySettings,
+          );
           break;
+      }
+    }
+    if (!importedKuaishou && legacySettings is Map) {
+      final hasLegacyKuaishou = const {
+        LocalStorageService.kKuaishouCookie,
+        LocalStorageService.kKuaishouKww,
+        LocalStorageService.kKuaishouCookieExpiresAt,
+        LocalStorageService.kKuaishouSecondaryCookie,
+        LocalStorageService.kKuaishouSecondaryKww,
+        LocalStorageService.kKuaishouSecondaryCookieExpiresAt,
+        LocalStorageService.kKuaishouAccountPoolState,
+      }.any(legacySettings.containsKey);
+      if (hasLegacyKuaishou) {
+        KuaishouAccountService.instance.importBackupMap(
+          {
+            'cookie': legacySettings[LocalStorageService.kKuaishouCookie],
+            'kww': legacySettings[LocalStorageService.kKuaishouKww],
+            'cookieExpiresAt':
+                legacySettings[LocalStorageService.kKuaishouCookieExpiresAt],
+          },
+          legacySettings: legacySettings,
+        );
       }
     }
   }

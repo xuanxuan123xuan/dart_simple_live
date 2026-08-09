@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const channel = MethodChannel('simple_live/ohos_pip_test');
+  const capabilitiesChannel =
+      MethodChannel('simple_live/ohos_capabilities_test');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late OhosPipService service;
@@ -15,13 +18,37 @@ void main() {
   setUp(() {
     service = OhosPipService(
       channel: channel,
+      capabilitiesChannel: capabilitiesChannel,
       isOhos: () => true,
     );
+    messenger.setMockMethodCallHandler(capabilitiesChannel, (call) async {
+      return {
+        'pipAvailable': true,
+        'pipAutoOnLeaveSupported': true,
+        'pipCanHideDanmaku': true,
+      };
+    });
   });
 
   tearDown(() async {
     messenger.setMockMethodCallHandler(channel, null);
+    messenger.setMockMethodCallHandler(capabilitiesChannel, null);
     await service.dispose();
+  });
+
+  test('settings and native bridge use PiP capabilities', () {
+    final settings = File(
+      'lib/modules/settings/play_settings_page.dart',
+    ).readAsStringSync();
+    final plugin = File(
+      'ohos/entry/src/main/ets/plugins/OhosCapabilitiesPlugin.ets',
+    ).readAsStringSync();
+
+    expect(settings, contains('capabilities.pipCanHideDanmaku'));
+    expect(settings, contains('capabilities.pipAutoOnLeaveSupported'));
+    expect(settings, contains('Floating().isPipAvailable'));
+    expect(plugin, contains('PiPWindow.isPiPEnabled()'));
+    expect(plugin, contains("'pipAvailable': available"));
   });
 
   test('manual enter forwards normalized video dimensions', () async {
@@ -86,6 +113,40 @@ void main() {
 
     expect(await service.isAvailable(), isFalse);
   });
+
+  test('capabilities are cached and normalized', () async {
+    var calls = 0;
+    messenger.setMockMethodCallHandler(capabilitiesChannel, (call) async {
+      calls += 1;
+      return {
+        'pipAvailable': true,
+        'pipAutoOnLeaveSupported': true,
+        'pipCanHideDanmaku': false,
+      };
+    });
+
+    final first = await service.getCapabilities();
+    final second = await service.getCapabilities();
+
+    expect(first.pipAvailable, isTrue);
+    expect(first.pipAutoOnLeaveSupported, isTrue);
+    expect(first.pipCanHideDanmaku, isFalse);
+    expect(identical(first, second), isTrue);
+    expect(calls, 1);
+  });
+
+  test('capability failures safely disable PiP settings', () async {
+    messenger.setMockMethodCallHandler(capabilitiesChannel, (call) async {
+      throw PlatformException(code: 'unsupported');
+    });
+
+    final capabilities = await service.getCapabilities();
+
+    expect(capabilities.pipAvailable, isFalse);
+    expect(capabilities.pipAutoOnLeaveSupported, isFalse);
+    expect(capabilities.pipCanHideDanmaku, isFalse);
+  });
+
   test('non-OHOS platforms never invoke the native channel', () async {
     var calls = 0;
     messenger.setMockMethodCallHandler(channel, (call) async {
@@ -94,6 +155,7 @@ void main() {
     });
     final otherPlatform = OhosPipService(
       channel: channel,
+      capabilitiesChannel: capabilitiesChannel,
       isOhos: () => false,
     );
 

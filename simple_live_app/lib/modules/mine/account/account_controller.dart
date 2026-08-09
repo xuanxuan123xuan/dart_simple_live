@@ -224,9 +224,14 @@ class AccountController extends GetxController {
   }
 
   void kuaishouLogin() {
-    final hasCookie = KuaishouAccountService.instance.hasCookie.value;
+    kuaishouSlotLogin(KuaishouAccountSlot.primary);
+  }
+
+  void kuaishouSlotLogin(KuaishouAccountSlot slot) {
+    final session = KuaishouAccountService.instance.sessionFor(slot);
+    final hasCookie = session.isConfigured;
     Utils.showBottomSheet(
-      title: "快手账号",
+      title: "快手${getKuaishouSlotName(slot)}",
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -238,7 +243,7 @@ class AccountController extends GetxController {
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
-                kuaishouWebLogin();
+                kuaishouWebLogin(slot);
               },
             ),
           if (!Platform.isAndroid && !Platform.isIOS && !Utils.isOhos)
@@ -249,7 +254,7 @@ class AccountController extends GetxController {
               trailing: const Icon(Icons.chevron_right),
               onTap: () async {
                 Get.back();
-                await openKuaishouInBrowserThenConfigCookie();
+                await openKuaishouInBrowserThenConfigCookie(slot);
               },
             ),
           ListTile(
@@ -259,7 +264,7 @@ class AccountController extends GetxController {
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Get.back();
-              doKuaishouCookieConfig();
+              doKuaishouCookieConfig(slot);
             },
           ),
           if (hasCookie)
@@ -270,7 +275,7 @@ class AccountController extends GetxController {
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
-                showCurrentKuaishouCookie();
+                showCurrentKuaishouCookie(slot);
               },
             ),
           if (hasCookie)
@@ -281,7 +286,7 @@ class AccountController extends GetxController {
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
-                exportKuaishouCookieToClipboard();
+                exportKuaishouCookieToClipboard(slot);
               },
             ),
           if (Platform.isAndroid || Platform.isIOS || Utils.isOhos)
@@ -292,7 +297,7 @@ class AccountController extends GetxController {
               trailing: const Icon(Icons.chevron_right),
               onTap: () async {
                 Get.back();
-                await importKuaishouCookieFromFile();
+                await importKuaishouCookieFromFile(slot);
               },
             ),
           if (hasCookie)
@@ -303,7 +308,7 @@ class AccountController extends GetxController {
               trailing: const Icon(Icons.chevron_right),
               onTap: () async {
                 Get.back();
-                await clearKuaishouCookie();
+                await clearKuaishouCookie(slot);
               },
             ),
         ],
@@ -314,28 +319,38 @@ class AccountController extends GetxController {
   bool get canUseKuaishouWebLogin =>
       Platform.isAndroid || Platform.isIOS || Utils.isOhos;
 
-  void kuaishouWebLogin() {
-    Get.toNamed(RoutePath.kKuaishouWebLogin);
+  void kuaishouWebLogin([
+    KuaishouAccountSlot slot = KuaishouAccountSlot.primary,
+  ]) {
+    Get.toNamed(RoutePath.kKuaishouWebLogin, arguments: slot);
   }
 
-  Future<void> clearKuaishouCookie() async {
-    if (KuaishouAccountService.instance.hasCookie.value) {
-      var result =
-          await Utils.showAlertDialog("确定要清除自定义快手 Cookie 吗？", title: "清除配置");
+  Future<void> clearKuaishouCookie([
+    KuaishouAccountSlot slot = KuaishouAccountSlot.primary,
+  ]) async {
+    final account = KuaishouAccountService.instance;
+    if (account.sessionFor(slot).isConfigured) {
+      final result = await Utils.showAlertDialog(
+        "确定要清除快手${getKuaishouSlotName(slot)} Cookie 吗？",
+        title: "清除配置",
+      );
       if (result) {
-        KuaishouAccountService.instance.clearCookie();
-        SmartDialog.showToast("已清除快手 Cookie");
+        account.clearCookieForSlot(slot);
+        SmartDialog.showToast("已清除快手${getKuaishouSlotName(slot)} Cookie");
       }
     }
   }
 
-  void doKuaishouCookieConfig() {
+  void doKuaishouCookieConfig([
+    KuaishouAccountSlot slot = KuaishouAccountSlot.primary,
+  ]) {
     final account = KuaishouAccountService.instance;
-    final cookieController = TextEditingController(text: account.cookie);
+    final session = account.sessionFor(slot);
+    final cookieController = TextEditingController(text: session.cookie);
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) =>       AlertDialog(
-        title: const Text("配置快手 Cookie"),
+      builder: (_) => AlertDialog(
+        title: Text("配置快手${getKuaishouSlotName(slot)} Cookie"),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -367,10 +382,20 @@ class AccountController extends GetxController {
               final pastedKww = _extractKuaishouKww(rawInput);
               Get.back();
               if (cookie.isEmpty) {
-                account.clearCookie();
-                SmartDialog.showToast("已清除快手 Cookie");
+                account.clearCookieForSlot(slot);
+                SmartDialog.showToast(
+                  "已清除快手${getKuaishouSlotName(slot)} Cookie",
+                );
               } else {
-                account.setCookie(cookie, kww: pastedKww);
+                final saved = account.setCookieForSlot(
+                  slot,
+                  cookie,
+                  kww: pastedKww,
+                );
+                if (!saved) {
+                  SmartDialog.showToast("主账号和备用账号不能使用相同 Cookie 或 UID");
+                  return;
+                }
                 final hasKwfv1 = _parseCookieMap(cookie).containsKey("kwfv1");
                 SmartDialog.showToast(
                   hasKwfv1 || pastedKww.isNotEmpty
@@ -386,16 +411,18 @@ class AccountController extends GetxController {
     ).whenComplete(cookieController.dispose);
   }
 
-  void showCurrentKuaishouCookie() {
-    final credentials = _currentKuaishouCredentialsText();
+  void showCurrentKuaishouCookie([
+    KuaishouAccountSlot slot = KuaishouAccountSlot.primary,
+  ]) {
+    final credentials = _currentKuaishouCredentialsText(slot);
     if (credentials.isEmpty) {
       SmartDialog.showToast("当前没有快手弹幕凭证");
       return;
     }
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) =>       AlertDialog(
-        title: const Text("当前快手弹幕凭证"),
+      builder: (_) => AlertDialog(
+        title: Text("快手${getKuaishouSlotName(slot)}弹幕凭证"),
         content: SingleChildScrollView(child: SelectableText(credentials)),
         actions: [
           TextButton(onPressed: () => Get.back(), child: const Text("关闭")),
@@ -411,8 +438,10 @@ class AccountController extends GetxController {
     );
   }
 
-  void exportKuaishouCookieToClipboard() {
-    final credentials = _currentKuaishouCredentialsText();
+  void exportKuaishouCookieToClipboard([
+    KuaishouAccountSlot slot = KuaishouAccountSlot.primary,
+  ]) {
+    final credentials = _currentKuaishouCredentialsText(slot);
     if (credentials.isEmpty) {
       SmartDialog.showToast("当前没有快手弹幕凭证");
       return;
@@ -420,7 +449,9 @@ class AccountController extends GetxController {
     Utils.copyToClipboard(credentials);
   }
 
-  Future<void> openKuaishouInBrowserThenConfigCookie() async {
+  Future<void> openKuaishouInBrowserThenConfigCookie([
+    KuaishouAccountSlot slot = KuaishouAccountSlot.primary,
+  ]) async {
     try {
       final opened = await launchUrlString(
         _kuaishouHomeUrl,
@@ -432,10 +463,12 @@ class AccountController extends GetxController {
     } catch (_) {
       SmartDialog.showToast("无法打开系统浏览器，请手动打开 live.kuaishou.com 后粘贴 Cookie");
     }
-    doKuaishouCookieConfig();
+    doKuaishouCookieConfig(slot);
   }
 
-  Future<void> importKuaishouCookieFromFile() async {
+  Future<void> importKuaishouCookieFromFile([
+    KuaishouAccountSlot slot = KuaishouAccountSlot.primary,
+  ]) async {
     try {
       final picked = await FilePicker.platform.pickFiles(
         allowMultiple: false,
@@ -461,8 +494,16 @@ class AccountController extends GetxController {
         return;
       }
       final kww = _extractKuaishouKww(content);
-      KuaishouAccountService.instance.setCookie(cookie, kww: kww);
-      SmartDialog.showToast("已从文件导入快手 Cookie");
+      final saved = KuaishouAccountService.instance.setCookieForSlot(
+        slot,
+        cookie,
+        kww: kww,
+      );
+      SmartDialog.showToast(
+        saved
+            ? "已从文件导入快手${getKuaishouSlotName(slot)} Cookie"
+            : "主账号和备用账号不能使用相同 Cookie 或 UID",
+      );
     } catch (e) {
       SmartDialog.showToast("导入 Cookie 失败：$e");
     }
@@ -476,7 +517,7 @@ class AccountController extends GetxController {
     }
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) =>       AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text("当前抖音 Cookie"),
         content: SingleChildScrollView(
           child: SelectableText(cookie),
@@ -722,27 +763,73 @@ class AccountController extends GetxController {
   String getKuaishouCookieSummaryText() {
     douyinCookieCountdownTick.value;
     final account = KuaishouAccountService.instance;
+    account.revision.value;
     account.hasCookie.value;
-    final cookie = account.cookie;
-    if (cookie.isEmpty) {
-      return "建议配置 Cookie，用于搜索和弹幕";
-    }
-    final expiry = account.cookieExpiresAt;
-    if (expiry == null) {
-      return Utils.isOhos
-          ? "已配置 Cookie（${cookie.length} 字符），服务端未公开到期时间"
-          : "已配置 Cookie（${cookie.length} 字符），有效期无法判断";
-    }
-    final remain = expiry.difference(DateTime.now());
-    if (remain.isNegative) {
-      return "已配置 Cookie（${cookie.length} 字符），预计有效期已过";
-    }
-    return "已配置 Cookie（${cookie.length} 字符），预计剩余 ${_formatDurationShort(remain)}";
+    account.mode.value;
+    return "当前模式：${getKuaishouModeName(account.mode.value)}";
   }
 
-  String _currentKuaishouCredentialsText() {
-    final cookie = KuaishouAccountService.instance.cookie;
+  String getKuaishouSlotName(KuaishouAccountSlot slot) =>
+      slot == KuaishouAccountSlot.primary ? "主账号" : "备用账号";
+
+  String getKuaishouModeName(KuaishouAccountPoolMode mode) => switch (mode) {
+        KuaishouAccountPoolMode.primary => "主账号",
+        KuaishouAccountPoolMode.secondary => "备用账号",
+        KuaishouAccountPoolMode.anonymous => "匿名模式",
+      };
+
+  String getKuaishouSlotSummaryText(KuaishouAccountSlot slot) {
+    douyinCookieCountdownTick.value;
+    final account = KuaishouAccountService.instance;
+    account.revision.value;
+    account.mode.value;
+    final session = account.sessionFor(slot);
+    if (!session.isConfigured) {
+      return "未配置";
+    }
+    final now = DateTime.now();
+    if (session.credentialState == KuaishouCredentialState.invalid) {
+      return "已失效，请重新登录";
+    }
+    final suspendedUntil = session.suspendedUntil;
+    if (suspendedUntil?.isAfter(now) == true) {
+      return "请求频繁，暂停至 ${_formatDateTime(suspendedUntil!)}";
+    }
+    final cooldownUntil = session.cooldownUntil;
+    if (cooldownUntil?.isAfter(now) == true) {
+      return "冷却至 ${_formatDateTime(cooldownUntil!)}";
+    }
+
+    final state = session.credentialState == KuaishouCredentialState.valid
+        ? "有效"
+        : "已配置，待验证";
+    final expiry = session.cookieExpiresAt;
+    if (expiry == null) {
+      final loginText = session.loggedInAt == null
+          ? ""
+          : "，登录于 ${_formatDateTime(session.loggedInAt!)}";
+      final validatedText = session.lastValidatedAt == null
+          ? ""
+          : "，上次验证 ${_formatDateTime(session.lastValidatedAt!)}";
+      return "$state，到期时间未知$loginText$validatedText";
+    }
+    final remain = expiry.difference(now);
+    if (remain.isNegative) {
+      return "$state，预计已到期";
+    }
+    return "$state，预计剩余 ${_formatDurationShort(remain)}";
+  }
+
+  String _currentKuaishouCredentialsText(KuaishouAccountSlot slot) {
+    final cookie = KuaishouAccountService.instance.sessionFor(slot).cookie;
     return cookie.isEmpty ? "" : "Cookie: $cookie";
+  }
+
+  String _formatDateTime(DateTime value) {
+    final local = value.toLocal();
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+    return "${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)} "
+        "${twoDigits(local.hour)}:${twoDigits(local.minute)}";
   }
 
   String _extractKuaishouKww(String input) {

@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/modules/mine/account/account_controller.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
+import 'package:simple_live_app/services/kuaishou_account_service.dart';
 
 class AccountPage extends GetView<AccountController> {
   const AccountPage({Key? key}) : super(key: key);
@@ -89,6 +90,38 @@ class AccountPage extends GetView<AccountController> {
                     )
                   : const Icon(Icons.chevron_right),
               onTap: controller.kuaishouTap,
+            ),
+          ),
+          Obx(
+            () => ListTile(
+              contentPadding: const EdgeInsets.only(left: 28, right: 16),
+              leading: const Icon(Icons.person_outline),
+              title: const Text("主账号"),
+              subtitle: Text(
+                controller.getKuaishouSlotSummaryText(
+                  KuaishouAccountSlot.primary,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => controller.kuaishouSlotLogin(
+                KuaishouAccountSlot.primary,
+              ),
+            ),
+          ),
+          Obx(
+            () => ListTile(
+              contentPadding: const EdgeInsets.only(left: 28, right: 16),
+              leading: const Icon(Icons.person_add_alt_outlined),
+              title: const Text("备用账号"),
+              subtitle: Text(
+                controller.getKuaishouSlotSummaryText(
+                  KuaishouAccountSlot.secondary,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => controller.kuaishouSlotLogin(
+                KuaishouAccountSlot.secondary,
+              ),
             ),
           ),
         ],

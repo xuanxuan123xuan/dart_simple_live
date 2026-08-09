@@ -46,8 +46,8 @@ class KuaishouRequestCoordinator {
   KuaishouRequestCoordinator({
     DateTime Function()? nowProvider,
     math.Random? random,
-    this.minInterval = const Duration(milliseconds: 300),
-    this.maxJitter = const Duration(milliseconds: 150),
+    this.minInterval = const Duration(milliseconds: 1500),
+    this.maxJitter = const Duration(milliseconds: 500),
   })  : _now = nowProvider ?? DateTime.now,
         _random = random ?? math.Random();
 
@@ -65,6 +65,8 @@ class KuaishouRequestCoordinator {
   final Map<String, Future<Object?>> _inFlight = {};
   final Set<_QueuedRequest> _running = {};
   final Map<String, _CacheEntry> _cache = {};
+  final Map<String, Future<Object?>> _logicalPending = {};
+  final Map<String, _CacheEntry> _logicalCache = {};
 
   bool _pumping = false;
   DateTime? _lastRequestAt;
@@ -144,30 +146,30 @@ class KuaishouRequestCoordinator {
     _queue.clear();
     _pending.clear();
     _inFlight.clear();
-    _running.clear();
     _cache.clear();
+    _logicalPending.clear();
+    _logicalCache.clear();
     _cooldownActive = false;
     _cooldownUntil = null;
     _cooldownProbeClaimed = false;
-    // 已知取舍：此处无条件释放 pumping，使 reset 后的新请求能立即启动新循环；
-    // 旧 _pumpLoop 恢复时会因 while 条件 epoch 不匹配而停止消费，但其 await 中的
-    // 在途请求无法撤销——该请求完成时会被 epoch 检查丢弃（不交付、不写缓存），
-    // 只存在"串行窗口内多发出一个将被丢弃的请求"的短暂并发，可接受。
-    _pumping = false;
-    _lastRequestAt = null;
+    // Do not release the pump or clear _lastRequestAt here. An old physical
+    // request cannot be cancelled safely; the new account queue must wait for
+    // it to finish and must still observe the device/IP-level interval.
   }
 
   /// 调度一个快手敏感请求。
   ///
   /// [key] 为合并与缓存的键（如 `room_detail:$roomId`）；同 key 的在途请求
   /// 会合并到同一个 Future。成功结果按 [cacheTtl] 缓存（失败不缓存）。
-  /// [bypassInterval] 为 true 时不受最小间隔约束（仅限用户主动进房）。
+  /// [bypassInterval] 仅为兼容旧调用保留。所有请求都必须遵守物理间隔，
+  /// 用户主动操作只能通过 [priority] 插队。
   /// [logLabel] 为日志脱敏标签（如房间哈希），严禁传入原始 roomId。
   Future<T> schedule<T>({
     required KuaishouRequestPriority priority,
     required String key,
     Duration? cacheTtl,
     bool bypassInterval = false,
+    bool allowDuringCooldown = false,
     String? logLabel,
     required Future<T> Function() task,
   }) {
@@ -198,7 +200,7 @@ class KuaishouRequestCoordinator {
 
     // 3. 冷却检查：后台请求让路；整个冷却窗口只允许一个主动探针。
     var cooldownProbe = false;
-    if (inCooldown) {
+    if (inCooldown && !allowDuringCooldown) {
       if (priority != KuaishouRequestPriority.userEnter ||
           _cooldownProbeClaimed) {
         CoreLog.i(
@@ -211,7 +213,6 @@ class KuaishouRequestCoordinator {
       cooldownProbe = true;
     }
 
-    final mayBypassInterval = bypassInterval && _pending.isEmpty;
     final completer = Completer<Object?>();
     final queued = _QueuedRequest(
       epoch: _epoch,
@@ -219,10 +220,8 @@ class KuaishouRequestCoordinator {
       key: key,
       task: () async => await task(),
       completer: completer,
-      // bypass 仅由调用方显式声明（用户单房间进房）；userEnter 优先级
-      // 本身不自动绕过最小间隔，避免多开批量开格时 N 路请求背靠背突发。
-      bypassInterval: mayBypassInterval,
       cooldownProbe: cooldownProbe,
+      allowDuringCooldown: allowDuringCooldown,
       cacheTtl: cacheTtl,
     );
     _queue.add(queued);
@@ -259,16 +258,13 @@ class KuaishouRequestCoordinator {
         }
 
         // 最小间隔 + 抖动：执行前等待，避免背靠背突发。
-        if (!next.bypassInterval) {
-          final lastAt = _lastRequestAt;
-          if (lastAt != null) {
-            final elapsed = _now().difference(lastAt);
-            if (elapsed < minInterval) {
-              final jitter = _random.nextInt(maxJitter.inMilliseconds + 1);
-              final wait =
-                  minInterval - elapsed + Duration(milliseconds: jitter);
-              await _waitUninterruptible(wait);
-            }
+        final lastAt = _lastRequestAt;
+        if (lastAt != null) {
+          final elapsed = _now().difference(lastAt);
+          if (elapsed < minInterval) {
+            final jitter = _random.nextInt(maxJitter.inMilliseconds + 1);
+            final wait = minInterval - elapsed + Duration(milliseconds: jitter);
+            await _waitUninterruptible(wait);
           }
         }
         // reset/cooldown may happen while the request is sleeping outside the
@@ -283,15 +279,15 @@ class KuaishouRequestCoordinator {
         await _runNext(next, epoch);
       }
     } finally {
-      // 仅在未被 reset 打断时释放 pumping 标志，避免旧循环清除新循环状态。
-      if (epoch == _epoch) {
-        _pumping = false;
+      _pumping = false;
+      if (_queue.isNotEmpty) {
+        _pump();
       }
     }
   }
 
   bool _rejectForCooldown(_QueuedRequest request) {
-    if (!inCooldown) {
+    if (!inCooldown || request.allowDuringCooldown) {
       return false;
     }
     if (request.priority == KuaishouRequestPriority.userEnter) {
@@ -379,6 +375,58 @@ class KuaishouRequestCoordinator {
   void cacheValue<T>(String key, T value, Duration ttl) {
     _cache[key] = _CacheEntry(value: value, expiresAt: _now().add(ttl));
   }
+
+  /// 合并一个逻辑操作并缓存结果，但不占用物理请求队列。
+  ///
+  /// 详情解析可能依次产生握手、页面和凭证等多个 HTTP 请求；这些请求应
+  /// 分别调用 [schedule]，外层逻辑操作只用本方法做 single-flight，避免
+  /// 嵌套调度造成串行队列自锁。
+  Future<T> coalesce<T>({
+    required String key,
+    Duration? cacheTtl,
+    Duration? Function(T value)? cacheTtlForValue,
+    required Future<T> Function() task,
+  }) {
+    final cached = _logicalCache[key];
+    if (cached != null) {
+      if (cached.expiresAt.isAfter(_now())) {
+        return Future.value(cached.value as T);
+      }
+      _logicalCache.remove(key);
+    }
+    final pending = _logicalPending[key];
+    if (pending != null) {
+      return pending.then((value) => value as T);
+    }
+    final epoch = _epoch;
+    final future = Future<T>.sync(task).then((value) {
+      if (epoch != _epoch) {
+        throw KuaishouCooldownError('协调器已重置');
+      }
+      final ttl = cacheTtlForValue?.call(value) ?? cacheTtl;
+      if (ttl != null && ttl > Duration.zero) {
+        _logicalCache[key] = _CacheEntry(
+          value: value,
+          expiresAt: _now().add(ttl),
+        );
+      }
+      return value;
+    });
+    _logicalPending[key] = future;
+    void removePending() {
+      if (identical(_logicalPending[key], future)) {
+        _logicalPending.remove(key);
+      }
+    }
+
+    unawaited(
+      future.then<void>(
+        (_) => removePending(),
+        onError: (Object _, StackTrace __) => removePending(),
+      ),
+    );
+    return future;
+  }
 }
 
 /// 协调器冷却期内后台请求被拒绝时抛出的错误。
@@ -398,8 +446,8 @@ class _QueuedRequest {
     required this.key,
     required this.task,
     required this.completer,
-    required this.bypassInterval,
     required this.cooldownProbe,
+    required this.allowDuringCooldown,
     this.cacheTtl,
   });
 
@@ -408,8 +456,8 @@ class _QueuedRequest {
   final String key;
   final Future<Object?> Function() task;
   final Completer<Object?> completer;
-  final bool bypassInterval;
   bool cooldownProbe;
+  final bool allowDuringCooldown;
   final Duration? cacheTtl;
 }
 

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -9,6 +10,7 @@ import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_action.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_menu.dart';
@@ -129,6 +131,26 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     },
                   ),
                 ),
+                if (Utils.isOhos) ...[
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "网络波动时自动降低清晰度",
+                      subtitle: "仅在多次独立缓冲后降一档，切换房间后重新判断",
+                      value: controller.ohosAutoQualityDegrade.value,
+                      onChanged: controller.setOhosAutoQualityDegrade,
+                    ),
+                  ),
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "网络波动提示",
+                      subtitle: "持续缓冲时检测当前播放端点并显示结果",
+                      value: controller.ohosNetworkFluctuationNotice.value,
+                      onChanged: controller.setOhosNetworkFluctuationNotice,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -353,34 +375,7 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     },
                   ),
                 ),
-                AppStyle.divider,
-                Obx(
-                  () => Visibility(
-                    visible: Platform.isAndroid,
-                    child: SettingsSwitch(
-                      title: "进入小窗隐藏弹幕",
-                      value: controller.pipHideDanmu.value,
-                      onChanged: (e) {
-                        controller.setPIPHideDanmu(e);
-                      },
-                    ),
-                  ),
-                ),
-                if (Platform.isAndroid) AppStyle.divider,
-                Obx(
-                  () => Visibility(
-                    visible: Platform.isAndroid,
-                    child: SettingsSwitch(
-                      title: "退出时自动小窗",
-                      subtitle: "按 Home 键或系统手势退到后台时进入小窗；应用内返回仍回到主页",
-                      value: controller.autoPipOnExit.value,
-                      onChanged: (e) {
-                        controller.setAutoPipOnExit(e);
-                      },
-                    ),
-                  ),
-                ),
-                AppStyle.divider,
+                _PipSettingsSection(controller: controller),
                 Obx(
                   () => SettingsSwitch(
                     title: "播放器中显示SC",
@@ -522,8 +517,7 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
   void showSubtitleModelRecommendations() {
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) => 
-      AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text("字幕模型推荐"),
         content: const SingleChildScrollView(
           child: Column(
@@ -567,6 +561,72 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _PipSettingsSection extends StatefulWidget {
+  const _PipSettingsSection({required this.controller});
+
+  final AppSettingsController controller;
+
+  @override
+  State<_PipSettingsSection> createState() => _PipSettingsSectionState();
+}
+
+class _PipSettingsSectionState extends State<_PipSettingsSection> {
+  late final Future<PipCapabilities> _capabilities = _loadCapabilities();
+
+  Future<PipCapabilities> _loadCapabilities() async {
+    if (Platform.isAndroid) {
+      try {
+        return await Floating().isPipAvailable
+            ? PipCapabilities.supported
+            : PipCapabilities.unsupported;
+      } catch (_) {
+        return PipCapabilities.unsupported;
+      }
+    }
+    if (Utils.isOhos) {
+      return OhosPipService.instance.getCapabilities(refresh: true);
+    }
+    return PipCapabilities.unsupported;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PipCapabilities>(
+      future: _capabilities,
+      builder: (context, snapshot) {
+        final capabilities = snapshot.data ?? PipCapabilities.unsupported;
+        final showHideDanmaku = capabilities.pipCanHideDanmaku;
+        final showAutoOnLeave = capabilities.pipAutoOnLeaveSupported;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppStyle.divider,
+            if (showHideDanmaku)
+              Obx(
+                () => SettingsSwitch(
+                  title: "进入小窗隐藏弹幕",
+                  value: widget.controller.pipHideDanmu.value,
+                  onChanged: widget.controller.setPIPHideDanmu,
+                ),
+              ),
+            if (showHideDanmaku && showAutoOnLeave) AppStyle.divider,
+            if (showAutoOnLeave)
+              Obx(
+                () => SettingsSwitch(
+                  title: "退出时自动小窗",
+                  subtitle: "按 Home 键或系统手势退到后台时进入小窗；应用内返回仍回到主页",
+                  value: widget.controller.autoPipOnExit.value,
+                  onChanged: widget.controller.setAutoPipOnExit,
+                ),
+              ),
+            if (showHideDanmaku || showAutoOnLeave) AppStyle.divider,
+          ],
+        );
+      },
     );
   }
 }

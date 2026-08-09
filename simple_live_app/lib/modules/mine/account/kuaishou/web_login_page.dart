@@ -12,7 +12,7 @@ class KuaishouWebLoginPage extends GetView<KuaishouWebLoginController> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("快手网页登录"),
+        title: Text("快手${controller.targetSlotName}网页登录"),
         actions: [
           IconButton(
             tooltip: "刷新",

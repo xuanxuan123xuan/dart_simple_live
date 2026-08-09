@@ -706,7 +706,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   onError: controller.mediaError,
                   onControllerReady: controller.attachOhosVideoController,
                   onControllerDisposed: controller.detachOhosVideoController,
-                  onValueChanged: controller.updateOhosVideoState,
+                  onGenerationValueChanged:
+                      controller.updateOhosVideoStateForGeneration,
                   onCompleted: controller.mediaEnd,
                   initialVolume: controller.ohosVolume.value,
                   fit: fit,
@@ -1089,16 +1090,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   top: 12,
                   child: Container(
                     constraints: const BoxConstraints(maxWidth: 340),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
                       color: Colors.black.withAlpha(180),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       controller.networkHint.value,
-                      style: const TextStyle(
-                          fontSize: 12, color: Colors.white70),
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.white70),
                     ),
                   ),
                 ),
@@ -2381,8 +2382,7 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                 ),
               ),
               Text(
-                presentation?.levelLabel ??
-                    liveLinkHealthDataUnavailableLabel,
+                presentation?.levelLabel ?? liveLinkHealthDataUnavailableLabel,
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
@@ -2390,8 +2390,7 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
               ),
               const SizedBox(width: 6),
               Text(
-                presentation?.scoreLabel ??
-                    liveLinkHealthDataUnavailableLabel,
+                presentation?.scoreLabel ?? liveLinkHealthDataUnavailableLabel,
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
@@ -2496,10 +2495,9 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        r.lost > 0
-                            ? "连接失败 ${r.lost}/${r.samples}"
-                            : "连接正常",
-                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        r.lost > 0 ? "连接失败 ${r.lost}/${r.samples}" : "连接正常",
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                       const SizedBox(width: 8),
                       Text(
@@ -2528,4 +2526,3 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
     );
   }
 }
-

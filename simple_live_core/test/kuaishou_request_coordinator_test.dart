@@ -137,6 +137,71 @@ void main() {
     });
   });
 
+  group('KuaishouRequestCoordinator 逻辑操作合并', () {
+    test('外层详情合并不占用物理队列，内部可串行多个 HTTP 任务', () async {
+      final coordinator = KuaishouRequestCoordinator(
+        minInterval: Duration.zero,
+        maxJitter: Duration.zero,
+      );
+      var logicalCalls = 0;
+      var physicalCalls = 0;
+
+      Future<String> detailTask() => coordinator.coalesce(
+            key: 'detail:1',
+            cacheTtl: const Duration(seconds: 10),
+            task: () async {
+              logicalCalls++;
+              await coordinator.schedule(
+                priority: KuaishouRequestPriority.userEnter,
+                key: 'http:handshake:1',
+                task: () async => physicalCalls++,
+              );
+              await coordinator.schedule(
+                priority: KuaishouRequestPriority.userEnter,
+                key: 'http:page:1',
+                task: () async => physicalCalls++,
+              );
+              return 'detail';
+            },
+          );
+
+      expect(await Future.wait([detailTask(), detailTask()]),
+          ['detail', 'detail']);
+      expect(logicalCalls, 1);
+      expect(physicalCalls, 2);
+      expect(await detailTask(), 'detail');
+      expect(logicalCalls, 1);
+    });
+
+    test('可按结果设置不同 TTL', () async {
+      var now = DateTime(2026, 1, 1);
+      final coordinator = KuaishouRequestCoordinator(
+        nowProvider: () => now,
+        minInterval: Duration.zero,
+        maxJitter: Duration.zero,
+      );
+      var calls = 0;
+      Future<String> load() => coordinator.coalesce(
+            key: 'status:1',
+            cacheTtlForValue: (value) => value == 'offline'
+                ? const Duration(minutes: 3)
+                : const Duration(seconds: 30),
+            task: () async {
+              calls++;
+              return 'offline';
+            },
+          );
+
+      await load();
+      now = now.add(const Duration(minutes: 2));
+      await load();
+      expect(calls, 1);
+      now = now.add(const Duration(minutes: 2));
+      await load();
+      expect(calls, 2);
+    });
+  });
+
   group('KuaishouRequestCoordinator 最小间隔', () {
     test('后台请求之间受最小间隔约束', () async {
       final coordinator = KuaishouRequestCoordinator(
@@ -217,12 +282,13 @@ void main() {
   });
 
   group('KuaishouRequestCoordinator 优先级', () {
-    test('用户主动进房插队：不受最小间隔约束，先于排队中的后台请求执行', () async {
+    test('用户主动进房只插队，仍遵守物理请求最小间隔', () async {
       final coordinator = KuaishouRequestCoordinator(
         minInterval: const Duration(milliseconds: 200),
         maxJitter: Duration.zero,
       );
       final order = <String>[];
+      final starts = <int>[];
 
       // 先入队两个后台请求（会因最小间隔被节流）。
       final follow = coordinator.schedule(
@@ -230,6 +296,7 @@ void main() {
         key: 'follow',
         task: () async {
           order.add('follow');
+          starts.add(DateTime.now().millisecondsSinceEpoch);
           return 'follow';
         },
       );
@@ -238,15 +305,17 @@ void main() {
         key: 'status',
         task: () async {
           order.add('status');
+          starts.add(DateTime.now().millisecondsSinceEpoch);
           return 'status';
         },
       );
-      // 用户主动进房：应绕过最小间隔立即执行，不被后台请求阻塞。
+      // 用户主动进房应插到已排队的后台任务前，但不跳过出站间隔。
       final enter = coordinator.schedule(
         priority: KuaishouRequestPriority.userEnter,
         key: 'enter',
         task: () async {
           order.add('enter');
+          starts.add(DateTime.now().millisecondsSinceEpoch);
           return 'enter';
         },
       );
@@ -255,9 +324,10 @@ void main() {
       expect(results, ['follow', 'status', 'enter']);
       expect(order.contains('enter'), isTrue);
       expect(order.first, 'follow');
-      // userEnter 不受最小间隔约束：其在队列中时不会排在后台请求之后等待。
-      // 由于 follow 先出队执行，enter 应紧随其后（跳过 status 的间隔等待）。
-      expect(order.indexOf('enter'), lessThanOrEqualTo(1));
+      expect(order, ['follow', 'enter', 'status']);
+      for (var i = 1; i < starts.length; i++) {
+        expect(starts[i] - starts[i - 1], greaterThanOrEqualTo(200));
+      }
     });
   });
 
@@ -314,6 +384,21 @@ void main() {
         task: () async => 'ok',
       );
       expect(after, 'ok');
+    });
+
+    test('账号冷却时允许显式标记的匿名请求继续', () async {
+      final coordinator = KuaishouRequestCoordinator(
+        minInterval: Duration.zero,
+        maxJitter: Duration.zero,
+      )..beginCooldown(const Duration(hours: 1));
+
+      final value = await coordinator.schedule(
+        priority: KuaishouRequestPriority.followRefresh,
+        key: 'anonymous',
+        allowDuringCooldown: true,
+        task: () async => 'ok',
+      );
+      expect(value, 'ok');
     });
 
     test('reset during interval wait prevents stale queued task from executing',
@@ -411,6 +496,53 @@ void main() {
         task: () async => 'new-result',
       );
       expect(after, 'new-result');
+    });
+
+    test('reset 后新账号会等待旧物理请求完成并保留全局间隔', () async {
+      final coordinator = KuaishouRequestCoordinator(
+        minInterval: const Duration(milliseconds: 100),
+        maxJitter: Duration.zero,
+      );
+      final gate = Completer<void>();
+      final starts = <int>[];
+      var active = 0;
+      var maxActive = 0;
+
+      final oldRequest = coordinator.schedule(
+        priority: KuaishouRequestPriority.userEnter,
+        key: 'old-account',
+        task: () async {
+          starts.add(DateTime.now().millisecondsSinceEpoch);
+          active++;
+          maxActive = active;
+          await gate.future;
+          active--;
+          return 'old';
+        },
+      );
+      final oldExpectation =
+          expectLater(oldRequest, throwsA(isA<KuaishouCooldownError>()));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.reset();
+      final newRequest = coordinator.schedule(
+        priority: KuaishouRequestPriority.userEnter,
+        key: 'new-account',
+        task: () async {
+          starts.add(DateTime.now().millisecondsSinceEpoch);
+          active++;
+          if (active > maxActive) maxActive = active;
+          active--;
+          return 'new';
+        },
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(starts, hasLength(1), reason: '旧账号在途时不得启动新账号请求');
+      gate.complete();
+      await oldExpectation;
+      expect(await newRequest, 'new');
+      expect(maxActive, 1);
+      expect(starts[1] - starts[0], greaterThanOrEqualTo(100));
     });
 
     test('reset 前已合并的等待者也不拿到旧会话结果', () async {

@@ -50,8 +50,11 @@ class RemoteSyncWebDAVController extends BaseController {
   final _userDouyinAccountJsonName = 'SimpleLive_douyin_account.json';
   final _userSettingsJsonName = 'SimpleLive_Settings.json';
   final _userTagsJsonName = 'SimpleLive_Tags.json';
-  final _profileJsonName = 'SimpleLive_Profile_v3.json';
-  final _legacyProfileJsonName = 'SimpleLive_Profile_v2.json';
+  final _profileJsonName = 'SimpleLive_Profile_v4.json';
+  final _legacyProfileJsonNames = const {
+    'SimpleLive_Profile_v3.json',
+    'SimpleLive_Profile_v2.json',
+  };
 
   @override
   void onInit() {
@@ -268,7 +271,7 @@ class RemoteSyncWebDAVController extends BaseController {
             (file) =>
                 file.isFile &&
                 (file.name == _profileJsonName ||
-                    file.name == _legacyProfileJsonName),
+                    _legacyProfileJsonNames.contains(file.name)),
           )
           .firstOrNull;
       if (profileFile != null) {

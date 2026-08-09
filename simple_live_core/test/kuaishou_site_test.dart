@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:test/test.dart';
 
@@ -318,6 +319,261 @@ void main() {
     });
   });
 
+  group('KuaishouSite anonymous follow status', () {
+    test('anonymous headers never contain Cookie', () {
+      final site = KuaishouSite()
+        ..customCookie = 'kuaishou.live.web_st=secret'
+        ..cookie = 'did=device';
+      expect(
+        site.anonymousRequestHeaders.keys.map((key) => key.toLowerCase()),
+        isNot(contains('cookie')),
+      );
+    });
+
+    test('anonymous request uses the isolated Dio without login Cookie',
+        () async {
+      final seenHeaders = <Map<String, dynamic>>[];
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              seenHeaders.add(Map<String, dynamic>.from(options.headers));
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: '<html>public page without live state</html>',
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(anonymousDio: dio)
+        ..customCookie = 'kuaishou.live.web_st=secret'
+        ..cookie = 'did=device';
+
+      final state = await site.getAnonymousLiveStatusState(roomId: 'room-1');
+
+      expect(state, LiveStatusState.unknown);
+      expect(seenHeaders, hasLength(1));
+      expect(
+        seenHeaders.single.keys.map((key) => key.toLowerCase()),
+        isNot(contains('cookie')),
+      );
+    });
+
+    test('uses state-specific cache TTLs', () {
+      expect(
+        KuaishouSite.anonymousStatusCacheTtl(LiveStatusState.live),
+        const Duration(seconds: 60),
+      );
+      expect(
+        KuaishouSite.anonymousStatusCacheTtl(LiveStatusState.offline),
+        const Duration(minutes: 3),
+      );
+      expect(
+        KuaishouSite.anonymousStatusCacheTtl(LiveStatusState.unknown),
+        const Duration(seconds: 30),
+      );
+    });
+  });
+
+  group('KuaishouSite account transport isolation', () {
+    test('keeps Dio, CookieJar, credentials, and detail cache per slot',
+        () async {
+      final createdDios = <Dio>[];
+      final seenCookies = <String>[];
+      Dio createAuthenticatedDio() {
+        final dio = Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                seenCookies.add(options.headers['cookie']?.toString() ?? '');
+                handler.resolve(
+                  Response<String>(
+                    requestOptions: options,
+                    statusCode: 200,
+                    data: _kuaishouLivePage(roomId: 'room-isolated'),
+                  ),
+                );
+              },
+            ),
+          );
+        createdDios.add(dio);
+        return dio;
+      }
+
+      final site = KuaishouSite(
+        authenticatedDioFactory: createAuthenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      );
+
+      site.activateAccountSession(
+        sessionKey: 'primary',
+        cookie: 'kuaishou.live.web_st=primary-token',
+        kww: 'primary-kww',
+      );
+      final primaryDetail = await site.getRoomDetail(roomId: 'room-isolated');
+      final primaryDio = site.authenticatedDioIdentityFor('primary');
+      final primaryJar = site.cookieJarIdentityFor('primary');
+
+      site.activateAccountSession(
+        sessionKey: 'secondary',
+        cookie: 'kuaishou.live.web_st=secondary-token',
+        kww: 'secondary-kww',
+      );
+      final secondaryDetail = await site.getRoomDetail(roomId: 'room-isolated');
+      final secondaryDio = site.authenticatedDioIdentityFor('secondary');
+      final secondaryJar = site.cookieJarIdentityFor('secondary');
+
+      site.activateAccountSession(
+        sessionKey: 'primary',
+        cookie: 'kuaishou.live.web_st=primary-token',
+        kww: 'primary-kww',
+      );
+      final cachedPrimary = await site.getRoomDetail(roomId: 'room-isolated');
+
+      expect(primaryDetail.roomId, 'room-isolated');
+      expect(secondaryDetail.roomId, 'room-isolated');
+      expect(cachedPrimary.roomId, 'room-isolated');
+      expect(createdDios, hasLength(2));
+      expect(primaryDio, isNot(same(secondaryDio)));
+      expect(primaryJar, isNot(same(secondaryJar)));
+      expect(site.authenticatedDioIdentityFor('primary'), same(primaryDio));
+      expect(seenCookies, [
+        contains('primary-token'),
+        contains('secondary-token'),
+      ]);
+    });
+
+    for (final scenario in [
+      (
+        name: 'cookie invalidation',
+        statusCode: 200,
+        body: '<html>登录状态已失效，请重新登录</html>',
+        event: KuaishouAccountHealthEvent.credentialInvalid,
+      ),
+      (
+        name: 'hard rate limit',
+        statusCode: 429,
+        body: '<html>请求频繁</html>',
+        event: KuaishouAccountHealthEvent.rateLimited,
+      ),
+    ]) {
+      test('retries one user operation on secondary after ${scenario.name}',
+          () async {
+        var transportIndex = 0;
+        final requestCounts = <int, int>{};
+        Dio createAuthenticatedDio() {
+          final index = transportIndex++;
+          return Dio()
+            ..interceptors.add(
+              InterceptorsWrapper(
+                onRequest: (options, handler) {
+                  requestCounts[index] = (requestCounts[index] ?? 0) + 1;
+                  handler.resolve(
+                    Response<String>(
+                      requestOptions: options,
+                      statusCode: index == 0 ? scenario.statusCode : 200,
+                      data: index == 0
+                          ? scenario.body
+                          : _kuaishouLivePage(roomId: 'fallback-room'),
+                    ),
+                  );
+                },
+              ),
+            );
+        }
+
+        late final KuaishouSite site;
+        final events = <KuaishouAccountHealthEvent>[];
+        site = KuaishouSite(
+          authenticatedDioFactory: createAuthenticatedDio,
+          coordinator: KuaishouRequestCoordinator(
+            minInterval: Duration.zero,
+            maxJitter: Duration.zero,
+          ),
+        )
+          ..activateAccountSession(
+            sessionKey: 'primary',
+            cookie: 'kuaishou.live.web_st=primary',
+            kww: '',
+          )
+          ..onAccountHealthEvent = (event) {
+            events.add(event);
+            site.activateAccountSession(
+              sessionKey: 'secondary',
+              cookie: 'kuaishou.live.web_st=secondary',
+              kww: '',
+            );
+          };
+
+        final detail = await KuaishouRequestTrace.run(
+          KuaishouRequestSource.userEnter,
+          () => site.getRoomDetail(roomId: 'fallback-room'),
+        );
+
+        expect(detail.roomId, 'fallback-room');
+        expect(events, [scenario.event]);
+        expect(site.activeAccountSessionKey, 'secondary');
+        expect(requestCounts, {0: 1, 1: 1});
+      });
+    }
+  });
+
+  test('anonymous detail is reused for playback and strips danmaku', () async {
+    var anonymousRequests = 0;
+    var authenticatedSessions = 0;
+    final anonymousDio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            anonymousRequests += 1;
+            handler.resolve(
+              Response<String>(
+                requestOptions: options,
+                statusCode: 200,
+                data: _kuaishouLivePage(
+                  roomId: 'anonymous-room',
+                  includeDanmakuCredentials: true,
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    final site = KuaishouSite(
+      anonymousDio: anonymousDio,
+      authenticatedDioFactory: () {
+        authenticatedSessions += 1;
+        return Dio();
+      },
+      coordinator: KuaishouRequestCoordinator(
+        minInterval: Duration.zero,
+        maxJitter: Duration.zero,
+      ),
+    );
+
+    expect(
+      await site.getAnonymousLiveStatusState(roomId: 'anonymous-room'),
+      LiveStatusState.live,
+    );
+    site.activateAnonymousMode();
+    final detail = await KuaishouRequestTrace.run(
+      KuaishouRequestSource.userEnter,
+      () => site.getRoomDetail(roomId: 'anonymous-room'),
+    );
+
+    expect(detail.resolvedLiveStatus, LiveStatusState.live);
+    expect(detail.danmakuData, isNull);
+    expect(site.getDanmaku(), isNot(isA<KuaishouDanmaku>()));
+    expect(anonymousRequests, 1);
+    expect(authenticatedSessions, 0);
+  });
+
   group('KuaishouSite 弹幕冷却注入', () {
     test('getDanmaku 注入协调器冷却检查，冷却时返回 true', () {
       final site = KuaishouSite();
@@ -345,6 +601,10 @@ void main() {
         KuaishouSite.looksLikeChallengePage('<div id="captcha"></div>'),
         isTrue,
       );
+      expect(
+        KuaishouSite.looksLikeChallengePage('<html>请求频繁</html>'),
+        isTrue,
+      );
     });
 
     test('does not classify a normal room page as challenge', () {
@@ -356,4 +616,11 @@ void main() {
       );
     });
   });
+}
+
+String _kuaishouLivePage({
+  required String roomId,
+  bool includeDanmakuCredentials = false,
+}) {
+  return '''<script>window.__INITIAL_STATE__={"liveroom":{"token":"${includeDanmakuCredentials ? 'secret-token' : ''}","websocketUrls":[${includeDanmakuCredentials ? '"wss://example.com/live"' : ''}],"playList":[{"isLiving":true,"author":{"id":"$roomId","name":"主播"},"liveStream":{"id":"stream-$roomId","playUrls":{"h264":{"adaptationSet":{"representation":[{"name":"高清","url":"https://example.com/$roomId.flv"}]}}}}}]}};</script>''';
 }

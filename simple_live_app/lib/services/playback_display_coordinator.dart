@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/services/ohos_display_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 /// The only platform-facing gateway used to control playback display state.
@@ -21,16 +22,25 @@ abstract interface class PlaybackDisplayGateway {
 }
 
 class FlutterPlaybackDisplayGateway implements PlaybackDisplayGateway {
-  bool get _isSupportedMobile {
-    return !Utils.isOhos && (Platform.isAndroid || Platform.isIOS);
-  }
+  FlutterPlaybackDisplayGateway({OhosDisplayService? ohosDisplayService})
+      : _ohosDisplayService = ohosDisplayService ?? OhosDisplayService.instance;
+
+  final OhosDisplayService _ohosDisplayService;
+
+  bool get _supportsFlutterMobileDisplay =>
+      !Utils.isOhos && (Platform.isAndroid || Platform.isIOS);
 
   @override
-  bool get requiresImmersiveRecheck => _isSupportedMobile && Platform.isIOS;
+  bool get requiresImmersiveRecheck =>
+      _supportsFlutterMobileDisplay && Platform.isIOS;
 
   @override
   Future<void> setKeepScreenAwake(bool enabled) async {
-    if (!_isSupportedMobile) {
+    if (Utils.isOhos) {
+      await _ohosDisplayService.setKeepScreenOn(enabled);
+      return;
+    }
+    if (!_supportsFlutterMobileDisplay) {
       return;
     }
     if (enabled) {
@@ -42,7 +52,7 @@ class FlutterPlaybackDisplayGateway implements PlaybackDisplayGateway {
 
   @override
   Future<void> setImmersiveSystemUi(bool immersive) async {
-    if (!_isSupportedMobile) {
+    if (!_supportsFlutterMobileDisplay) {
       return;
     }
     Log.d('SystemUi: coordinator apply immersive=$immersive');
@@ -198,7 +208,9 @@ class PlaybackDisplayCoordinator extends GetxService
     // iPad 旋转/尺寸变化（含台前调度窗口调整）完成后，UIKit 会重新评估
     // 状态栏外观，把 immersive 隐藏覆盖掉。合并短时间内的连续变化，
     // 延迟后强制重新应用，覆盖"旋转动画结束、viewport 更新"的时刻。
-    if (!_appActive || !_gateway.requiresImmersiveRecheck || !_desiredImmersive) {
+    if (!_appActive ||
+        !_gateway.requiresImmersiveRecheck ||
+        !_desiredImmersive) {
       return;
     }
     _metricsDebounce?.cancel();
@@ -284,7 +296,8 @@ class PlaybackDisplayCoordinator extends GetxService
       final operationRevision = _revision;
       final keepAwake = _desiredKeepAwake;
       final immersive = _desiredImmersive;
-      Log.d('SystemUi: coordinator drain revision=$_revision keepAwake=$keepAwake immersive=$immersive appliedRev=$_appliedRevision appliedImm=$_appliedImmersive');
+      Log.d(
+          'SystemUi: coordinator drain revision=$_revision keepAwake=$keepAwake immersive=$immersive appliedRev=$_appliedRevision appliedImm=$_appliedImmersive');
 
       if (_appliedKeepAwake != keepAwake) {
         try {

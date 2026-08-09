@@ -33,3 +33,4 @@ tmp_*.xml
 !**/README.md
 !WHATS_CHANGED.md
 !docs/*.md
+!docs/待实施/09-直播稳定性与鸿蒙能力补齐/*.md

@@ -20,7 +20,21 @@ VideoPlayerValue _value({
 }
 
 void main() {
-  test('OHOS URL sources always receive the API 12 live buffer strategy', () {
+  test('OHOS playback state owns a display lease and drives keep-awake', () {
+    final player = File(
+      'lib/modules/live_room/player/player_controller.dart',
+    ).readAsStringSync();
+
+    expect(player, contains('initPlaybackDisplayLease();'));
+    expect(player, contains('_setKeepScreenAwake(value.isPlaying);'));
+    expect(player, contains('await releasePlaybackDisplayLease();'));
+    expect(
+      player,
+      isNot(contains('if (!Utils.isOhos) {\n      _playbackDisplayLease')),
+    );
+  });
+
+  test('OHOS assigns each source generation once and selects by headers', () {
     final nativePlayer = File(
       'third_party/video_player_ohos/ohos/src/main/ets/components/'
       'videoplayer/VideoPlayer.ets',
@@ -28,24 +42,55 @@ void main() {
 
     expect(
       nativePlayer,
-      contains('const LIVE_PREFERRED_BUFFER_DURATION_SECONDS: number = 1;'),
+      contains('assignMediaSourceIfNeeded(generation: number)'),
     );
+    expect(nativePlayer, contains('SOURCE_ASSIGNMENT_ASSIGNING'));
+    expect(nativePlayer, contains('SOURCE_ASSIGNMENT_ASSIGNED'));
+    expect(nativePlayer, contains('generation === this.playerGeneration'));
     expect(
       nativePlayer,
       contains(
-        'preferredBufferDuration: LIVE_PREFERRED_BUFFER_DURATION_SECONDS,',
+        'this.disposed || creationGeneration !== this.playerGeneration',
       ),
     );
-    expect(nativePlayer, contains('this.headers ?? {}'));
+    expect(nativePlayer, contains('Object.keys(this.headers).length > 0'));
+    expect(nativePlayer, contains('player.url = this.getIUri();'));
     expect(
-      RegExp(r'await this\.setNetworkMediaSource\(\);')
-          .allMatches(nativePlayer)
-          .length,
-      2,
+      nativePlayer,
+      contains('player.setMediaSource(mediaSource, playbackStrategy)'),
     );
-    expect(nativePlayer, isNot(contains('if (!this.headers)')));
-    const legacyUrlAssignment = 'this.avPlayer.url = this.getIUri();';
-    expect(nativePlayer, isNot(contains(legacyUrlAssignment)));
+    expect(
+      nativePlayer,
+      contains('let playbackStrategy: media.PlaybackStrategy = {};'),
+    );
+    expect(nativePlayer, isNot(contains('preferredBufferDuration')));
+    expect(nativePlayer, contains('Events.START_RENDER_FRAME'));
+  });
+
+  test('OHOS native errors are structured, sanitized, and never swallowed', () {
+    final nativePlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
+    final sendError = RegExp(
+      r'sendError\(error: BusinessError\): void \{([\s\S]*?)\n  \}',
+    ).firstMatch(nativePlayer)!.group(1)!;
+
+    for (final field in const [
+      'nativeErrorCode',
+      'nativeState',
+      'sourceAssignmentState',
+      'sourceKind',
+      'prepared',
+      'firstFrameRendered',
+    ]) {
+      expect(sendError, contains('details.set("$field"'));
+    }
+    expect(sendError, isNot(contains('url')));
+    expect(sendError, isNot(contains('headers')));
+    expect(nativePlayer, contains('this.sendError(err);'));
+    expect(nativePlayer, isNot(contains('AvPlayer Avoid Error Reporting')));
+    expect(nativePlayer, isNot(contains('err.code == AVPLAYER_STATE_ERROR')));
   });
 
   test('reports continuous buffering after eight seconds', () {

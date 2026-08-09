@@ -22,6 +22,20 @@ class KuaishouCooldownEvidenceTracker {
   static Duration? immediateCooldownForStatus(int statusCode) =>
       statusCode == 429 ? rateLimitCooldownDuration : null;
 
+  /// Returns the duration until the next 00:00 in Asia/Shanghai.
+  /// Dart has no bundled IANA timezone database, so use the fixed UTC+8 offset.
+  static Duration durationUntilNextShanghaiMidnight([DateTime? now]) {
+    final utcNow = (now ?? DateTime.now()).toUtc();
+    final shanghaiNow = utcNow.add(const Duration(hours: 8));
+    final nextDate = DateTime.utc(
+      shanghaiNow.year,
+      shanghaiNow.month,
+      shanghaiNow.day + 1,
+    );
+    final nextMidnightUtc = nextDate.subtract(const Duration(hours: 8));
+    return nextMidnightUtc.difference(utcNow);
+  }
+
   /// Matches the auth-cookie fields accepted by the Kuaishou web-login flow.
   /// Device identifiers such as `did` and session helper cookies do not count.
   static bool hasAuthenticatedSession(String cookieHeader) {

@@ -33,6 +33,10 @@ int? followStatusForLiveState(LiveStatusState state) {
   };
 }
 
+/// Kuaishou follow refresh is status-only. Metadata detail requests would
+/// consume the active account and defeat the anonymous follow-status channel.
+bool shouldRefreshFollowMetadata(String siteId) => siteId != Constant.kKuaishou;
+
 class FollowService extends GetxService {
   static const Duration updateStatusCooldown = Duration(seconds: 30);
   static const Duration refreshProgressCompletionHold = Duration(seconds: 2);
@@ -784,11 +788,14 @@ class FollowService extends GetxService {
     required bool refreshProgressUi,
     required bool reconcileDouyinIdentity,
   }) async {
-    if (targets.isEmpty) {
+    final metadataTargets =
+        targets.where((item) => shouldRefreshFollowMetadata(item.siteId));
+    if (metadataTargets.isEmpty) {
       return;
     }
-    final orderedTargets =
-        _orderRefreshBucketBySite(_distinctFollowUsers(targets));
+    final orderedTargets = _orderRefreshBucketBySite(
+      _distinctFollowUsers(metadataTargets.toList(growable: false)),
+    );
     final generation = _updateGeneration;
     var completed = 0;
     var successCount = 0;
@@ -1773,13 +1780,9 @@ class DouyinFollowRefreshSummary {
 
 /// 快手关注刷新站点级限速器。
 ///
-/// 快手没有轻量状态接口，`getLiveStatusState` 直接走完整 `getRoomDetail`
-/// （网页详情抓取）。core 的 [KuaishouRequestCoordinator] 已按
-/// `followRefresh` 优先级对快手请求做全局串行、最小间隔、同房 in-flight
-/// 合并与短 TTL 缓存，并保证用户主动进房（`userEnter`）优先且不受最小
-/// 间隔约束。本 limiter 只负责关注刷新自身的 worker 层并发：快手状态
-/// 请求固定 1 路串行提交，杜绝冷启动时多路 worker 同时抓取快手网页详情；
-/// 它不影响用户进房（进房请求不经过关注刷新的 worker 与 gate）。
+/// 快手关注状态使用独立匿名页面请求。core 协调器负责所有物理请求的
+/// 1.5s + jitter 全局间隔、同房合并与优先级；本 limiter 只保证关注列表
+/// 自身按固定单路提交，不影响用户进房在全局队列中的优先级。
 class KuaishouFollowRefreshLimiter {
   final int initialConcurrency;
   final Duration initialInterval;
@@ -1797,9 +1800,7 @@ class KuaishouFollowRefreshLimiter {
   }) : _currentInterval = initialInterval;
 
   factory KuaishouFollowRefreshLimiter.forTargetCount(int targetCount) {
-    // 快手状态请求固定 1 路串行。真正的平台级最小间隔由 core 协调器
-    // （300ms + jitter）主导，本层 150ms 间隔作为 worker 级冗余兜底
-    // （协调器全局间隔恒覆盖它），只保证关注刷新自身不并发提交。
+    // 物理请求的 1.5s + jitter 由 core 协调器执行；本层只固定单 worker。
     return KuaishouFollowRefreshLimiter._(
       initialConcurrency: 1,
       initialInterval: const Duration(milliseconds: 150),

@@ -120,6 +120,7 @@ export enum Events {
   STATE_CHANGE = 'stateChange',
   TIME_UPDATE = 'timeUpdate',
   BUFFER_UPDATE = 'bufferingUpdate',
+  START_RENDER_FRAME = 'startRenderFrame',
   ERROR = 'error'
 }
 

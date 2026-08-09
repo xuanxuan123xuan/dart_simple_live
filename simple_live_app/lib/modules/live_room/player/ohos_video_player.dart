@@ -6,6 +6,11 @@ import 'package:video_player/video_player.dart';
 
 enum OhosPlaybackHealthIssue { bufferingTimeout, playbackStall }
 
+typedef OhosVideoValueChanged = void Function(
+  int playerGeneration,
+  VideoPlayerValue value,
+);
+
 const ohosBufferingTimeout = Duration(seconds: 8);
 const ohosPlaybackStallTimeout = Duration(seconds: 12);
 
@@ -81,6 +86,7 @@ class OhosVideoPlayer extends StatefulWidget {
     this.onControllerReady,
     this.onControllerDisposed,
     this.onValueChanged,
+    this.onGenerationValueChanged,
     this.onCompleted,
     this.fit = BoxFit.contain,
     this.forcedAspectRatio,
@@ -94,6 +100,7 @@ class OhosVideoPlayer extends StatefulWidget {
   final ValueChanged<VideoPlayerController>? onControllerReady;
   final ValueChanged<VideoPlayerController>? onControllerDisposed;
   final ValueChanged<VideoPlayerValue>? onValueChanged;
+  final OhosVideoValueChanged? onGenerationValueChanged;
   final VoidCallback? onCompleted;
   final BoxFit fit;
   final double? forcedAspectRatio;
@@ -221,6 +228,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     }
     final value = controller.value;
     widget.onValueChanged?.call(value);
+    widget.onGenerationValueChanged?.call(widget.revision, value);
     if (looksLikeOhosPlaybackCompleted(
           current: value,
           previous: _previousValue,
