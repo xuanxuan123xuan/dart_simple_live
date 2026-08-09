@@ -18,6 +18,7 @@ import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
+import 'package:simple_live_app/services/live_link_health_presentation.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
@@ -44,7 +45,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     Utils.showModalBottomSheetSafe(
       context: Get.context!,
       isScrollControlled: true,
-      builder: (context) => _NetworkDiagnosePanel(controller: controller),
+      builder: (context) => SingleChildScrollView(
+        child: _NetworkDiagnosePanel(controller: controller),
+      ),
     );
   }
 
@@ -2316,6 +2319,7 @@ class _NetworkDiagnosePanel extends StatefulWidget {
 
 class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
   final List<NetworkDiagnosisResult> _results = [];
+  LiveLinkHealthPresentation? _healthPresentation;
   bool _running = true;
   String _summary = "";
 
@@ -2340,13 +2344,93 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
     if (!mounted) return;
     final summary =
         NetworkDiagnoseService.summarizePlaybackEndpoint(playbackResult);
+    final healthSnapshot = widget.controller.currentLiveLinkHealthSnapshot;
     setState(() {
       _results
         ..clear()
         ..addAll(results);
+      _healthPresentation = healthSnapshot == null
+          ? null
+          : presentLiveLinkHealthSnapshot(
+              healthSnapshot,
+              currentBuffering:
+                  widget.controller.currentLiveLinkHealthBuffering,
+            );
       _summary = summary;
       _running = false;
     });
+  }
+
+  Widget _buildHealthSection() {
+    final presentation = _healthPresentation;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(10),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  "直播链路健康度",
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                presentation?.levelLabel ??
+                    liveLinkHealthDataUnavailableLabel,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                presentation?.scoreLabel ??
+                    liveLinkHealthDataUnavailableLabel,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "主要原因：${presentation?.primaryCauseLabel ?? liveLinkHealthDataUnavailableLabel}",
+            style: const TextStyle(fontSize: 12),
+          ),
+          if (presentation != null) ...[
+            const SizedBox(height: 8),
+            for (final row in presentation.rows)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        row.label,
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        row.value,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
   }
 
   @override
@@ -2383,6 +2467,8 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                 child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
               )
             else ...[
+              _buildHealthSection(),
+              const SizedBox(height: 8),
               for (final r in _results)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),

@@ -126,6 +126,11 @@ mixin PlayerMixin {
   String? _livePlaybackSource;
   int _livePlaybackGeneration = 0;
 
+  LiveLinkHealthSnapshot? get currentLiveLinkHealthSnapshot =>
+      _liveLinkHealthCollector.snapshot();
+
+  bool? get currentLiveLinkHealthBuffering => _livePlaybackBuffering;
+
   Future<void> _writeLiveLatencyChaseSpeed(double speed) async {
     final platform = player.platform;
     if (platform is! NativePlayer) {
