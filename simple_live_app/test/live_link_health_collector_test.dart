@@ -119,6 +119,12 @@ void main() {
     final playerController = File(
       'lib/modules/live_room/player/player_controller.dart',
     ).readAsStringSync();
+    final liveRoomController = File(
+      'lib/modules/live_room/live_room_controller.dart',
+    ).readAsStringSync();
+    final telemetryService = File(
+      'lib/services/live_latency_telemetry_service.dart',
+    ).readAsStringSync();
     final sampleStart = playerController.indexOf(
       'Future<void> _sampleLivePlaybackLightweight()',
     );
@@ -153,6 +159,57 @@ void main() {
       playerController,
       contains('automaticReconnectEvents: !Utils.isOhos'),
     );
+    final mixinEnd = playerController.indexOf('mixin PlayerStateMixin');
+    final playerMixin = playerController.substring(0, mixinEnd);
+    expect(playerMixin, contains('MpvLiveLatencyChaseSamplingLoop('));
+    expect(playerMixin, contains('MpvLiveLatencyChaseSamplingLoop.nextDelay('));
+    expect(playerMixin, isNot(contains('Timer.periodic(')));
+    expect(playerMixin, isNot(contains('_livePlaybackLightweightTimer')));
+    expect(sampleMethod, contains('final shouldCollectHealth ='));
+    expect(
+      sampleMethod,
+      contains('final throughputFuture ='),
+    );
+    expect(sampleMethod, contains('shouldCollectHealth ?'));
+    expect(
+      playerController,
+      contains('activationRevision != _liveLatencyChaseActivationRevision'),
+    );
+    expect(
+      playerController,
+      contains('_liveLatencyChaseAppActive && !_liveLatencyChaseUserPaused'),
+    );
+    expect(
+      liveRoomController,
+      contains('resumeLiveLatencyChase(appForegrounded: true)'),
+    );
+    expect(
+      liveRoomController,
+      contains(
+        'demuxerCacheDurationOverride: latestLivePlaybackCacheTelemetry',
+      ),
+    );
+    expect(
+      telemetryService,
+      contains('MpvTelemetryValue? demuxerCacheDurationOverride'),
+    );
+    expect(
+      telemetryService,
+      contains('demuxerCacheDurationOverride ??'),
+    );
+    final closeStart = playerController.indexOf(
+      'Future<void> closePlayerResources()',
+    );
+    final ohosCloseReturn = playerController.indexOf(
+      'return;',
+      playerController.indexOf('if (Utils.isOhos)', closeStart),
+    );
+    final ohosClosePath = playerController.substring(
+      closeStart,
+      ohosCloseReturn,
+    );
+    expect(ohosClosePath, contains('await stopLiveLatencyChase();'));
+    expect(playerController, contains(': MPVLogLevel.warn'));
   });
 
   test('live playback identity retains only normalized scheme host and port',
@@ -184,7 +241,8 @@ void main() {
     );
   });
 
-  test('reconnect host comparison ignores URL paths queries and signatures', () {
+  test('reconnect host comparison ignores URL paths queries and signatures',
+      () {
     expect(
       didLivePlaybackHostChange(
         'https://CDN.example/live/old.flv?token=secret-a',

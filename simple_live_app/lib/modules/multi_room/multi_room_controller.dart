@@ -20,8 +20,26 @@ import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/memory_pressure_monitor.dart';
+import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+
+MpvLiveLatencyPlaybackRole resolveMultiRoomLiveLatencyRole({
+  required String roomKey,
+  required int roomIndex,
+  required String? focusedRoomKey,
+  required bool mainSubLayoutActive,
+}) {
+  if (focusedRoomKey != null) {
+    return roomKey == focusedRoomKey
+        ? MpvLiveLatencyPlaybackRole.multiRoomPrimaryVisible
+        : MpvLiveLatencyPlaybackRole.multiRoomSecondaryOrInactive;
+  }
+  if (mainSubLayoutActive && roomIndex == 0) {
+    return MpvLiveLatencyPlaybackRole.multiRoomPrimaryVisible;
+  }
+  return MpvLiveLatencyPlaybackRole.multiRoomSecondaryOrInactive;
+}
 
 class MultiRoomController extends GetxController with WidgetsBindingObserver {
   final List<MultiRoomItem> initialRooms;
@@ -69,6 +87,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     // 画面仍会被聚焦分支覆盖，看起来像“按钮没反应”。
     focusedRoomKey.value = null;
     mainSubLayout.value = !mainSubLayout.value;
+    _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
     _scheduleResumePlayers();
@@ -88,6 +107,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     _normalizeChatTarget(chatTargetKey, 0);
     mainSubLayout.value = true;
     focusedRoomKey.value = null;
+    _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
     _scheduleResumePlayers();
@@ -158,6 +178,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     _mainSubLayoutBeforeFocus = mainSubLayout.value;
     focusedRoomKey.value = key;
+    _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
     _scheduleResumePlayers();
@@ -171,6 +192,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (restoreMainSub != null) {
       mainSubLayout.value = restoreMainSub;
     }
+    _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
     _scheduleResumePlayers();
@@ -262,6 +284,12 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
       existing = Get.find<MultiRoomPlayerController>(tag: tag);
       existing.onActivateAudio = _scheduleResumePlayers;
+      unawaited(
+        existing.updateLiveLatencyParticipation(
+          role: _liveLatencyRoleFor(item),
+          appActive: _appActive,
+        ),
+      );
       return existing;
     }
     if (_closing || isClosed) {
@@ -277,6 +305,8 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         initialQualityIndex: _pendingQualities.remove(item.key),
         initialLineIndex: _pendingLines.remove(item.key),
         initialPaused: allPaused.value,
+        initialAppActive: _appActive,
+        initialLiveLatencyRole: _liveLatencyRoleFor(item),
         mutationQueue: _playerMutationQueue,
       ),
       tag: tag,
@@ -291,6 +321,28 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     playerController.onActivateAudio = _scheduleResumePlayers;
     return playerController;
+  }
+
+  MpvLiveLatencyPlaybackRole _liveLatencyRoleFor(MultiRoomItem item) {
+    return resolveMultiRoomLiveLatencyRole(
+      roomKey: item.key,
+      roomIndex: rooms.indexWhere((room) => room.key == item.key),
+      focusedRoomKey: focusedRoomKey.value,
+      mainSubLayoutActive: isMainSubLayoutActive,
+    );
+  }
+
+  void _syncLiveLatencyParticipation() {
+    for (final room in rooms) {
+      final controller = _existingPlayerFor(room);
+      if (controller == null) continue;
+      unawaited(
+        controller.updateLiveLatencyParticipation(
+          role: _liveLatencyRoleFor(room),
+          appActive: _appActive,
+        ),
+      );
+    }
   }
 
   void _onPlayerOpened() {
@@ -336,6 +388,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
       Get.delete<MultiRoomPlayerController>(tag: tag);
     }
+    _syncLiveLatencyParticipation();
     if (rooms.isEmpty) {
       SmartDialog.showToast("已关闭全部多开直播间");
       Get.back();
@@ -351,6 +404,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     final item = rooms.removeAt(oldIndex);
     rooms.insert(newIndex, item);
     _normalizeChatTarget(chatTargetKey, newIndex);
+    _syncLiveLatencyParticipation();
     _scheduleResumePlayers();
   }
 
@@ -626,6 +680,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
       _recordLiveLinkHealthEventForAll(
         LiveLinkEventType.appForegrounded,
       );
+      _syncLiveLatencyParticipation();
       _scheduleResumePlayers(delay: Duration.zero);
       if (_danmakuSuspendedForLifecycle) {
         _danmakuSuspendedForLifecycle = false;
@@ -641,6 +696,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
       _recordLiveLinkHealthEventForAll(
         LiveLinkEventType.appBackgrounded,
       );
+      _syncLiveLatencyParticipation();
       _cancelPlaybackRecovery();
       // 后台挂起：断开所有格子弹幕长连接，省心跳与流量，前台恢复。
       if (!_danmakuSuspendedForLifecycle) {
@@ -690,6 +746,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     rooms.add(room);
     _normalizeLayoutAfterRoomChange();
+    _syncLiveLatencyParticipation();
     SmartDialog.showToast("已加入 ${item.userName}");
     _scheduleResumePlayers();
   }
@@ -717,6 +774,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     rooms.add(room);
     _normalizeLayoutAfterRoomChange();
+    _syncLiveLatencyParticipation();
     SmartDialog.showToast("已加入 ${item.userName}");
     _scheduleResumePlayers();
   }

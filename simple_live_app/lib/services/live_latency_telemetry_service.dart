@@ -194,8 +194,9 @@ Future<MpvLiveHealthThroughputProperties> sampleMpvLiveHealthThroughput(
 }
 
 Future<MpvLiveLatencyProperties> sampleMpvLiveLatencyProperties(
-  Player player,
-) async {
+  Player player, {
+  MpvTelemetryValue? demuxerCacheDurationOverride,
+}) async {
   final platform = player.platform;
   if (platform is! NativePlayer) {
     return const MpvLiveLatencyProperties.unsupported();
@@ -203,7 +204,6 @@ Future<MpvLiveLatencyProperties> sampleMpvLiveLatencyProperties(
   // NativePlayer's web stub omits getProperty, so keep this call dynamic.
   final dynamic native = platform;
   final values = await Future.wait([
-    _sampleMpvProperty(native, mpvDemuxerCacheDurationProperty),
     _sampleMpvProperty(native, mpvSpeedProperty),
     _sampleMpvProperty(native, mpvAvsyncProperty),
     _sampleMpvProperty(native, mpvDecoderFrameDropCountProperty),
@@ -212,13 +212,14 @@ Future<MpvLiveLatencyProperties> sampleMpvLiveLatencyProperties(
     _sampleMpvProperty(native, mpvVoDelayedFrameCountProperty),
   ]);
   return MpvLiveLatencyProperties(
-    demuxerCacheDuration: values[0],
-    speed: values[1],
-    avsync: values[2],
-    decoderFrameDropCount: values[3],
-    frameDropCount: values[4],
-    mistimedFrameCount: values[5],
-    voDelayedFrameCount: values[6],
+    demuxerCacheDuration: demuxerCacheDurationOverride ??
+        await _sampleMpvProperty(native, mpvDemuxerCacheDurationProperty),
+    speed: values[0],
+    avsync: values[1],
+    decoderFrameDropCount: values[2],
+    frameDropCount: values[3],
+    mistimedFrameCount: values[4],
+    voDelayedFrameCount: values[5],
   );
 }
 

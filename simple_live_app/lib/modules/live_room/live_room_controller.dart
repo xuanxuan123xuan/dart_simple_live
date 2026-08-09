@@ -41,6 +41,7 @@ import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart'
     show didLivePlaybackHostChange;
 import 'package:simple_live_app/services/live_link_health_models.dart';
+import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_network_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
@@ -737,8 +738,7 @@ class LiveRoomController extends PlayerController
         SmartDialog.showToast("网络波动，已自动降低清晰度");
         unawaited(
           getPlayUrl(
-            automaticReconnectReason:
-                LiveReconnectReason.playbackUrlRefresh,
+            automaticReconnectReason: LiveReconnectReason.playbackUrlRefresh,
           ),
         );
       }
@@ -2592,9 +2592,8 @@ class LiveRoomController extends PlayerController
     LiveReconnectReason? automaticReconnectReason,
   }) async {
     final previousSource = _selectedPlaybackSource;
-    final reconnectStartedAt = automaticReconnectReason == null
-        ? null
-        : DateTime.now();
+    final reconnectStartedAt =
+        automaticReconnectReason == null ? null : DateTime.now();
     final requestRevision = ++_playbackRequestRevision;
     final loadGeneration = _loadGeneration;
     playUrls.clear();
@@ -2926,7 +2925,10 @@ class LiveRoomController extends PlayerController
     _liveLatencyTelemetryInFlight = true;
     try {
       final state = player.state;
-      final nativeProperties = await sampleMpvLiveLatencyProperties(player);
+      final nativeProperties = await sampleMpvLiveLatencyProperties(
+        player,
+        demuxerCacheDurationOverride: latestLivePlaybackCacheTelemetry,
+      );
       if (_roomDisposed ||
           !_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         return;
@@ -2976,9 +2978,8 @@ class LiveRoomController extends PlayerController
     bool? reconnectHostChanged,
   }) async {
     final previousSource = _selectedPlaybackSource;
-    final reconnectStartedAt = reconnectReason == null && !refreshUrls
-        ? null
-        : DateTime.now();
+    final reconnectStartedAt =
+        reconnectReason == null && !refreshUrls ? null : DateTime.now();
     final requestRevision = ++_playbackRequestRevision;
     final loadGeneration = _loadGeneration;
     var playbackUrlRefreshed = false;
@@ -4360,6 +4361,9 @@ class LiveRoomController extends PlayerController
     final wasPlaying = player.state.playing;
     try {
       if (wasPlaying) {
+        await suspendLiveLatencyChase(
+          MpvLiveLatencyProtectionReason.userPaused,
+        );
         await player.pause();
         recordLiveLinkHealthEvent(LiveLinkEventType.playbackPausedByUser);
       }
@@ -4376,6 +4380,7 @@ class LiveRoomController extends PlayerController
       if (!_roomDisposed && !isPlayerClosing) {
         if (wasPlaying) {
           await player.play();
+          await resumeLiveLatencyChase();
           recordLiveLinkHealthEvent(LiveLinkEventType.playbackResumedByUser);
         }
         if (fullScreenState.value) {
@@ -4583,6 +4588,11 @@ ${errorStackTrace ?? ""}''');
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       Log.d("进入后台:$state");
+      unawaited(
+        suspendLiveLatencyChase(
+          MpvLiveLatencyProtectionReason.lifecycleInterrupted,
+        ),
+      );
       recordLiveLinkHealthEvent(LiveLinkEventType.appBackgrounded);
       isBackground = true;
       _backgroundedAt ??= DateTime.now();
@@ -4619,6 +4629,9 @@ ${errorStackTrace ?? ""}''');
       var positionBeforeBackground = _positionBeforeBackground;
       var ohosWasPlayingBeforeBackground = _ohosWasPlayingBeforeBackground;
       var wasPlayingBeforeBackground = _wasPlayingBeforeBackground;
+      // Always release the lifecycle gate. The user-pause gate remains
+      // independent, so this does not restart a stream paused by the user.
+      unawaited(resumeLiveLatencyChase(appForegrounded: true));
       _backgroundedAt = null;
       _positionBeforeBackground = null;
       _ohosWasPlayingBeforeBackground = null;

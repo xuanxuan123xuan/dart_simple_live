@@ -9,6 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_adaptive_quality.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_live_link_health.dart';
@@ -21,8 +22,31 @@ import 'package:simple_live_app/services/live_link_health_collector.dart'
 import 'package:simple_live_app/services/live_link_health_media_kit_adapter.dart';
 import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
+import 'package:simple_live_app/services/mpv_live_latency_chase_sampling_loop.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+
+bool shouldSampleMultiRoomLiveHealth({
+  required bool appActive,
+  required bool paused,
+  required bool playbackDesired,
+  required bool liveStatus,
+  required bool hasActiveSource,
+}) {
+  return appActive &&
+      !paused &&
+      playbackDesired &&
+      liveStatus &&
+      hasActiveSource;
+}
+
+bool shouldChaseMultiRoomLiveLatency({
+  required bool healthSamplingEligible,
+  required MpvLiveLatencyPlaybackRole role,
+}) {
+  return healthSamplingEligible &&
+      role == MpvLiveLatencyPlaybackRole.multiRoomPrimaryVisible;
+}
 
 class MultiRoomRefreshResult {
   const MultiRoomRefreshResult({
@@ -100,9 +124,14 @@ class MultiRoomPlayerController extends GetxController {
     int? initialQualityIndex,
     int? initialLineIndex,
     bool initialPaused = false,
+    bool initialAppActive = true,
+    MpvLiveLatencyPlaybackRole initialLiveLatencyRole =
+        MpvLiveLatencyPlaybackRole.multiRoomSecondaryOrInactive,
     PlayerMutationQueue? mutationQueue,
   })  : _mutationQueue = mutationQueue ?? PlayerMutationQueue(),
-        _ownsMutationQueue = mutationQueue == null {
+        _ownsMutationQueue = mutationQueue == null,
+        _liveLatencyAppActive = initialAppActive,
+        _liveLatencyRole = initialLiveLatencyRole {
     if (initialVolume != null) {
       volume.value = initialVolume.clamp(0, 100).toDouble();
     }
@@ -194,6 +223,7 @@ class MultiRoomPlayerController extends GetxController {
   bool _routeTransitionClosed = false;
   Future<void>? _routeTransitionFuture;
   bool _playbackDesired = false;
+  int _playbackIntentRevision = 0;
   bool _danmakuActive = false;
   Future<void>? _danmakuStopFuture;
   Future<void> _operationChain = Future<void>.value();
@@ -218,6 +248,25 @@ class MultiRoomPlayerController extends GetxController {
       '${item.site.id}/${item.roomId} $error',
     ),
   );
+  late final MpvLiveLatencyChaseSamplingLoop _liveLatencySamplingLoop =
+      MpvLiveLatencyChaseSamplingLoop(
+    sample: _sampleLiveLatencyTick,
+    nextInterval: _nextLiveLatencySampleDelay,
+    onError: (error) => Log.d(
+      'multi-room live latency sample skipped: '
+      '${item.site.id}/${item.roomId} $error',
+    ),
+  );
+  static const Duration _healthTelemetryInterval = Duration(seconds: 5);
+  static const Duration _audioUnderrunProtectionDeduplication =
+      Duration(milliseconds: 500);
+  bool _liveLatencyAppActive;
+  MpvLiveLatencyPlaybackRole _liveLatencyRole;
+  LiveStreamProtocol? _activeLiveProtocol;
+  DateTime? _nextHealthTelemetryDueAt;
+  MultiRoomPlaybackTelemetry? _latestNativeTelemetry;
+  DateTime? _lastAudioUnderrunProtectionAt;
+  int _liveLatencyControlToken = 0;
   int? _userQualityIndex;
   int? _memoryPressureQualityIndex;
 
@@ -309,6 +358,9 @@ class MultiRoomPlayerController extends GetxController {
       );
       if (type != null) {
         _liveLinkHealth.recordEvent(type);
+        if (type == LiveLinkEventType.audioUnderrun) {
+          _protectLiveLatencyForAudioUnderrun();
+        }
       }
     });
     unawaited(load());
@@ -340,10 +392,33 @@ class MultiRoomPlayerController extends GetxController {
       _isBuffering = true;
       _bufferingCount += 1;
       _bufferingSince = now;
-      unawaited(_liveLatencyChaser.protect(sampledAt: now));
+      unawaited(
+        _liveLatencyChaser.protect(
+          sampledAt: now,
+          reason: MpvLiveLatencyProtectionReason.buffering,
+          generation: _liveLatencyChaser.generation,
+        ),
+      );
     } else if (!value && _isBuffering) {
       _finishBuffering(now);
     }
+  }
+
+  void _protectLiveLatencyForAudioUnderrun() {
+    final now = DateTime.now();
+    final previous = _lastAudioUnderrunProtectionAt;
+    if (previous != null &&
+        now.difference(previous) < _audioUnderrunProtectionDeduplication) {
+      return;
+    }
+    _lastAudioUnderrunProtectionAt = now;
+    unawaited(
+      _liveLatencyChaser.protect(
+        sampledAt: now,
+        reason: MpvLiveLatencyProtectionReason.audioUnderrun,
+        generation: _liveLatencyChaser.generation,
+      ),
+    );
   }
 
   void _finishBuffering(DateTime now) {
@@ -395,8 +470,10 @@ class MultiRoomPlayerController extends GetxController {
     );
   }
 
-  /// Samples properties exposed only by NativePlayer/libmpv. Web and other
-  /// backends safely fall back to the regular snapshot with unknown values.
+  /// Returns the latest snapshot produced by the shared per-player sampling
+  /// loop. This method intentionally performs no native reads and never feeds
+  /// the latency chaser, so the 5-second adaptive-quality pass cannot sample
+  /// `demuxer-cache-duration` a second time.
   Future<MultiRoomPlaybackTelemetry> sampleTelemetry({
     DateTime? sampledAt,
     bool isPrimary = false,
@@ -404,26 +481,86 @@ class MultiRoomPlayerController extends GetxController {
     bool isChatTarget = false,
   }) async {
     final now = sampledAt ?? DateTime.now();
-    final healthGeneration = _liveLinkHealth.current;
-    final fallback = telemetrySnapshot(
-      sampledAt: now,
+    final latest = _latestNativeTelemetry;
+    return telemetrySnapshot(
+      // Preserve the native sample age. Re-labelling a stale cached reading
+      // with `now` would make adaptive quality treat old telemetry as fresh.
+      sampledAt: latest?.sampledAt ?? now,
+      bandwidthBytesPerSecond: latest?.bandwidthBytesPerSecond,
+      demuxerCacheDurationSeconds: latest?.demuxerCacheDurationSeconds,
+      width: latest?.width,
+      height: latest?.height,
+      framesPerSecond: latest?.framesPerSecond,
       isPrimary: isPrimary,
       isFocused: isFocused,
       isChatTarget: isChatTarget,
     );
-    if (_disposed || _playerDisposed) return fallback;
-    final platform = player.platform;
-    if (platform is! NativePlayer) return fallback;
+  }
 
-    const properties = [
-      mpvCacheSpeedProperty,
+  Duration? _nextLiveLatencySampleDelay() {
+    if (!_isLiveHealthSamplingEligible) return null;
+    return MpvLiveLatencyChaseSamplingLoop.nextDelay(
+      chaseInterval: _isLiveLatencyChaseEligible
+          ? _liveLatencyChaser.recommendedSampleInterval
+          : null,
+      healthDueAt: _nextHealthTelemetryDueAt,
+    );
+  }
+
+  bool get _isLiveHealthSamplingEligible =>
+      !_disposed &&
+      !_playerDisposed &&
+      !_routeTransitionClosed &&
+      shouldSampleMultiRoomLiveHealth(
+        appActive: _liveLatencyAppActive,
+        paused: paused.value,
+        playbackDesired: _playbackDesired,
+        liveStatus: liveStatus.value,
+        hasActiveSource:
+            _activeLiveProtocol != null && _liveLinkHealth.current != null,
+      );
+
+  bool get _isLiveLatencyChaseEligible => shouldChaseMultiRoomLiveLatency(
+        healthSamplingEligible: _isLiveHealthSamplingEligible,
+        role: _liveLatencyRole,
+      );
+
+  Future<void> _sampleLiveLatencyTick() async {
+    if (!_isLiveHealthSamplingEligible) return;
+    final controlToken = _liveLatencyControlToken;
+    final healthGeneration = _liveLinkHealth.current;
+    final chaseGeneration = _liveLatencyChaser.generation;
+    if (healthGeneration == null ||
+        !_isCurrentLiveLatencySamplingContext(
+          controlToken: controlToken,
+          healthGeneration: healthGeneration,
+          chaseGeneration: chaseGeneration,
+        )) {
+      return;
+    }
+    final sampledAt = DateTime.now();
+    final healthDueAt = _nextHealthTelemetryDueAt;
+    final includeHealthTelemetry =
+        healthDueAt == null || !sampledAt.isBefore(healthDueAt);
+    if (includeHealthTelemetry) {
+      // Reserve the next low-frequency slot before any async/native work. A
+      // temporarily unavailable backend or a rejected stale read must not
+      // turn an overdue health deadline into a zero-delay spin loop.
+      _nextHealthTelemetryDueAt = sampledAt.add(_healthTelemetryInterval);
+    }
+    final platform = player.platform;
+    if (platform is! NativePlayer) return;
+    final properties = <String>[
       mpvDemuxerCacheDurationProperty,
-      mpvVideoWidthProperty,
-      mpvVideoHeightProperty,
-      mpvEstimatedFpsProperty,
-      health_telemetry.mpvVideoBitrateProperty,
-      health_telemetry.mpvAudioBitrateProperty,
-      health_telemetry.mpvSpeedProperty,
+      if (includeHealthTelemetry) ...[
+        mpvCacheSpeedProperty,
+        mpvVideoWidthProperty,
+        mpvVideoHeightProperty,
+        mpvEstimatedFpsProperty,
+        health_telemetry.mpvVideoBitrateProperty,
+        health_telemetry.mpvAudioBitrateProperty,
+        health_telemetry.mpvSpeedProperty,
+      ],
     ];
     final values = await Future.wait([
       for (final property in properties)
@@ -433,57 +570,133 @@ class MultiRoomPlayerController extends GetxController {
       for (var index = 0; index < properties.length; index += 1)
         properties[index]: values[index],
     };
+    if (!_isCurrentLiveLatencySamplingContext(
+      controlToken: controlToken,
+      healthGeneration: healthGeneration,
+      chaseGeneration: chaseGeneration,
+    )) {
+      return;
+    }
     final native = parseMpvTelemetryProperties(raw);
+    if (_isLiveLatencyChaseEligible) {
+      await _liveLatencyChaser.observe(
+        cacheDurationSeconds: native.demuxerCacheDurationSeconds,
+        isBuffering: _isBuffering || !player.state.playing,
+        sampledAt: sampledAt,
+        generation: chaseGeneration,
+      );
+    }
+    if (!includeHealthTelemetry ||
+        !_isCurrentLiveLatencySamplingContext(
+          controlToken: controlToken,
+          healthGeneration: healthGeneration,
+          chaseGeneration: chaseGeneration,
+        )) {
+      return;
+    }
     final throughput = health_telemetry.parseMpvLiveHealthThroughputProperties(
       cacheSpeed: raw[mpvCacheSpeedProperty],
       videoBitrate: raw[health_telemetry.mpvVideoBitrateProperty],
       audioBitrate: raw[health_telemetry.mpvAudioBitrateProperty],
     );
-    if (healthGeneration != null &&
-        _isCurrentHealthGeneration(healthGeneration)) {
-      final state = player.state;
-      final speed = double.tryParse(
-            raw[health_telemetry.mpvSpeedProperty]?.trim() ?? '',
-          ) ??
-          _liveLatencyChaser.currentSpeed;
-      final summary = _liveLinkHealth.addSample(
-        generation: healthGeneration,
-        sample: LiveLinkHealthSample(
-          generation: healthGeneration.generation,
-          sampledAt: now,
-          position: state.position,
-          playing: state.playing,
-          buffering: state.buffering,
-          playbackSpeed: speed.isFinite && speed > 0 ? speed : 1,
-          streamActive: state.playing || state.buffering,
-          demuxerCacheSeconds: native.demuxerCacheDurationSeconds,
-          receiveBytesPerSecond: throughput.receiveBytesPerSecond,
-          estimatedMediaBitsPerSecond: throughput.estimatedMediaBitsPerSecond,
-        ),
-      );
-      if (summary != null) {
-        Log.writeLog(summary);
-      }
-    }
-    await _liveLatencyChaser.observe(
-      cacheDurationSeconds: native.demuxerCacheDurationSeconds,
-      isBuffering: _isBuffering ||
-          paused.value ||
-          !liveStatus.value ||
-          !player.state.playing,
-      sampledAt: now,
+    final state = player.state;
+    final speed = double.tryParse(
+          raw[health_telemetry.mpvSpeedProperty]?.trim() ?? '',
+        ) ??
+        _liveLatencyChaser.currentSpeed;
+    final summary = _liveLinkHealth.addSample(
+      generation: healthGeneration,
+      sample: LiveLinkHealthSample(
+        generation: healthGeneration.generation,
+        sampledAt: sampledAt,
+        position: state.position,
+        playing: state.playing,
+        buffering: state.buffering,
+        playbackSpeed: speed.isFinite && speed > 0 ? speed : 1,
+        streamActive: state.playing || state.buffering,
+        demuxerCacheSeconds: native.demuxerCacheDurationSeconds,
+        receiveBytesPerSecond: throughput.receiveBytesPerSecond,
+        estimatedMediaBitsPerSecond: throughput.estimatedMediaBitsPerSecond,
+      ),
     );
-    return telemetrySnapshot(
-      sampledAt: now,
+    if (summary != null) Log.writeLog(summary);
+    _latestNativeTelemetry = telemetrySnapshot(
+      sampledAt: sampledAt,
       bandwidthBytesPerSecond: native.bandwidthBytesPerSecond,
       demuxerCacheDurationSeconds: native.demuxerCacheDurationSeconds,
       width: native.width,
       height: native.height,
       framesPerSecond: native.framesPerSecond,
-      isPrimary: isPrimary,
-      isFocused: isFocused,
-      isChatTarget: isChatTarget,
     );
+  }
+
+  bool _isCurrentLiveLatencySamplingContext({
+    required int controlToken,
+    required MultiRoomLiveLinkHealthGeneration healthGeneration,
+    required int chaseGeneration,
+  }) {
+    return controlToken == _liveLatencyControlToken &&
+        chaseGeneration == _liveLatencyChaser.generation &&
+        _isLiveHealthSamplingEligible &&
+        _isCurrentHealthGeneration(healthGeneration);
+  }
+
+  /// Updates whether this tile is allowed to run the latency/health sampler.
+  /// Every active tile retains the 5-second health cadence, while only the
+  /// currently visible primary tile enables chase observations and cadence.
+  Future<void> updateLiveLatencyParticipation({
+    required MpvLiveLatencyPlaybackRole role,
+    required bool appActive,
+  }) async {
+    if (_liveLatencyRole == role && _liveLatencyAppActive == appActive) {
+      return;
+    }
+    _liveLatencyRole = role;
+    _liveLatencyAppActive = appActive;
+    final reason = appActive
+        ? MpvLiveLatencyProtectionReason.sourceChanged
+        : MpvLiveLatencyProtectionReason.lifecycleInterrupted;
+    await _stopLiveLatencySampling(reason: reason);
+    if (_isLiveHealthSamplingEligible) {
+      await _startLiveLatencySampling();
+    }
+  }
+
+  Future<void> _startLiveLatencySampling() async {
+    final protocol = _activeLiveProtocol;
+    if (protocol == null || !_isLiveHealthSamplingEligible) return;
+    final controlToken = ++_liveLatencyControlToken;
+    _liveLatencySamplingLoop.stop();
+    await _liveLatencyChaser.start(
+      latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
+      protocol: protocol,
+      platformProfile: PlatformUtils.isMobileApp
+          ? MpvLiveLatencyPlatformProfile.resourceConstrained
+          : MpvLiveLatencyPlatformProfile.conservative,
+      playbackRole: _liveLatencyRole,
+    );
+    if (controlToken != _liveLatencyControlToken ||
+        !_isLiveHealthSamplingEligible) {
+      return;
+    }
+    _nextHealthTelemetryDueAt = DateTime.now();
+    _liveLatencySamplingLoop.start();
+  }
+
+  Future<void> _stopLiveLatencySampling({
+    required MpvLiveLatencyProtectionReason reason,
+  }) async {
+    _liveLatencyControlToken += 1;
+    _liveLatencySamplingLoop.stop();
+    _nextHealthTelemetryDueAt = null;
+    _latestNativeTelemetry = null;
+    _lastAudioUnderrunProtectionAt = null;
+    final generation = _liveLatencyChaser.generation;
+    await _liveLatencyChaser.protect(
+      reason: reason,
+      generation: generation,
+    );
+    await _liveLatencyChaser.stop();
   }
 
   bool _isCurrentHealthGeneration(
@@ -603,8 +816,11 @@ class MultiRoomPlayerController extends GetxController {
       _restoreLineIndex = _lineIndex;
     }
     try {
+      await _stopLiveLatencySampling(
+        reason: MpvLiveLatencyProtectionReason.sourceChanged,
+      );
+      _activeLiveProtocol = null;
       _liveLinkHealth.stop();
-      await _liveLatencyChaser.stop();
       await player.stop();
       if (_disposed) return;
       // 重新加载前断开旧连接，避免刷新后同一格挂着两条长连接。
@@ -705,20 +921,20 @@ class MultiRoomPlayerController extends GetxController {
   }) async {
     if (_disposed || _routeTransitionClosed || _playUrls.isEmpty) return;
     final previousSource = _liveLinkHealth.current?.source;
-    final reconnectStartedAt = automaticReconnectReason == null
-        ? null
-        : DateTime.now();
+    final reconnectStartedAt =
+        automaticReconnectReason == null ? null : DateTime.now();
     var url = _playUrls[_lineIndex];
     if (AppSettingsController.instance.playerForceHttps.value) {
       url = url.replaceAll("http://", "https://");
     }
+    await _stopLiveLatencySampling(
+      reason: MpvLiveLatencyProtectionReason.sourceChanged,
+    );
+    _activeLiveProtocol = null;
+    if (_disposed || _routeTransitionClosed) return;
     final healthOpenAttempt = _liveLinkHealth.prepareSource(source: url);
     final protocol = classifyLiveStreamProtocol(url);
     await MpvOptionsService.applyLiveLatencyOptions(player, protocol);
-    await _liveLatencyChaser.start(
-      latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
-      protocol: protocol,
-    );
     if (_disposed || _routeTransitionClosed) return;
     _playbackDesired = true;
     await player.open(
@@ -734,6 +950,7 @@ class MultiRoomPlayerController extends GetxController {
       userOperation: userOperation,
     );
     if (healthGeneration == null) return;
+    _activeLiveProtocol = protocol;
     _lastOpenedAt = completedAt;
     if (automaticReconnectReason != null &&
         reconnectStartedAt != null &&
@@ -746,14 +963,16 @@ class MultiRoomPlayerController extends GetxController {
           previousSource,
           url,
         ),
-        reconnectRecoveryDuration:
-            completedAt.difference(reconnectStartedAt),
+        reconnectRecoveryDuration: completedAt.difference(reconnectStartedAt),
         expectedGeneration: healthGeneration,
       );
     }
     await player.setVolume(muted.value ? 0 : volume.value);
     if (paused.value) {
       await player.pause();
+    }
+    if (_isLiveHealthSamplingEligible) {
+      await _startLiveLatencySampling();
     }
     // iOS 上多个 libmpv Player 共享 audio session。任意一格重新 open
     // 都可能中断其他格，由页面级控制器统一恢复仍应播放的播放器。
@@ -816,6 +1035,7 @@ class MultiRoomPlayerController extends GetxController {
   /// recovery never override this state.
   Future<void> setPaused(bool value) {
     if (paused.value == value) return Future<void>.value();
+    final intentRevision = ++_playbackIntentRevision;
     paused.value = value;
     _liveLinkHealth.recordEvent(
       value
@@ -825,11 +1045,33 @@ class MultiRoomPlayerController extends GetxController {
     if (value && _isBuffering) {
       _finishBuffering(DateTime.now());
     }
+    // Queue the native mutation immediately so rapid pause/resume taps retain
+    // their intent order. The revision checks discard work that became stale
+    // while an asynchronous stop/play operation was in flight.
     return _enqueue(() async {
+      if (intentRevision != _playbackIntentRevision || paused.value != value) {
+        return;
+      }
       if (value) {
+        await _stopLiveLatencySampling(
+          reason: MpvLiveLatencyProtectionReason.userPaused,
+        );
+        if (intentRevision != _playbackIntentRevision ||
+            paused.value != value) {
+          return;
+        }
         await player.pause();
       } else if (_playbackDesired && liveStatus.value) {
         await player.play();
+        if (intentRevision != _playbackIntentRevision ||
+            paused.value != value) {
+          return;
+        }
+        await _startLiveLatencySampling();
+        if (intentRevision != _playbackIntentRevision ||
+            paused.value != value) {
+          return;
+        }
         // 恢复播放激活 audio session，可能中断其他格，通知恢复。
         onActivateAudio?.call();
       }
@@ -1183,11 +1425,14 @@ class MultiRoomPlayerController extends GetxController {
       if (_playerDisposed) return;
       _routeTransitionClosed = true;
       _playbackDesired = false;
+      await _stopLiveLatencySampling(
+        reason: MpvLiveLatencyProtectionReason.lifecycleInterrupted,
+      );
+      _activeLiveProtocol = null;
       _liveLinkHealth.stop();
       if (_isBuffering) _finishBuffering(DateTime.now());
       try {
         await _stopDanmaku();
-        await _liveLatencyChaser.stop();
         await player.stop();
         await player.dispose();
         _playerDisposed = true;
@@ -1205,6 +1450,13 @@ class MultiRoomPlayerController extends GetxController {
   void onClose() {
     _disposed = true;
     _playbackDesired = false;
+    _activeLiveProtocol = null;
+    _liveLatencyControlToken += 1;
+    _liveLatencySamplingLoop.stop();
+    final liveLatencyProtection = _liveLatencyChaser.protect(
+      reason: MpvLiveLatencyProtectionReason.lifecycleInterrupted,
+      generation: _liveLatencyChaser.generation,
+    );
     _liveLinkHealth.stop();
     if (_isBuffering) _finishBuffering(DateTime.now());
     unawaited(_bufferingSubscription?.cancel());
@@ -1222,6 +1474,7 @@ class MultiRoomPlayerController extends GetxController {
     danmakuController = null;
     // 等当前串行的 open/load 收尾后再释放 Player，避免异步回调操作已释放实例。
     unawaited(_operationChain.whenComplete(() async {
+      await liveLatencyProtection;
       await _liveLatencyChaser.stop();
       if (!_playerDisposed) {
         await player.stop();
