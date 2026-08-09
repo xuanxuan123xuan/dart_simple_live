@@ -25,6 +25,9 @@ import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_
 import 'package:simple_live_app/modules/live_room/player/player_volume_session_policy.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
+import 'package:simple_live_app/services/live_link_health_collector.dart';
+import 'package:simple_live_app/services/live_link_health_models.dart';
+import 'package:simple_live_app/services/live_link_health_tracker.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
@@ -97,18 +100,23 @@ mixin PlayerMixin {
   /// 当前平台是否存在可用的 media_kit 播放器。
   bool get hasMpvPlayer => !Utils.isOhos;
 
+  /// Safe, signature-free target used by shadow health logs.
+  String get liveLinkHealthTarget => 'unknown';
+
   late final MpvLiveLatencyChaseService _liveLatencyChaser =
       MpvLiveLatencyChaseService(
     writeSpeed: _writeLiveLatencyChaseSpeed,
     readSpeed: _readLiveLatencyChaseSpeed,
     onWriteError: (error) => Log.d('live latency chase speed skipped: $error'),
   );
-  Timer? _liveLatencyChaseTimer;
-  StreamSubscription<bool>? _liveLatencyChaseBufferingSubscription;
-  bool _liveLatencyChaseSampling = false;
-  bool _liveLatencyChaseBuffering = false;
-  String? _liveLatencyChaseSource;
-  int _liveLatencyChaseGeneration = 0;
+  final LiveLinkHealthShadowCollector _liveLinkHealthCollector =
+      LiveLinkHealthShadowCollector();
+  Timer? _livePlaybackLightweightTimer;
+  StreamSubscription<bool>? _livePlaybackBufferingSubscription;
+  int? _livePlaybackSamplingGeneration;
+  bool? _livePlaybackBuffering;
+  String? _livePlaybackSource;
+  int _livePlaybackGeneration = 0;
 
   Future<void> _writeLiveLatencyChaseSpeed(double speed) async {
     final platform = player.platform;
@@ -159,88 +167,209 @@ mixin PlayerMixin {
     if (Platform.isAndroid) {
       await nativePlayer.setProperty('force-seekable', 'yes');
     }
-    _startLiveLatencyChaseSampling();
   }
 
-  void _startLiveLatencyChaseSampling() {
-    if (player.platform is! NativePlayer || _liveLatencyChaseTimer != null) {
+  Future<void> startLivePlaybackLightweightSampling({
+    required String source,
+    DateTime? openedAt,
+  }) async {
+    final generation = _livePlaybackGeneration;
+    final canonicalSource = canonicalizeLivePlaybackSource(source);
+    if (canonicalSource.isEmpty || !_liveLinkHealthCollector.isActive) {
       return;
     }
-    _liveLatencyChaseBufferingSubscription =
-        player.stream.buffering.listen((isBuffering) {
-      _liveLatencyChaseBuffering = isBuffering;
-      if (isBuffering) {
-        unawaited(_liveLatencyChaser.protect());
-      }
-    });
-    _liveLatencyChaseTimer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => unawaited(_sampleLiveLatencyChase()),
+    _livePlaybackSource = canonicalSource;
+    final now = openedAt ?? DateTime.now();
+    if (!Utils.isOhos) {
+      await _liveLatencyChaser.start(
+        latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
+        protocol: classifyLiveStreamProtocol(canonicalSource),
+        startedAt: now,
+      );
+    }
+    if (generation != _livePlaybackGeneration ||
+        canonicalSource != _livePlaybackSource) {
+      return;
+    }
+    _liveLinkHealthCollector.addEvent(
+      LiveLinkHealthEvent(
+        generation: generation,
+        occurredAt: now,
+        type: LiveLinkEventType.streamOpened,
+      ),
+    );
+    if (!Utils.isOhos) {
+      _livePlaybackBufferingSubscription ??=
+          player.stream.buffering.listen((buffering) {
+        _recordLivePlaybackBuffering(buffering, at: DateTime.now());
+        if (buffering) {
+          unawaited(_liveLatencyChaser.protect());
+        }
+      });
+      _startLivePlaybackLightweightTimer();
+      unawaited(_sampleLivePlaybackLightweight());
+    }
+  }
+
+  void _startLivePlaybackLightweightTimer() {
+    if (_livePlaybackLightweightTimer != null) {
+      return;
+    }
+    _livePlaybackLightweightTimer = Timer.periodic(
+      LiveLinkHealthTracker.sampleInterval,
+      (_) => unawaited(_sampleLivePlaybackLightweight()),
     );
   }
 
-  Future<void> _sampleLiveLatencyChase() async {
-    final generation = _liveLatencyChaseGeneration;
-    if (_liveLatencyChaseSampling || !player.state.playing) {
+  Future<void> _sampleLivePlaybackLightweight() async {
+    final generation = _livePlaybackGeneration;
+    final source = _livePlaybackSource;
+    if (_livePlaybackSamplingGeneration != null || source == null) {
       return;
     }
-    final playlist = player.state.playlist;
-    if (playlist.medias.isEmpty ||
-        playlist.index < 0 ||
-        playlist.index >= playlist.medias.length) {
-      return;
-    }
-    _liveLatencyChaseSampling = true;
+    _livePlaybackSamplingGeneration = generation;
     try {
+      if (Utils.isOhos) {
+        final controller = _ohosVideoController;
+        if (controller == null) {
+          return;
+        }
+        final value = controller.value;
+        final sampledAt = DateTime.now();
+        _recordLivePlaybackBuffering(
+          value.isBuffering || !value.isInitialized,
+          at: sampledAt,
+        );
+        _recordLiveLinkHealthSample(
+          LiveLinkHealthSample(
+            generation: generation,
+            sampledAt: sampledAt,
+            position: value.position,
+            playing: value.isPlaying,
+            buffering: value.isBuffering || !value.isInitialized,
+            playbackSpeed: value.playbackSpeed,
+            streamActive: value.isInitialized &&
+                (value.isPlaying || value.isBuffering),
+          ),
+        );
+        return;
+      }
+
+      final state = player.state;
+      final playlist = state.playlist;
+      if (playlist.medias.isEmpty ||
+          playlist.index < 0 ||
+          playlist.index >= playlist.medias.length) {
+        return;
+      }
       final dynamic media = playlist.medias[playlist.index];
-      final source = media.uri?.toString() ?? '';
-      if (source.isEmpty) {
+      final currentSource = canonicalizeLivePlaybackSource(
+        media.uri?.toString() ?? '',
+      );
+      if (currentSource != source) {
         return;
       }
-      if (generation != _liveLatencyChaseGeneration) {
+      final sampledAt = DateTime.now();
+      final cacheDurationSeconds = await sampleMpvDemuxerCacheDuration(player);
+      if (generation != _livePlaybackGeneration ||
+          source != _livePlaybackSource) {
         return;
       }
-      if (_liveLatencyChaseSource != source) {
-        _liveLatencyChaseSource = source;
-        await _liveLatencyChaser.start(
-          latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
-          protocol: classifyLiveStreamProtocol(source),
+      _recordLiveLinkHealthSample(
+        LiveLinkHealthSample(
+          generation: generation,
+          sampledAt: sampledAt,
+          position: state.position,
+          playing: state.playing,
+          buffering: state.buffering,
+          playbackSpeed: _liveLatencyChaser.currentSpeed,
+          streamActive: state.playing || state.buffering,
+          demuxerCacheSeconds: cacheDurationSeconds,
+        ),
+      );
+      if (state.playing) {
+        await _liveLatencyChaser.observe(
+          cacheDurationSeconds: cacheDurationSeconds,
+          isBuffering: state.buffering,
+          sampledAt: sampledAt,
         );
       }
-      if (generation != _liveLatencyChaseGeneration) {
-        return;
-      }
-      final cacheDurationSeconds = await sampleMpvDemuxerCacheDuration(player);
-      if (generation != _liveLatencyChaseGeneration) {
-        return;
-      }
-      await _liveLatencyChaser.observe(
-        cacheDurationSeconds: cacheDurationSeconds,
-        isBuffering: _liveLatencyChaseBuffering,
-      );
     } catch (error) {
-      Log.d('live latency chase sample skipped: $error');
-      await _liveLatencyChaser.protect();
+      Log.d('live playback lightweight sample skipped: $error');
+      if (!Utils.isOhos &&
+          generation == _livePlaybackGeneration &&
+          source == _livePlaybackSource) {
+        await _liveLatencyChaser.protect();
+      }
     } finally {
-      _liveLatencyChaseSampling = false;
+      if (_livePlaybackSamplingGeneration == generation) {
+        _livePlaybackSamplingGeneration = null;
+      }
     }
+  }
+
+  void _recordLiveLinkHealthSample(LiveLinkHealthSample sample) {
+    final summary = _liveLinkHealthCollector.addSample(sample);
+    if (summary != null) {
+      Log.writeLog(summary);
+    }
+  }
+
+  void _recordLivePlaybackBuffering(bool buffering, {required DateTime at}) {
+    if (_livePlaybackBuffering == buffering) {
+      return;
+    }
+    _livePlaybackBuffering = buffering;
+    recordLiveLinkHealthEvent(
+      buffering
+          ? LiveLinkEventType.bufferingStarted
+          : LiveLinkEventType.bufferingEnded,
+      at: at,
+    );
+  }
+
+  void recordLiveLinkHealthEvent(
+    LiveLinkEventType type, {
+    DateTime? at,
+  }) {
+    _liveLinkHealthCollector.addEvent(
+      LiveLinkHealthEvent(
+        generation: _livePlaybackGeneration,
+        occurredAt: at ?? DateTime.now(),
+        type: type,
+      ),
+    );
+  }
+
+  Future<void> _cancelLivePlaybackSamplingInfrastructure() async {
+    _livePlaybackLightweightTimer?.cancel();
+    _livePlaybackLightweightTimer = null;
+    await _livePlaybackBufferingSubscription?.cancel();
+    _livePlaybackBufferingSubscription = null;
+    _livePlaybackBuffering = null;
   }
 
   Future<void> resetLiveLatencyChase() async {
-    _liveLatencyChaseGeneration += 1;
-    _liveLatencyChaseSource = null;
-    await _liveLatencyChaser.reset();
+    _livePlaybackGeneration += 1;
+    await _cancelLivePlaybackSamplingInfrastructure();
+    _livePlaybackSource = null;
+    _liveLinkHealthCollector.startGeneration(
+      generation: _livePlaybackGeneration,
+      target: liveLinkHealthTarget,
+    );
+    if (!Utils.isOhos) {
+      await _liveLatencyChaser.reset();
+    }
   }
 
   Future<void> stopLiveLatencyChase() async {
-    _liveLatencyChaseGeneration += 1;
-    _liveLatencyChaseTimer?.cancel();
-    _liveLatencyChaseTimer = null;
-    await _liveLatencyChaseBufferingSubscription?.cancel();
-    _liveLatencyChaseBufferingSubscription = null;
-    _liveLatencyChaseBuffering = false;
-    _liveLatencyChaseSource = null;
-    await _liveLatencyChaser.stop();
+    _livePlaybackGeneration += 1;
+    await _cancelLivePlaybackSamplingInfrastructure();
+    _livePlaybackSource = null;
+    _liveLinkHealthCollector.stop();
+    if (!Utils.isOhos) {
+      await _liveLatencyChaser.stop();
+    }
   }
 
   late final VideoController _mpvVideoController = VideoController(
@@ -283,12 +412,18 @@ mixin PlayerMixin {
     _ohosVideoController = controller;
     BackgroundPlaybackService.instance.attachOhosController(controller);
     updateOhosVideoState(controller.value);
+    if (_livePlaybackSource != null && _liveLinkHealthCollector.isActive) {
+      _startLivePlaybackLightweightTimer();
+      unawaited(_sampleLivePlaybackLightweight());
+    }
   }
 
   void detachOhosVideoController(VideoPlayerController controller) {
     if (identical(_ohosVideoController, controller)) {
       BackgroundPlaybackService.instance.detachOhosController(controller);
       _ohosVideoController = null;
+      _livePlaybackLightweightTimer?.cancel();
+      _livePlaybackLightweightTimer = null;
       ohosPlaying.value = false;
       ohosBuffering.value = false;
     }
@@ -326,8 +461,10 @@ mixin PlayerMixin {
     }
     if (controller.value.isPlaying) {
       await controller.pause();
+      recordLiveLinkHealthEvent(LiveLinkEventType.playbackPausedByUser);
     } else {
       await controller.play();
+      recordLiveLinkHealthEvent(LiveLinkEventType.playbackResumedByUser);
     }
     updateOhosVideoState(controller.value);
   }
@@ -2223,6 +2360,10 @@ class PlayerController extends BaseController
         await Future.delayed(const Duration(milliseconds: 200));
         await resetLiveLatencyChase();
         await player.open(currentMedia);
+        final source = currentMedia.uri.toString();
+        if (source.isNotEmpty) {
+          await startLivePlaybackLightweightSampling(source: source);
+        }
       }
     } catch (e, stackTrace) {
       Log.e("重启解码器失败: $e", stackTrace);

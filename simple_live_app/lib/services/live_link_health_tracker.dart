@@ -36,14 +36,20 @@ class LiveLinkHealthTracker {
   int get eventCount => _events.length;
 
   void startGeneration(int generation, {DateTime? at}) {
+    reset();
     _generation = generation;
+    _excludedUntil = (at ?? _clock()).add(warmupDuration);
+  }
+
+  void reset() {
+    _generation = null;
     _samples.clear();
     _events.clear();
     _pausedByUser = false;
     _backgrounded = false;
     _bufferingEventActive = false;
     _lastAudioUnderrunAt = null;
-    _excludedUntil = (at ?? _clock()).add(warmupDuration);
+    _excludedUntil = null;
     _levelHysteresis.reset();
   }
 

@@ -38,6 +38,7 @@ import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
+import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_network_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
@@ -358,6 +359,9 @@ bool isCurrentLiveRoomPlaybackRequest({
 
 class LiveRoomController extends PlayerController
     with WidgetsBindingObserver, WindowListener {
+  @override
+  String get liveLinkHealthTarget => '${rxSite.value.id}/${rxRoomId.value}';
+
   static const volumeSliderDialogTag = "live_room_volume_slider";
   final Site pSite;
   final String pRoomId;
@@ -2682,12 +2686,22 @@ class LiveRoomController extends PlayerController
     if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) {
       return;
     }
+    // Stop the shared lightweight sampler before either backend changes
+    // source. Its generation gate prevents an older native read from being
+    // accepted after this point.
+    await resetLiveLatencyChase();
+    if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+      return;
+    }
     // A previous room/line may have been a portrait stream. Reset the hint
     // for every backend until the newly opened source reports its dimensions.
     isVertical.value = false;
     if (Utils.isOhos) {
       currentLineInfo.value = lineDisplayName(currentLineIndex);
       errorMsg.value = "";
+      await startLivePlaybackLightweightSampling(
+        source: playUrls[currentLineIndex],
+      );
       _ohosHealthyPlaybackSince = null;
       _lastOhosPlaybackPosition = Duration.zero;
       ohosPlayerRevision.value += 1;
@@ -2747,6 +2761,10 @@ class LiveRoomController extends PlayerController
         if (!Utils.isOhos) {
           await player.stop();
         }
+        return;
+      }
+      await startLivePlaybackLightweightSampling(source: finalUrl);
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         return;
       }
       _hasActivePlaybackSession = true;
@@ -4202,6 +4220,7 @@ class LiveRoomController extends PlayerController
     try {
       if (wasPlaying) {
         await player.pause();
+        recordLiveLinkHealthEvent(LiveLinkEventType.playbackPausedByUser);
       }
       final result = await AppNavigator.toMultiRoom(
         [currentRoom, addedRoom],
@@ -4216,6 +4235,7 @@ class LiveRoomController extends PlayerController
       if (!_roomDisposed && !isPlayerClosing) {
         if (wasPlaying) {
           await player.play();
+          recordLiveLinkHealthEvent(LiveLinkEventType.playbackResumedByUser);
         }
         if (fullScreenState.value) {
           await restoreFullScreenSystemUi();
@@ -4353,6 +4373,7 @@ class LiveRoomController extends PlayerController
         CurrentRoomService.instance.setRoom(currentSite, currentRoomId);
         _roomDisposed = false;
         _loadGeneration += 1;
+        await resetLiveLatencyChase();
         _onlineRefreshFailures = 0;
         tempMutedUsers.clear();
         danmakuViewportHeight.value = 0;
@@ -4421,6 +4442,7 @@ ${errorStackTrace ?? ""}''');
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       Log.d("进入后台:$state");
+      recordLiveLinkHealthEvent(LiveLinkEventType.appBackgrounded);
       isBackground = true;
       _backgroundedAt ??= DateTime.now();
       _positionBeforeBackground ??= _lastKnownPlayerPosition;
@@ -4445,6 +4467,7 @@ ${errorStackTrace ?? ""}''');
       }
     } else if (state == AppLifecycleState.resumed) {
       Log.d("返回前台");
+      recordLiveLinkHealthEvent(LiveLinkEventType.appForegrounded);
       _refreshAutoExitCountdown();
       isBackground = false;
       unawaited(
