@@ -9,24 +9,24 @@ typedef MpvPlaybackSpeedReader = Future<double?> Function();
 class MpvLiveLatencyChasePolicy {
   const MpvLiveLatencyChasePolicy._({
     required this.enabled,
-    required this.targetCacheSeconds,
-    required this.catchUpThresholdSeconds,
-    required this.releaseThresholdSeconds,
-    required this.minimumCacheSeconds,
+    required this.stopThresholdSeconds,
+    required this.resumeThresholdSeconds,
+    required this.hardFloorSeconds,
+    required this.maximumCatchUpMultiplier,
   });
 
   const MpvLiveLatencyChasePolicy.disabled()
       : enabled = false,
-        targetCacheSeconds = 0,
-        catchUpThresholdSeconds = 0,
-        releaseThresholdSeconds = 0,
-        minimumCacheSeconds = 0;
+        stopThresholdSeconds = 0,
+        resumeThresholdSeconds = 0,
+        hardFloorSeconds = 0,
+        maximumCatchUpMultiplier = 1;
 
   final bool enabled;
-  final double targetCacheSeconds;
-  final double catchUpThresholdSeconds;
-  final double releaseThresholdSeconds;
-  final double minimumCacheSeconds;
+  final double stopThresholdSeconds;
+  final double resumeThresholdSeconds;
+  final double hardFloorSeconds;
+  final double maximumCatchUpMultiplier;
 
   factory MpvLiveLatencyChasePolicy.forStream({
     required String latencyMode,
@@ -35,19 +35,29 @@ class MpvLiveLatencyChasePolicy {
     if (latencyMode == 'off') {
       return const MpvLiveLatencyChasePolicy.disabled();
     }
+    if (protocol == LiveStreamProtocol.unknown) {
+      return const MpvLiveLatencyChasePolicy.disabled();
+    }
 
     final isLowLatencyProtocol = protocol == LiveStreamProtocol.flv ||
         protocol == LiveStreamProtocol.rtmp;
-    final targetCacheSeconds =
-        latencyMode == 'aggressive' || isLowLatencyProtocol ? 0.5 : 1.0;
-    final catchUpMargin = targetCacheSeconds <= 0.5 ? 0.35 : 0.5;
-    final releaseMargin = targetCacheSeconds <= 0.5 ? 0.1 : 0.2;
+    final isAggressive = latencyMode == 'aggressive';
+    if (isLowLatencyProtocol) {
+      return MpvLiveLatencyChasePolicy._(
+        enabled: true,
+        stopThresholdSeconds: isAggressive ? 0.8 : 1.2,
+        resumeThresholdSeconds: isAggressive ? 1.4 : 2.0,
+        hardFloorSeconds: isAggressive ? 0.4 : 0.6,
+        maximumCatchUpMultiplier: isAggressive ? 1.08 : 1.06,
+      );
+    }
+
     return MpvLiveLatencyChasePolicy._(
       enabled: true,
-      targetCacheSeconds: targetCacheSeconds,
-      catchUpThresholdSeconds: targetCacheSeconds + catchUpMargin,
-      releaseThresholdSeconds: targetCacheSeconds + releaseMargin,
-      minimumCacheSeconds: targetCacheSeconds * 0.6,
+      stopThresholdSeconds: isAggressive ? 1.4 : 1.8,
+      resumeThresholdSeconds: isAggressive ? 2.4 : 3.0,
+      hardFloorSeconds: isAggressive ? 0.8 : 1.0,
+      maximumCatchUpMultiplier: isAggressive ? 1.06 : 1.04,
     );
   }
 }
@@ -62,6 +72,9 @@ class MpvLiveLatencyChaseService {
     required MpvPlaybackSpeedWriter writeSpeed,
     MpvPlaybackSpeedReader? readSpeed,
     this.minimumDwell = const Duration(seconds: 10),
+    this.bufferingCooldown = const Duration(seconds: 15),
+    this.safetyCooldown = const Duration(seconds: 10),
+    this.predictionHorizon = const Duration(seconds: 3),
     DateTime Function()? clock,
     void Function(Object error)? onWriteError,
   })  : _writeSpeed = writeSpeed,
@@ -71,15 +84,18 @@ class MpvLiveLatencyChaseService {
 
   static const double normalSpeed = 1.0;
 
-  /// Catch-up multipliers applied to the speed present before chasing starts.
-  static const double minimumCatchUpSpeed = 1.05;
-  static const double maximumCatchUpSpeed = 1.08;
+  /// Small, quantized catch-up steps avoid consuming the safety cache at a
+  /// fixed high rate all the way to the live edge.
+  static const double minimumCatchUpDelta = 0.01;
 
   final MpvPlaybackSpeedWriter _writeSpeed;
   final MpvPlaybackSpeedReader? _readSpeed;
   final DateTime Function() _clock;
   final void Function(Object error)? _onWriteError;
   final Duration minimumDwell;
+  final Duration bufferingCooldown;
+  final Duration safetyCooldown;
+  final Duration predictionHorizon;
 
   MpvLiveLatencyChasePolicy _policy =
       const MpvLiveLatencyChasePolicy.disabled();
@@ -90,6 +106,9 @@ class MpvLiveLatencyChaseService {
   bool _baselineRestorePending = false;
   bool _catchingUp = false;
   bool _enabled = false;
+  DateTime? _cooldownUntil;
+  DateTime? _previousSampledAt;
+  double? _previousCacheSeconds;
   Future<void> _operationChain = Future<void>.value();
 
   bool get isEnabled => _enabled;
@@ -121,12 +140,22 @@ class MpvLiveLatencyChaseService {
       _hasBaselineSpeed = true;
       _currentSpeed = capturedSpeed;
       _baselineRestorePending = false;
-      _policy = MpvLiveLatencyChasePolicy.forStream(
+      final streamPolicy = MpvLiveLatencyChasePolicy.forStream(
         latencyMode: latencyMode,
         protocol: protocol,
       );
+      // Respect explicit user playback speeds. The captured value is still
+      // retained so lifecycle cleanup can restore it, but automatic chasing
+      // must never multiply a deliberately slow or fast baseline.
+      final usesChaseSafeBaseline =
+          capturedSpeed >= 0.95 && capturedSpeed <= 1.05;
+      _policy = usesChaseSafeBaseline
+          ? streamPolicy
+          : const MpvLiveLatencyChasePolicy.disabled();
       _enabled = _policy.enabled;
       _catchingUp = false;
+      _cooldownUntil = null;
+      _clearCacheTrend();
       _lastSpeedChangeAt = null;
     });
   }
@@ -156,22 +185,53 @@ class MpvLiveLatencyChaseService {
     }
     final now = sampledAt ?? _clock();
     final cache = cacheDurationSeconds;
-    if (isBuffering ||
-        cache == null ||
-        !cache.isFinite ||
-        cache < 0 ||
-        cache <= _policy.minimumCacheSeconds) {
+    if (isBuffering) {
+      await _enterSafetyCooldown(now, bufferingCooldown);
+      _clearCacheTrend();
+      return;
+    }
+    if (cache == null || !cache.isFinite || cache < 0) {
+      await _enterSafetyCooldown(now, safetyCooldown);
+      _clearCacheTrend();
+      return;
+    }
+
+    final cacheSlope = _recordCacheSample(cache, now);
+    final predictedCache = cacheSlope == null
+        ? cache
+        : cache +
+            cacheSlope *
+                (predictionHorizon.inMicroseconds /
+                    Duration.microsecondsPerSecond);
+    if (cache <= _policy.hardFloorSeconds ||
+        predictedCache <= _policy.hardFloorSeconds ||
+        (cacheSlope != null && cacheSlope < -0.10)) {
+      await _enterSafetyCooldown(now, safetyCooldown);
+      return;
+    }
+
+    final cooldownUntil = _cooldownUntil;
+    if (cooldownUntil != null && now.isBefore(cooldownUntil)) {
+      _catchingUp = false;
+      await _restoreNormalSpeed(now, bypassDwell: true);
+      return;
+    }
+    if (cooldownUntil != null) {
+      _cooldownUntil = null;
+    }
+
+    if (cache <= _policy.stopThresholdSeconds) {
       _catchingUp = false;
       await _restoreNormalSpeed(now, bypassDwell: true);
       return;
     }
 
     final shouldCatchUp = _catchingUp
-        ? cache > _policy.releaseThresholdSeconds
-        : cache >= _policy.catchUpThresholdSeconds;
+        ? cache > _policy.stopThresholdSeconds
+        : cache >= _policy.resumeThresholdSeconds;
     if (shouldCatchUp) {
       _catchingUp = true;
-      final desiredSpeed = _catchUpSpeedFor(cache);
+      final desiredSpeed = _catchUpSpeedFor(cache, cacheSlope: cacheSlope);
       if (_canChangeSpeed(now, desiredSpeed)) {
         await _applySpeed(desiredSpeed, sampledAt: now);
       }
@@ -179,7 +239,7 @@ class MpvLiveLatencyChaseService {
     }
 
     _catchingUp = false;
-    await _restoreNormalSpeed(now);
+    await _restoreNormalSpeed(now, bypassDwell: true);
   }
 
   /// Immediately drops back to the saved baseline after a buffering signal.
@@ -195,6 +255,8 @@ class MpvLiveLatencyChaseService {
   Future<void> reset({DateTime? sampledAt}) {
     return _enqueue(() async {
       _catchingUp = false;
+      _cooldownUntil = null;
+      _clearCacheTrend();
       _lastSpeedChangeAt = null;
       await _restoreBaselineSpeed(
         sampledAt ?? _clock(),
@@ -209,6 +271,8 @@ class MpvLiveLatencyChaseService {
     return _enqueue(() async {
       _enabled = false;
       _catchingUp = false;
+      _cooldownUntil = null;
+      _clearCacheTrend();
       _lastSpeedChangeAt = null;
       _policy = const MpvLiveLatencyChasePolicy.disabled();
       final restored = await _restoreBaselineSpeed(
@@ -230,11 +294,30 @@ class MpvLiveLatencyChaseService {
     return result;
   }
 
-  double _catchUpSpeedFor(double cacheDurationSeconds) {
-    final excess = cacheDurationSeconds - _policy.catchUpThresholdSeconds;
-    final multiplier = (minimumCatchUpSpeed + math.min(0.03, excess * 0.02))
-        .clamp(minimumCatchUpSpeed, maximumCatchUpSpeed)
-        .toDouble();
+  double _catchUpSpeedFor(
+    double cacheDurationSeconds, {
+    required double? cacheSlope,
+  }) {
+    final maxDelta = _policy.maximumCatchUpMultiplier - normalSpeed;
+    double delta;
+    if (cacheDurationSeconds >= 5) {
+      delta = maxDelta;
+    } else if (cacheDurationSeconds >= 3) {
+      delta = math.min(maxDelta, 0.05);
+    } else if (cacheDurationSeconds >= _policy.resumeThresholdSeconds) {
+      delta = math.min(maxDelta, 0.03);
+    } else if (cacheDurationSeconds >= _policy.stopThresholdSeconds + 0.5) {
+      delta = math.min(maxDelta, 0.02);
+    } else {
+      delta = math.min(maxDelta, minimumCatchUpDelta);
+    }
+
+    // A falling cache moves down one speed step before prediction reaches the
+    // hard floor. A steep fall is handled above as an immediate protection.
+    if (cacheSlope != null && cacheSlope < -0.02) {
+      delta = math.max(minimumCatchUpDelta, delta - 0.01);
+    }
+    final multiplier = normalSpeed + delta;
     return _baselineSpeed * multiplier;
   }
 
@@ -242,8 +325,44 @@ class MpvLiveLatencyChaseService {
     if ((desiredSpeed - _currentSpeed).abs() < 0.001) {
       return false;
     }
+    // Reducing catch-up speed is a safety action. Only increases are subject
+    // to the dwell that protects the native player from write churn.
+    if (desiredSpeed < _currentSpeed) {
+      return true;
+    }
     final changedAt = _lastSpeedChangeAt;
     return changedAt == null || now.difference(changedAt) >= minimumDwell;
+  }
+
+  Future<void> _enterSafetyCooldown(DateTime now, Duration duration) async {
+    final proposedUntil = now.add(duration);
+    final currentUntil = _cooldownUntil;
+    if (currentUntil == null || proposedUntil.isAfter(currentUntil)) {
+      _cooldownUntil = proposedUntil;
+    }
+    _catchingUp = false;
+    await _restoreNormalSpeed(now, bypassDwell: true);
+  }
+
+  double? _recordCacheSample(double cacheSeconds, DateTime sampledAt) {
+    double? slope;
+    final previousAt = _previousSampledAt;
+    final previousCache = _previousCacheSeconds;
+    if (previousAt != null && previousCache != null) {
+      final elapsedMicros = sampledAt.difference(previousAt).inMicroseconds;
+      if (elapsedMicros > 0) {
+        slope = (cacheSeconds - previousCache) /
+            (elapsedMicros / Duration.microsecondsPerSecond);
+      }
+    }
+    _previousSampledAt = sampledAt;
+    _previousCacheSeconds = cacheSeconds;
+    return slope;
+  }
+
+  void _clearCacheTrend() {
+    _previousSampledAt = null;
+    _previousCacheSeconds = null;
   }
 
   Future<bool> _restoreNormalSpeed(
