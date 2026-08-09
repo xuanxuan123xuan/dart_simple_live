@@ -1,7 +1,7 @@
 {
   "name": "Simple Live",
   "identifier": "com.simplelive.source.stable",
-  "sourceURL": "https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/stable/ipa-source/apps-stable.json",
+  "sourceURL": "https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/ipa-source/apps-stable.json",
   "apps": [
     {
       "name": "Simple Live",
@@ -12,7 +12,7 @@
       "versionDescription": "稳定版（正式分支构建发布）",
       "downloadURL": "https://github.com/xuanxuan123xuan/dart_simple_live/releases/download/ios-stable/simple-live.ipa",
       "localizedDescription": "多平台直播聚合：虎牙/斗鱼/抖音/快手/B站（稳定版）",
-      "iconURL": "https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/stable/ipa-source/icon.png",
+      "iconURL": "https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/ipa-source/icon.png",
       "tintColor": "#4CAF50",
       "size": 0,
       "minOSVersion": "15.0"
