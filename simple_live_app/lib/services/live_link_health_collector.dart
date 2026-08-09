@@ -1,8 +1,38 @@
 import 'live_link_health_models.dart';
 import 'live_link_health_tracker.dart';
 
-String canonicalizeLivePlaybackSource(String source) =>
-    Uri.tryParse(source)?.toString() ?? source;
+/// Returns the minimum stable identity needed by generation gates.
+///
+/// Paths, user info, queries, fragments, and signed tokens are deliberately
+/// discarded so the health layer never retains a complete playback URL.
+String canonicalizeLivePlaybackSource(String source) {
+  final uri = Uri.tryParse(source.trim());
+  if (uri == null || uri.scheme.isEmpty || uri.host.isEmpty) {
+    return '';
+  }
+  final scheme = uri.scheme.toLowerCase();
+  final host = uri.host.toLowerCase();
+  final authorityHost = host.contains(':') ? '[$host]' : host;
+  final port = uri.hasPort ? ':${uri.port}' : '';
+  return '$scheme://$authorityHost$port';
+}
+
+/// Compares only normalized URL hosts. No URL, path, query, or signature is
+/// retained in the returned reconnect observation.
+bool? didLivePlaybackHostChange(String? previousSource, String? nextSource) {
+  final previousHost = _normalizedLivePlaybackHost(previousSource);
+  final nextHost = _normalizedLivePlaybackHost(nextSource);
+  if (previousHost == null || nextHost == null) {
+    return null;
+  }
+  return previousHost != nextHost;
+}
+
+String? _normalizedLivePlaybackHost(String? source) {
+  final uri = source == null ? null : Uri.tryParse(source.trim());
+  final host = uri?.host.trim().toLowerCase();
+  return host == null || host.isEmpty ? null : host;
+}
 
 /// Shadow-only coordinator for one live playback generation.
 ///
@@ -98,6 +128,8 @@ String formatLiveLinkHealthShadow({
       'throughput=${_formatMetric(metrics.throughputRatio)} '
       'underruns60s=${_formatOptionalValue(metrics.audioUnderrunCount)} '
       'reconnects60s=${_formatOptionalValue(metrics.automaticReconnectCount)} '
+      'reconnectHostChanged=${_formatOptionalValue(metrics.latestAutomaticReconnectHostChanged)} '
+      'reconnectRecovery=${_formatOptionalDuration(metrics.latestAutomaticReconnectRecoveryDuration)} '
       'buffering=${sample.buffering} '
       'progress=${_formatMetric(metrics.normalizedProgressRatio)}';
 }
@@ -107,3 +139,6 @@ String _formatMetric(double? value, {String suffix = ''}) {
 }
 
 String _formatOptionalValue(Object? value) => value?.toString() ?? 'unknown';
+
+String _formatOptionalDuration(Duration? value) =>
+    value == null ? 'unknown' : '${value.inMilliseconds}ms';

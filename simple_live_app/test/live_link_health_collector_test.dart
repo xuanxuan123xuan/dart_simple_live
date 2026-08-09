@@ -151,17 +151,20 @@ void main() {
     );
     expect(
       playerController,
-      contains('automaticReconnectEvents: true'),
+      contains('automaticReconnectEvents: !Utils.isOhos'),
     );
   });
 
-  test('live playback source uses Uri canonical representation', () {
-    const source = 'https://example.com/live%20room?token=a%2Fb';
+  test('live playback identity retains only normalized scheme host and port',
+      () {
+    const source =
+        'HTTPS://User:pass@Example.COM:8443/live%20room?token=a%2Fb#secret';
 
-    expect(
-      canonicalizeLivePlaybackSource(source),
-      Uri.tryParse(source)!.toString(),
-    );
+    final identity = canonicalizeLivePlaybackSource(source);
+    expect(identity, 'https://example.com:8443');
+    expect(identity, isNot(contains('live')));
+    expect(identity, isNot(contains('token')));
+    expect(identity, isNot(contains('User')));
     expect(canonicalizeLivePlaybackSource(''), isEmpty);
 
     final playerController = File(
@@ -179,6 +182,24 @@ void main() {
         'final currentSource = canonicalizeLivePlaybackSource(',
       ),
     );
+  });
+
+  test('reconnect host comparison ignores URL paths queries and signatures', () {
+    expect(
+      didLivePlaybackHostChange(
+        'https://CDN.example/live/old.flv?token=secret-a',
+        'https://cdn.example/live/new.flv?token=secret-b',
+      ),
+      isFalse,
+    );
+    expect(
+      didLivePlaybackHostChange(
+        'https://edge-a.example/live.flv?token=secret-a',
+        'https://edge-b.example/live.flv?token=secret-b',
+      ),
+      isTrue,
+    );
+    expect(didLivePlaybackHostChange('not a URL', null), isNull);
   });
 
   test('playlist reset rechecks the playback request before opening', () {
@@ -201,5 +222,54 @@ void main() {
     expect(resetIndex, greaterThanOrEqualTo(0));
     expect(requestCheckIndex, greaterThan(resetIndex));
     expect(requestCheckIndex, lessThan(firstOpenIndex));
+  });
+
+  test('single-room reconnect metadata is recorded only after current reopen',
+      () {
+    final controller = File(
+      'lib/modules/live_room/live_room_controller.dart',
+    ).readAsStringSync();
+    final start = controller.indexOf('Future<bool> setPlayer({');
+    final end = controller.indexOf(
+      'bool get _shouldRefreshUrlsOnPlaybackRetry',
+      start,
+    );
+    final method = controller.substring(start, end);
+    final reconnectEvent = method.indexOf('LiveLinkEventType.cdnReconnect');
+    final currentRequestCheck = method.lastIndexOf(
+      '_isCurrentPlaybackRequest(requestRevision, loadGeneration)',
+      reconnectEvent,
+    );
+
+    expect(currentRequestCheck, greaterThanOrEqualTo(0));
+    expect(reconnectEvent, greaterThan(currentRequestCheck));
+    expect(method, contains('recordedReason != null && !Utils.isOhos'));
+    expect(method, contains('reconnectHostChanged:'));
+    expect(method, contains('reconnectRecoveryDuration:'));
+  });
+
+  test('default decoder reopen records health only after a current open', () {
+    final controller = File(
+      'lib/modules/live_room/player/player_controller.dart',
+    ).readAsStringSync();
+    final start = controller.indexOf(
+      'Future<void> _handleStreamError(String error)',
+    );
+    final end = controller.indexOf(
+      'Future<void> _handleInvalidVideoSize()',
+      start,
+    );
+    final method = controller.substring(start, end);
+    final playerOpen = method.indexOf('await player.open(currentMedia);');
+    final reset = method.indexOf('await resetLiveLatencyChase();');
+    final reconnectEvent = method.indexOf('LiveLinkEventType.cdnReconnect');
+
+    expect(method, contains('_streamErrorRecoveryInFlight'));
+    expect(playerOpen, greaterThanOrEqualTo(0));
+    expect(reset, greaterThan(playerOpen));
+    expect(reconnectEvent, greaterThan(reset));
+    expect(method, contains('recoveryGeneration != _livePlaybackGeneration'));
+    expect(method, contains('reconnectHostChanged:'));
+    expect(method, contains('reconnectRecoveryDuration:'));
   });
 }

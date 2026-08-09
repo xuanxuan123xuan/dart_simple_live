@@ -38,6 +38,8 @@ import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
+import 'package:simple_live_app/services/live_link_health_collector.dart'
+    show didLivePlaybackHostChange;
 import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_network_service.dart';
@@ -733,7 +735,12 @@ class LiveRoomController extends PlayerController
         currentQuality += 1;
         currentQualityInfo.value = qualites[currentQuality].quality;
         SmartDialog.showToast("网络波动，已自动降低清晰度");
-        unawaited(getPlayUrl());
+        unawaited(
+          getPlayUrl(
+            automaticReconnectReason:
+                LiveReconnectReason.playbackUrlRefresh,
+          ),
+        );
       }
     });
   }
@@ -812,6 +819,8 @@ class LiveRoomController extends PlayerController
 
   Future<void> _recoverKuaishouPlaybackAfterBuffering() async {
     final recoverySessionRevision = _kuaishouRecoverySessionRevision;
+    final previousSource = _selectedPlaybackSource;
+    final reconnectStartedAt = DateTime.now();
     try {
       await _runKuaishouRecoverySingleFlight(() async {
         final loadGeneration = _loadGeneration;
@@ -827,10 +836,19 @@ class LiveRoomController extends PlayerController
         await initPlaylist(requestRevision: requestRevision);
         if (recoverySessionRevision == _kuaishouRecoverySessionRevision &&
             _isCurrentPlaybackRequest(requestRevision, loadGeneration) &&
-            _hasActivePlaybackSession) {
+            _hasActivePlaybackSession &&
+            !Utils.isOhos) {
+          final completedAt = DateTime.now();
           recordLiveLinkHealthEvent(
             LiveLinkEventType.cdnReconnect,
+            at: completedAt,
             reconnectReason: LiveReconnectReason.sustainedBuffering,
+            reconnectHostChanged: didLivePlaybackHostChange(
+              previousSource,
+              _selectedPlaybackSource,
+            ),
+            reconnectRecoveryDuration:
+                completedAt.difference(reconnectStartedAt),
           );
         }
       });
@@ -2564,7 +2582,19 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  Future<void> getPlayUrl({bool userInitiatedQualityChange = false}) async {
+  String? get _selectedPlaybackSource =>
+      currentLineIndex >= 0 && currentLineIndex < playUrls.length
+          ? playUrls[currentLineIndex]
+          : null;
+
+  Future<void> getPlayUrl({
+    bool userInitiatedQualityChange = false,
+    LiveReconnectReason? automaticReconnectReason,
+  }) async {
+    final previousSource = _selectedPlaybackSource;
+    final reconnectStartedAt = automaticReconnectReason == null
+        ? null
+        : DateTime.now();
     final requestRevision = ++_playbackRequestRevision;
     final loadGeneration = _loadGeneration;
     playUrls.clear();
@@ -2592,6 +2622,23 @@ class LiveRoomController extends PlayerController
       if (userInitiatedQualityChange && _hasActivePlaybackSession) {
         recordLiveLinkHealthEvent(LiveLinkEventType.qualityChangedByUser);
       }
+      if (!Utils.isOhos &&
+          automaticReconnectReason != null &&
+          reconnectStartedAt != null) {
+        final completedAt = DateTime.now();
+        recordLiveLinkHealthEvent(
+          LiveLinkEventType.cdnReconnect,
+          at: completedAt,
+          reconnectReason: automaticReconnectReason,
+          reconnectHostChanged: didLivePlaybackHostChange(
+            previousSource,
+            _selectedPlaybackSource,
+          ),
+          reconnectRecoveryDuration: completedAt.difference(
+            reconnectStartedAt,
+          ),
+        );
+      }
       _scheduleAutoSelectFastestLine(
         requestRevision: requestRevision,
         loadGeneration: loadGeneration,
@@ -2605,6 +2652,12 @@ class LiveRoomController extends PlayerController
     LiveReconnectReason? reconnectReason,
   }) async {
     final loadGeneration = _loadGeneration;
+    final reconnectHostChanged = reconnectReason == null
+        ? null
+        : didLivePlaybackHostChange(
+            _selectedPlaybackSource,
+            index >= 0 && index < playUrls.length ? playUrls[index] : null,
+          );
     if (persist) {
       _manualLineSelectionRevision += 1;
     }
@@ -2614,7 +2667,10 @@ class LiveRoomController extends PlayerController
     }
     // 切线时同样重置重试次数
     mediaErrorRetryCount = 0;
-    final reopened = await setPlayer(reconnectReason: reconnectReason);
+    final reopened = await setPlayer(
+      reconnectReason: reconnectReason,
+      reconnectHostChanged: reconnectHostChanged,
+    );
     if (!reopened || !_isCurrentLoad(loadGeneration)) {
       return;
     }
@@ -2917,7 +2973,12 @@ class LiveRoomController extends PlayerController
     bool refreshUrls = false,
     bool rotateOhosLine = false,
     LiveReconnectReason? reconnectReason,
+    bool? reconnectHostChanged,
   }) async {
+    final previousSource = _selectedPlaybackSource;
+    final reconnectStartedAt = reconnectReason == null && !refreshUrls
+        ? null
+        : DateTime.now();
     final requestRevision = ++_playbackRequestRevision;
     final loadGeneration = _loadGeneration;
     var playbackUrlRefreshed = false;
@@ -2964,10 +3025,20 @@ class LiveRoomController extends PlayerController
           (playbackUrlRefreshed
               ? LiveReconnectReason.playbackUrlRefresh
               : null);
-      if (recordedReason != null) {
+      if (recordedReason != null && !Utils.isOhos) {
+        final completedAt = DateTime.now();
         recordLiveLinkHealthEvent(
           LiveLinkEventType.cdnReconnect,
+          at: completedAt,
           reconnectReason: recordedReason,
+          reconnectHostChanged: reconnectHostChanged ??
+              didLivePlaybackHostChange(
+                previousSource,
+                _selectedPlaybackSource,
+              ),
+          reconnectRecoveryDuration: reconnectStartedAt == null
+              ? null
+              : completedAt.difference(reconnectStartedAt),
         );
       }
       return true;
@@ -4605,13 +4676,19 @@ ${errorStackTrace ?? ""}''');
           // 命中就走 setPlayer(refreshUrls) 重连，避免 play() 造成假播放。
           if (_ohosPlaybackLooksStalled(controller)) {
             Log.d("$reason 后鸿蒙播放器疑似断流，重新加载");
-            await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+            await setPlayer(
+              refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
+              reconnectReason: LiveReconnectReason.playbackUrlRefresh,
+            );
             return;
           }
           return;
         }
       }
-      await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+      await setPlayer(
+        refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
+        reconnectReason: LiveReconnectReason.playbackUrlRefresh,
+      );
       return;
     }
     if (since == null ||
@@ -4638,7 +4715,10 @@ ${errorStackTrace ?? ""}''');
       return;
     }
     Log.d("$reason 后检测到播放停滞，尝试恢复");
-    await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+    await setPlayer(
+      refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
+      reconnectReason: LiveReconnectReason.playbackUrlRefresh,
+    );
   }
 
   /// 返回前台时判定鸿蒙 AVPlayer 是否已断流：出错或长时间无进度推进。

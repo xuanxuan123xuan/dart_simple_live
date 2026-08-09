@@ -41,12 +41,16 @@ LiveLinkHealthEvent _event(
   required int millisecond,
   int generation = 1,
   LiveReconnectReason? reconnectReason,
+  bool? reconnectHostChanged,
+  Duration? reconnectRecoveryDuration,
 }) {
   return LiveLinkHealthEvent(
     generation: generation,
     occurredAt: _base.add(Duration(milliseconds: millisecond)),
     type: type,
     reconnectReason: reconnectReason,
+    reconnectHostChanged: reconnectHostChanged,
+    reconnectRecoveryDuration: reconnectRecoveryDuration,
   );
 }
 
@@ -154,6 +158,8 @@ void main() {
     expect(snapshot.metrics.noDataDuration, isNull);
     expect(snapshot.metrics.audioUnderrunCount, isNull);
     expect(snapshot.metrics.automaticReconnectCount, isNull);
+    expect(snapshot.metrics.latestAutomaticReconnectHostChanged, isNull);
+    expect(snapshot.metrics.latestAutomaticReconnectRecoveryDuration, isNull);
   });
 
   test('each fault domain takes its maximum penalty without double counting',
@@ -183,6 +189,8 @@ void main() {
         LiveLinkEventType.cdnReconnect,
         millisecond: 9000,
         reconnectReason: LiveReconnectReason.playbackUrlRefresh,
+        reconnectHostChanged: true,
+        reconnectRecoveryDuration: const Duration(milliseconds: 1450),
       ),
     ];
 
@@ -202,6 +210,11 @@ void main() {
     expect(snapshot.metrics.penalties.buffer, 25);
     expect(snapshot.metrics.penalties.continuity, 30);
     expect(snapshot.metrics.penalties.recovery, 10);
+    expect(snapshot.metrics.latestAutomaticReconnectHostChanged, isTrue);
+    expect(
+      snapshot.metrics.latestAutomaticReconnectRecoveryDuration,
+      const Duration(milliseconds: 1450),
+    );
     expect(snapshot.metrics.penalties.total, 100);
     expect(snapshot.score, 0);
   });

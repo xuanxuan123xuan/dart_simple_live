@@ -17,7 +17,7 @@ import 'package:simple_live_app/modules/multi_room/player_mutation_queue.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart'
     as health_telemetry;
 import 'package:simple_live_app/services/live_link_health_collector.dart'
-    show canonicalizeLivePlaybackSource;
+    show canonicalizeLivePlaybackSource, didLivePlaybackHostChange;
 import 'package:simple_live_app/services/live_link_health_media_kit_adapter.dart';
 import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
@@ -704,10 +704,15 @@ class MultiRoomPlayerController extends GetxController {
     LiveReconnectReason? automaticReconnectReason,
   }) async {
     if (_disposed || _routeTransitionClosed || _playUrls.isEmpty) return;
+    final previousSource = _liveLinkHealth.current?.source;
+    final reconnectStartedAt = automaticReconnectReason == null
+        ? null
+        : DateTime.now();
     var url = _playUrls[_lineIndex];
     if (AppSettingsController.instance.playerForceHttps.value) {
       url = url.replaceAll("http://", "https://");
     }
+    final healthOpenAttempt = _liveLinkHealth.prepareSource(source: url);
     final protocol = classifyLiveStreamProtocol(url);
     await MpvOptionsService.applyLiveLatencyOptions(player, protocol);
     await _liveLatencyChaser.start(
@@ -716,19 +721,36 @@ class MultiRoomPlayerController extends GetxController {
     );
     if (_disposed || _routeTransitionClosed) return;
     _playbackDesired = true;
-    _lastOpenedAt = DateTime.now();
-    _liveLinkHealth.beginSource(
-      target: '${item.site.id}/${item.roomId}',
-      source: url,
-      openedAt: _lastOpenedAt,
-      userOperation: userOperation,
-      automaticReconnectReason: automaticReconnectReason,
-    );
     await player.open(
       Media(url, httpHeaders: _playHeaders),
       play: !paused.value,
     );
-    if (_disposed) return;
+    if (_disposed || _routeTransitionClosed) return;
+    final completedAt = DateTime.now();
+    final healthGeneration = _liveLinkHealth.beginSource(
+      target: '${item.site.id}/${item.roomId}',
+      openAttempt: healthOpenAttempt,
+      openedAt: completedAt,
+      userOperation: userOperation,
+    );
+    if (healthGeneration == null) return;
+    _lastOpenedAt = completedAt;
+    if (automaticReconnectReason != null &&
+        reconnectStartedAt != null &&
+        _isCurrentHealthGeneration(healthGeneration)) {
+      _liveLinkHealth.recordEvent(
+        LiveLinkEventType.cdnReconnect,
+        at: completedAt,
+        reconnectReason: automaticReconnectReason,
+        reconnectHostChanged: didLivePlaybackHostChange(
+          previousSource,
+          url,
+        ),
+        reconnectRecoveryDuration:
+            completedAt.difference(reconnectStartedAt),
+        expectedGeneration: healthGeneration,
+      );
+    }
     await player.setVolume(muted.value ? 0 : volume.value);
     if (paused.value) {
       await player.pause();

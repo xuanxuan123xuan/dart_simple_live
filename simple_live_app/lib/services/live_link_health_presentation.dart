@@ -11,6 +11,8 @@ enum LiveLinkHealthPresentationMetric {
   audioUnderruns,
   buffering,
   reconnects,
+  reconnectHostChange,
+  reconnectRecovery,
   progress,
 }
 
@@ -101,6 +103,18 @@ LiveLinkHealthPresentation presentLiveLinkHealthSnapshot(
         label: '自动重连（最近60秒）',
         count: metrics.automaticReconnectCount,
       ),
+      _optionalBoolRow(
+        metric: LiveLinkHealthPresentationMetric.reconnectHostChange,
+        label: '最近重连更换 host',
+        value: metrics.latestAutomaticReconnectHostChanged,
+        trueLabel: '是',
+        falseLabel: '否',
+      ),
+      _optionalDurationRow(
+        metric: LiveLinkHealthPresentationMetric.reconnectRecovery,
+        label: '最近重连恢复耗时',
+        duration: metrics.latestAutomaticReconnectRecoveryDuration,
+      ),
       _optionalMetricRow(
         metric: LiveLinkHealthPresentationMetric.progress,
         label: '播放推进',
@@ -174,6 +188,25 @@ LiveLinkHealthPresentationRow _optionalDurationRow({
     label: label,
     value: _formatDuration(duration),
     supported: true,
+  );
+}
+
+LiveLinkHealthPresentationRow _optionalBoolRow({
+  required LiveLinkHealthPresentationMetric metric,
+  required String label,
+  required bool? value,
+  required String trueLabel,
+  required String falseLabel,
+}) {
+  return LiveLinkHealthPresentationRow(
+    metric: metric,
+    label: label,
+    value: value == null
+        ? liveLinkHealthDataUnavailableLabel
+        : value
+            ? trueLabel
+            : falseLabel,
+    supported: value != null,
   );
 }
 

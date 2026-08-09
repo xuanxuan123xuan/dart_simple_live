@@ -3,12 +3,22 @@ import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/live_link_health_tracker.dart';
 
 class MultiRoomLiveLinkHealthGeneration {
-  const MultiRoomLiveLinkHealthGeneration({
+  const MultiRoomLiveLinkHealthGeneration._({
     required this.generation,
     required this.source,
   });
 
   final int generation;
+  final String source;
+}
+
+class MultiRoomLiveLinkHealthOpenAttempt {
+  const MultiRoomLiveLinkHealthOpenAttempt._({
+    required this.revision,
+    required this.source,
+  });
+
+  final int revision;
   final String source;
 }
 
@@ -32,6 +42,7 @@ class MultiRoomLiveLinkHealthCoordinator {
 
   final LiveLinkHealthShadowCollector _collector;
   int _generation = 0;
+  int _openRevision = 0;
   MultiRoomLiveLinkHealthGeneration? _current;
   bool? _buffering;
 
@@ -40,18 +51,28 @@ class MultiRoomLiveLinkHealthCoordinator {
   LiveLinkHealthSnapshot? snapshot({DateTime? at}) =>
       _collector.snapshot(at: at);
 
-  MultiRoomLiveLinkHealthGeneration beginSource({
-    required String target,
+  MultiRoomLiveLinkHealthOpenAttempt prepareSource({
     required String source,
+  }) {
+    return MultiRoomLiveLinkHealthOpenAttempt._(
+      revision: ++_openRevision,
+      source: canonicalizeLivePlaybackSource(source),
+    );
+  }
+
+  MultiRoomLiveLinkHealthGeneration? beginSource({
+    required String target,
+    required MultiRoomLiveLinkHealthOpenAttempt openAttempt,
     DateTime? openedAt,
     LiveLinkEventType? userOperation,
-    LiveReconnectReason? automaticReconnectReason,
   }) {
-    final canonicalSource = canonicalizeLivePlaybackSource(source);
+    if (openAttempt.revision != _openRevision || openAttempt.source.isEmpty) {
+      return null;
+    }
     final generation = ++_generation;
-    final token = MultiRoomLiveLinkHealthGeneration(
+    final token = MultiRoomLiveLinkHealthGeneration._(
       generation: generation,
-      source: canonicalSource,
+      source: openAttempt.source,
     );
     _current = token;
     _buffering = null;
@@ -63,13 +84,6 @@ class MultiRoomLiveLinkHealthCoordinator {
     );
     if (userOperation != null) {
       recordEvent(userOperation, at: at);
-    }
-    if (automaticReconnectReason != null) {
-      recordEvent(
-        LiveLinkEventType.cdnReconnect,
-        at: at,
-        reconnectReason: automaticReconnectReason,
-      );
     }
     recordEvent(LiveLinkEventType.streamOpened, at: at);
     return token;
@@ -93,9 +107,17 @@ class MultiRoomLiveLinkHealthCoordinator {
     LiveLinkEventType type, {
     DateTime? at,
     LiveReconnectReason? reconnectReason,
+    bool? reconnectHostChanged,
+    Duration? reconnectRecoveryDuration,
+    MultiRoomLiveLinkHealthGeneration? expectedGeneration,
   }) {
     final current = _current;
     if (current == null) return false;
+    if (expectedGeneration != null &&
+        (current.generation != expectedGeneration.generation ||
+            current.source != expectedGeneration.source)) {
+      return false;
+    }
     final occurredAt = at ?? DateTime.now();
     if (type == LiveLinkEventType.playbackPausedByUser ||
         type == LiveLinkEventType.appBackgrounded) {
@@ -109,6 +131,8 @@ class MultiRoomLiveLinkHealthCoordinator {
         occurredAt: occurredAt,
         type: type,
         reconnectReason: reconnectReason,
+        reconnectHostChanged: reconnectHostChanged,
+        reconnectRecoveryDuration: reconnectRecoveryDuration,
       ),
     );
   }
@@ -127,6 +151,7 @@ class MultiRoomLiveLinkHealthCoordinator {
   }
 
   void stop() {
+    _openRevision += 1;
     _generation += 1;
     _current = null;
     _buffering = null;

@@ -84,20 +84,29 @@ class LiveLinkHealthSample {
 }
 
 class LiveLinkHealthEvent {
-  const LiveLinkHealthEvent({
+  LiveLinkHealthEvent({
     required this.generation,
     required this.occurredAt,
     required this.type,
     this.reconnectReason,
+    this.reconnectHostChanged,
+    this.reconnectRecoveryDuration,
   }) : assert(
           type != LiveLinkEventType.cdnReconnect || reconnectReason != null,
           'cdnReconnect events require a structured reconnect reason',
+        ),
+        assert(
+          reconnectRecoveryDuration == null ||
+              !reconnectRecoveryDuration.isNegative,
+          'reconnect recovery duration cannot be negative',
         );
 
   final int generation;
   final DateTime occurredAt;
   final LiveLinkEventType type;
   final LiveReconnectReason? reconnectReason;
+  final bool? reconnectHostChanged;
+  final Duration? reconnectRecoveryDuration;
 }
 
 class LiveLinkHealthPenalties {
@@ -135,6 +144,8 @@ class LiveLinkHealthMetrics {
     required this.longestProgressStall,
     required this.playbackEndpointReachable,
     required this.penalties,
+    this.latestAutomaticReconnectHostChanged,
+    this.latestAutomaticReconnectRecoveryDuration,
   });
 
   final Duration eligibleWindow;
@@ -150,6 +161,8 @@ class LiveLinkHealthMetrics {
   final Duration longestBuffering;
   final int? automaticReconnectCount;
   final List<LiveReconnectReason> automaticReconnectReasons;
+  final bool? latestAutomaticReconnectHostChanged;
+  final Duration? latestAutomaticReconnectRecoveryDuration;
   final double? normalizedProgressRatio;
   final Duration longestProgressStall;
   final bool? playbackEndpointReachable;

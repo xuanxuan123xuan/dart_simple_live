@@ -17,6 +17,8 @@ void main() {
         bufferingCount: 3,
         bufferingDuration: const Duration(milliseconds: 2800),
         reconnects: 1,
+        reconnectHostChanged: true,
+        reconnectRecoveryDuration: const Duration(milliseconds: 1250),
         progress: 0.93,
       ),
       currentBuffering: true,
@@ -25,7 +27,7 @@ void main() {
     expect(presentation.levelLabel, '较差');
     expect(presentation.scoreLabel, '42/100');
     expect(presentation.primaryCauseLabel, '播放器追帧正在消耗缓存');
-    expect(presentation.rows, hasLength(9));
+    expect(presentation.rows, hasLength(11));
     expect(
       presentation.rows.map((row) => row.metric),
       const [
@@ -37,6 +39,8 @@ void main() {
         LiveLinkHealthPresentationMetric.audioUnderruns,
         LiveLinkHealthPresentationMetric.buffering,
         LiveLinkHealthPresentationMetric.reconnects,
+        LiveLinkHealthPresentationMetric.reconnectHostChange,
+        LiveLinkHealthPresentationMetric.reconnectRecovery,
         LiveLinkHealthPresentationMetric.progress,
       ],
     );
@@ -77,6 +81,20 @@ void main() {
       '1 次',
     );
     expect(
+      _row(
+        presentation,
+        LiveLinkHealthPresentationMetric.reconnectHostChange,
+      ).value,
+      '是',
+    );
+    expect(
+      _row(
+        presentation,
+        LiveLinkHealthPresentationMetric.reconnectRecovery,
+      ).value,
+      '1.3 秒',
+    );
+    expect(
       _row(presentation, LiveLinkHealthPresentationMetric.progress).value,
       '93%',
     );
@@ -112,6 +130,8 @@ void main() {
       LiveLinkHealthPresentationMetric.noDataDuration,
       LiveLinkHealthPresentationMetric.audioUnderruns,
       LiveLinkHealthPresentationMetric.reconnects,
+      LiveLinkHealthPresentationMetric.reconnectHostChange,
+      LiveLinkHealthPresentationMetric.reconnectRecovery,
       LiveLinkHealthPresentationMetric.progress,
     ]) {
       final row = _row(presentation, metric);
@@ -170,6 +190,8 @@ LiveLinkHealthSnapshot _snapshot({
   required int bufferingCount,
   required Duration bufferingDuration,
   required int? reconnects,
+  bool? reconnectHostChanged,
+  Duration? reconnectRecoveryDuration,
   required double? progress,
 }) {
   return LiveLinkHealthSnapshot(
@@ -192,6 +214,8 @@ LiveLinkHealthSnapshot _snapshot({
       longestBuffering: bufferingDuration,
       automaticReconnectCount: reconnects,
       automaticReconnectReasons: const [],
+      latestAutomaticReconnectHostChanged: reconnectHostChanged,
+      latestAutomaticReconnectRecoveryDuration: reconnectRecoveryDuration,
       normalizedProgressRatio: progress,
       longestProgressStall: Duration.zero,
       playbackEndpointReachable: null,

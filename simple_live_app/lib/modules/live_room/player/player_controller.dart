@@ -115,7 +115,10 @@ mixin PlayerMixin {
     tracker: LiveLinkHealthTracker(
       capabilities: LiveLinkHealthCapabilities(
         audioUnderrunEvents: !Utils.isOhos,
-        automaticReconnectEvents: true,
+        // OHOS currently exposes only a widget rebuild request here, not a
+        // reliable async playback-success callback. Report the metric as
+        // unsupported instead of presenting a misleading zero reconnects.
+        automaticReconnectEvents: !Utils.isOhos,
       ),
     ),
   );
@@ -196,7 +199,7 @@ mixin PlayerMixin {
     if (!Utils.isOhos) {
       await _liveLatencyChaser.start(
         latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
-        protocol: classifyLiveStreamProtocol(canonicalSource),
+        protocol: classifyLiveStreamProtocol(source),
         startedAt: now,
       );
     }
@@ -351,6 +354,8 @@ mixin PlayerMixin {
     LiveLinkEventType type, {
     DateTime? at,
     LiveReconnectReason? reconnectReason,
+    bool? reconnectHostChanged,
+    Duration? reconnectRecoveryDuration,
   }) {
     _liveLinkHealthCollector.addEvent(
       LiveLinkHealthEvent(
@@ -358,6 +363,8 @@ mixin PlayerMixin {
         occurredAt: at ?? DateTime.now(),
         type: type,
         reconnectReason: reconnectReason,
+        reconnectHostChanged: reconnectHostChanged,
+        reconnectRecoveryDuration: reconnectRecoveryDuration,
       ),
     );
   }
@@ -2069,6 +2076,7 @@ class PlayerController extends BaseController
   // Fix Issue #57: 流错误重试计数器
   int _streamErrorRetryCount = 0;
   DateTime? _lastStreamErrorTime;
+  bool _streamErrorRecoveryInFlight = false;
   Timer? _surfaceHealthCheckTimer;
 
   /// 自动网络诊断提示（达到 tracker 阈值的独立缓冲开始时触发，
@@ -2356,8 +2364,10 @@ class PlayerController extends BaseController
     final now = DateTime.now();
 
     // 防止短时间内重复触发
-    if (_lastStreamErrorTime != null &&
-        now.difference(_lastStreamErrorTime!) < const Duration(seconds: 2)) {
+    if (_streamErrorRecoveryInFlight ||
+        (_lastStreamErrorTime != null &&
+            now.difference(_lastStreamErrorTime!) <
+                const Duration(seconds: 2))) {
       return;
     }
     _lastStreamErrorTime = now;
@@ -2374,32 +2384,69 @@ class PlayerController extends BaseController
       false,
     );
 
-    // 等待1秒后重新打开当前流
-    await Future.delayed(const Duration(seconds: 1));
-
+    _streamErrorRecoveryInFlight = true;
+    final expectedGeneration = _livePlaybackGeneration;
+    final previousSourceIdentity = _livePlaybackSource;
+    final reconnectStartedAt = now;
     try {
-      final currentMedia = player.state.playlist.medias.isNotEmpty
-          ? player.state.playlist.medias[player.state.playlist.index]
+      // 等待1秒后重新打开当前流
+      await Future.delayed(const Duration(seconds: 1));
+      if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
+        return;
+      }
+      final playlist = player.state.playlist;
+      final currentMedia = playlist.medias.isNotEmpty &&
+              playlist.index >= 0 &&
+              playlist.index < playlist.medias.length
+          ? playlist.medias[playlist.index]
           : null;
 
       if (currentMedia != null && !_playerClosing) {
+        final source = currentMedia.uri.toString();
+        final sourceIdentity = canonicalizeLivePlaybackSource(source);
+        if (sourceIdentity.isEmpty ||
+            (previousSourceIdentity != null &&
+                sourceIdentity != previousSourceIdentity)) {
+          return;
+        }
         Log.i("正在重启解码器...");
         await player.pause();
         await Future.delayed(const Duration(milliseconds: 200));
+        if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
+          return;
+        }
+        await player.open(currentMedia);
+        if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
+          return;
+        }
         await resetLiveLatencyChase();
+        final recoveryGeneration = _livePlaybackGeneration;
+        await startLivePlaybackLightweightSampling(source: source);
+        if (_playerClosing ||
+            recoveryGeneration != _livePlaybackGeneration ||
+            sourceIdentity != _livePlaybackSource) {
+          return;
+        }
+        final completedAt = DateTime.now();
         recordLiveLinkHealthEvent(
           LiveLinkEventType.cdnReconnect,
+          at: completedAt,
           reconnectReason: LiveReconnectReason.mediaError,
+          reconnectHostChanged: didLivePlaybackHostChange(
+            previousSourceIdentity,
+            sourceIdentity,
+          ),
+          reconnectRecoveryDuration:
+              completedAt.difference(reconnectStartedAt),
         );
-        await player.open(currentMedia);
-        final source = currentMedia.uri.toString();
-        if (source.isNotEmpty) {
-          await startLivePlaybackLightweightSampling(source: source);
-        }
       }
     } catch (e, stackTrace) {
       Log.e("重启解码器失败: $e", stackTrace);
-      mediaError(error);
+      if (!_playerClosing && expectedGeneration == _livePlaybackGeneration) {
+        mediaError(error);
+      }
+    } finally {
+      _streamErrorRecoveryInFlight = false;
     }
   }
 

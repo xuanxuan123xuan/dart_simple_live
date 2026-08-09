@@ -64,19 +64,28 @@ class LiveLinkHealthEvaluator {
         .where((event) => event.type == LiveLinkEventType.bufferingStarted)
         .length;
     final buffering = _bufferingMetrics(longSamples);
-    final automaticReconnectCount = input.capabilities.automaticReconnectEvents
+    final automaticReconnectEvents = input.capabilities.automaticReconnectEvents
         ? events
             .where((event) => event.type == LiveLinkEventType.cdnReconnect)
-            .length
+            .toList(growable: false)
+        : const <LiveLinkHealthEvent>[];
+    final automaticReconnectCount = input.capabilities.automaticReconnectEvents
+        ? automaticReconnectEvents.length
         : null;
     final automaticReconnectReasons =
         input.capabilities.automaticReconnectEvents
-            ? events
-                .where((event) => event.type == LiveLinkEventType.cdnReconnect)
+            ? automaticReconnectEvents
                 .map((event) => event.reconnectReason)
                 .whereType<LiveReconnectReason>()
                 .toList(growable: false)
             : const <LiveReconnectReason>[];
+    final latestAutomaticReconnect = automaticReconnectEvents.isEmpty
+        ? null
+        : automaticReconnectEvents.reduce(
+            (latest, event) => event.occurredAt.isAfter(latest.occurredAt)
+                ? event
+                : latest,
+          );
     final progress = _progressMetrics(shortSamples);
 
     final intakeAvailable = longSamples.any(
@@ -161,6 +170,10 @@ class LiveLinkHealthEvaluator {
       longestBuffering: buffering.longest,
       automaticReconnectCount: automaticReconnectCount,
       automaticReconnectReasons: automaticReconnectReasons,
+      latestAutomaticReconnectHostChanged:
+          latestAutomaticReconnect?.reconnectHostChanged,
+      latestAutomaticReconnectRecoveryDuration:
+          latestAutomaticReconnect?.reconnectRecoveryDuration,
       normalizedProgressRatio: progress.normalizedRatio,
       longestProgressStall: progress.longestStall,
       playbackEndpointReachable: endpointReachable,
