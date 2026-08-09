@@ -237,8 +237,7 @@ jobs:
 
           target="$out/dart_simple_live-${APP_VERSION}-ios-${suffix}-${short_sha}.ipa"
           cp "$src" "$target"
-          # 固定名 IPA：供 AltStore/LiveContainer 源（ipa-source/apps.json）
-          # 的 releases/latest/download/simple-live.ipa URL 使用，永远最新。
+          # 固定名 IPA：供独立 ipa-source 分支的 apps.json 使用。
           cp "$target" "$out/simple-live.ipa"
           sha="$(shasum -a 256 "$target" | cut -d' ' -f1)"
           size="$(du -h "$target" | cut -f1)"
@@ -272,8 +271,7 @@ jobs:
 
       # GitHub artifact 下载永远是 zip 打包；需要"直接拿到 .ipa"时，
       # 发布到 Release 附件（附件不套 zip）。固定名 simple-live.ipa 供
-      # AltStore/LiveContainer 源（ipa-source/apps.json）的 latest 指向；
-      # 非 prerelease 才能被 releases/latest 命中。
+      # AltStore/LiveContainer 源通过 ios-dev 固定 tag 获取该文件。
       - name: 发布含 .ipa 的 Release
         if: ${{ inputs.publish_release }}
         uses: softprops/action-gh-release@v2
@@ -288,10 +286,19 @@ jobs:
             - 版本：${{ steps.appver.outputs.version }}
             - 提交：`${{ github.sha }}`
             - 下载附件 `*.ipa` 即为可直接安装的包（Release 附件不打包 zip）。
-            - AltStore / LiveContainer 源：`https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/dev/ipa-source/apps.json`
+            - AltStore / LiveContainer 源：`https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/ipa-source/apps.json`
           files: ${{ steps.artifact.outputs.dir }}/simple-live.ipa
           allowUpdates: true
           prerelease: false
+
+      - name: 更新 dev IPA 源分支
+        if: ${{ inputs.publish_release }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash "$GITHUB_WORKSPACE/.github/scripts/update_ipa_source.sh" \
+            dev "${{ steps.appver.outputs.version }}"
 
       - name: 清理钥匙串
         if: ${{ always() && inputs.signed }}
