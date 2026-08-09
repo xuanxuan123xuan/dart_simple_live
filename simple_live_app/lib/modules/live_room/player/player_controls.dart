@@ -1191,7 +1191,7 @@ void showPlayerSettings(LiveRoomController controller) {
               AppSettingsController.instance.setFullScreenForceLandscape(e);
             },
             title: const Text("全屏自动横屏"),
-            subtitle: const Text("竖屏进全屏时自动转横屏，状态栏才能隐藏；关闭则保持当前方向"),
+            subtitle: const Text("默认跟随视频方向；开启后竖屏直播也会强制横屏（iPad 更易隐藏状态栏）"),
             contentPadding: AppStyle.edgeInsetsH16,
             secondary: const Icon(Icons.screen_rotation),
           ),

@@ -414,7 +414,7 @@ class AppSettingsController extends GetxController {
     );
     fullScreenForceLandscape.value = LocalStorageService.instance.getValue(
       LocalStorageService.kFullScreenForceLandscape,
-      true,
+      false,
     );
 
     initSiteSort();
@@ -2129,9 +2129,9 @@ class AppSettingsController extends GetxController {
     );
   }
 
-  /// 全屏播放是否自动横屏（iPad 竖屏状态栏由系统强制显示，
-  /// 只有横屏才能可靠隐藏；关闭则保持当前方向）。
-  var fullScreenForceLandscape = true.obs;
+  /// 全屏播放是否强制横屏。默认关闭并跟随视频方向；iPad 竖屏时
+  /// 状态栏可能无法可靠隐藏，用户仍可手动开启强制横屏。
+  var fullScreenForceLandscape = false.obs;
   void setFullScreenForceLandscape(bool value) {
     fullScreenForceLandscape.value = value;
     LocalStorageService.instance.setValue(

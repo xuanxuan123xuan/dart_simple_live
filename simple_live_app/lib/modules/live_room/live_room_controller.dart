@@ -2682,12 +2682,12 @@ class LiveRoomController extends PlayerController
     if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) {
       return;
     }
+    // A previous room/line may have been a portrait stream. Reset the hint
+    // for every backend until the newly opened source reports its dimensions.
+    isVertical.value = false;
     if (Utils.isOhos) {
       currentLineInfo.value = lineDisplayName(currentLineIndex);
       errorMsg.value = "";
-      // A previous room/line may have been a portrait stream. Reset the hint
-      // until AVPlayer reports the dimensions of the newly opened source.
-      isVertical.value = false;
       _ohosHealthyPlaybackSince = null;
       _lastOhosPlaybackPosition = Duration.zero;
       ohosPlayerRevision.value += 1;
