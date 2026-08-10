@@ -22,6 +22,7 @@ void main() {
       _TestKuaishouAccountService(),
     );
     controller = AccountController();
+    Get.put<AccountController>(controller);
   });
 
   tearDown(Get.reset);
