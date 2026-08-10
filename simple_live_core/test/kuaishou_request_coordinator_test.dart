@@ -200,6 +200,25 @@ void main() {
       await load();
       expect(calls, 2);
     });
+
+    test('forceNetwork 绕过已完成缓存但仍合并同时请求', () async {
+      final coordinator = KuaishouRequestCoordinator();
+      var calls = 0;
+      Future<int> load({bool forceNetwork = false}) => coordinator.coalesce(
+            key: 'status:force',
+            cacheTtl: const Duration(minutes: 1),
+            bypassCache: forceNetwork,
+            task: () async => ++calls,
+          );
+
+      expect(await load(), 1);
+      expect(await load(), 1);
+      expect(
+          await Future.wait(
+              [load(forceNetwork: true), load(forceNetwork: true)]),
+          [2, 2]);
+      expect(calls, 2);
+    });
   });
 
   group('KuaishouRequestCoordinator 最小间隔', () {
@@ -332,12 +351,14 @@ void main() {
   });
 
   group('KuaishouRequestCoordinator 冷却', () {
-    test('冷却期内后台请求被拒绝，用户主动进房放行', () async {
+    test('冷却期停发；到期后只允许一次用户探针', () async {
+      var now = DateTime(2026, 1, 1);
       final coordinator = KuaishouRequestCoordinator(
+        nowProvider: () => now,
         minInterval: Duration.zero,
         maxJitter: Duration.zero,
       );
-      coordinator.beginCooldown(const Duration(minutes: 10));
+      coordinator.beginCooldown(const Duration(minutes: 5));
 
       // 后台请求应直接失败。
       await expectLater(
@@ -349,35 +370,32 @@ void main() {
         throwsA(isA<KuaishouCooldownError>()),
       );
 
-      // 用户主动进房应放行（单探针）。
-      final gate = Completer<String>();
-      final enterResult = coordinator.schedule(
-        priority: KuaishouRequestPriority.userEnter,
-        key: 'enter',
-        task: () => gate.future,
-      );
-      // 探针额度覆盖整个冷却窗口，而不只是一次请求的在途时间。
       await expectLater(
         coordinator.schedule(
           priority: KuaishouRequestPriority.userEnter,
-          key: 'second-enter',
-          task: () async => 'should-not-run',
-        ),
-        throwsA(isA<KuaishouCooldownError>()),
-      );
-      gate.complete('entered');
-      expect(await enterResult, 'entered');
-      await expectLater(
-        coordinator.schedule(
-          priority: KuaishouRequestPriority.userEnter,
-          key: 'third-enter',
-          task: () async => 'should-not-run',
+          key: 'enter-during-cooldown',
+          task: () async => 'blocked',
         ),
         throwsA(isA<KuaishouCooldownError>()),
       );
 
-      // 结束冷却后后台请求恢复。
-      coordinator.endCooldown();
+      now = now.add(const Duration(minutes: 6));
+      await expectLater(
+        coordinator.schedule(
+          priority: KuaishouRequestPriority.followRefresh,
+          key: 'background-after-expiry',
+          task: () async => 'blocked',
+        ),
+        throwsA(isA<KuaishouCooldownError>()),
+      );
+      expect(
+        await coordinator.schedule(
+          priority: KuaishouRequestPriority.userEnter,
+          key: 'probe',
+          task: () async => 'probe-ok',
+        ),
+        'probe-ok',
+      );
       final after = await coordinator.schedule(
         priority: KuaishouRequestPriority.followRefresh,
         key: 'after',
@@ -386,19 +404,41 @@ void main() {
       expect(after, 'ok');
     });
 
-    test('账号冷却时允许显式标记的匿名请求继续', () async {
+    test('cancelScope 只取消同作用域中尚未执行的请求', () async {
       final coordinator = KuaishouRequestCoordinator(
         minInterval: Duration.zero,
         maxJitter: Duration.zero,
-      )..beginCooldown(const Duration(hours: 1));
-
-      final value = await coordinator.schedule(
-        priority: KuaishouRequestPriority.followRefresh,
-        key: 'anonymous',
-        allowDuringCooldown: true,
-        task: () async => 'ok',
       );
-      expect(value, 'ok');
+      final gate = Completer<void>();
+      final running = coordinator.schedule(
+        priority: KuaishouRequestPriority.userEnter,
+        key: 'running',
+        task: () async {
+          await gate.future;
+          return 'running';
+        },
+      );
+      final canceled = coordinator.schedule(
+        priority: KuaishouRequestPriority.followRefresh,
+        key: 'queued-canceled',
+        scopeId: 'follow',
+        task: () async => 'wrong',
+      );
+      final kept = coordinator.schedule(
+        priority: KuaishouRequestPriority.catalogBackground,
+        key: 'queued-kept',
+        scopeId: 'catalog',
+        task: () async => 'kept',
+      );
+
+      coordinator.cancelScope('follow');
+      await expectLater(
+        canceled,
+        throwsA(isA<KuaishouRequestCanceledError>()),
+      );
+      gate.complete();
+      expect(await running, 'running');
+      expect(await kept, 'kept');
     });
 
     test('reset during interval wait prevents stale queued task from executing',

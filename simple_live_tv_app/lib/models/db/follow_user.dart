@@ -3,6 +3,8 @@ import 'package:hive/hive.dart';
 
 part 'follow_user.g.dart';
 
+enum FollowLiveCheckState { refreshing, fresh, unknown, limited }
+
 @HiveType(typeId: 1)
 class FollowUser {
   FollowUser({
@@ -52,6 +54,9 @@ class FollowUser {
   /// 直播状态
   /// 0=未知(加载中) 1=未开播 2=直播中
   Rx<int> liveStatus = 0.obs;
+
+  /// 本次网络核验状态，仅存在于运行时，不持久化。
+  Rx<FollowLiveCheckState> liveCheckState = FollowLiveCheckState.unknown.obs;
 
   factory FollowUser.fromJson(Map<String, dynamic> json) {
     final roomId = json['roomId']?.toString().trim() ?? "";

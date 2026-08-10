@@ -10,13 +10,31 @@ class LiveCategory {
     required this.children,
   });
 
+  factory LiveCategory.fromJson(Map<String, dynamic> json) {
+    final rawChildren = json['children'];
+    if (json['id'] == null || json['name'] == null || rawChildren is! List) {
+      throw const FormatException('Invalid live category snapshot');
+    }
+    return LiveCategory(
+      id: json['id'].toString(),
+      name: json['name'].toString(),
+      children: rawChildren
+          .map((item) => LiveSubCategory.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ))
+          .toList(growable: false),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'id': id,
+        'children': children.map((item) => item.toJson()).toList(),
+      };
+
   @override
   String toString() {
-    return json.encode({
-      "name": name,
-      "id": id,
-      "children": children,
-    });
+    return json.encode(toJson());
   }
 }
 
@@ -32,13 +50,29 @@ class LiveSubCategory {
     this.pic,
   });
 
+  factory LiveSubCategory.fromJson(Map<String, dynamic> json) {
+    if (json['id'] == null ||
+        json['name'] == null ||
+        json['parentId'] == null) {
+      throw const FormatException('Invalid live subcategory snapshot');
+    }
+    return LiveSubCategory(
+      id: json['id'].toString(),
+      name: json['name'].toString(),
+      parentId: json['parentId'].toString(),
+      pic: json['pic']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'id': id,
+        'parentId': parentId,
+        'pic': pic,
+      };
+
   @override
   String toString() {
-    return json.encode({
-      "name": name,
-      "id": id,
-      "parentId": parentId,
-      "pic": pic,
-    });
+    return json.encode(toJson());
   }
 }

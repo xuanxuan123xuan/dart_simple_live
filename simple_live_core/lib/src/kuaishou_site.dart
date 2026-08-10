@@ -80,22 +80,42 @@ enum KuaishouAccountHealthEvent {
   credentialInvalid,
 }
 
+enum KuaishouAnonymousCapability { available, degraded }
+
+abstract class KuaishouCategorySnapshotStore {
+  Future<Map<String, dynamic>?> read();
+  Future<void> write(Map<String, dynamic> snapshot);
+}
+
 /// 以 async-local 方式携带当前快手请求来源，供站点内部日志聚合使用。
 /// 不改动 LiveSite 接口签名即可让调用方标记来源；未标记时回退 unknown。
 class KuaishouRequestTrace {
   KuaishouRequestTrace._();
 
   static const _sourceKey = #kuaishouRequestSource;
+  static const _scopeKey = #kuaishouRequestScope;
+  static const _forceNetworkKey = #kuaishouForceNetwork;
 
   static KuaishouRequestSource get current =>
       Zone.current[_sourceKey] as KuaishouRequestSource? ??
       KuaishouRequestSource.unknown;
 
+  static String? get scopeId => Zone.current[_scopeKey] as String?;
+
+  static bool get forceNetwork =>
+      Zone.current[_forceNetworkKey] as bool? ?? false;
+
   static Future<T> run<T>(
     KuaishouRequestSource source,
-    Future<T> Function() action,
-  ) {
-    return Zone.current.fork(zoneValues: {_sourceKey: source}).run(action);
+    Future<T> Function() action, {
+    String? scopeId,
+    bool forceNetwork = false,
+  }) {
+    return Zone.current.fork(zoneValues: {
+      _sourceKey: source,
+      if (scopeId != null) _scopeKey: scopeId,
+      _forceNetworkKey: forceNetwork,
+    }).run(action);
   }
 }
 
@@ -106,13 +126,19 @@ class KuaishouSite extends LiveSite {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   KuaishouSite({
     Dio? anonymousDio,
+    CookieJar? anonymousCookieJar,
     Dio Function()? authenticatedDioFactory,
     CookieJar Function()? cookieJarFactory,
     KuaishouRequestCoordinator? coordinator,
+    KuaishouCategorySnapshotStore? categorySnapshotStore,
   })  : _anonymousDio = anonymousDio ?? Dio(),
+        _anonymousCookieJar = anonymousCookieJar ?? CookieJar(),
         _authenticatedDioFactory = authenticatedDioFactory ?? Dio.new,
         _cookieJarFactory = cookieJarFactory ?? CookieJar.new,
+        _categorySnapshotStore = categorySnapshotStore,
         coordinator = coordinator ?? KuaishouRequestCoordinator() {
+    _anonymousDio.interceptors.add(CookieManager(_anonymousCookieJar));
+    _anonymousDio.options.connectTimeout = const Duration(seconds: 5);
     id = "kuaishou";
     name = "快手直播";
   }
@@ -162,8 +188,20 @@ class KuaishouSite extends LiveSite {
 
   /// 匿名通道使用独立 Dio，永不安装 CookieManager，也不读取登录 CookieJar。
   final Dio _anonymousDio;
+  final CookieJar _anonymousCookieJar;
   final Dio Function() _authenticatedDioFactory;
   final CookieJar Function() _cookieJarFactory;
+  final KuaishouCategorySnapshotStore? _categorySnapshotStore;
+  final StreamController<List<LiveCategory>> _categoryUpdates =
+      StreamController<List<LiveCategory>>.broadcast();
+  int _anonymousIndeterminateCount = 0;
+  KuaishouAnonymousCapability _anonymousCapability =
+      KuaishouAnonymousCapability.available;
+
+  KuaishouAnonymousCapability get anonymousCapability => _anonymousCapability;
+  Stream<List<LiveCategory>> get categoryUpdates => _categoryUpdates.stream;
+
+  void cancelScope(String scopeId) => coordinator.cancelScope(scopeId);
 
   /// 房间详情成功缓存 TTL（短窗口复用，播放地址有效期未核实前取保守值）。
   static const Duration _detailCacheTtl = Duration(seconds: 15);
@@ -206,6 +244,8 @@ class KuaishouSite extends LiveSite {
   Object? cookieJarIdentityFor(String sessionKey) =>
       _accountTransports[sessionKey]?.sessionCookieJar;
 
+  Object get anonymousCookieJarIdentity => _anonymousCookieJar;
+
   bool didReportAttemptedFor(String sessionKey) =>
       _accountTransports[sessionKey]?.didReportAttempted ?? false;
 
@@ -215,6 +255,9 @@ class KuaishouSite extends LiveSite {
       return;
     }
     final dio = _authenticatedDioFactory();
+    dio.options.connectTimeout = const Duration(seconds: 5);
+    dio.options.sendTimeout = const Duration(seconds: 5);
+    dio.options.receiveTimeout = const Duration(seconds: 5);
     final cookieJar = _cookieJarFactory();
     dio.interceptors.add(CookieManager(cookieJar));
     transport.sessionDio = dio;
@@ -270,6 +313,33 @@ class KuaishouSite extends LiveSite {
         'Sec-Fetch-Dest': 'empty',
         'Sec-Fetch-Mode': 'cors',
       };
+
+  Future<dynamic> _getPublicJson(
+    String url, {
+    Map<String, dynamic>? queryParameters,
+    required Map<String, dynamic> headers,
+    CoreCancellation? cancellation,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    try {
+      final result = await HttpClient.instance.getJson(
+        url,
+        queryParameters: queryParameters,
+        header: headers,
+        cancellation: cancellation,
+        timeout: timeout,
+      );
+      _throwIfExplicitRateLimit(result);
+      return result;
+    } on CoreError catch (error) {
+      if (error.statusCode == 429) {
+        coordinator.beginCooldown(
+          KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
+        );
+      }
+      rethrow;
+    }
+  }
 
   Map<String, dynamic> _headersWithCookieFor(
     _KuaishouAccountTransport transport,
@@ -431,60 +501,136 @@ class KuaishouSite extends LiveSite {
 
   // ==================== 分类 ====================
 
+  static const int _categorySnapshotVersion = 1;
+  static const Duration _categorySnapshotTtl = Duration(hours: 12);
+  static const String _categoryRefreshScope = 'kuaishou:category-refresh';
+
+  List<LiveCategory> _emptyCategoryRoots() => <LiveCategory>[
+        LiveCategory(id: "1", name: "热门", children: []),
+        LiveCategory(id: "2", name: "网游", children: []),
+        LiveCategory(id: "3", name: "单机", children: []),
+        LiveCategory(id: "4", name: "手游", children: []),
+        LiveCategory(id: "5", name: "棋牌", children: []),
+        LiveCategory(id: "6", name: "娱乐", children: []),
+        LiveCategory(id: "7", name: "综合", children: []),
+        LiveCategory(id: "8", name: "文化", children: []),
+      ];
+
   @override
   Future<List<LiveCategory>> getCategores() async {
-    List<LiveCategory> categories = [
-      LiveCategory(id: "1", name: "热门", children: []),
-      LiveCategory(id: "2", name: "网游", children: []),
-      LiveCategory(id: "3", name: "单机", children: []),
-      LiveCategory(id: "4", name: "手游", children: []),
-      LiveCategory(id: "5", name: "棋牌", children: []),
-      LiveCategory(id: "6", name: "娱乐", children: []),
-      LiveCategory(id: "7", name: "综合", children: []),
-      LiveCategory(id: "8", name: "文化", children: []),
-    ];
-
-    for (var category in categories) {
-      var subs = await _getAllSubCategories(category);
-      category.children.addAll(subs);
+    final cached = await _readCategorySnapshot();
+    if (cached != null) {
+      if (DateTime.now().difference(cached.savedAt) > _categorySnapshotTtl) {
+        unawaited(refreshCategories().catchError((Object error) {
+          CoreLog.i('[ks-category] background refresh failed: $error');
+          return cached.categories;
+        }));
+      }
+      return cached.categories;
     }
+    return refreshCategories();
+  }
+
+  Future<List<LiveCategory>> refreshCategories() async {
+    final categories = _emptyCategoryRoots();
+    for (final category in categories) {
+      category.children.addAll(await _getAllSubCategories(category));
+    }
+    if (categories.length != 8 ||
+        categories.any((category) => category.children.isEmpty)) {
+      throw CoreError(
+        '快手分区目录不完整，已保留旧缓存',
+        kind: CoreErrorKind.response,
+      );
+    }
+    final store = _categorySnapshotStore;
+    if (store != null) {
+      await store.write({
+        'version': _categorySnapshotVersion,
+        'savedAt': DateTime.now().toUtc().toIso8601String(),
+        'categories': categories.map((item) => item.toJson()).toList(),
+      });
+    }
+    _categoryUpdates.add(categories);
     return categories;
   }
 
-  Future<List<LiveSubCategory>> _getAllSubCategories(
-    LiveCategory category, {
-    int page = 1,
-    int pageSize = 30,
-  }) async {
-    List<LiveSubCategory> allSubs = [];
+  Future<_KuaishouCategorySnapshot?> _readCategorySnapshot() async {
+    final raw = await _categorySnapshotStore?.read();
+    if (raw == null || raw['version'] != _categorySnapshotVersion) {
+      return null;
+    }
     try {
-      while (true) {
-        var subs = await _getSubCategories(category, page, pageSize);
-        allSubs.addAll(subs);
-        if (subs.length < pageSize) break;
-        page++;
+      final savedAt = DateTime.parse(raw['savedAt'].toString()).toLocal();
+      final list = raw['categories'];
+      if (list is! List || list.length != 8) return null;
+      final categories = list
+          .map((item) => LiveCategory.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ))
+          .toList(growable: false);
+      if (categories.any((category) => category.children.isEmpty)) return null;
+      return _KuaishouCategorySnapshot(savedAt, categories);
+    } catch (error) {
+      CoreLog.i('[ks-category] invalid snapshot: $error');
+      return null;
+    }
+  }
+
+  Future<List<LiveSubCategory>> _getAllSubCategories(
+    LiveCategory category,
+  ) async {
+    final allSubs = <LiveSubCategory>[];
+    final seen = <String>{};
+    for (var page = 1; page <= 10; page++) {
+      final result = await _getSubCategories(category, page, 50);
+      for (final sub in result.items) {
+        if (seen.add('${sub.parentId}:${sub.id}')) {
+          allSubs.add(sub);
+        }
       }
-    } catch (_) {}
+      if (!result.hasMore) break;
+      if (page == 10) {
+        throw CoreError(
+          '快手分区目录超过分页上限',
+          kind: CoreErrorKind.response,
+        );
+      }
+    }
     return allSubs;
   }
 
-  Future<List<LiveSubCategory>> _getSubCategories(
+  Future<_KuaishouSubCategoryPage> _getSubCategories(
     LiveCategory category,
     int page,
     int pageSize,
   ) async {
     var result = await coordinator.schedule<dynamic>(
-      priority: KuaishouRequestPriority.roomStatus,
+      priority: KuaishouRequestPriority.catalogBackground,
       key: 'http:category:${category.id}:$page:$pageSize',
-      task: () => HttpClient.instance.getJson(
+      traffic: KuaishouRequestTraffic.publicApi,
+      scopeId: _categoryRefreshScope,
+      timeout: const Duration(seconds: 8),
+      task: () => _getPublicJson(
         "https://live.kuaishou.com/live_api/category/data",
         queryParameters: {"type": category.id, "page": page, "size": pageSize},
-        header: _headers,
+        headers: _headers,
       ),
     );
-
-    List<LiveSubCategory> subs = [];
-    for (var item in result["data"]["list"] ?? []) {
+    _throwIfExplicitRateLimit(result);
+    if (result is! Map || result['data'] is! Map) {
+      throw CoreError('快手分区目录响应格式错误', kind: CoreErrorKind.response);
+    }
+    final data = result['data'] as Map;
+    final list = data['list'];
+    if (list is! List || _parseResponseBoolean(data['hasMore']) == null) {
+      throw CoreError('快手分区目录分页字段缺失', kind: CoreErrorKind.response);
+    }
+    final subs = <LiveSubCategory>[];
+    for (final item in list) {
+      if (item is! Map || item['id'] == null || item['name'] == null) {
+        throw CoreError('快手分区目录条目格式错误', kind: CoreErrorKind.response);
+      }
       subs.add(
         LiveSubCategory(
           id: item["id"].toString(),
@@ -494,7 +640,10 @@ class KuaishouSite extends LiveSite {
         ),
       );
     }
-    return subs;
+    return _KuaishouSubCategoryPage(
+      items: subs,
+      hasMore: _parseResponseBoolean(data['hasMore'])!,
+    );
   }
 
   // ==================== 分类直播间列表 ====================
@@ -504,14 +653,24 @@ class KuaishouSite extends LiveSite {
     LiveSubCategory category, {
     int page = 1,
   }) async {
-    var api = category.id.length < 7
+    final parentId = int.tryParse(category.parentId) ?? 0;
+    if (parentId < 1 || parentId > 8) {
+      throw CoreError(
+        '快手分区父级编号无效',
+        kind: CoreErrorKind.response,
+      );
+    }
+    final api = parentId >= 1 && parentId <= 5
         ? "https://live.kuaishou.com/live_api/gameboard/list"
         : "https://live.kuaishou.com/live_api/non-gameboard/list";
 
     var result = await coordinator.schedule<dynamic>(
-      priority: KuaishouRequestPriority.roomStatus,
+      priority: KuaishouRequestPriority.interactivePublic,
       key: 'http:category_rooms:${category.id}:$page',
-      task: () => HttpClient.instance.getJson(
+      traffic: KuaishouRequestTraffic.publicApi,
+      scopeId: KuaishouRequestTrace.scopeId,
+      timeout: const Duration(seconds: 8),
+      task: () => _getPublicJson(
         api,
         queryParameters: {
           "filterType": 0,
@@ -519,12 +678,21 @@ class KuaishouSite extends LiveSite {
           "gameId": category.id,
           "page": page,
         },
-        header: _headers,
+        headers: _headers,
       ),
     );
-
+    _throwIfExplicitRateLimit(result);
+    if (result is! Map || result['data'] is! Map) {
+      throw CoreError('快手分区直播间响应格式错误', kind: CoreErrorKind.response);
+    }
+    final data = result['data'] as Map;
+    final list = data['list'];
+    final hasMore = _parseResponseBoolean(data['hasMore']);
+    if (list is! List || hasMore == null) {
+      throw CoreError('快手分区直播间分页字段缺失', kind: CoreErrorKind.response);
+    }
     var items = <LiveRoomItem>[];
-    for (var item in result["data"]["list"] ?? []) {
+    for (var item in list) {
       var cover = item['poster']?.toString() ?? '';
       if (cover.isNotEmpty && !isImageUrl(cover)) {
         cover = '$cover.jpg';
@@ -540,7 +708,7 @@ class KuaishouSite extends LiveSite {
       );
     }
 
-    return LiveCategoryResult(hasMore: items.length >= 20, items: items);
+    return LiveCategoryResult(hasMore: hasMore, items: items);
   }
 
   // ==================== 推荐直播间 ====================
@@ -548,15 +716,24 @@ class KuaishouSite extends LiveSite {
   @override
   Future<LiveCategoryResult> getRecommendRooms({int page = 1}) async {
     var result = await coordinator.schedule<dynamic>(
-      priority: KuaishouRequestPriority.roomStatus,
+      priority: KuaishouRequestPriority.interactivePublic,
       key: 'http:home:$page',
-      task: () => HttpClient.instance.getJson(
+      traffic: KuaishouRequestTraffic.publicApi,
+      scopeId: KuaishouRequestTrace.scopeId,
+      timeout: const Duration(seconds: 8),
+      task: () => _getPublicJson(
         "https://live.kuaishou.com/live_api/home/list",
-        header: _headers,
+        headers: _headers,
       ),
     );
-
-    var list = result['data']['list'] ?? [];
+    _throwIfExplicitRateLimit(result);
+    if (result is! Map || result['data'] is! Map) {
+      throw CoreError('快手推荐响应格式错误', kind: CoreErrorKind.response);
+    }
+    final list = (result['data'] as Map)['list'];
+    if (list is! List) {
+      throw CoreError('快手推荐列表字段缺失', kind: CoreErrorKind.response);
+    }
     var items = <LiveRoomItem>[];
 
     for (var item in list) {
@@ -628,9 +805,12 @@ class KuaishouSite extends LiveSite {
     CoreCancellation? cancellation,
   }) async {
     final result = await coordinator.schedule<dynamic>(
-      priority: KuaishouRequestPriority.userEnter,
+      priority: KuaishouRequestPriority.interactivePublic,
       key: 'http:search_live:${keyword.hashCode}:$page',
-      task: () => HttpClient.instance.getJson(
+      traffic: KuaishouRequestTraffic.publicApi,
+      scopeId: KuaishouRequestTrace.scopeId ?? 'kuaishou:search',
+      timeout: const Duration(seconds: 8),
+      task: () => _getPublicJson(
         "https://live.kuaishou.com/live_api/search/liveStream",
         queryParameters: {
           "keyword": keyword,
@@ -638,10 +818,11 @@ class KuaishouSite extends LiveSite {
           "count": _liveSearchPageSize,
           "ussid": "",
         },
-        header: _searchHeaders(keyword),
+        headers: _searchHeaders(keyword),
         cancellation: cancellation,
       ),
     );
+    _throwIfExplicitRateLimit(result);
 
     if (result is! Map) {
       throw _invalidSearchResponse('直播间');
@@ -754,9 +935,12 @@ class KuaishouSite extends LiveSite {
     CoreCancellation? cancellation,
   }) async {
     final result = await coordinator.schedule<dynamic>(
-      priority: KuaishouRequestPriority.userEnter,
+      priority: KuaishouRequestPriority.interactivePublic,
       key: 'http:search_author:${keyword.hashCode}:$page',
-      task: () => HttpClient.instance.getJson(
+      traffic: KuaishouRequestTraffic.publicApi,
+      scopeId: KuaishouRequestTrace.scopeId ?? 'kuaishou:search',
+      timeout: const Duration(seconds: 8),
+      task: () => _getPublicJson(
         "https://live.kuaishou.com/live_api/search/author",
         queryParameters: {
           "key": keyword,
@@ -766,10 +950,11 @@ class KuaishouSite extends LiveSite {
           "ussid": "",
           "lssid": "",
         },
-        header: _searchHeaders(keyword),
+        headers: _searchHeaders(keyword),
         cancellation: cancellation,
       ),
     );
+    _throwIfExplicitRateLimit(result);
 
     if (result is! Map) {
       throw _invalidSearchResponse('主播');
@@ -845,15 +1030,19 @@ class KuaishouSite extends LiveSite {
     CoreCancellation? cancellation,
   }) async {
     final result = await coordinator.schedule<dynamic>(
-      priority: KuaishouRequestPriority.userEnter,
+      priority: KuaishouRequestPriority.interactivePublic,
       key: 'http:search_overview:${keyword.hashCode}',
-      task: () => HttpClient.instance.getJson(
+      traffic: KuaishouRequestTraffic.publicApi,
+      scopeId: KuaishouRequestTrace.scopeId ?? 'kuaishou:search',
+      timeout: const Duration(seconds: 8),
+      task: () => _getPublicJson(
         "https://live.kuaishou.com/live_api/search/overview",
         queryParameters: {"keyword": keyword, "ussid": ""},
-        header: _searchHeaders(keyword),
+        headers: _searchHeaders(keyword),
         cancellation: cancellation,
       ),
     );
+    _throwIfExplicitRateLimit(result);
     if (result is! Map || result["data"] is! Map) {
       throw _invalidSearchResponse('概览');
     }
@@ -1022,20 +1211,61 @@ class KuaishouSite extends LiveSite {
   // ==================== 房间详情 ====================
 
   @override
-  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) {
+    return _getRoomDetailWithinBudget(roomId).timeout(
+      const Duration(seconds: 12),
+      onTimeout: () => throw CoreError(
+        '快手直播间加载超时，请重试',
+        kind: CoreErrorKind.network,
+      ),
+    );
+  }
+
+  Future<LiveRoomDetail> _getRoomDetailWithinBudget(String roomId) async {
     final source = KuaishouRequestTrace.current;
+    if (_isUserTriggered(source)) {
+      coordinator.cancelScope(_categoryRefreshScope);
+      coordinator.cancelScope('kuaishou:follow-refresh');
+      coordinator.cancelScope('kuaishou:search');
+    }
     if (_anonymousMode) {
       return _getAnonymousRoomDetail(roomId, source: source);
     }
 
+    LiveRoomDetail? anonymousDetail;
+    if (_isUserTriggered(source)) {
+      anonymousDetail = coordinator.logicalCachedValue<LiveRoomDetail>(
+        'anonymous_public_detail:$roomId',
+      );
+      if (anonymousDetail != null &&
+          extractPlayableUrls(anonymousDetail.data).isNotEmpty &&
+          _currentCookieHeaderFor(_activeTransport).isEmpty) {
+        return anonymousDetail;
+      }
+    }
+
+    LiveRoomDetail combine(LiveRoomDetail authenticated) {
+      final anonymous = anonymousDetail;
+      if (anonymous == null || extractPlayableUrls(anonymous.data).isEmpty) {
+        return authenticated;
+      }
+      return _mergeAnonymousPlaybackWithCredentials(anonymous, authenticated);
+    }
+
     final firstTransport = _activeTransport;
     try {
-      return await _getRoomDetailForTransport(
-        roomId,
-        source: source,
-        transport: firstTransport,
+      return combine(
+        await _getRoomDetailForTransport(
+          roomId,
+          source: source,
+          transport: firstTransport,
+        ),
       );
     } catch (_) {
+      if (anonymousDetail != null &&
+          extractPlayableUrls(anonymousDetail.data).isNotEmpty) {
+        return anonymousDetail;
+      }
       if (!_isUserTriggered(source) || firstTransport.lastHealthEvent == null) {
         rethrow;
       }
@@ -1043,17 +1273,20 @@ class KuaishouSite extends LiveSite {
       // The account-pool callback switches primary -> secondary synchronously.
       // Retry only this foreground operation and never replay background work.
       if (_anonymousMode) {
-        return _getAnonymousRoomDetail(roomId, source: source);
+        return anonymousDetail ??
+            await _getAnonymousRoomDetail(roomId, source: source);
       }
       final fallbackTransport = _activeTransport;
       if (identical(fallbackTransport, firstTransport)) {
         rethrow;
       }
       try {
-        return await _getRoomDetailForTransport(
-          roomId,
-          source: source,
-          transport: fallbackTransport,
+        return combine(
+          await _getRoomDetailForTransport(
+            roomId,
+            source: source,
+            transport: fallbackTransport,
+          ),
         );
       } catch (_) {
         if (fallbackTransport.lastHealthEvent != null && _anonymousMode) {
@@ -1072,6 +1305,7 @@ class KuaishouSite extends LiveSite {
     return coordinator.coalesce(
       key: '${transport.cacheNamespace}:room_detail:$roomId',
       cacheTtl: roomDetailCacheTtlForSource(source),
+      bypassCache: KuaishouRequestTrace.forceNetwork,
       task: () => _fetchRoomDetailUncoordinated(
         roomId,
         transport: transport,
@@ -1174,21 +1408,6 @@ class KuaishouSite extends LiveSite {
         _ensureCurrentSession(transport, sessionEpoch);
       }
 
-      // 登录页已经给出明确 live/offline 时直接采用，避免离线房间再放大为
-      // 一次匿名补请求。只有解析证据不足时才允许匿名公开页兜底。
-      if (detail == null ||
-          detail.resolvedLiveStatus == LiveStatusState.unknown) {
-        final anonymousDetail = await _loadRoomDetail(
-          url: url,
-          roomId: roomId,
-          headers: _headers,
-          transport: transport,
-          sessionEpoch: sessionEpoch,
-        );
-        _ensureCurrentSession(transport, sessionEpoch);
-        detail = _preferRoomDetail(detail, anonymousDetail);
-      }
-
       if (detail == null) {
         CoreLog.i(
           '[ks-request] fail endpoint=room_detail room=$maskedRoom '
@@ -1254,18 +1473,6 @@ class KuaishouSite extends LiveSite {
     return 'room#$hash';
   }
 
-  LiveRoomDetail? _preferRoomDetail(
-    LiveRoomDetail? primary,
-    LiveRoomDetail? secondary,
-  ) {
-    if (primary == null) return secondary;
-    if (secondary == null) return primary;
-    if (primary.resolvedLiveStatus == LiveStatusState.live) return primary;
-    if (secondary.resolvedLiveStatus == LiveStatusState.live) return secondary;
-    if (primary.resolvedLiveStatus != LiveStatusState.unknown) return primary;
-    return secondary;
-  }
-
   Future<LiveRoomDetail?> _loadRoomDetail({
     required String url,
     required String roomId,
@@ -1283,6 +1490,8 @@ class KuaishouSite extends LiveSite {
         key: '${transport.cacheNamespace}:http:room_page:'
             '${authenticated ? "auth" : "anon"}:$roomId',
         logLabel: maskedRoom,
+        scopeId: KuaishouRequestTrace.scopeId,
+        timeout: const Duration(seconds: 5),
         task: () {
           if (authenticated) {
             _ensureTransportAvailable(transport, source);
@@ -1291,10 +1500,12 @@ class KuaishouSite extends LiveSite {
             url,
             queryParameters: const {},
             header: headers,
+            timeout: const Duration(seconds: 5),
           );
         },
       );
       _ensureCurrentSession(transport, sessionEpoch);
+      _throwIfExplicitRateLimit(resultText);
       if (authenticated && looksLikeCredentialInvalidPage(resultText)) {
         throw const _KuaishouCredentialInvalidException();
       }
@@ -1387,13 +1598,66 @@ class KuaishouSite extends LiveSite {
         lower.contains('verifycenter') ||
         html.contains('人机验证') ||
         html.contains('安全验证') ||
+        html.contains('400010') ||
+        html.contains('访问太快') ||
         html.contains('请求频繁') ||
         html.contains('访问过于频繁') ||
         html.contains('风控');
   }
 
   static bool looksLikeExplicitRateLimitText(String html) {
-    return html.contains('请求频繁') || html.contains('访问过于频繁');
+    return html.contains('400010') ||
+        html.contains('访问太快') ||
+        html.contains('请求频繁') ||
+        html.contains('访问过于频繁');
+  }
+
+  LiveRoomDetail _mergeAnonymousPlaybackWithCredentials(
+    LiveRoomDetail playback,
+    LiveRoomDetail credentials,
+  ) {
+    return LiveRoomDetail(
+      roomId: playback.roomId,
+      title: playback.title,
+      cover: playback.cover,
+      userName: playback.userName,
+      userAvatar: playback.userAvatar,
+      online: playback.online,
+      introduction: playback.introduction,
+      notice: playback.notice,
+      status: playback.status,
+      liveStatusState: playback.liveStatusState,
+      data: playback.data,
+      danmakuData: credentials.danmakuData,
+      url: playback.url,
+      isRecord: playback.isRecord,
+      showTime: playback.showTime,
+      categoryId: playback.categoryId,
+      categoryName: playback.categoryName,
+      categoryParentId: playback.categoryParentId,
+      categoryParentName: playback.categoryParentName,
+      categoryPic: playback.categoryPic,
+    );
+  }
+
+  void _throwIfExplicitRateLimit(dynamic response) {
+    final text = response is String ? response : jsonEncode(response);
+    if (!looksLikeExplicitRateLimitText(text)) return;
+    coordinator.beginCooldown(
+      KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
+    );
+    throw CoreError(
+      '快手访问过于频繁，请稍后重试',
+      statusCode: 429,
+      kind: CoreErrorKind.http,
+    );
+  }
+
+  bool? _parseResponseBoolean(dynamic value) {
+    if (value is bool) return value;
+    if (value == 1 || value?.toString().toLowerCase() == 'true') return true;
+    if (value == 0 || value?.toString().toLowerCase() == 'false') return false;
+    return null;
   }
 
   static bool looksLikeCredentialInvalidPage(String html) {
@@ -1433,14 +1697,12 @@ class KuaishouSite extends LiveSite {
     final immediateCooldown =
         KuaishouCooldownEvidenceTracker.immediateCooldownForStatus(statusCode);
     if (immediateCooldown != null) {
+      coordinator.beginCooldown(immediateCooldown);
       transport.lastErrorClassification =
           KuaishouErrorClassification.rateLimited;
-      transport.hardBlocked = true;
-      transport.lastHealthEvent = KuaishouAccountHealthEvent.rateLimited;
-      _emitAccountHealthEvent(
-        transport,
-        KuaishouAccountHealthEvent.rateLimited,
-      );
+      // 429/400010 are host-level evidence. Rotating or invalidating an
+      // account during the same host cooldown only amplifies traffic.
+      transport.lastHealthEvent = null;
       return;
     }
     if (statusCode == 403) {
@@ -1736,9 +1998,13 @@ class KuaishouSite extends LiveSite {
   Future<LiveStatusState> getAnonymousLiveStatusState({
     required String roomId,
   }) {
+    if (_anonymousCapability == KuaishouAnonymousCapability.degraded) {
+      return Future.value(LiveStatusState.unknown);
+    }
     return coordinator.coalesce(
       key: 'anonymous_live_status:$roomId',
       cacheTtlForValue: anonymousStatusCacheTtl,
+      bypassCache: KuaishouRequestTrace.forceNetwork,
       task: () => KuaishouRequestTrace.run(
         KuaishouRequestSource.followStatus,
         () async {
@@ -1747,12 +2013,40 @@ class KuaishouSite extends LiveSite {
               roomId,
               source: KuaishouRequestSource.followStatus,
             );
-            return detail.resolvedLiveStatus;
-          } catch (_) {
+            final state = detail.resolvedLiveStatus;
+            if (state == LiveStatusState.unknown) {
+              _recordAnonymousIndeterminate();
+            } else {
+              _anonymousIndeterminateCount = 0;
+            }
+            return state;
+          } on _KuaishouAnonymousIndeterminateException {
+            _recordAnonymousIndeterminate();
+            return LiveStatusState.unknown;
+          } on KuaishouCooldownError {
+            rethrow;
+          } on CoreError catch (error) {
+            if (error.statusCode == 429) rethrow;
             return LiveStatusState.unknown;
           }
         },
+        scopeId: KuaishouRequestTrace.scopeId,
+        forceNetwork: KuaishouRequestTrace.forceNetwork,
       ),
+    );
+  }
+
+  void beginAnonymousStatusRefresh() {
+    _anonymousIndeterminateCount = 0;
+    _anonymousCapability = KuaishouAnonymousCapability.available;
+  }
+
+  void _recordAnonymousIndeterminate() {
+    _anonymousIndeterminateCount++;
+    if (_anonymousIndeterminateCount < 3) return;
+    _anonymousCapability = KuaishouAnonymousCapability.degraded;
+    coordinator.cancelScope(
+      KuaishouRequestTrace.scopeId ?? 'kuaishou:follow-refresh',
     );
   }
 
@@ -1764,35 +2058,49 @@ class KuaishouSite extends LiveSite {
       key: 'anonymous_public_detail:$roomId',
       cacheTtlForValue: (detail) =>
           anonymousStatusCacheTtl(detail.resolvedLiveStatus),
+      bypassCache: KuaishouRequestTrace.forceNetwork,
       task: () async {
         final url = KuaishouLiveLink.publicRoomUrl(roomId);
-        final response = await coordinator.schedule<Response<String>>(
-          priority: _priorityForSource(source),
-          key: 'http:anonymous_public_detail:$roomId',
-          logLabel: _maskRoomId(roomId),
-          allowDuringCooldown: true,
-          task: () => _anonymousDio.get<String>(
-            url,
-            options: Options(
-              headers: _headers,
-              responseType: ResponseType.plain,
-            ),
-          ),
+        final cookiesBefore = await _anonymousCookieJar.loadForRequest(
+          Uri.parse(url),
         );
-        final html = response.data ?? '';
-        if (looksLikeChallengePage(html)) {
-          throw CoreError(
-            '快手匿名访问受限',
-            statusCode: response.statusCode ?? 0,
-            kind: CoreErrorKind.http,
-          );
-        }
-        final detail = await _parseRoomDetail(
+        var response = await _requestAnonymousRoomPage(
+          roomId: roomId,
+          url: url,
+          source: source,
+          attempt: 1,
+        );
+        var html = response.data ?? '';
+        var detail = await _parseRoomDetail(
           html,
           roomId,
           allowDanmaku: false,
         );
+        final cookiesAfter = await _anonymousCookieJar.loadForRequest(
+          Uri.parse(url),
+        );
+        final structureNormal = html.contains('window.__INITIAL_STATE__');
+        if (structureNormal &&
+            (detail == null ||
+                detail.resolvedLiveStatus == LiveStatusState.unknown) &&
+            cookiesAfter.length > cookiesBefore.length) {
+          response = await _requestAnonymousRoomPage(
+            roomId: roomId,
+            url: url,
+            source: source,
+            attempt: 2,
+          );
+          html = response.data ?? '';
+          detail = await _parseRoomDetail(
+            html,
+            roomId,
+            allowDanmaku: false,
+          );
+        }
         if (detail == null) {
+          if (html.contains('window.__INITIAL_STATE__')) {
+            throw const _KuaishouAnonymousIndeterminateException();
+          }
           throw CoreError(
             '快手匿名直播间详情解析失败',
             statusCode: response.statusCode ?? 0,
@@ -1802,6 +2110,64 @@ class KuaishouSite extends LiveSite {
         return detail;
       },
     );
+  }
+
+  Future<Response<String>> _requestAnonymousRoomPage({
+    required String roomId,
+    required String url,
+    required KuaishouRequestSource source,
+    required int attempt,
+  }) async {
+    try {
+      final response = await coordinator.schedule<Response<String>>(
+        priority: _priorityForSource(source),
+        key: 'http:anonymous_public_detail:$roomId:$attempt',
+        logLabel: _maskRoomId(roomId),
+        scopeId: KuaishouRequestTrace.scopeId,
+        timeout: const Duration(seconds: 5),
+        task: () => _anonymousDio.get<String>(
+          url,
+          options: Options(
+            headers: _headers,
+            responseType: ResponseType.plain,
+            sendTimeout: const Duration(seconds: 5),
+            receiveTimeout: const Duration(seconds: 5),
+          ),
+        ),
+      );
+      final html = response.data ?? '';
+      if (response.statusCode == 429 || looksLikeExplicitRateLimitText(html)) {
+        coordinator.beginCooldown(
+          KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
+        );
+        throw CoreError(
+          '快手访问过于频繁，请稍后重试',
+          statusCode: 429,
+          kind: CoreErrorKind.http,
+        );
+      }
+      if (looksLikeChallengePage(html)) {
+        throw CoreError(
+          '快手匿名访问受限',
+          statusCode: response.statusCode ?? 0,
+          kind: CoreErrorKind.http,
+        );
+      }
+      return response;
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 429) {
+        coordinator.beginCooldown(
+          KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
+        );
+        throw CoreError(
+          '快手访问过于频繁，请稍后重试',
+          statusCode: 429,
+          kind: CoreErrorKind.http,
+          cause: error,
+        );
+      }
+      rethrow;
+    }
   }
 
   static Duration anonymousStatusCacheTtl(LiveStatusState state) {
@@ -1931,6 +2297,8 @@ class KuaishouSite extends LiveSite {
         priority: _priorityForSource(KuaishouRequestTrace.current),
         key: '${transport.cacheNamespace}:http:cookie_handshake:$roomId',
         logLabel: maskedRoom,
+        scopeId: KuaishouRequestTrace.scopeId,
+        timeout: const Duration(seconds: 5),
         task: () {
           _ensureTransportAvailable(transport, KuaishouRequestTrace.current);
           return dio
@@ -1945,6 +2313,7 @@ class KuaishouSite extends LiveSite {
         },
       );
       final responseStatus = response.statusCode ?? 0;
+      _throwIfExplicitRateLimit(response.data ?? '');
       if (responseStatus == 401 ||
           responseStatus == 403 ||
           responseStatus == 429) {
@@ -2047,6 +2416,8 @@ class KuaishouSite extends LiveSite {
       priority: KuaishouRequestPriority.danmakuCredential,
       key: '${transport.cacheNamespace}:websocket_info:$liveStreamId',
       logLabel: _maskRoomId(roomId),
+      scopeId: KuaishouRequestTrace.scopeId,
+      timeout: const Duration(seconds: 5),
       task: () {
         _ensureTransportAvailable(
           transport,
@@ -2085,6 +2456,7 @@ class KuaishouSite extends LiveSite {
           'Sec-Fetch-Dest': 'empty',
           'Sec-Fetch-Mode': 'cors',
         },
+        timeout: const Duration(seconds: 5),
       );
       _ensureCurrentSession(transport, sessionEpoch);
       _recordEndpointSuccess('websocket_info', transport, sessionEpoch);
@@ -2144,9 +2516,10 @@ class KuaishouSite extends LiveSite {
     if (sessionEpoch != transport.epoch) return;
     try {
       await coordinator.schedule<void>(
-        priority: KuaishouRequestPriority.followRefresh,
+        priority: KuaishouRequestPriority.did,
         key: '${transport.cacheNamespace}:did_register',
         logLabel: 'did',
+        scopeId: 'kuaishou:did',
         task: () async {
           _ensureTransportAvailable(transport, KuaishouRequestSource.userEnter);
           final stopwatch = Stopwatch()..start();
@@ -2322,12 +2695,33 @@ class _KuaishouWebsocketInfo {
   }
 }
 
+class _KuaishouSubCategoryPage {
+  const _KuaishouSubCategoryPage({
+    required this.items,
+    required this.hasMore,
+  });
+
+  final List<LiveSubCategory> items;
+  final bool hasMore;
+}
+
+class _KuaishouCategorySnapshot {
+  const _KuaishouCategorySnapshot(this.savedAt, this.categories);
+
+  final DateTime savedAt;
+  final List<LiveCategory> categories;
+}
+
 class _KuaishouChallengePageException implements Exception {
   const _KuaishouChallengePageException();
 }
 
 class _KuaishouCredentialInvalidException implements Exception {
   const _KuaishouCredentialInvalidException();
+}
+
+class _KuaishouAnonymousIndeterminateException implements Exception {
+  const _KuaishouAnonymousIndeterminateException();
 }
 
 class _KuaishouAccountTransport {

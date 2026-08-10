@@ -58,6 +58,7 @@ class FollowUserController extends BasePageController<FollowUser> {
     FollowUserTag(id: "0", tag: "全部", userId: []),
     FollowUserTag(id: "1", tag: "直播中", userId: []),
     FollowUserTag(id: "2", tag: "未开播", userId: []),
+    FollowUserTag(id: "3", tag: "状态未知", userId: []),
   ].obs;
 
   // 用户自定义标签
@@ -280,6 +281,7 @@ class FollowUserController extends BasePageController<FollowUser> {
       options.addAll(const [
         FollowGroupOption(id: "live", title: "直播中", liveStatus: 2),
         FollowGroupOption(id: "not_live", title: "未开播", liveStatus: 1),
+        FollowGroupOption(id: "unknown", title: "状态未知", liveStatus: 0),
       ]);
     } else {
       final siteIds = FollowService.instance.followList
@@ -332,11 +334,9 @@ class FollowUserController extends BasePageController<FollowUser> {
     }
     final liveStatus = selected.liveStatus;
     if (liveStatus != null) {
-      final expectedStatus = liveStatus == 1 ? {0, 1} : {liveStatus};
       return FollowService.instance.sortFollowUsers(
         _distinctFollowUsers(
-          source
-              .where((item) => expectedStatus.contains(item.liveStatus.value)),
+          source.where((item) => item.liveStatus.value == liveStatus),
         ),
       );
     }
@@ -616,6 +616,7 @@ class FollowUserController extends BasePageController<FollowUser> {
 
   @override
   void onClose() {
+    FollowService.instance.cancelFollowPageRefresh();
     onUpdatedIndexedStream?.cancel();
     onUpdatedListStream?.cancel();
     super.onClose();

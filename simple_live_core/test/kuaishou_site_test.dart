@@ -456,12 +456,6 @@ void main() {
         body: '<html>登录状态已失效，请重新登录</html>',
         event: KuaishouAccountHealthEvent.credentialInvalid,
       ),
-      (
-        name: 'hard rate limit',
-        statusCode: 429,
-        body: '<html>请求频繁</html>',
-        event: KuaishouAccountHealthEvent.rateLimited,
-      ),
     ]) {
       test('retries one user operation on secondary after ${scenario.name}',
           () async {

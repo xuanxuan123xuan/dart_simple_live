@@ -17,16 +17,34 @@ enum KuaishouRequestPriority {
   /// 弹幕凭证解析。
   danmakuCredential(2),
 
+  /// 用户可见的公开目录、推荐和搜索请求。
+  interactivePublic(3),
+
   /// 当前房间状态轮询 / 复核。
-  roomStatus(3),
+  roomStatus(4),
+
+  /// 目录后台更新和其他低优先级公开请求。
+  catalogBackground(5),
 
   /// 关注列表后台状态刷新。
-  followRefresh(4);
+  followRefresh(6),
+
+  /// 设备标识上报。
+  did(7);
 
   const KuaishouRequestPriority(this.order);
 
   /// 数值越小优先级越高。
   final int order;
+}
+
+/// 快手出站流量类型。
+///
+/// 房间 HTML、匿名状态和凭证请求共享更严格的敏感预算；公开 JSON
+/// 目录请求仍经过同一物理队列，但使用较短的目录间隔。
+enum KuaishouRequestTraffic {
+  sensitive,
+  publicApi,
 }
 
 /// 快手进程级请求协调器。
@@ -48,6 +66,8 @@ class KuaishouRequestCoordinator {
     math.Random? random,
     this.minInterval = const Duration(milliseconds: 1500),
     this.maxJitter = const Duration(milliseconds: 500),
+    this.publicMinInterval = const Duration(milliseconds: 500),
+    this.publicMaxJitter = const Duration(milliseconds: 200),
   })  : _now = nowProvider ?? DateTime.now,
         _random = random ?? math.Random();
 
@@ -56,6 +76,12 @@ class KuaishouRequestCoordinator {
 
   /// 最小间隔上的随机抖动上界，打破固定节奏。
   final Duration maxJitter;
+
+  /// 公开 JSON 请求的出站最小间隔。
+  final Duration publicMinInterval;
+
+  /// 公开 JSON 请求的随机抖动上界。
+  final Duration publicMaxJitter;
 
   final DateTime Function() _now;
   final math.Random _random;
@@ -74,10 +100,11 @@ class KuaishouRequestCoordinator {
   /// 会话代次：reset 时递增，用于丢弃旧代次请求的结果与缓存写入。
   int _epoch = 0;
 
-  /// 全局冷却：为 true 时后台请求直接失败，仅用户主动请求可放行。
+  /// 全局冷却：为 true 时所有新请求直接失败。
   bool _cooldownActive = false;
   DateTime? _cooldownUntil;
   bool _cooldownProbeClaimed = false;
+  bool _awaitingCooldownProbe = false;
 
   /// 当前队列长度（观测用）。
   int get queuedCount => _queue.length;
@@ -86,12 +113,24 @@ class KuaishouRequestCoordinator {
   int get inFlightCount => _inFlight.length;
 
   /// 是否有生效中的冷却（观测用）。
-  bool get inCooldown =>
-      _cooldownActive &&
-      (_cooldownUntil == null || _cooldownUntil!.isAfter(_now()));
+  bool get inCooldown {
+    _refreshCooldownState();
+    return _cooldownActive;
+  }
 
-  /// 开始全局冷却。冷却期内除 [KuaishouRequestPriority.userEnter] 外的
-  /// 请求直接以 [KuaishouCooldownError] 失败；用户主动进房仍可放行单探针。
+  void _refreshCooldownState() {
+    final until = _cooldownUntil;
+    if (_cooldownActive && until != null && !until.isAfter(_now())) {
+      _cooldownActive = false;
+      _cooldownUntil = null;
+      _cooldownProbeClaimed = false;
+      _awaitingCooldownProbe = true;
+      CoreLog.i('[ks-coordinator] cooldown elapsed; awaiting user probe');
+    }
+  }
+
+  /// 开始全局冷却。冷却期内所有新请求直接失败；到期后只允许一次
+  /// [KuaishouRequestPriority.userEnter] 探针，探针成功后恢复后台流量。
   ///
   /// 已处于冷却时取更长剩余时长，避免较短的冷却（如 403→2min）覆盖
   /// 较长的冷却（如 429→5min）。
@@ -111,6 +150,7 @@ class KuaishouRequestCoordinator {
     final startsNewCooldown =
         currentUntil == null || !currentUntil.isAfter(now);
     _cooldownActive = true;
+    _awaitingCooldownProbe = false;
     _cooldownUntil = now.add(duration);
     if (startsNewCooldown) {
       // If the request that triggered the cooldown was a user-enter request,
@@ -123,6 +163,18 @@ class KuaishouRequestCoordinator {
       '[ks-coordinator] cooldown begin duration=${duration.inSeconds}s '
       'until=$_cooldownUntil',
     );
+    // A host-level limit invalidates queued background work. Keep only the
+    // current user probe; callers may enqueue a new probe after cooldown.
+    final background = _queue
+        .where(
+            (request) => request.priority != KuaishouRequestPriority.userEnter)
+        .toList(growable: false);
+    for (final request in background) {
+      _completeError(request, KuaishouCooldownError('快手请求处于冷却期'));
+    }
+    _queue.removeWhere(
+      (request) => request.priority != KuaishouRequestPriority.userEnter,
+    );
   }
 
   /// 立即结束冷却。
@@ -130,6 +182,7 @@ class KuaishouRequestCoordinator {
     _cooldownActive = false;
     _cooldownUntil = null;
     _cooldownProbeClaimed = false;
+    _awaitingCooldownProbe = false;
     CoreLog.i('[ks-coordinator] cooldown ended');
   }
 
@@ -152,6 +205,7 @@ class KuaishouRequestCoordinator {
     _cooldownActive = false;
     _cooldownUntil = null;
     _cooldownProbeClaimed = false;
+    _awaitingCooldownProbe = false;
     // Do not release the pump or clear _lastRequestAt here. An old physical
     // request cannot be cancelled safely; the new account queue must wait for
     // it to finish and must still observe the device/IP-level interval.
@@ -168,8 +222,11 @@ class KuaishouRequestCoordinator {
     required KuaishouRequestPriority priority,
     required String key,
     Duration? cacheTtl,
+    KuaishouRequestTraffic traffic = KuaishouRequestTraffic.sensitive,
+    String? scopeId,
+    Duration? timeout,
+    bool bypassCache = false,
     bool bypassInterval = false,
-    bool allowDuringCooldown = false,
     String? logLabel,
     required Future<T> Function() task,
   }) {
@@ -187,7 +244,7 @@ class KuaishouRequestCoordinator {
     }
 
     // 2. 短 TTL 缓存命中。
-    if (cacheTtl != null) {
+    if (cacheTtl != null && !bypassCache) {
       final cached = _cache[key];
       if (cached != null && cached.expiresAt.isAfter(_now())) {
         CoreLog.i('[ks-coordinator] cache hit key=${logLabel ?? '<key>'}');
@@ -198,16 +255,23 @@ class KuaishouRequestCoordinator {
       }
     }
 
-    // 3. 冷却检查：后台请求让路；整个冷却窗口只允许一个主动探针。
+    // 3. 冷却检查：冷却期停发；到期后只允许用户操作单探针。
     var cooldownProbe = false;
-    if (inCooldown && !allowDuringCooldown) {
+    if (inCooldown) {
+      CoreLog.i(
+        '[ks-coordinator] rejected by cooldown '
+        'key=${logLabel ?? '<key>'}',
+      );
+      return Future.error(KuaishouCooldownError('快手请求处于冷却期'));
+    }
+    if (_awaitingCooldownProbe) {
       if (priority != KuaishouRequestPriority.userEnter ||
           _cooldownProbeClaimed) {
         CoreLog.i(
-          '[ks-coordinator] rejected by cooldown '
+          '[ks-coordinator] rejected awaiting user probe '
           'key=${logLabel ?? '<key>'}',
         );
-        return Future.error(KuaishouCooldownError('快手请求处于冷却期'));
+        return Future.error(KuaishouCooldownError('快手请求等待用户探针'));
       }
       _cooldownProbeClaimed = true;
       cooldownProbe = true;
@@ -221,13 +285,33 @@ class KuaishouRequestCoordinator {
       task: () async => await task(),
       completer: completer,
       cooldownProbe: cooldownProbe,
-      allowDuringCooldown: allowDuringCooldown,
       cacheTtl: cacheTtl,
+      traffic: traffic,
+      scopeId: scopeId,
+      timeout: timeout,
+      bypassCache: bypassCache,
     );
     _queue.add(queued);
     _pending[key] = queued;
     _pump();
     return completer.future.then((value) => value as T);
+  }
+
+  /// 取消指定作用域内尚未执行的请求。
+  ///
+  /// 已经进入 [task] 的物理请求不能由通用协调器强行取消，但其结果仍会
+  /// 交给调用方的超时/代次保护处理。
+  void cancelScope(String scopeId) {
+    final canceled = _queue
+        .where((request) => request.scopeId == scopeId)
+        .toList(growable: false);
+    for (final request in canceled) {
+      _completeError(request, KuaishouRequestCanceledError('请求作用域已取消'));
+    }
+    _queue.removeWhere((request) => request.scopeId == scopeId);
+    if (_queue.isNotEmpty) {
+      _pump();
+    }
   }
 
   void _pump() {
@@ -259,11 +343,17 @@ class KuaishouRequestCoordinator {
 
         // 最小间隔 + 抖动：执行前等待，避免背靠背突发。
         final lastAt = _lastRequestAt;
+        final minGap = next.traffic == KuaishouRequestTraffic.publicApi
+            ? publicMinInterval
+            : minInterval;
+        final jitterMax = next.traffic == KuaishouRequestTraffic.publicApi
+            ? publicMaxJitter
+            : maxJitter;
         if (lastAt != null) {
           final elapsed = _now().difference(lastAt);
-          if (elapsed < minInterval) {
-            final jitter = _random.nextInt(maxJitter.inMilliseconds + 1);
-            final wait = minInterval - elapsed + Duration(milliseconds: jitter);
+          if (elapsed < minGap) {
+            final jitter = _random.nextInt(jitterMax.inMilliseconds + 1);
+            final wait = minGap - elapsed + Duration(milliseconds: jitter);
             await _waitUninterruptible(wait);
           }
         }
@@ -287,14 +377,12 @@ class KuaishouRequestCoordinator {
   }
 
   bool _rejectForCooldown(_QueuedRequest request) {
-    if (!inCooldown || request.allowDuringCooldown) {
-      return false;
-    }
-    if (request.priority == KuaishouRequestPriority.userEnter) {
-      if (request.cooldownProbe) {
+    if (!inCooldown) {
+      if (!_awaitingCooldownProbe) {
         return false;
       }
-      if (!_cooldownProbeClaimed) {
+      if (request.priority == KuaishouRequestPriority.userEnter &&
+          (request.cooldownProbe || !_cooldownProbeClaimed)) {
         _cooldownProbeClaimed = true;
         request.cooldownProbe = true;
         return false;
@@ -310,7 +398,9 @@ class KuaishouRequestCoordinator {
     _inFlight[next.key] = future;
     _running.add(next);
     try {
-      final value = await future;
+      final value = next.timeout == null
+          ? await future
+          : await future.timeout(next.timeout!);
       // 会话已被 reset（账号切换）时丢弃结果与缓存，避免污染新会话；
       // 同时让等待者失败返回，避免永久挂起。
       if (epoch != _epoch) {
@@ -332,9 +422,24 @@ class KuaishouRequestCoordinator {
       if (!next.completer.isCompleted) {
         next.completer.complete(value);
       }
+      if (next.cooldownProbe && _awaitingCooldownProbe) {
+        endCooldown();
+      }
     } catch (e, stackTrace) {
       if (epoch != _epoch) {
         _completeReset(next);
+      } else if (e is TimeoutException) {
+        if (!next.completer.isCompleted) {
+          next.completer.completeError(e, stackTrace);
+        }
+        // Future.timeout does not cancel Dio/HttpClient work. Keep the single
+        // physical lane occupied until the underlying request terminates, so
+        // a logical timeout cannot create an overlapping burst.
+        try {
+          await future;
+        } catch (_) {
+          // The caller already received the timeout classification.
+        }
       } else if (!next.completer.isCompleted) {
         next.completer.completeError(e, stackTrace);
       }
@@ -376,6 +481,17 @@ class KuaishouRequestCoordinator {
     _cache[key] = _CacheEntry(value: value, expiresAt: _now().add(ttl));
   }
 
+  /// 读取尚未过期的逻辑缓存，不触发网络或创建新任务。
+  T? logicalCachedValue<T>(String key) {
+    final cached = _logicalCache[key];
+    if (cached == null) return null;
+    if (!cached.expiresAt.isAfter(_now())) {
+      _logicalCache.remove(key);
+      return null;
+    }
+    return cached.value is T ? cached.value as T : null;
+  }
+
   /// 合并一个逻辑操作并缓存结果，但不占用物理请求队列。
   ///
   /// 详情解析可能依次产生握手、页面和凭证等多个 HTTP 请求；这些请求应
@@ -385,10 +501,11 @@ class KuaishouRequestCoordinator {
     required String key,
     Duration? cacheTtl,
     Duration? Function(T value)? cacheTtlForValue,
+    bool bypassCache = false,
     required Future<T> Function() task,
   }) {
     final cached = _logicalCache[key];
-    if (cached != null) {
+    if (cached != null && !bypassCache) {
       if (cached.expiresAt.isAfter(_now())) {
         return Future.value(cached.value as T);
       }
@@ -439,6 +556,15 @@ class KuaishouCooldownError extends Error {
   String toString() => 'KuaishouCooldownError: $message';
 }
 
+class KuaishouRequestCanceledError extends Error {
+  KuaishouRequestCanceledError(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'KuaishouRequestCanceledError: $message';
+}
+
 class _QueuedRequest {
   _QueuedRequest({
     required this.epoch,
@@ -447,7 +573,10 @@ class _QueuedRequest {
     required this.task,
     required this.completer,
     required this.cooldownProbe,
-    required this.allowDuringCooldown,
+    required this.traffic,
+    required this.scopeId,
+    required this.timeout,
+    required this.bypassCache,
     this.cacheTtl,
   });
 
@@ -457,7 +586,10 @@ class _QueuedRequest {
   final Future<Object?> Function() task;
   final Completer<Object?> completer;
   bool cooldownProbe;
-  final bool allowDuringCooldown;
+  final KuaishouRequestTraffic traffic;
+  final String? scopeId;
+  final Duration? timeout;
+  final bool bypassCache;
   final Duration? cacheTtl;
 }
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:simple_live_core/src/common/core_cancellation.dart';
 import 'package:simple_live_core/src/common/core_error.dart';
 import 'package:dio/dio.dart';
@@ -55,8 +57,18 @@ class HttpClient {
     Map<String, dynamic>? header,
     CancelToken? cancel,
     CoreCancellation? cancellation,
+    Duration? timeout,
   }) async {
     final binding = _bindCancellation(cancellation, cancel);
+    final requestCancel =
+        binding?.dioToken ?? cancel ?? (timeout == null ? null : CancelToken());
+    var timedOut = false;
+    final timeoutTimer = timeout == null
+        ? null
+        : Timer(timeout, () {
+            timedOut = true;
+            requestCancel?.cancel('hard timeout');
+          });
     try {
       queryParameters ??= {};
       header ??= {};
@@ -67,11 +79,18 @@ class HttpClient {
           responseType: ResponseType.plain,
           headers: header,
         ),
-        cancelToken: binding?.dioToken ?? cancel,
+        cancelToken: requestCancel,
       );
       return result.data;
     } catch (e) {
       if (e is DioException && e.type == DioExceptionType.cancel) {
+        if (timedOut) {
+          throw CoreError(
+            "发送GET请求超时",
+            kind: CoreErrorKind.network,
+            cause: e,
+          );
+        }
         throw CoreCancelledError(cause: e);
       } else if (e is DioException && e.type == DioExceptionType.badResponse) {
         throw CoreError(e.message ?? "",
@@ -82,6 +101,7 @@ class HttpClient {
         throw CoreError("发送GET请求失败", kind: CoreErrorKind.network, cause: e);
       }
     } finally {
+      timeoutTimer?.cancel();
       binding?.dispose();
     }
   }
@@ -96,8 +116,18 @@ class HttpClient {
     Map<String, dynamic>? header,
     CancelToken? cancel,
     CoreCancellation? cancellation,
+    Duration? timeout,
   }) async {
     final binding = _bindCancellation(cancellation, cancel);
+    final requestCancel =
+        binding?.dioToken ?? cancel ?? (timeout == null ? null : CancelToken());
+    var timedOut = false;
+    final timeoutTimer = timeout == null
+        ? null
+        : Timer(timeout, () {
+            timedOut = true;
+            requestCancel?.cancel('hard timeout');
+          });
     try {
       queryParameters ??= {};
       header ??= {};
@@ -108,11 +138,18 @@ class HttpClient {
           responseType: ResponseType.json,
           headers: header,
         ),
-        cancelToken: binding?.dioToken ?? cancel,
+        cancelToken: requestCancel,
       );
       return result.data;
     } catch (e) {
       if (e is DioException && e.type == DioExceptionType.cancel) {
+        if (timedOut) {
+          throw CoreError(
+            "发送GET请求超时",
+            kind: CoreErrorKind.network,
+            cause: e,
+          );
+        }
         throw CoreCancelledError(cause: e);
       } else if (e is DioException && e.type == DioExceptionType.badResponse) {
         throw CoreError(e.message ?? "",
@@ -123,6 +160,7 @@ class HttpClient {
         throw CoreError("发送GET请求失败", kind: CoreErrorKind.network, cause: e);
       }
     } finally {
+      timeoutTimer?.cancel();
       binding?.dispose();
     }
   }
