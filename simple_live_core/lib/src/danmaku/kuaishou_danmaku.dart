@@ -187,6 +187,9 @@ class KuaishouDanmaku extends LiveDanmaku {
     _credentialRetryNotified = false;
     _credentialRetryAttempts = 0;
     _credentialRetryStartedAt = null;
+    if (args == null) {
+      return;
+    }
     if (args is! KuaishouDanmakuArgs) {
       onClose?.call("快手弹幕凭证尚未就绪，请稍后刷新直播间重试");
       return;

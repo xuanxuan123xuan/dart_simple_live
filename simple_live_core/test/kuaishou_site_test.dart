@@ -652,6 +652,158 @@ void main() {
     });
   });
 
+  group('KuaishouSite foreground account fallback', () {
+    test('uses the secondary account before anonymous playback', () async {
+      var transportIndex = 0;
+      final authenticatedRequests = <int, int>{};
+      var anonymousRequests = 0;
+      Dio createAuthenticatedDio() {
+        final index = transportIndex++;
+        return Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                authenticatedRequests[index] =
+                    (authenticatedRequests[index] ?? 0) + 1;
+                handler.resolve(
+                  Response<String>(
+                    requestOptions: options,
+                    statusCode: 200,
+                    data: index == 0
+                        ? _kuaishouOfflinePage(roomId: 'fallback-live-room')
+                        : _kuaishouLivePage(
+                            roomId: 'fallback-live-room',
+                            includeDanmakuCredentials: true,
+                          ),
+                  ),
+                );
+              },
+            ),
+          );
+      }
+
+      final anonymousDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              anonymousRequests += 1;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(roomId: 'fallback-live-room'),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: anonymousDio,
+        authenticatedDioFactory: createAuthenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )
+        ..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        )
+        ..accountFallbackProvider = (_) => const KuaishouAccountFallbackSession(
+              sessionKey: 'secondary',
+              cookie: 'kuaishou.live.web_st=secondary-token',
+              kww: '',
+            );
+
+      final detail = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.userEnter,
+        () => site.getRoomDetail(roomId: 'fallback-live-room'),
+      );
+      final danmaku = detail.danmakuData as KuaishouDanmakuArgs;
+
+      expect(detail.resolvedLiveStatus, LiveStatusState.live);
+      expect(danmaku.hasConnectionInfo, isTrue);
+      expect(authenticatedRequests, {0: 1, 1: 1});
+      expect(anonymousRequests, 0);
+    });
+
+    test('uses anonymous playback only after both accounts fail', () async {
+      var transportIndex = 0;
+      final authenticatedRequests = <int, int>{};
+      var anonymousRequests = 0;
+      Dio createAuthenticatedDio() {
+        final index = transportIndex++;
+        return Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                authenticatedRequests[index] =
+                    (authenticatedRequests[index] ?? 0) + 1;
+                handler.resolve(
+                  Response<String>(
+                    requestOptions: options,
+                    statusCode: 200,
+                    data: _kuaishouOfflinePage(
+                      roomId: 'anonymous-fallback-room',
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+      }
+
+      final anonymousDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              anonymousRequests += 1;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(
+                    roomId: 'anonymous-fallback-room',
+                    includeDanmakuCredentials: true,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: anonymousDio,
+        authenticatedDioFactory: createAuthenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )
+        ..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        )
+        ..accountFallbackProvider = (_) => const KuaishouAccountFallbackSession(
+              sessionKey: 'secondary',
+              cookie: 'kuaishou.live.web_st=secondary-token',
+              kww: '',
+            );
+
+      final detail = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.userEnter,
+        () => site.getRoomDetail(roomId: 'anonymous-fallback-room'),
+      );
+
+      expect(detail.resolvedLiveStatus, LiveStatusState.live);
+      expect(KuaishouSite.extractPlayableUrls(detail.data), isNotEmpty);
+      expect(detail.danmakuData, isNull);
+      expect(authenticatedRequests, {0: 1, 1: 1});
+      expect(anonymousRequests, 1);
+    });
+  });
+
   test('anonymous detail is reused for playback and strips danmaku', () async {
     var anonymousRequests = 0;
     var authenticatedSessions = 0;
@@ -755,4 +907,8 @@ String _kuaishouLivePage({
       ? '"playUrls":{"h264":{"adaptationSet":{"representation":[{"name":"高清","url":"https://example.com/$roomId.flv"}]}}}'
       : '"playUrls":{}';
   return '''<script>window.__INITIAL_STATE__={"liveroom":{"token":"${includeDanmakuCredentials ? 'secret-token' : ''}","websocketUrls":[${includeDanmakuCredentials ? '"wss://example.com/live"' : ''}],"playList":[{"isLiving":true,"author":{"id":"$roomId","name":"主播"},"liveStream":{"id":"stream-$roomId",$playUrls}}]}};</script>''';
+}
+
+String _kuaishouOfflinePage({required String roomId}) {
+  return '''<script>window.__INITIAL_STATE__={"liveroom":{"playList":[{"isLiving":false,"author":{"id":"$roomId","name":"主播"},"liveStream":{"id":"","playUrls":{}}}]}};</script>''';
 }

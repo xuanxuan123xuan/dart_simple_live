@@ -82,6 +82,21 @@ enum KuaishouAccountHealthEvent {
 
 enum KuaishouAnonymousCapability { available, degraded }
 
+class KuaishouAccountFallbackSession {
+  const KuaishouAccountFallbackSession({
+    required this.sessionKey,
+    required this.cookie,
+    required this.kww,
+  });
+
+  final String sessionKey;
+  final String cookie;
+  final String kww;
+}
+
+typedef KuaishouAccountFallbackProvider = KuaishouAccountFallbackSession?
+    Function(String attemptedSessionKey);
+
 abstract class KuaishouCategorySnapshotStore {
   Future<Map<String, dynamic>?> read();
   Future<void> write(Map<String, dynamic> snapshot);
@@ -182,6 +197,10 @@ class KuaishouSite extends LiveSite {
   void Function(KuaishouAccountHealthEvent event)? onAccountHealthEvent;
   void Function(String sessionKey, KuaishouAccountHealthEvent event)?
       onAccountSessionHealthEvent;
+
+  /// Supplies the other available account for one foreground room operation.
+  /// The provider does not change the globally selected account.
+  KuaishouAccountFallbackProvider? accountFallbackProvider;
 
   /// 快手敏感请求的进程级协调器：全局最小间隔、优先级、同房合并与短缓存。
   final KuaishouRequestCoordinator coordinator;
@@ -1232,83 +1251,85 @@ class KuaishouSite extends LiveSite {
       return _getAnonymousRoomDetail(roomId, source: source);
     }
 
-    LiveRoomDetail? anonymousDetail;
-    if (_isUserTriggered(source)) {
-      anonymousDetail = coordinator.logicalCachedValue<LiveRoomDetail>(
-        'anonymous_public_detail:$roomId',
-      );
-      if (anonymousDetail != null &&
-          extractPlayableUrls(anonymousDetail.data).isNotEmpty &&
-          _currentCookieHeaderFor(_activeTransport).isEmpty) {
-        return anonymousDetail;
-      }
-    }
-
-    LiveRoomDetail combine(LiveRoomDetail authenticated) {
-      final anonymous = anonymousDetail;
-      if (anonymous == null || extractPlayableUrls(anonymous.data).isEmpty) {
-        return authenticated;
-      }
-      return _mergeAnonymousPlaybackWithCredentials(anonymous, authenticated);
-    }
-
     final firstTransport = _activeTransport;
     try {
-      return combine(
-        await _getRoomDetailForTransport(
-          roomId,
-          source: source,
-          transport: firstTransport,
-        ),
+      return await _getRoomDetailForTransport(
+        roomId,
+        source: source,
+        transport: firstTransport,
+        requireLive: _isUserTriggered(source),
       );
     } catch (_) {
-      if (anonymousDetail != null &&
-          extractPlayableUrls(anonymousDetail.data).isNotEmpty) {
-        return anonymousDetail;
-      }
-      if (!_isUserTriggered(source) || firstTransport.lastHealthEvent == null) {
+      if (!_isUserTriggered(source) || coordinator.inCooldown) {
         rethrow;
       }
 
-      // The account-pool callback switches primary -> secondary synchronously.
-      // Retry only this foreground operation and never replay background work.
-      if (_anonymousMode) {
-        return anonymousDetail ??
-            await _getAnonymousRoomDetail(roomId, source: source);
-      }
-      final fallbackTransport = _activeTransport;
-      if (identical(fallbackTransport, firstTransport)) {
-        rethrow;
-      }
-      try {
-        return combine(
-          await _getRoomDetailForTransport(
+      final fallbackTransport = _resolveFallbackTransport(firstTransport);
+      if (fallbackTransport != null) {
+        try {
+          return await _getRoomDetailForTransport(
             roomId,
             source: source,
             transport: fallbackTransport,
-          ),
-        );
-      } catch (_) {
-        if (fallbackTransport.lastHealthEvent != null && _anonymousMode) {
-          return _getAnonymousRoomDetail(roomId, source: source);
+            requireLive: true,
+          );
+        } catch (_) {
+          if (coordinator.inCooldown) {
+            rethrow;
+          }
         }
-        rethrow;
+      }
+
+      // Anonymous HTML is the terminal playback-only fallback. It is never
+      // mixed with either account's room detail or danmaku credentials.
+      return _getAnonymousRoomDetail(roomId, source: source);
+    }
+  }
+
+  _KuaishouAccountTransport? _resolveFallbackTransport(
+    _KuaishouAccountTransport attempted,
+  ) {
+    if (!_anonymousMode) {
+      final active = _activeTransport;
+      if (!identical(active, attempted) &&
+          active.sessionKey != attempted.sessionKey &&
+          _currentCookieHeaderFor(active).isNotEmpty) {
+        return active;
       }
     }
+
+    final fallback = accountFallbackProvider?.call(attempted.sessionKey);
+    if (fallback == null ||
+        fallback.sessionKey == attempted.sessionKey ||
+        fallback.cookie.trim().isEmpty) {
+      return null;
+    }
+    final transport = _transportFor(fallback.sessionKey);
+    if (transport.customCookie != fallback.cookie ||
+        transport.customKww != fallback.kww) {
+      transport.resetCredential(
+        cookie: fallback.cookie,
+        kww: fallback.kww,
+      );
+    }
+    return transport;
   }
 
   Future<LiveRoomDetail> _getRoomDetailForTransport(
     String roomId, {
     required KuaishouRequestSource source,
     required _KuaishouAccountTransport transport,
+    bool requireLive = false,
   }) {
     return coordinator.coalesce(
-      key: '${transport.cacheNamespace}:room_detail:$roomId',
+      key: '${transport.cacheNamespace}:room_detail:$roomId:'
+          '${requireLive ? "live" : "any"}',
       cacheTtl: roomDetailCacheTtlForSource(source),
       bypassCache: KuaishouRequestTrace.forceNetwork,
       task: () => _fetchRoomDetailUncoordinated(
         roomId,
         transport: transport,
+        requireLive: requireLive,
       ),
     );
   }
@@ -1360,6 +1381,7 @@ class KuaishouSite extends LiveSite {
   Future<LiveRoomDetail> _fetchRoomDetailUncoordinated(
     String roomId, {
     required _KuaishouAccountTransport transport,
+    bool requireLive = false,
   }) async {
     final sessionEpoch = transport.epoch;
     final stopwatch = Stopwatch()..start();
@@ -1409,19 +1431,23 @@ class KuaishouSite extends LiveSite {
         _ensureCurrentSession(transport, sessionEpoch);
       }
 
-      if (!_isCompleteRoomDetail(detail)) {
+      if (!_isCompleteRoomDetail(detail, requireLive: requireLive)) {
         final isLiveWithoutPlayback =
             detail?.resolvedLiveStatus == LiveStatusState.live &&
                 extractPlayableUrls(detail?.data).isEmpty;
+        final isRequiredLiveMissing = requireLive &&
+            detail?.resolvedLiveStatus == LiveStatusState.offline;
         CoreLog.i(
           '[ks-request] fail endpoint=room_detail room=$maskedRoom '
           'source=${source.name} totalMs=${stopwatch.elapsedMilliseconds} '
-          'reason=${isLiveWithoutPlayback ? "playback_missing" : "parse_failed"} '
+          'reason=${isLiveWithoutPlayback ? "playback_missing" : isRequiredLiveMissing ? "live_missing" : "parse_failed"} '
           'class=${transport.lastErrorClassification.name}',
         );
         final classification = transport.lastErrorClassification;
         throw CoreError(
-          isLiveWithoutPlayback ? "快手直播间播放信息尚未就绪，请稍后重试" : "快手直播间详情解析失败，请稍后重试",
+          isLiveWithoutPlayback || isRequiredLiveMissing
+              ? "当前快手账号未取得直播详情，请稍后重试"
+              : "快手直播间详情解析失败，请稍后重试",
           statusCode: classification == KuaishouErrorClassification.forbidden
               ? 403
               : classification == KuaishouErrorClassification.challengePage
@@ -1478,13 +1504,16 @@ class KuaishouSite extends LiveSite {
     }
   }
 
-  static bool _isCompleteRoomDetail(LiveRoomDetail? detail) {
+  static bool _isCompleteRoomDetail(
+    LiveRoomDetail? detail, {
+    bool requireLive = false,
+  }) {
     if (detail == null) return false;
     switch (detail.resolvedLiveStatus) {
       case LiveStatusState.live:
         return extractPlayableUrls(detail.data).isNotEmpty;
       case LiveStatusState.offline:
-        return true;
+        return !requireLive;
       case LiveStatusState.unknown:
         return false;
     }
@@ -1643,34 +1672,6 @@ class KuaishouSite extends LiveSite {
         html.contains('访问太快') ||
         html.contains('请求频繁') ||
         html.contains('访问过于频繁');
-  }
-
-  LiveRoomDetail _mergeAnonymousPlaybackWithCredentials(
-    LiveRoomDetail playback,
-    LiveRoomDetail credentials,
-  ) {
-    return LiveRoomDetail(
-      roomId: playback.roomId,
-      title: playback.title,
-      cover: playback.cover,
-      userName: playback.userName,
-      userAvatar: playback.userAvatar,
-      online: playback.online,
-      introduction: playback.introduction,
-      notice: playback.notice,
-      status: playback.status,
-      liveStatusState: playback.liveStatusState,
-      data: playback.data,
-      danmakuData: credentials.danmakuData,
-      url: playback.url,
-      isRecord: playback.isRecord,
-      showTime: playback.showTime,
-      categoryId: playback.categoryId,
-      categoryName: playback.categoryName,
-      categoryParentId: playback.categoryParentId,
-      categoryParentName: playback.categoryParentName,
-      categoryPic: playback.categoryPic,
-    );
   }
 
   void _throwIfExplicitRateLimit(dynamic response) {
@@ -1979,18 +1980,21 @@ class KuaishouSite extends LiveSite {
     }
 
     if (args.liveStreamId.isEmpty) {
-      final freshDetail = await KuaishouRequestTrace.run<LiveRoomDetail?>(
-        KuaishouRequestSource.danmakuCredential,
-        () async => await _getRoomDetailForTransport(
-          args.roomId,
-          source: KuaishouRequestSource.danmakuCredential,
-          transport: transport,
-        ),
-      ).timeout(
-        const Duration(seconds: 4),
-        onTimeout: () => null,
-      );
-      final freshArgs = freshDetail?.danmakuData;
+      LiveRoomDetail? freshDetail;
+      try {
+        freshDetail = await KuaishouRequestTrace.run(
+          KuaishouRequestSource.danmakuCredential,
+          () => _getRoomDetailForTransport(
+            args.roomId,
+            source: KuaishouRequestSource.danmakuCredential,
+            transport: transport,
+            requireLive: true,
+          ),
+        ).timeout(const Duration(seconds: 4));
+      } on TimeoutException {
+        return null;
+      }
+      final freshArgs = freshDetail.danmakuData;
       if (freshArgs is KuaishouDanmakuArgs) {
         args = freshArgs;
       }

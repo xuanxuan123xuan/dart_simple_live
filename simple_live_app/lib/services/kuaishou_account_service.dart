@@ -194,6 +194,7 @@ class KuaishouAccountService extends GetxService {
       final active = activeSession;
       site.onAccountHealthEvent = null;
       site.onAccountSessionHealthEvent = _handleSiteHealthEvent;
+      site.accountFallbackProvider = _provideFallbackSession;
       if (active == null) {
         site.activateAnonymousMode();
       } else {
@@ -204,6 +205,30 @@ class KuaishouAccountService extends GetxService {
         );
       }
     }
+  }
+
+  KuaishouAccountFallbackSession? _provideFallbackSession(
+    String attemptedSessionKey,
+  ) {
+    refreshAvailability();
+    final attempted = KuaishouAccountSlot.values.firstWhereOrNull(
+      (slot) => slot.name == attemptedSessionKey,
+    );
+    final candidates = attempted == KuaishouAccountSlot.primary
+        ? [secondary]
+        : attempted == KuaishouAccountSlot.secondary
+            ? [primary]
+            : [primary, secondary];
+    final now = DateTime.now();
+    for (final candidate in candidates) {
+      if (!candidate.isAvailable(now)) continue;
+      return KuaishouAccountFallbackSession(
+        sessionKey: candidate.slot.name,
+        cookie: candidate.cookie,
+        kww: candidate.kww,
+      );
+    }
+    return null;
   }
 
   void setCookie(String cookie, {String? kww, DateTime? expiresAt}) {
@@ -389,6 +414,10 @@ class KuaishouAccountService extends GetxService {
         _degradeFrom(KuaishouAccountSlot.primary);
       } else if (mode.value == KuaishouAccountPoolMode.secondary) {
         _degradeFrom(KuaishouAccountSlot.secondary);
+      } else if (primary.isAvailable(current)) {
+        mode.value = KuaishouAccountPoolMode.primary;
+      } else if (secondary.isAvailable(current)) {
+        mode.value = KuaishouAccountPoolMode.secondary;
       }
     }
     if (!recovered && mode.value != previousMode) {

@@ -178,6 +178,16 @@ void main() {
     await danmaku.stop();
   });
 
+  test('anonymous playback without danmaku data stays silent', () async {
+    final closeMessages = <String>[];
+    final danmaku = KuaishouDanmaku()..onClose = closeMessages.add;
+
+    await danmaku.start(null);
+
+    expect(closeMessages, isEmpty);
+    await danmaku.stop();
+  });
+
   test('stopping Kuaishou danmaku cancels credential retry', () async {
     final timers = <_FakeTimer>[];
     var resolverCalls = 0;
