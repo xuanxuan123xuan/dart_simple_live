@@ -38,6 +38,8 @@ const SOURCE_ASSIGNMENT_FAILED: string = 'failed';
 const SOURCE_KIND_DIRECT_URL: string = 'directUrl';
 const SOURCE_KIND_MEDIA_SOURCE_WITH_HEADERS: string = 'mediaSourceWithHeaders';
 const SOURCE_KIND_RAW_FILE: string = 'rawFile';
+const OPERATE_ERROR: number = 801;
+const AVPLAYER_STATE_ERROR: number = 5400102;
 
 const TAG = 'VideoPlayer'
 export class VideoPlayer {
@@ -269,9 +271,25 @@ export class VideoPlayer {
       if (this.disposed || this.avPlayer !== boundPlayer) {
         return;
       }
+      // video_player applies looping after initialization. HarmonyOS reports
+      // that unsupported operation for live streams as 801, and can also emit
+      // a transient state error while applying adjacent controller settings.
+      // Once this source is prepared these errors do not invalidate playback;
+      // the progress watchdog remains responsible for detecting a real stall.
+      if (this.shouldIgnorePreparedPlaybackError(err)) {
+        Log.w(TAG, `ignore non-fatal native error code=${err.code} state=${this.avPlayer?.state ?? 'released'} generation=${this.playerGeneration}`);
+        return;
+      }
       Log.e(TAG, `native error code=${err.code} state=${this.avPlayer?.state ?? 'released'} generation=${this.playerGeneration}`);
       this.sendError(err);
     })
+  }
+
+  private shouldIgnorePreparedPlaybackError(error: BusinessError): boolean {
+    if (!this.prepared || this.sourceAssignmentState !== SOURCE_ASSIGNMENT_ASSIGNED) {
+      return false;
+    }
+    return error.code === OPERATE_ERROR || error.code === AVPLAYER_STATE_ERROR;
   }
 
   /**
@@ -700,7 +718,7 @@ export class VideoPlayer {
     details.set("sourceKind", this.sourceKind);
     details.set("prepared", this.prepared);
     details.set("firstFrameRendered", this.firstFrameRendered);
-    this.eventSink?.error("videoError", "HarmonyOS AVPlayer error", details);
+    this.eventSink?.error("videoError", `HarmonyOS AVPlayer error ${error.code}`, details);
   }
 
   getIUri(): string {

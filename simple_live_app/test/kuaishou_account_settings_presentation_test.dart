@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/modules/mine/account/account_controller.dart';
+import 'package:simple_live_app/modules/mine/account/kuaishou/account_page.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 
 class _TestKuaishouAccountService extends KuaishouAccountService {
@@ -60,5 +61,20 @@ void main() {
       controller.getKuaishouSlotSummaryText(KuaishouAccountSlot.secondary),
       contains('有效，到期时间未知'),
     );
+  });
+
+  testWidgets('Kuaishou account page shows primary and backup accounts', (
+    tester,
+  ) async {
+    account.mode.value = KuaishouAccountPoolMode.anonymous;
+
+    await tester.pumpWidget(
+      const GetMaterialApp(home: KuaishouAccountPage()),
+    );
+
+    expect(find.text('快手账号'), findsOneWidget);
+    expect(find.text('主账号'), findsOneWidget);
+    expect(find.text('备用账号'), findsOneWidget);
+    expect(find.text('当前模式：匿名模式'), findsOneWidget);
   });
 }

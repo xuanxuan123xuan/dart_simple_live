@@ -13,6 +13,7 @@ import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
+import 'package:simple_live_app/services/kuaishou_private_browser_launcher.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
@@ -119,8 +120,8 @@ class AccountController extends GetxController {
     douyinLogin();
   }
 
-  void kuaishouTap() async {
-    kuaishouLogin();
+  void kuaishouTap() {
+    Get.toNamed(RoutePath.kKuaishouAccount);
   }
 
   void douyinLogin() {
@@ -223,10 +224,6 @@ class AccountController extends GetxController {
     }
   }
 
-  void kuaishouLogin() {
-    kuaishouSlotLogin(KuaishouAccountSlot.primary);
-  }
-
   void kuaishouSlotLogin(KuaishouAccountSlot slot) {
     final session = KuaishouAccountService.instance.sessionFor(slot);
     final hasCookie = session.isConfigured;
@@ -250,7 +247,11 @@ class AccountController extends GetxController {
             ListTile(
               leading: const Icon(Icons.open_in_browser),
               title: const Text("浏览器登录后粘贴 Cookie"),
-              subtitle: const Text("使用系统浏览器打开快手直播，登录后回到这里粘贴完整 Cookie"),
+              subtitle: Text(
+                slot == KuaishouAccountSlot.secondary
+                    ? "使用新的无痕浏览器窗口登录备用账号，再回来粘贴完整 Cookie"
+                    : "使用系统浏览器打开快手直播，登录后回到这里粘贴完整 Cookie",
+              ),
               trailing: const Icon(Icons.chevron_right),
               onTap: () async {
                 Get.back();
@@ -315,9 +316,6 @@ class AccountController extends GetxController {
       ),
     );
   }
-
-  bool get canUseKuaishouWebLogin =>
-      Platform.isAndroid || Platform.isIOS || Utils.isOhos;
 
   void kuaishouWebLogin([
     KuaishouAccountSlot slot = KuaishouAccountSlot.primary,
@@ -452,6 +450,16 @@ class AccountController extends GetxController {
   Future<void> openKuaishouInBrowserThenConfigCookie([
     KuaishouAccountSlot slot = KuaishouAccountSlot.primary,
   ]) async {
+    if (slot == KuaishouAccountSlot.secondary) {
+      final opened = await KuaishouPrivateBrowserLauncher.open(
+        _kuaishouHomeUrl,
+      );
+      if (!opened) {
+        SmartDialog.showToast("无法创建无痕浏览器窗口，请手动打开新的无痕窗口登录快手备用账号");
+      }
+      doKuaishouCookieConfig(slot);
+      return;
+    }
     try {
       final opened = await launchUrlString(
         _kuaishouHomeUrl,

@@ -32,6 +32,9 @@ class KuaishouWebLoginController extends BaseController {
   Timer? _sessionPollTimer;
   bool _loginPageReady = false;
   bool _autoChecking = false;
+  bool _ohosLoginRequestLoaded = false;
+  bool _freshOhosSessionPrepared = false;
+  bool _freshOhosStorageResetPending = false;
 
   KuaishouAccountSlot get targetSlot => Get.arguments is KuaishouAccountSlot
       ? Get.arguments as KuaishouAccountSlot
@@ -39,6 +42,9 @@ class KuaishouWebLoginController extends BaseController {
 
   String get targetSlotName =>
       targetSlot == KuaishouAccountSlot.primary ? "主账号" : "备用账号";
+
+  bool get requiresFreshSession =>
+      requiresFreshKuaishouLoginSession(targetSlot);
 
   @override
   void onInit() {
@@ -74,14 +80,9 @@ class KuaishouWebLoginController extends BaseController {
             progress.value = 0;
             errorMessage.value = '';
           },
-          onPageFinished: (_) {
-            _loginPageReady = true;
-            progress.value = 1;
-            unawaited(_prepareOhosLoginPage());
-            unawaited(_tryAutoCompleteLogin());
-          },
+          onPageFinished: (_) => unawaited(_handleOhosPageFinished()),
           onUrlChange: (_) {
-            if (_loginPageReady) {
+            if (_loginPageReady && !_freshOhosStorageResetPending) {
               unawaited(_tryAutoCompleteLogin());
             }
           },
@@ -94,7 +95,51 @@ class KuaishouWebLoginController extends BaseController {
         ),
       );
     ohosWebViewController = controller;
-    controller.loadRequest(Uri.parse(_loginUrl));
+    unawaited(_openOhosLoginPage());
+  }
+
+  Future<void> _openOhosLoginPage() async {
+    final controller = ohosWebViewController;
+    if (controller == null) {
+      return;
+    }
+    try {
+      if (requiresFreshSession && !_freshOhosSessionPrepared) {
+        await _ohosWebCookieChannel.invokeMethod<void>('clearCookies');
+        _freshOhosSessionPrepared = true;
+        _freshOhosStorageResetPending = true;
+      }
+      errorMessage.value = '';
+      await controller.loadRequest(Uri.parse(_loginUrl));
+      _ohosLoginRequestLoaded = true;
+    } catch (e) {
+      progress.value = 1;
+      errorMessage.value =
+          requiresFreshSession ? '无法创建备用账号独立登录会话' : '无法打开快手登录页面';
+      Log.e('准备鸿蒙快手登录会话失败：$e', StackTrace.current);
+    }
+  }
+
+  Future<void> _handleOhosPageFinished() async {
+    progress.value = 1;
+    final controller = ohosWebViewController;
+    if (_freshOhosStorageResetPending && controller != null) {
+      try {
+        await controller.runJavaScript(
+          'window.localStorage.clear(); window.sessionStorage.clear();',
+        );
+        _freshOhosStorageResetPending = false;
+        _loginPageReady = false;
+        await controller.loadRequest(Uri.parse(_loginUrl));
+      } catch (e) {
+        errorMessage.value = '无法清理主账号网页登录状态';
+        Log.e('清理鸿蒙快手主账号网页登录状态失败：$e', StackTrace.current);
+      }
+      return;
+    }
+    _loginPageReady = true;
+    await _prepareOhosLoginPage();
+    await _tryAutoCompleteLogin();
   }
 
   void onWebViewCreated(InAppWebViewController controller) {
@@ -143,7 +188,11 @@ class KuaishouWebLoginController extends BaseController {
   Future<void> reload() async {
     errorMessage.value = "";
     if (Utils.isOhos) {
-      await ohosWebViewController?.reload();
+      if (_ohosLoginRequestLoaded) {
+        await ohosWebViewController?.reload();
+      } else {
+        await _openOhosLoginPage();
+      }
     } else {
       await webViewController?.reload();
     }
@@ -228,7 +277,10 @@ class KuaishouWebLoginController extends BaseController {
       "https://kuaishou.com",
       "https://www.kuaishou.com",
     ]) {
-      final cookies = await manager.getCookies(url: WebUri(url));
+      final cookies = await manager.getCookies(
+        url: WebUri(url),
+        webViewController: webViewController,
+      );
       for (final item in cookies) {
         final name = item.name.trim();
         final value = item.value.trim();
@@ -250,7 +302,7 @@ class KuaishouWebLoginController extends BaseController {
   }
 
   Future<void> _tryAutoCompleteLogin() async {
-    if (checking.value || _autoChecking) {
+    if (checking.value || _autoChecking || _freshOhosStorageResetPending) {
       return;
     }
     _autoChecking = true;
@@ -360,6 +412,10 @@ class KuaishouWebLoginController extends BaseController {
     }
     return '';
   }
+}
+
+bool requiresFreshKuaishouLoginSession(KuaishouAccountSlot slot) {
+  return slot == KuaishouAccountSlot.secondary;
 }
 
 const List<String> _kuaishouAuthCookiePriority = [

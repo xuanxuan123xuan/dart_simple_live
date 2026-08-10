@@ -67,7 +67,7 @@ void main() {
     expect(nativePlayer, contains('Events.START_RENDER_FRAME'));
   });
 
-  test('OHOS native errors are structured, sanitized, and never swallowed', () {
+  test('OHOS native errors are structured and sanitized', () {
     final nativePlayer = File(
       'third_party/video_player_ohos/ohos/src/main/ets/components/'
       'videoplayer/VideoPlayer.ets',
@@ -88,9 +88,28 @@ void main() {
     }
     expect(sendError, isNot(contains('url')));
     expect(sendError, isNot(contains('headers')));
+    expect(sendError, contains(r'HarmonyOS AVPlayer error ${error.code}'));
     expect(nativePlayer, contains('this.sendError(err);'));
-    expect(nativePlayer, isNot(contains('AvPlayer Avoid Error Reporting')));
-    expect(nativePlayer, isNot(contains('err.code == AVPLAYER_STATE_ERROR')));
+  });
+
+  test('OHOS ignores only prepared non-fatal operation errors', () {
+    final nativePlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
+    final ignoreError = RegExp(
+      r'shouldIgnorePreparedPlaybackError\(error: BusinessError\): boolean \{([\s\S]*?)\n  \}',
+    ).firstMatch(nativePlayer)!.group(1)!;
+
+    expect(ignoreError, contains('this.prepared'));
+    expect(ignoreError, contains('SOURCE_ASSIGNMENT_ASSIGNED'));
+    expect(ignoreError, contains('OPERATE_ERROR'));
+    expect(ignoreError, contains('AVPLAYER_STATE_ERROR'));
+    expect(ignoreError, isNot(contains('5400103')));
+    expect(
+      nativePlayer,
+      contains('if (this.shouldIgnorePreparedPlaybackError(err))'),
+    );
   });
 
   test('reports continuous buffering after eight seconds', () {

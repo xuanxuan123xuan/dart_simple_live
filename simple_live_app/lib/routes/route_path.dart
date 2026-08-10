@@ -72,6 +72,9 @@ class RoutePath {
   /// 快手 Web登录
   static const kKuaishouWebLogin = "/settings/account/kuaishou/web_login";
 
+  /// 快手账号管理
+  static const kKuaishouAccount = "/settings/account/kuaishou";
+
   /// 数据同步
   static const kLocalSync = "/local_sync";
 
