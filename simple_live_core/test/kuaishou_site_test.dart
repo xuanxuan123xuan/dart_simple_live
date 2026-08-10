@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -518,6 +519,139 @@ void main() {
     }
   });
 
+  group('KuaishouSite authenticated room warm-up', () {
+    late Interceptor roomPageInterceptor;
+
+    tearDown(() {
+      HttpClient.instance.dio.interceptors.remove(roomPageInterceptor);
+    });
+
+    test('retries a live handshake page without playback using account Cookie',
+        () async {
+      var handshakeRequests = 0;
+      var authenticatedPageRequests = 0;
+      String? fallbackCookie;
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handshakeRequests += 1;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(
+                    roomId: 'warm-room',
+                    includePlayback: false,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      roomPageInterceptor = InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (options.uri.path != '/u/warm-room') {
+            handler.next(options);
+            return;
+          }
+          authenticatedPageRequests += 1;
+          fallbackCookie = options.headers['cookie']?.toString();
+          handler.resolve(
+            Response<String>(
+              requestOptions: options,
+              statusCode: 200,
+              data: _kuaishouLivePage(roomId: 'warm-room'),
+            ),
+          );
+        },
+      );
+      HttpClient.instance.dio.interceptors.add(roomPageInterceptor);
+      final site = KuaishouSite(
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        );
+
+      final detail = await site.getRoomDetail(roomId: 'warm-room');
+
+      expect(KuaishouSite.extractPlayableUrls(detail.data), isNotEmpty);
+      expect(handshakeRequests, 1);
+      expect(authenticatedPageRequests, 1);
+      expect(fallbackCookie, contains('primary-token'));
+    });
+
+    test('does not cache a live detail that still has no playback', () async {
+      var handshakeRequests = 0;
+      var authenticatedPageRequests = 0;
+      final incompletePage = _kuaishouLivePage(
+        roomId: 'incomplete-room',
+        includePlayback: false,
+      );
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handshakeRequests += 1;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: incompletePage,
+                ),
+              );
+            },
+          ),
+        );
+      roomPageInterceptor = InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (options.uri.path != '/u/incomplete-room') {
+            handler.next(options);
+            return;
+          }
+          authenticatedPageRequests += 1;
+          handler.resolve(
+            Response<String>(
+              requestOptions: options,
+              statusCode: 200,
+              data: incompletePage,
+            ),
+          );
+        },
+      );
+      HttpClient.instance.dio.interceptors.add(roomPageInterceptor);
+      final site = KuaishouSite(
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        );
+
+      await expectLater(
+        site.getRoomDetail(roomId: 'incomplete-room'),
+        throwsA(isA<CoreError>()),
+      );
+      await expectLater(
+        site.getRoomDetail(roomId: 'incomplete-room'),
+        throwsA(isA<CoreError>()),
+      );
+
+      expect(handshakeRequests, 2);
+      expect(authenticatedPageRequests, 2);
+    });
+  });
+
   test('anonymous detail is reused for playback and strips danmaku', () async {
     var anonymousRequests = 0;
     var authenticatedSessions = 0;
@@ -615,6 +749,10 @@ void main() {
 String _kuaishouLivePage({
   required String roomId,
   bool includeDanmakuCredentials = false,
+  bool includePlayback = true,
 }) {
-  return '''<script>window.__INITIAL_STATE__={"liveroom":{"token":"${includeDanmakuCredentials ? 'secret-token' : ''}","websocketUrls":[${includeDanmakuCredentials ? '"wss://example.com/live"' : ''}],"playList":[{"isLiving":true,"author":{"id":"$roomId","name":"主播"},"liveStream":{"id":"stream-$roomId","playUrls":{"h264":{"adaptationSet":{"representation":[{"name":"高清","url":"https://example.com/$roomId.flv"}]}}}}}]}};</script>''';
+  final playUrls = includePlayback
+      ? '"playUrls":{"h264":{"adaptationSet":{"representation":[{"name":"高清","url":"https://example.com/$roomId.flv"}]}}}'
+      : '"playUrls":{}';
+  return '''<script>window.__INITIAL_STATE__={"liveroom":{"token":"${includeDanmakuCredentials ? 'secret-token' : ''}","websocketUrls":[${includeDanmakuCredentials ? '"wss://example.com/live"' : ''}],"playList":[{"isLiving":true,"author":{"id":"$roomId","name":"主播"},"liveStream":{"id":"stream-$roomId",$playUrls}}]}};</script>''';
 }

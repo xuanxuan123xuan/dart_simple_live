@@ -1393,7 +1393,8 @@ class KuaishouSite extends LiveSite {
         );
         _ensureCurrentSession(transport, sessionEpoch);
       }
-      if (detail == null && _currentCookieHeaderFor(transport).isNotEmpty) {
+      if (_needsAuthenticatedRoomPage(detail) &&
+          _currentCookieHeaderFor(transport).isNotEmpty) {
         CoreLog.i(
           '[ks-request] fallback=with_cookie room=$maskedRoom '
           'source=${source.name} prefetchMs=$prefetchMs',
@@ -1408,15 +1409,19 @@ class KuaishouSite extends LiveSite {
         _ensureCurrentSession(transport, sessionEpoch);
       }
 
-      if (detail == null) {
+      if (!_isCompleteRoomDetail(detail)) {
+        final isLiveWithoutPlayback =
+            detail?.resolvedLiveStatus == LiveStatusState.live &&
+                extractPlayableUrls(detail?.data).isEmpty;
         CoreLog.i(
           '[ks-request] fail endpoint=room_detail room=$maskedRoom '
           'source=${source.name} totalMs=${stopwatch.elapsedMilliseconds} '
-          'reason=parse_failed class=${transport.lastErrorClassification.name}',
+          'reason=${isLiveWithoutPlayback ? "playback_missing" : "parse_failed"} '
+          'class=${transport.lastErrorClassification.name}',
         );
         final classification = transport.lastErrorClassification;
         throw CoreError(
-          "快手直播间详情解析失败，请稍后重试",
+          isLiveWithoutPlayback ? "快手直播间播放信息尚未就绪，请稍后重试" : "快手直播间详情解析失败，请稍后重试",
           statusCode: classification == KuaishouErrorClassification.forbidden
               ? 403
               : classification == KuaishouErrorClassification.challengePage
@@ -1434,26 +1439,54 @@ class KuaishouSite extends LiveSite {
         );
       }
 
+      // Completeness guarantees a non-null detail here; partial responses have
+      // already failed and therefore cannot enter the completed-value cache.
+      final completeDetail = detail!;
+
       if (source == KuaishouRequestSource.userEnter ||
           source == KuaishouRequestSource.manual) {
         unawaited(
           _registerDid(
             transport: transport,
             sessionEpoch: sessionEpoch,
-            categoryId: detail.categoryId,
-            categoryName: detail.categoryName,
+            categoryId: completeDetail.categoryId,
+            categoryName: completeDetail.categoryName,
           ),
         );
       }
       CoreLog.i(
         '[ks-request] done endpoint=room_detail room=$maskedRoom '
         'source=${source.name} '
-        'status=${detail.liveStatusState?.name ?? "unknown"} '
+        'status=${completeDetail.liveStatusState?.name ?? "unknown"} '
         'totalMs=${stopwatch.elapsedMilliseconds}',
       );
-      return detail;
+      return completeDetail;
     } finally {
       activeDetailRequests -= 1;
+    }
+  }
+
+  static bool _needsAuthenticatedRoomPage(LiveRoomDetail? detail) {
+    if (detail == null) return true;
+    switch (detail.resolvedLiveStatus) {
+      case LiveStatusState.live:
+        return extractPlayableUrls(detail.data).isEmpty;
+      case LiveStatusState.unknown:
+        return true;
+      case LiveStatusState.offline:
+        return false;
+    }
+  }
+
+  static bool _isCompleteRoomDetail(LiveRoomDetail? detail) {
+    if (detail == null) return false;
+    switch (detail.resolvedLiveStatus) {
+      case LiveStatusState.live:
+        return extractPlayableUrls(detail.data).isNotEmpty;
+      case LiveStatusState.offline:
+        return true;
+      case LiveStatusState.unknown:
+        return false;
     }
   }
 
