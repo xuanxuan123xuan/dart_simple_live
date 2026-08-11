@@ -27,10 +27,10 @@ void main() {
 
   tearDown(Get.reset);
 
-  test('settings summary exposes the current anonymous mode', () {
+  test('settings summary exposes the missing Cookie state', () {
     account.mode.value = KuaishouAccountPoolMode.anonymous;
 
-    expect(controller.getKuaishouCookieSummaryText(), '当前模式：匿名模式');
+    expect(controller.getKuaishouCookieSummaryText(), '当前模式：未配置 Cookie');
   });
 
   test('settings summary distinguishes daily suspension from expiry', () {
@@ -76,6 +76,6 @@ void main() {
     expect(find.text('快手账号'), findsOneWidget);
     expect(find.text('主账号'), findsOneWidget);
     expect(find.text('备用账号'), findsOneWidget);
-    expect(find.text('当前模式：匿名模式'), findsOneWidget);
+    expect(find.text('当前模式：未配置 Cookie'), findsOneWidget);
   });
 }

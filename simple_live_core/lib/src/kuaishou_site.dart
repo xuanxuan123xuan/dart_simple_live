@@ -80,8 +80,6 @@ enum KuaishouAccountHealthEvent {
   credentialInvalid,
 }
 
-enum KuaishouAnonymousCapability { available, degraded }
-
 class KuaishouAccountFallbackSession {
   const KuaishouAccountFallbackSession({
     required this.sessionKey,
@@ -140,27 +138,19 @@ class KuaishouSite extends LiveSite {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   KuaishouSite({
-    Dio? anonymousDio,
-    CookieJar? anonymousCookieJar,
     Dio Function()? authenticatedDioFactory,
     CookieJar Function()? cookieJarFactory,
     KuaishouRequestCoordinator? coordinator,
     KuaishouCategorySnapshotStore? categorySnapshotStore,
-  })  : _anonymousDio = anonymousDio ?? Dio(),
-        _anonymousCookieJar = anonymousCookieJar ?? CookieJar(),
-        _authenticatedDioFactory = authenticatedDioFactory ?? Dio.new,
+  })  : _authenticatedDioFactory = authenticatedDioFactory ?? Dio.new,
         _cookieJarFactory = cookieJarFactory ?? CookieJar.new,
         _categorySnapshotStore = categorySnapshotStore,
         coordinator = coordinator ?? KuaishouRequestCoordinator() {
-    _anonymousDio.interceptors.add(CookieManager(_anonymousCookieJar));
-    _anonymousDio.options.connectTimeout = const Duration(seconds: 5);
     id = "kuaishou";
     name = "快手直播";
   }
 
   static const String _legacySessionKey = 'legacy';
-  static const String _anonymousSessionKey = 'anonymous';
-
   final Map<String, _KuaishouAccountTransport> _accountTransports = {};
   String _activeAccountSessionKey = _legacySessionKey;
   bool _anonymousMode = false;
@@ -189,8 +179,7 @@ class KuaishouSite extends LiveSite {
   /// 当前进程内正在执行中的快手详情请求数（观测用）。
   int activeDetailRequests = 0;
 
-  /// 最近一次快手响应分类（S2-T2 错误分类；限流时触发全局冷却）。
-  /// 记录最近一次错误分类（供观测与冷却触发）。
+  /// 最近一次快手响应分类，供当前请求选择备用账号和错误展示使用。
   KuaishouErrorClassification get lastErrorClassification =>
       _activeTransport.lastErrorClassification;
 
@@ -205,19 +194,11 @@ class KuaishouSite extends LiveSite {
   /// 快手敏感请求的进程级协调器：全局最小间隔、优先级、同房合并与短缓存。
   final KuaishouRequestCoordinator coordinator;
 
-  /// 匿名通道使用独立 Dio，永不安装 CookieManager，也不读取登录 CookieJar。
-  final Dio _anonymousDio;
-  final CookieJar _anonymousCookieJar;
   final Dio Function() _authenticatedDioFactory;
   final CookieJar Function() _cookieJarFactory;
   final KuaishouCategorySnapshotStore? _categorySnapshotStore;
   final StreamController<List<LiveCategory>> _categoryUpdates =
       StreamController<List<LiveCategory>>.broadcast();
-  int _anonymousIndeterminateCount = 0;
-  KuaishouAnonymousCapability _anonymousCapability =
-      KuaishouAnonymousCapability.available;
-
-  KuaishouAnonymousCapability get anonymousCapability => _anonymousCapability;
   Stream<List<LiveCategory>> get categoryUpdates => _categoryUpdates.stream;
 
   void cancelScope(String scopeId) => coordinator.cancelScope(scopeId);
@@ -252,7 +233,7 @@ class KuaishouSite extends LiveSite {
   }
 
   void activateAnonymousMode() {
-    _activeAccountSessionKey = _anonymousSessionKey;
+    _activeAccountSessionKey = _legacySessionKey;
     _anonymousMode = true;
   }
 
@@ -262,8 +243,6 @@ class KuaishouSite extends LiveSite {
 
   Object? cookieJarIdentityFor(String sessionKey) =>
       _accountTransports[sessionKey]?.sessionCookieJar;
-
-  Object get anonymousCookieJarIdentity => _anonymousCookieJar;
 
   bool didReportAttemptedFor(String sessionKey) =>
       _accountTransports[sessionKey]?.didReportAttempted ?? false;
@@ -340,24 +319,56 @@ class KuaishouSite extends LiveSite {
     CoreCancellation? cancellation,
     Duration timeout = const Duration(seconds: 8),
   }) async {
-    try {
+    final transport = _preferredCookieTransport();
+    if (transport == null) {
+      throw CoreError(
+        '请先配置快手账号 Cookie',
+        statusCode: 401,
+        kind: CoreErrorKind.http,
+      );
+    }
+    Future<dynamic> requestWith(_KuaishouAccountTransport selected) async {
+      final requestHeaders = <String, dynamic>{...headers};
+      final cookieHeader = _currentCookieHeaderFor(selected).trim();
+      if (cookieHeader.isEmpty) {
+        throw CoreError(
+          '请先配置快手账号 Cookie',
+          statusCode: 401,
+          kind: CoreErrorKind.http,
+        );
+      }
+      requestHeaders['cookie'] = cookieHeader;
       final result = await HttpClient.instance.getJson(
         url,
         queryParameters: queryParameters,
-        header: headers,
+        header: requestHeaders,
         cancellation: cancellation,
         timeout: timeout,
       );
       _throwIfExplicitRateLimit(result);
       return result;
-    } on CoreError catch (error) {
-      if (error.statusCode == 429) {
-        coordinator.beginCooldown(
-          KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
-        );
-      }
-      rethrow;
     }
+
+    try {
+      return await requestWith(transport);
+    } catch (firstError, firstStackTrace) {
+      final fallback = _preferredCookieTransport(excluding: transport);
+      if (fallback != null) {
+        return requestWith(fallback);
+      }
+      Error.throwWithStackTrace(firstError, firstStackTrace);
+    }
+  }
+
+  _KuaishouAccountTransport? _preferredCookieTransport({
+    _KuaishouAccountTransport? excluding,
+  }) {
+    final active = _activeTransport;
+    if (!identical(active, excluding) &&
+        _currentCookieHeaderFor(active).trim().isNotEmpty) {
+      return active;
+    }
+    return _resolveFallbackTransport(excluding ?? active);
   }
 
   Map<String, dynamic> _headersWithCookieFor(
@@ -370,10 +381,6 @@ class KuaishouSite extends LiveSite {
     }
     return headers;
   }
-
-  /// 供测试和调用方验证匿名通道不会注入登录 Cookie。
-  Map<String, dynamic> get anonymousRequestHeaders =>
-      Map.unmodifiable(_headers);
 
   static String resolveServerKww(String cookie, String fallback) {
     for (final part in cookie.split(';')) {
@@ -1273,55 +1280,42 @@ class KuaishouSite extends LiveSite {
       coordinator.cancelScope('kuaishou:follow-refresh');
       coordinator.cancelScope('kuaishou:search');
     }
-    if (_anonymousMode) {
-      return _getAnonymousRoomDetail(roomId, source: source);
+    final firstTransport = _preferredCookieTransport();
+    if (firstTransport == null) {
+      throw CoreError(
+        '请先配置快手账号 Cookie',
+        statusCode: 401,
+        kind: CoreErrorKind.http,
+      );
     }
-
-    final firstTransport = _activeTransport;
     try {
       return await _getRoomDetailForTransport(
         roomId,
         source: source,
         transport: firstTransport,
-        requireLive: _isUserTriggered(source),
       );
-    } catch (_) {
-      if (!_isUserTriggered(source) || coordinator.inCooldown) {
-        rethrow;
-      }
-
-      final fallbackTransport = _resolveFallbackTransport(firstTransport);
+    } catch (firstError, firstStackTrace) {
+      final fallbackTransport =
+          _preferredCookieTransport(excluding: firstTransport);
       if (fallbackTransport != null) {
-        try {
-          return await _getRoomDetailForTransport(
-            roomId,
-            source: source,
-            transport: fallbackTransport,
-            requireLive: true,
-          );
-        } catch (_) {
-          if (coordinator.inCooldown) {
-            rethrow;
-          }
-        }
+        return _getRoomDetailForTransport(
+          roomId,
+          source: source,
+          transport: fallbackTransport,
+        );
       }
-
-      // Anonymous HTML is the terminal playback-only fallback. It is never
-      // mixed with either account's room detail or danmaku credentials.
-      return _getAnonymousRoomDetail(roomId, source: source);
+      Error.throwWithStackTrace(firstError, firstStackTrace);
     }
   }
 
   _KuaishouAccountTransport? _resolveFallbackTransport(
     _KuaishouAccountTransport attempted,
   ) {
-    if (!_anonymousMode) {
-      final active = _activeTransport;
-      if (!identical(active, attempted) &&
-          active.sessionKey != attempted.sessionKey &&
-          _currentCookieHeaderFor(active).isNotEmpty) {
-        return active;
-      }
+    final active = _activeTransport;
+    if (!identical(active, attempted) &&
+        active.sessionKey != attempted.sessionKey &&
+        _currentCookieHeaderFor(active).isNotEmpty) {
+      return active;
     }
 
     final fallback = accountFallbackProvider?.call(attempted.sessionKey);
@@ -1704,9 +1698,6 @@ class KuaishouSite extends LiveSite {
   void _throwIfExplicitRateLimit(dynamic response) {
     final text = response is String ? response : jsonEncode(response);
     if (!looksLikeExplicitRateLimitText(text)) return;
-    coordinator.beginCooldown(
-      KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
-    );
     throw CoreError(
       '快手访问过于频繁，请稍后重试',
       statusCode: 429,
@@ -1758,11 +1749,8 @@ class KuaishouSite extends LiveSite {
     final immediateCooldown =
         KuaishouCooldownEvidenceTracker.immediateCooldownForStatus(statusCode);
     if (immediateCooldown != null) {
-      coordinator.beginCooldown(immediateCooldown);
       transport.lastErrorClassification =
           KuaishouErrorClassification.rateLimited;
-      // 429/400010 are host-level evidence. Rotating or invalidating an
-      // account during the same host cooldown only amplifies traffic.
       transport.lastHealthEvent = null;
       return;
     }
@@ -1770,36 +1758,7 @@ class KuaishouSite extends LiveSite {
       transport.lastErrorClassification = isChallengePage
           ? KuaishouErrorClassification.challengePage
           : KuaishouErrorClassification.forbidden;
-      final hasAuthenticatedSession =
-          KuaishouCooldownEvidenceTracker.hasAuthenticatedSession(
-        cookieHeader,
-      );
-      final shouldCooldown =
-          transport.cooldownEvidenceTracker.recordCredentialRejection(
-        endpoint: endpoint,
-        sessionEpoch: sessionEpoch,
-        hasAuthenticatedSession: hasAuthenticatedSession,
-      );
-      if (isChallengePage && hasAuthenticatedSession) {
-        transport.hardBlocked = true;
-        transport.lastHealthEvent =
-            KuaishouAccountHealthEvent.securityChallenge;
-        _emitAccountHealthEvent(
-          transport,
-          KuaishouAccountHealthEvent.securityChallenge,
-        );
-        return;
-      }
-      CoreLog.i(
-        '[ks-request] credential_rejection endpoint=$endpoint '
-        'session=$sessionEpoch authenticated=$hasAuthenticatedSession '
-        'cooldown=$shouldCooldown',
-      );
-      if (shouldCooldown) {
-        transport.cooldownUntil = DateTime.now().add(
-          KuaishouCooldownEvidenceTracker.cooldownDuration,
-        );
-      }
+      transport.lastHealthEvent = null;
       return;
     }
     if (statusCode >= 400) {
@@ -1833,15 +1792,9 @@ class KuaishouSite extends LiveSite {
     _KuaishouAccountTransport transport,
     KuaishouRequestSource source,
   ) {
-    if (transport.hardBlocked) {
-      throw KuaishouCooldownError('快手账号槽位已暂停');
-    }
-    final cooldownUntil = transport.cooldownUntil;
-    if (cooldownUntil != null &&
-        cooldownUntil.isAfter(DateTime.now()) &&
-        !_isUserTriggered(source)) {
-      throw KuaishouCooldownError('快手账号槽位处于冷却期');
-    }
+    // Keep the original Cookie request behavior: every attempt reaches the
+    // selected account. A failed primary attempt is handled by the caller's
+    // secondary-account fallback instead of a host-wide or slot-wide gate.
   }
 
   void _emitAccountHealthEvent(
@@ -2052,198 +2005,25 @@ class KuaishouSite extends LiveSite {
 
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
-    return getAnonymousLiveStatusState(roomId: roomId);
-  }
-
-  /// 关注列表专用匿名状态接口。
-  ///
-  /// 只请求公开房间页、解析三态并写入按状态区分 TTL 的匿名缓存；失败
-  /// 返回 unknown，绝不读取登录 CookieJar、注册 DID 或回退登录请求。
-  Future<LiveStatusState> getAnonymousLiveStatusState({
-    required String roomId,
-  }) {
-    if (_anonymousCapability == KuaishouAnonymousCapability.degraded) {
-      return Future.value(LiveStatusState.unknown);
-    }
-    return coordinator.coalesce(
-      key: 'anonymous_live_status:$roomId',
-      cacheTtlForValue: anonymousStatusCacheTtl,
-      bypassCache: KuaishouRequestTrace.forceNetwork,
-      task: () => KuaishouRequestTrace.run(
+    try {
+      final detail = await KuaishouRequestTrace.run(
         KuaishouRequestSource.followStatus,
-        () async {
-          try {
-            final detail = await _getAnonymousRoomDetail(
-              roomId,
-              source: KuaishouRequestSource.followStatus,
-            );
-            final state = detail.resolvedLiveStatus;
-            if (state == LiveStatusState.unknown) {
-              _recordAnonymousIndeterminate();
-            } else {
-              _anonymousIndeterminateCount = 0;
-            }
-            return state;
-          } on _KuaishouAnonymousIndeterminateException {
-            _recordAnonymousIndeterminate();
-            return LiveStatusState.unknown;
-          } on KuaishouCooldownError {
-            rethrow;
-          } on CoreError catch (error) {
-            if (error.statusCode == 429) rethrow;
-            return LiveStatusState.unknown;
-          }
-        },
+        () => _getRoomDetailWithinBudget(roomId),
         scopeId: KuaishouRequestTrace.scopeId,
         forceNetwork: KuaishouRequestTrace.forceNetwork,
-      ),
-    );
-  }
-
-  void beginAnonymousStatusRefresh() {
-    _anonymousIndeterminateCount = 0;
-    _anonymousCapability = KuaishouAnonymousCapability.available;
-  }
-
-  void _recordAnonymousIndeterminate() {
-    _anonymousIndeterminateCount++;
-    if (_anonymousIndeterminateCount < 3) return;
-    _anonymousCapability = KuaishouAnonymousCapability.degraded;
-    coordinator.cancelScope(
-      KuaishouRequestTrace.scopeId ?? 'kuaishou:follow-refresh',
-    );
-  }
-
-  Future<LiveRoomDetail> _getAnonymousRoomDetail(
-    String roomId, {
-    required KuaishouRequestSource source,
-  }) {
-    return coordinator.coalesce(
-      key: 'anonymous_public_detail:$roomId',
-      cacheTtlForValue: (detail) =>
-          anonymousStatusCacheTtl(detail.resolvedLiveStatus),
-      bypassCache: KuaishouRequestTrace.forceNetwork,
-      task: () async {
-        final url = KuaishouLiveLink.publicRoomUrl(roomId);
-        final cookiesBefore = await _anonymousCookieJar.loadForRequest(
-          Uri.parse(url),
-        );
-        var response = await _requestAnonymousRoomPage(
-          roomId: roomId,
-          url: url,
-          source: source,
-          attempt: 1,
-        );
-        var html = response.data ?? '';
-        var detail = await _parseRoomDetail(
-          html,
-          roomId,
-          allowDanmaku: false,
-        );
-        final cookiesAfter = await _anonymousCookieJar.loadForRequest(
-          Uri.parse(url),
-        );
-        final structureNormal = html.contains('window.__INITIAL_STATE__');
-        if (structureNormal &&
-            (detail == null ||
-                detail.resolvedLiveStatus == LiveStatusState.unknown) &&
-            cookiesAfter.length > cookiesBefore.length) {
-          response = await _requestAnonymousRoomPage(
-            roomId: roomId,
-            url: url,
-            source: source,
-            attempt: 2,
-          );
-          html = response.data ?? '';
-          detail = await _parseRoomDetail(
-            html,
-            roomId,
-            allowDanmaku: false,
-          );
-        }
-        if (detail == null) {
-          if (html.contains('window.__INITIAL_STATE__')) {
-            throw const _KuaishouAnonymousIndeterminateException();
-          }
-          throw CoreError(
-            '快手匿名直播间详情解析失败',
-            statusCode: response.statusCode ?? 0,
-            kind: CoreErrorKind.response,
-          );
-        }
-        return detail;
-      },
-    );
-  }
-
-  Future<Response<String>> _requestAnonymousRoomPage({
-    required String roomId,
-    required String url,
-    required KuaishouRequestSource source,
-    required int attempt,
-  }) async {
-    try {
-      final response = await coordinator.schedule<Response<String>>(
-        priority: _priorityForSource(source),
-        key: 'http:anonymous_public_detail:$roomId:$attempt',
-        logLabel: _maskRoomId(roomId),
-        scopeId: KuaishouRequestTrace.scopeId,
-        timeout: const Duration(seconds: 5),
-        task: () => _anonymousDio.get<String>(
-          url,
-          options: Options(
-            headers: _headers,
-            responseType: ResponseType.plain,
-            sendTimeout: const Duration(seconds: 5),
-            receiveTimeout: const Duration(seconds: 5),
-          ),
-        ),
       );
-      final html = response.data ?? '';
-      if (response.statusCode == 429 || looksLikeExplicitRateLimitText(html)) {
-        coordinator.beginCooldown(
-          KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
-        );
-        throw CoreError(
-          '快手访问过于频繁，请稍后重试',
-          statusCode: 429,
-          kind: CoreErrorKind.http,
-        );
-      }
-      if (looksLikeChallengePage(html)) {
-        throw CoreError(
-          '快手匿名访问受限',
-          statusCode: response.statusCode ?? 0,
-          kind: CoreErrorKind.http,
-        );
-      }
-      return response;
-    } on DioException catch (error) {
-      if (error.response?.statusCode == 429) {
-        coordinator.beginCooldown(
-          KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
-        );
-        throw CoreError(
-          '快手访问过于频繁，请稍后重试',
-          statusCode: 429,
-          kind: CoreErrorKind.http,
-          cause: error,
-        );
-      }
-      rethrow;
+      return detail.resolvedLiveStatus;
+    } catch (_) {
+      return LiveStatusState.unknown;
     }
   }
 
-  static Duration anonymousStatusCacheTtl(LiveStatusState state) {
-    switch (state) {
-      case LiveStatusState.live:
-        return const Duration(seconds: 60);
-      case LiveStatusState.offline:
-        return const Duration(minutes: 3);
-      case LiveStatusState.unknown:
-        return const Duration(seconds: 30);
-    }
-  }
+  /// 兼容旧调用名。关注状态现已恢复为 Cookie 请求，并在主账号失败时
+  /// 使用备用账号；不再建立匿名房间请求。
+  Future<LiveStatusState> getAnonymousLiveStatusState({
+    required String roomId,
+  }) =>
+      getLiveStatusState(roomId: roomId);
 
   @override
   Future<bool> getLiveStatus({required String roomId}) async {
@@ -2782,10 +2562,6 @@ class _KuaishouChallengePageException implements Exception {
 
 class _KuaishouCredentialInvalidException implements Exception {
   const _KuaishouCredentialInvalidException();
-}
-
-class _KuaishouAnonymousIndeterminateException implements Exception {
-  const _KuaishouAnonymousIndeterminateException();
 }
 
 class _KuaishouAccountTransport {

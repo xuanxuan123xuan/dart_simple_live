@@ -783,7 +783,7 @@ class AccountController extends GetxController {
   String getKuaishouModeName(KuaishouAccountPoolMode mode) => switch (mode) {
         KuaishouAccountPoolMode.primary => "主账号",
         KuaishouAccountPoolMode.secondary => "备用账号",
-        KuaishouAccountPoolMode.anonymous => "匿名模式",
+        KuaishouAccountPoolMode.anonymous => "未配置 Cookie",
       };
 
   String getKuaishouSlotSummaryText(KuaishouAccountSlot slot) {
