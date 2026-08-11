@@ -25,6 +25,52 @@ int? followStatusForLiveState(LiveStatusState state) {
   };
 }
 
+Duration followPreviewCacheTtl(String _) => const Duration(minutes: 2);
+
+bool isFollowPreviewMetadataStale(
+  FollowUser item, {
+  DateTime? now,
+}) {
+  if (item.roomTitle.trim().isEmpty ||
+      item.roomCover.trim().isEmpty ||
+      item.userName.trim().isEmpty ||
+      item.face.trim().isEmpty) {
+    return true;
+  }
+  final updatedAt = item.previewUpdatedAt;
+  if (updatedAt == null) {
+    return true;
+  }
+  final checkedAt = now ?? DateTime.now();
+  if (updatedAt.isAfter(checkedAt)) {
+    return true;
+  }
+  return checkedAt.difference(updatedAt) >= followPreviewCacheTtl(item.siteId);
+}
+
+bool applyFollowPreviewDetail(
+  FollowUser item,
+  LiveRoomDetail detail, {
+  DateTime? updatedAt,
+}) {
+  final title = detail.title.trim();
+  final cover = detail.cover.trim();
+  final userName = detail.userName.trim();
+  final avatar = detail.userAvatar.trim();
+  final hasMetadata = title.isNotEmpty ||
+      cover.isNotEmpty ||
+      userName.isNotEmpty ||
+      avatar.isNotEmpty;
+  if (!hasMetadata) return false;
+
+  if (title.isNotEmpty) item.roomTitle = title;
+  if (cover.isNotEmpty) item.roomCover = cover;
+  if (userName.isNotEmpty) item.userName = userName;
+  if (avatar.isNotEmpty) item.face = avatar;
+  item.previewUpdatedAt = updatedAt ?? DateTime.now();
+  return true;
+}
+
 class FollowUserService extends BasePageController<FollowUser> {
   static const Duration updateStatusCooldown = Duration(seconds: 10);
   static const Duration refreshProgressCompletionHold = Duration(seconds: 2);
@@ -838,10 +884,6 @@ class FollowUserService extends BasePageController<FollowUser> {
       final douyinLimiter = douyinTargetCount > 0
           ? DouyinFollowRefreshLimiter.forTargetCount(douyinTargetCount)
           : null;
-      if (allowedTargets.any((item) => item.siteId == Constant.kKuaishou)) {
-        (Sites.allSites[Constant.kKuaishou]?.liveSite as KuaishouSite?)
-            ?.beginAnonymousStatusRefresh();
-      }
       final resumedSuccessCount = persistedTask?.successCount ?? 0;
       final resumedFailedCount = persistedTask?.failedCount ?? 0;
       var completed = resumeTask ? resumedSuccessCount + resumedFailedCount : 0;
@@ -1198,17 +1240,7 @@ class FollowUserService extends BasePageController<FollowUser> {
       item.id = newId;
       item.roomId = resolvedRoomId;
     }
-    final title = resolvedDetail.title.trim();
-    final cover = resolvedDetail.cover.trim();
-    if (title.isNotEmpty) {
-      item.roomTitle = title;
-    }
-    if (cover.isNotEmpty) {
-      item.roomCover = cover;
-    }
-    if (title.isNotEmpty || cover.isNotEmpty) {
-      item.previewUpdatedAt = DateTime.now();
-    }
+    applyFollowPreviewDetail(item, resolvedDetail);
     item.liveStatus.value = resolvedDetail.status ? 2 : 1;
     await DBService.instance.addFollow(item);
   }
@@ -1217,7 +1249,6 @@ class FollowUserService extends BasePageController<FollowUser> {
     Iterable<FollowUser> items, {
     bool force = false,
   }) {
-    final now = DateTime.now();
     return _sortFollowUsers(
       _distinctFollowUsers(
         items.where((item) {
@@ -1231,16 +1262,7 @@ class FollowUserService extends BasePageController<FollowUser> {
           if (force) {
             return true;
           }
-          final missingPreview =
-              item.roomTitle.trim().isEmpty || item.roomCover.trim().isEmpty;
-          if (missingPreview) {
-            return true;
-          }
-          final updatedAt = item.previewUpdatedAt;
-          if (updatedAt == null) {
-            return true;
-          }
-          return now.difference(updatedAt) > const Duration(minutes: 30);
+          return isFollowPreviewMetadataStale(item);
         }),
       ),
     );
@@ -1250,9 +1272,6 @@ class FollowUserService extends BasePageController<FollowUser> {
     Iterable<FollowUser> items, {
     bool force = false,
   }) async {
-    if (!AppSettingsController.instance.followShowLiveCover.value) {
-      return;
-    }
     final targets = _buildPreviewTargets(items, force: force);
     if (targets.isEmpty) {
       return;
@@ -1332,20 +1351,7 @@ class FollowUserService extends BasePageController<FollowUser> {
             updateMetadataProgress(done: false);
             continue;
           }
-          final title = detail.title.trim();
-          final cover = detail.cover.trim();
-          if (title.isNotEmpty && title != item.roomTitle) {
-            item.roomTitle = title;
-            changed = true;
-          }
-          if (cover.isNotEmpty && cover != item.roomCover) {
-            item.roomCover = cover;
-            changed = true;
-          }
-          if (title.isNotEmpty || cover.isNotEmpty) {
-            item.previewUpdatedAt = DateTime.now();
-            changed = true;
-          }
+          changed = applyFollowPreviewDetail(item, detail) || changed;
           await DBService.instance.addFollow(item);
           successCount++;
         } catch (e) {

@@ -64,10 +64,10 @@ class KuaishouRequestCoordinator {
   KuaishouRequestCoordinator({
     DateTime Function()? nowProvider,
     math.Random? random,
-    this.minInterval = const Duration(milliseconds: 1500),
-    this.maxJitter = const Duration(milliseconds: 500),
-    this.publicMinInterval = const Duration(milliseconds: 500),
-    this.publicMaxJitter = const Duration(milliseconds: 200),
+    this.minInterval = const Duration(milliseconds: 300),
+    this.maxJitter = const Duration(milliseconds: 150),
+    this.publicMinInterval = Duration.zero,
+    this.publicMaxJitter = Duration.zero,
   })  : _now = nowProvider ?? DateTime.now,
         _random = random ?? math.Random();
 

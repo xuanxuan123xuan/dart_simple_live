@@ -1,6 +1,3 @@
-import 'dart:io';
-
-import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
@@ -46,6 +43,16 @@ void main() {
       expect(categories, hasLength(8));
       expect(categories.first.children, hasLength(133));
       expect(interceptor.categoryPagesFor('1'), [1, 2, 3]);
+      expect(
+        interceptor.requests,
+        everyElement(
+          isA<RequestOptions>().having(
+            (request) => request.headers['cookie']?.toString(),
+            'Cookie header',
+            contains('test-token'),
+          ),
+        ),
+      );
       expect(store.value?['version'], 1);
       expect((store.value?['categories'] as List), hasLength(8));
 
@@ -82,7 +89,8 @@ void main() {
           hasLength(2));
     });
 
-    test('business code 400010 starts host cooldown', () async {
+    test('business code 400010 is reported without host-wide cooldown',
+        () async {
       interceptor.homeResponse = {
         'result': 400010,
         'message': '访问太快，请稍候再试',
@@ -95,130 +103,47 @@ void main() {
           isA<CoreError>().having((error) => error.statusCode, 'status', 429),
         ),
       );
-      expect(site.coordinator.inCooldown, isTrue);
+      expect(site.coordinator.inCooldown, isFalse);
     });
   });
 
-  group('Kuaishou anonymous session governance', () {
-    test('stores only server cookies and performs one warm retry', () async {
-      var requests = 0;
-      final requestCookies = <String>[];
-      final dio = Dio();
-      final anonymousJar = CookieJar();
-      final site = KuaishouSite(
-        anonymousDio: dio,
-        anonymousCookieJar: anonymousJar,
-        coordinator: _coordinator(),
-      )..customCookie = 'kuaishou.live.web_st=account-secret';
-      dio.interceptors.add(InterceptorsWrapper(
-        onRequest: (options, handler) async {
-          requests++;
-          final cookieHeaders = options.headers.entries
-              .where((entry) => entry.key.toLowerCase() == 'cookie')
-              .map((entry) => entry.value?.toString() ?? '')
-              .toList(growable: false);
-          requestCookies.add(cookieHeaders.isEmpty ? '' : cookieHeaders.first);
-          if (requests == 1) {
-            await anonymousJar.saveFromResponse(
-              options.uri,
-              [Cookie('did', 'temporary-device')],
-            );
-          }
-          handler.resolve(Response<String>(
-            requestOptions: options,
-            statusCode: 200,
-            data: requests == 1
-                ? _anonymousStatePage({'caption': 'insufficient'})
-                : _anonymousStatePage({'isLiving': false}),
-          ));
-        },
-      ));
-
-      final state = await KuaishouRequestTrace.run(
-        KuaishouRequestSource.followStatus,
-        () => site.getAnonymousLiveStatusState(roomId: 'room-warm'),
-        forceNetwork: true,
-      );
-
-      expect(state, LiveStatusState.offline);
-      expect(requests, 2);
-      expect(requestCookies.first, isEmpty);
-      expect(requestCookies.last, contains('did=temporary-device'));
-      expect(requestCookies.last, isNot(contains('account-secret')));
-      expect(
-        site.anonymousCookieJarIdentity,
-        isNot(same(site.cookieJarIdentityFor('legacy'))),
-      );
-    });
-
-    test('three structurally valid unknown pages degrade the refresh round',
-        () async {
-      var requests = 0;
-      final dio = Dio();
-      final site = KuaishouSite(
-        anonymousDio: dio,
-        coordinator: _coordinator(),
-      )..beginAnonymousStatusRefresh();
-      dio.interceptors.add(InterceptorsWrapper(
+  test('legacy follow-status entry point uses the configured Cookie', () async {
+    String? seenCookie;
+    final dio = Dio()
+      ..interceptors.add(InterceptorsWrapper(
         onRequest: (options, handler) {
-          requests++;
+          seenCookie = options.headers['cookie']?.toString();
           handler.resolve(Response<String>(
             requestOptions: options,
             statusCode: 200,
-            data: _anonymousStatePage({'caption': 'insufficient'}),
+            data: _anonymousStatePage({'isLiving': false}),
           ));
         },
       ));
-
-      for (var index = 0; index < 3; index++) {
-        expect(
-          await KuaishouRequestTrace.run(
-            KuaishouRequestSource.followStatus,
-            () => site.getAnonymousLiveStatusState(roomId: 'room-$index'),
-            scopeId: 'kuaishou:follow-refresh',
-            forceNetwork: true,
-          ),
-          LiveStatusState.unknown,
-        );
-      }
-      expect(site.anonymousCapability, KuaishouAnonymousCapability.degraded);
-      expect(
-        await site.getAnonymousLiveStatusState(roomId: 'room-four'),
-        LiveStatusState.unknown,
+    final site = KuaishouSite(
+      authenticatedDioFactory: () => dio,
+      coordinator: _coordinator(),
+    )..activateAccountSession(
+        sessionKey: 'primary',
+        cookie: 'kuaishou.live.web_st=account-secret',
+        kww: '',
       );
-      expect(requests, 3);
-    });
 
-    test('400010 stops anonymous status with an explicit limited error',
-        () async {
-      final dio = Dio();
-      final site = KuaishouSite(
-        anonymousDio: dio,
-        coordinator: _coordinator(),
-      );
-      dio.interceptors.add(InterceptorsWrapper(
-        onRequest: (options, handler) => handler.resolve(Response<String>(
-          requestOptions: options,
-          statusCode: 200,
-          data: '{"result":400010,"message":"访问太快，请稍候再试"}',
-        )),
-      ));
+    final state = await site.getAnonymousLiveStatusState(roomId: 'room');
 
-      await expectLater(
-        site.getAnonymousLiveStatusState(roomId: 'limited-room'),
-        throwsA(
-          isA<CoreError>().having((error) => error.statusCode, 'status', 429),
-        ),
-      );
-      expect(site.coordinator.inCooldown, isTrue);
-    });
+    expect(state, LiveStatusState.offline);
+    expect(seenCookie, contains('account-secret'));
   });
 }
 
 KuaishouSite _site({_MemoryCategoryStore? store}) => KuaishouSite(
       coordinator: _coordinator(),
       categorySnapshotStore: store,
-    );
+    )..activateAccountSession(
+        sessionKey: 'primary',
+        cookie: 'kuaishou.live.web_st=test-token',
+        kww: '',
+      );
 
 KuaishouRequestCoordinator _coordinator() => KuaishouRequestCoordinator(
       minInterval: Duration.zero,

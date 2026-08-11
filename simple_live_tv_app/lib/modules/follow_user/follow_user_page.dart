@@ -193,15 +193,12 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   Obx(() {
                     final layout = _layoutSpec();
                     final items = FollowUserService.instance.list;
-                    if (AppSettingsController
-                        .instance.followShowLiveCover.value) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        unawaited(
-                          FollowUserService.instance
-                              .refreshVisiblePreviews(items),
-                        );
-                      });
-                    }
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      unawaited(
+                        FollowUserService.instance
+                            .refreshVisiblePreviews(items),
+                      );
+                    });
                     return GridView.builder(
                       controller: _scrollController,
                       primary: false,

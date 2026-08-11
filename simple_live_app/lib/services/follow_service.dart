@@ -33,9 +33,58 @@ int? followStatusForLiveState(LiveStatusState state) {
   };
 }
 
-/// Kuaishou follow refresh is status-only. Metadata detail requests would
-/// consume the active account and defeat the anonymous follow-status channel.
-bool shouldRefreshFollowMetadata(String siteId) => siteId != Constant.kKuaishou;
+/// All sites refresh visible live-room metadata instead of allowing historical
+/// follow data to remain authoritative indefinitely.
+bool shouldRefreshFollowMetadata(String _) => true;
+
+/// Follow previews are display caches, not long-lived room metadata. Keep the
+/// same short freshness window for every site so a platform cannot remain
+/// stuck on an old title, cover, anchor name, or avatar.
+Duration followPreviewCacheTtl(String _) => const Duration(minutes: 2);
+
+bool isFollowPreviewMetadataStale(
+  FollowUser item, {
+  DateTime? now,
+}) {
+  if (item.roomTitle.trim().isEmpty ||
+      item.roomCover.trim().isEmpty ||
+      item.userName.trim().isEmpty ||
+      item.face.trim().isEmpty) {
+    return true;
+  }
+  final updatedAt = item.previewUpdatedAt;
+  if (updatedAt == null) {
+    return true;
+  }
+  final checkedAt = now ?? DateTime.now();
+  if (updatedAt.isAfter(checkedAt)) {
+    return true;
+  }
+  return checkedAt.difference(updatedAt) >= followPreviewCacheTtl(item.siteId);
+}
+
+bool applyFollowPreviewDetail(
+  FollowUser item,
+  LiveRoomDetail detail, {
+  DateTime? updatedAt,
+}) {
+  final title = detail.title.trim();
+  final cover = detail.cover.trim();
+  final userName = detail.userName.trim();
+  final avatar = detail.userAvatar.trim();
+  final hasMetadata = title.isNotEmpty ||
+      cover.isNotEmpty ||
+      userName.isNotEmpty ||
+      avatar.isNotEmpty;
+  if (!hasMetadata) return false;
+
+  if (title.isNotEmpty) item.roomTitle = title;
+  if (cover.isNotEmpty) item.roomCover = cover;
+  if (userName.isNotEmpty) item.userName = userName;
+  if (avatar.isNotEmpty) item.face = avatar;
+  item.previewUpdatedAt = updatedAt ?? DateTime.now();
+  return true;
+}
 
 class FollowService extends GetxService {
   static const Duration updateStatusCooldown = Duration(seconds: 30);
@@ -486,19 +535,7 @@ class FollowService extends GetxService {
       await DBService.instance.addFollow(item);
       await _migrateFollowTagReferences(oldId, newId);
     }
-    final title = resolvedDetail.title.trim();
-    final cover = resolvedDetail.cover.trim();
-    // 标题只补空：保留关注时的真标题残留（快手主播页无真标题，
-    // detail.title 可能是分区名/主播名兜底，不能覆盖已存标题）。
-    if (title.isNotEmpty && item.roomTitle.isEmpty) {
-      item.roomTitle = title;
-    }
-    if (cover.isNotEmpty) {
-      item.roomCover = cover;
-    }
-    if (title.isNotEmpty || cover.isNotEmpty) {
-      item.previewUpdatedAt = DateTime.now();
-    }
+    applyFollowPreviewDetail(item, resolvedDetail);
     item.liveStatus.value = resolvedDetail.status ? 2 : 1;
     item.liveStartTime =
         resolvedDetail.status && isLiving ? resolvedDetail.showTime : null;
@@ -713,7 +750,6 @@ class FollowService extends GetxService {
     Iterable<FollowUser> items, {
     bool force = false,
   }) {
-    final now = DateTime.now();
     return _orderRefreshBucketBySite(
       _distinctFollowUsers(
         items.where((item) {
@@ -727,16 +763,7 @@ class FollowService extends GetxService {
           if (force) {
             return true;
           }
-          final missingPreview =
-              item.roomTitle.trim().isEmpty || item.roomCover.trim().isEmpty;
-          if (missingPreview) {
-            return true;
-          }
-          final updatedAt = item.previewUpdatedAt;
-          if (updatedAt == null) {
-            return true;
-          }
-          return now.difference(updatedAt) > const Duration(minutes: 30);
+          return isFollowPreviewMetadataStale(item);
         }),
       ),
     );
@@ -860,23 +887,9 @@ class FollowService extends GetxService {
               detail: detail,
             );
           } else {
-            final title = detail.title.trim();
-            final cover = detail.cover.trim();
-            // 标题只补空：保留关注时的真标题残留，不被分区名/主播名兜底覆盖。
-            if (title.isNotEmpty && item.roomTitle.isEmpty) {
-              item.roomTitle = title;
-              changed = true;
-            }
-            if (cover.isNotEmpty && cover != item.roomCover) {
-              item.roomCover = cover;
-              changed = true;
-            }
+            changed = applyFollowPreviewDetail(item, detail) || changed;
             if (detail.status && item.liveStartTime != detail.showTime) {
               item.liveStartTime = detail.showTime;
-              changed = true;
-            }
-            if (title.isNotEmpty || cover.isNotEmpty) {
-              item.previewUpdatedAt = DateTime.now();
               changed = true;
             }
             await DBService.instance.addFollow(item);
@@ -1097,15 +1110,6 @@ class FollowService extends GetxService {
       final douyinLimiter = douyinTargetCount > 0
           ? DouyinFollowRefreshLimiter.forTargetCount(douyinTargetCount)
           : null;
-      final kuaishouTargetCount = filteredTargets.allowedTargets
-          .where((item) => item.siteId == Constant.kKuaishou)
-          .length;
-      if (kuaishouTargetCount > 0) {
-        final kuaishouSite =
-            Sites.allSites[Constant.kKuaishou]?.liveSite as KuaishouSite?;
-        kuaishouSite?.beginAnonymousStatusRefresh();
-      }
-
       final resumedSuccessCount = persistedTask?.successCount ?? 0;
       final resumedFailedCount = persistedTask?.failedCount ?? 0;
       var completed = resumeTask ? resumedSuccessCount + resumedFailedCount : 0;

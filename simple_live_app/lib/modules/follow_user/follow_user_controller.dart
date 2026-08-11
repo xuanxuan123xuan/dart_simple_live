@@ -381,8 +381,7 @@ class FollowUserController extends BasePageController<FollowUser> {
   }
 
   void _requestVisiblePreviews(List<FollowUser> items) {
-    if (items.isEmpty ||
-        !AppSettingsController.instance.followShowLiveCover.value) {
+    if (items.isEmpty) {
       return;
     }
     unawaited(FollowService.instance.refreshVisiblePreviews(items));
