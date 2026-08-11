@@ -13,6 +13,32 @@
 
 > **Release 资产**：本仓库提供阶段性 `Release` 安装包与压缩包，见 [GitHub Releases](https://github.com/xuanxuan123xuan/dart_simple_live/releases) 页面。
 
+## ❤️ 支持项目
+
+Simple Live 会一直坚持**免费、开源、不向用户收费**。目前项目主要由我——一名暂时没有收入的大学生——利用课余时间维护；适配不同平台、跟进直播接口变化、测试和发布新版本，都需要持续投入时间与精力。
+
+如果这个项目确实帮到了你，并且你在经济上有余力，欢迎通过下方二维码自愿赞助。每一份支持都会成为我继续维护和完善项目的动力。**赞助完全自愿，不赞助也不会影响任何功能或问题反馈。**
+
+<p align="center">
+  <img width="340" src="/assets/readme/sponsor-wechat.png" alt="微信赞助码">
+  &nbsp;&nbsp;
+  <img width="340" src="/assets/readme/sponsor-alipay.jpg" alt="支付宝赞助码">
+</p>
+
+<p align="center"><sub>微信 / 支付宝任选其一，请量力而行，感谢支持。</sub></p>
+
+## 💬 反馈与交流
+
+遇到播放问题、功能异常，或者有改进建议，欢迎加入 **SL 反馈催更群**。反馈时如果能附上平台、直播间链接、设备系统和复现步骤，会更方便定位问题。
+
+- QQ 群号：`1059378368`
+
+<p align="center">
+  <img width="420" src="/assets/readme/feedback-qq-group.jpg" alt="SL 反馈催更群二维码">
+</p>
+
+---
+
 ## ⚠️ 开发版说明
 
 本分支是 **dev 开发版**，用于验证新功能与修复，**可能存在不稳定或未完成的功能**，适合尝鲜测试，日常使用请用 [stable 稳定版](https://github.com/xuanxuan123xuan/dart_simple_live/tree/stable)。`stable` 已完成 Flutter 3.41 验证并同步升级。
