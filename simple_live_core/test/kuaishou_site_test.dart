@@ -184,6 +184,36 @@ void main() {
       );
     });
 
+    test('treats an HTTP 200 room error snapshot as unknown', () {
+      expect(
+        KuaishouSite.resolveLiveState({
+          'isLiving': false,
+          'liveStream': const {},
+          'author': const {},
+          'errorType': const {
+            'type': 2,
+            'title': '请求过快，请稍后重试',
+            'content': '浏览其他内容',
+          },
+        }),
+        LiveStatusState.unknown,
+      );
+    });
+
+    test('live stream evidence wins even when an error object is present', () {
+      expect(
+        KuaishouSite.resolveLiveState({
+          'isLiving': false,
+          'liveStream': {'id': 'active-stream'},
+          'errorType': const {
+            'type': 2,
+            'title': '请求过快，请稍后重试',
+          },
+        }),
+        LiveStatusState.live,
+      );
+    });
+
     test('scans every playList item and live evidence wins', () {
       expect(
         KuaishouSite.resolvePlayListState([
@@ -652,6 +682,102 @@ void main() {
     });
   });
 
+  group('KuaishouSite HTTP 200 rate limiting', () {
+    test('starts host cooldown without rotating or invalidating accounts',
+        () async {
+      var handshakeRequests = 0;
+      var fallbackRequests = 0;
+      var anonymousRequests = 0;
+      final accountEvents = <KuaishouAccountHealthEvent>[];
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handshakeRequests += 1;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: handshakeRequests == 1
+                      ? _kuaishouRateLimitedPage(roomId: 'limited-room')
+                      : _kuaishouLivePage(roomId: 'limited-room'),
+                ),
+              );
+            },
+          ),
+        );
+      final anonymousDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              anonymousRequests += 1;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(roomId: 'limited-room'),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: anonymousDio,
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )
+        ..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        )
+        ..accountFallbackProvider = (_) {
+          fallbackRequests += 1;
+          return const KuaishouAccountFallbackSession(
+            sessionKey: 'secondary',
+            cookie: 'kuaishou.live.web_st=secondary-token',
+            kww: '',
+          );
+        }
+        ..onAccountSessionHealthEvent = (_, event) {
+          accountEvents.add(event);
+        };
+
+      await expectLater(
+        KuaishouRequestTrace.run(
+          KuaishouRequestSource.userEnter,
+          () => site.getRoomDetail(roomId: 'limited-room'),
+        ),
+        throwsA(
+          isA<CoreError>()
+              .having((error) => error.statusCode, 'statusCode', 429),
+        ),
+      );
+
+      expect(site.coordinator.inCooldown, isTrue);
+      expect(site.activeAccountSessionKey, 'primary');
+      expect(handshakeRequests, 1);
+      expect(fallbackRequests, 0);
+      expect(anonymousRequests, 0);
+      expect(accountEvents, isEmpty);
+
+      site.coordinator.endCooldown();
+      final recovered = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.userEnter,
+        () => site.getRoomDetail(roomId: 'limited-room'),
+      );
+      expect(recovered.resolvedLiveStatus, LiveStatusState.live);
+      expect(handshakeRequests, 2);
+      expect(site.activeAccountSessionKey, 'primary');
+      expect(fallbackRequests, 0);
+      expect(anonymousRequests, 0);
+      expect(accountEvents, isEmpty);
+    });
+  });
+
   group('KuaishouSite foreground account fallback', () {
     test('uses the secondary account before anonymous playback', () async {
       var transportIndex = 0;
@@ -872,6 +998,15 @@ void main() {
   });
 
   group('KuaishouSite challenge page detection', () {
+    test('detects the HTTP 200 request-too-fast payload', () {
+      expect(
+        KuaishouSite.looksLikeExplicitRateLimitText(
+          _kuaishouRateLimitedPage(roomId: 'limited-room'),
+        ),
+        isTrue,
+      );
+    });
+
     test('detects verification pages without initial state', () {
       expect(
         KuaishouSite.looksLikeChallengePage('<html>请完成人机验证</html>'),
@@ -911,4 +1046,8 @@ String _kuaishouLivePage({
 
 String _kuaishouOfflinePage({required String roomId}) {
   return '''<script>window.__INITIAL_STATE__={"liveroom":{"playList":[{"isLiving":false,"author":{"id":"$roomId","name":"主播"},"liveStream":{"id":"","playUrls":{}}}]}};</script>''';
+}
+
+String _kuaishouRateLimitedPage({required String roomId}) {
+  return '''<script>window.__INITIAL_STATE__={"liveroom":{"playList":[{"isLiving":false,"author":{},"liveStream":{},"gameInfo":{},"errorType":{"type":2,"title":"请求过快，请稍后重试","content":"浏览其他内容","url":"/u/$roomId"}}]}};</script>''';
 }

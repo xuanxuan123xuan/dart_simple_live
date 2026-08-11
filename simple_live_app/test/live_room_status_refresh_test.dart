@@ -87,6 +87,120 @@ void main() {
     });
   });
 
+  group('room detail refresh commit guard', () {
+    test('does not publish an offline snapshot rejected by active playback',
+        () {
+      final decision = resolveRoomLiveRefresh(
+        currentState: LiveStatusState.live,
+        incomingState: LiveStatusState.offline,
+        consecutiveOfflineReports: 0,
+        currentLiveStatus: true,
+        playbackActive: true,
+      );
+
+      expect(
+        shouldCommitRoomDetailRefresh(
+          incomingState: LiveStatusState.offline,
+          decision: decision,
+        ),
+        isFalse,
+      );
+    });
+
+    test('publishes only a confirmed offline snapshot', () {
+      final decision = resolveRoomLiveRefresh(
+        currentState: LiveStatusState.live,
+        incomingState: LiveStatusState.offline,
+        consecutiveOfflineReports: 2,
+        currentLiveStatus: true,
+        playbackActive: false,
+      );
+
+      expect(
+        shouldCommitRoomDetailRefresh(
+          incomingState: LiveStatusState.offline,
+          decision: decision,
+        ),
+        isTrue,
+      );
+    });
+
+    test('never publishes an unknown snapshot', () {
+      const decision = RoomLiveRefreshDecision(
+        state: LiveStatusState.live,
+        consecutiveOfflineReports: 0,
+        liveStatus: true,
+      );
+
+      expect(
+        shouldCommitRoomDetailRefresh(
+          incomingState: LiveStatusState.unknown,
+          decision: decision,
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('Kuaishou room metadata retention', () {
+    test('keeps presentation fields while adopting fresh session data', () {
+      final oldData = <String, Object>{'play': 'old'};
+      final newData = <String, Object>{'play': 'new'};
+      final oldDanmaku = Object();
+      final newDanmaku = Object();
+      final merged = mergeKuaishouRoomDetailMetadata(
+        current: _roomDetail(
+          title: '原直播标题',
+          cover: 'https://example.com/old-cover.jpg',
+          userName: '原主播',
+          userAvatar: 'https://example.com/old-avatar.jpg',
+          online: 10,
+          data: oldData,
+          danmakuData: oldDanmaku,
+        ),
+        incoming: _roomDetail(
+          title: ' ',
+          cover: '',
+          userName: '',
+          userAvatar: '',
+          online: 42,
+          data: newData,
+          danmakuData: newDanmaku,
+        ),
+      );
+
+      expect(merged.title, '原直播标题');
+      expect(merged.cover, 'https://example.com/old-cover.jpg');
+      expect(merged.userName, '原主播');
+      expect(merged.userAvatar, 'https://example.com/old-avatar.jpg');
+      expect(merged.online, 42);
+      expect(merged.data, same(newData));
+      expect(merged.danmakuData, same(newDanmaku));
+    });
+
+    test('accepts fresh non-empty presentation fields', () {
+      final merged = mergeKuaishouRoomDetailMetadata(
+        current: _roomDetail(
+          title: '旧标题',
+          cover: 'old-cover',
+          userName: '旧主播',
+          userAvatar: 'old-avatar',
+        ),
+        incoming: _roomDetail(
+          title: '新标题',
+          cover: 'new-cover',
+          userName: '新主播',
+          userAvatar: 'new-avatar',
+        ),
+      );
+
+      expect(merged.title, '新标题');
+      expect(merged.cover, 'new-cover');
+      expect(merged.userName, '新主播');
+      expect(merged.userAvatar, 'new-avatar');
+    });
+  });
+
   group('online refresh backoff', () {
     test('normal unknown responses increment the backoff exactly once', () {
       final firstFailure = resolveOnlineRefreshFailureCount(
@@ -240,4 +354,32 @@ void main() {
       );
     });
   });
+}
+
+LiveRoomDetail _roomDetail({
+  String roomId = 'room-id',
+  String title = 'title',
+  String cover = 'cover',
+  String userName = 'anchor',
+  String userAvatar = 'avatar',
+  int online = 1,
+  bool status = true,
+  LiveStatusState liveStatusState = LiveStatusState.live,
+  Object? data,
+  Object? danmakuData,
+  String url = 'https://live.kuaishou.com/u/room-id',
+}) {
+  return LiveRoomDetail(
+    roomId: roomId,
+    title: title,
+    cover: cover,
+    userName: userName,
+    userAvatar: userAvatar,
+    online: online,
+    status: status,
+    liveStatusState: liveStatusState,
+    data: data,
+    danmakuData: danmakuData,
+    url: url,
+  );
 }

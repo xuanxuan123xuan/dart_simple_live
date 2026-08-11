@@ -426,6 +426,13 @@ class KuaishouSite extends LiveSite {
         _isLiveFlag(liveStream["living"])) {
       return LiveStatusState.live;
     }
+    // Kuaishou sometimes returns an HTTP 200 room page whose payload is an
+    // error snapshot (for example errorType=2 / "请求过快，请稍后重试").
+    // Such snapshots also carry isLiving=false, but that is not evidence that
+    // the broadcaster went offline.
+    if (_hasRoomError(room)) {
+      return LiveStatusState.unknown;
+    }
     if (_isOfflineFlag(room["isLiving"]) ||
         _isOfflineFlag(room["living"]) ||
         _isOfflineFlag(liveStream["isLiving"]) ||
@@ -433,6 +440,25 @@ class KuaishouSite extends LiveSite {
       return LiveStatusState.offline;
     }
     return LiveStatusState.unknown;
+  }
+
+  static bool _hasRoomError(Map room) {
+    final error = room["errorType"];
+    if (error is Map) {
+      if (error.isEmpty) return false;
+      final type = error["type"];
+      final normalizedType = type?.toString().trim() ?? '';
+      if (normalizedType.isNotEmpty && normalizedType != '0') {
+        return true;
+      }
+      for (final key in const ["title", "content", "url"]) {
+        if (error[key]?.toString().trim().isNotEmpty == true) {
+          return true;
+        }
+      }
+      return false;
+    }
+    return error?.toString().trim().isNotEmpty == true;
   }
 
   static LiveStatusState resolvePlayListState(dynamic playList) {
@@ -1670,6 +1696,7 @@ class KuaishouSite extends LiveSite {
   static bool looksLikeExplicitRateLimitText(String html) {
     return html.contains('400010') ||
         html.contains('访问太快') ||
+        html.contains('请求过快') ||
         html.contains('请求频繁') ||
         html.contains('访问过于频繁');
   }

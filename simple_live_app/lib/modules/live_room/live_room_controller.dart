@@ -237,6 +237,59 @@ RoomLiveRefreshDecision resolveRoomLiveRefresh({
   );
 }
 
+/// A refresh snapshot is safe to publish only after its state transition has
+/// been accepted. This keeps an active room's metadata intact while explicit
+/// offline reports are still being confirmed.
+@visibleForTesting
+bool shouldCommitRoomDetailRefresh({
+  required LiveStatusState incomingState,
+  required RoomLiveRefreshDecision decision,
+}) {
+  return incomingState != LiveStatusState.unknown &&
+      incomingState == decision.state;
+}
+
+/// Keeps known Kuaishou presentation metadata when a fresh playback/status
+/// snapshot omits it. Session-bound data always comes from [incoming], so
+/// account cookies, danmaku credentials, and playback URLs are never mixed.
+@visibleForTesting
+LiveRoomDetail mergeKuaishouRoomDetailMetadata({
+  required LiveRoomDetail current,
+  required LiveRoomDetail incoming,
+}) {
+  String prefer(String next, String previous) =>
+      next.trim().isNotEmpty ? next : previous;
+  String? preferNullable(String? next, String? previous) =>
+      next?.trim().isNotEmpty == true ? next : previous;
+
+  return LiveRoomDetail(
+    roomId: prefer(incoming.roomId, current.roomId),
+    title: prefer(incoming.title, current.title),
+    cover: prefer(incoming.cover, current.cover),
+    userName: prefer(incoming.userName, current.userName),
+    userAvatar: prefer(incoming.userAvatar, current.userAvatar),
+    online: incoming.online,
+    introduction: preferNullable(incoming.introduction, current.introduction),
+    notice: preferNullable(incoming.notice, current.notice),
+    status: incoming.status,
+    liveStatusState: incoming.liveStatusState,
+    data: incoming.data,
+    danmakuData: incoming.danmakuData,
+    url: prefer(incoming.url, current.url),
+    isRecord: incoming.isRecord,
+    showTime: preferNullable(incoming.showTime, current.showTime),
+    categoryId: preferNullable(incoming.categoryId, current.categoryId),
+    categoryName: preferNullable(incoming.categoryName, current.categoryName),
+    categoryParentId:
+        preferNullable(incoming.categoryParentId, current.categoryParentId),
+    categoryParentName: preferNullable(
+      incoming.categoryParentName,
+      current.categoryParentName,
+    ),
+    categoryPic: preferNullable(incoming.categoryPic, current.categoryPic),
+  );
+}
+
 @immutable
 class LiveRoomQualityPreference {
   final int? qualityIndex;
@@ -1617,12 +1670,23 @@ class LiveRoomController extends PlayerController
         return;
       }
       final incomingState = roomDetail.resolvedLiveStatus;
-      if (incomingState != LiveStatusState.unknown) {
-        detail.value = roomDetail;
-        online.value = roomDetail.online;
-        _syncBackgroundPlaybackMetadata(roomDetail);
+      final decision = _applyRoomLiveState(incomingState);
+      if (shouldCommitRoomDetailRefresh(
+        incomingState: incomingState,
+        decision: decision,
+      )) {
+        final currentDetail = detail.value;
+        final committedDetail =
+            site.id == Constant.kKuaishou && currentDetail != null
+                ? mergeKuaishouRoomDetailMetadata(
+                    current: currentDetail,
+                    incoming: roomDetail,
+                  )
+                : roomDetail;
+        detail.value = committedDetail;
+        online.value = committedDetail.online;
+        _syncBackgroundPlaybackMetadata(committedDetail);
       }
-      _applyRoomLiveState(incomingState);
       if (incomingState == LiveStatusState.live) {
         await _bootstrapPlaybackIfNeeded();
       }
@@ -1640,7 +1704,9 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  void _applyRoomLiveState(LiveStatusState incomingState) {
+  RoomLiveRefreshDecision _applyRoomLiveState(
+    LiveStatusState incomingState,
+  ) {
     _onlineRefreshFailures = resolveOnlineRefreshFailureCount(
       incomingState: incomingState,
       currentFailures: _onlineRefreshFailures,
@@ -1667,6 +1733,7 @@ class LiveRoomController extends PlayerController
     if (statusChanged) {
       _restartSuperChatRefreshTimer();
     }
+    return decision;
   }
 
   Future<void> _bootstrapPlaybackIfNeeded() async {
@@ -2568,7 +2635,7 @@ class LiveRoomController extends PlayerController
     }
 
     try {
-      final freshDetail = _sanitizeRoomDetail(
+      final fetchedDetail = _sanitizeRoomDetail(
         await _fetchRoomDetailWithSource(
           source: KuaishouRequestSource.playbackRecovery,
         ).timeout(const Duration(seconds: 12)),
@@ -2576,6 +2643,10 @@ class LiveRoomController extends PlayerController
       if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         return false;
       }
+      final freshDetail = mergeKuaishouRoomDetailMetadata(
+        current: previousDetail,
+        incoming: fetchedDetail,
+      );
       final freshQualities = List<LivePlayQuality>.of(
         await site.liveSite.getPlayQualites(detail: freshDetail),
       );
