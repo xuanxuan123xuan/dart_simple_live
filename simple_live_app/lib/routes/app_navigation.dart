@@ -10,6 +10,7 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/sync_client_info_model.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
+import 'package:simple_live_app/routes/account_route_target.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
@@ -146,6 +147,15 @@ class AppNavigator {
     } else {
       await Get.toNamed(RoutePath.kBiliBiliQRLogin);
     }
+  }
+
+  /// 打开账号管理，并在页面就绪后直接展示抖音 Cookie 配置。
+  static Future<dynamic> toDouyinCookieConfig() {
+    return Get.toNamed(
+          RoutePath.kSettingsAccount,
+          arguments: AccountRouteTarget.douyinCookieConfig,
+        ) ??
+        Future.value();
   }
 
   /// 跳转至同步设备

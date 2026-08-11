@@ -131,6 +131,10 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kQualityLevel, 1);
     qualityLevelCellular.value = LocalStorageService.instance
         .getValue(LocalStorageService.kQualityLevelCellular, 1);
+    ohosAutoQualityDegrade.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kOhosAutoQualityDegrade, true);
+    ohosNetworkFluctuationNotice.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kOhosNetworkFluctuationNotice, true);
 
     autoExitEnable.value = LocalStorageService.instance
         .getValue(LocalStorageService.kAutoExitEnable, false);
@@ -266,6 +270,8 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kCustomPlayerOutput, false);
     mpvProfile.value = LocalStorageService.instance
         .getValue(LocalStorageService.kMpvProfile, "balanced");
+    mpvLiveLatencyMode.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kMpvLiveLatencyMode, "auto");
     mpvAdvancedOptions.value = LocalStorageService.instance
         .getValue(LocalStorageService.kMpvAdvancedOptions, "");
     importedMpvConfPath.value = LocalStorageService.instance
@@ -412,7 +418,7 @@ class AppSettingsController extends GetxController {
     );
     fullScreenForceLandscape.value = LocalStorageService.instance.getValue(
       LocalStorageService.kFullScreenForceLandscape,
-      true,
+      false,
     );
 
     initSiteSort();
@@ -917,6 +923,20 @@ class AppSettingsController extends GetxController {
     qualityLevelCellular.value = level;
     LocalStorageService.instance
         .setValue(LocalStorageService.kQualityLevelCellular, level);
+  }
+
+  var ohosAutoQualityDegrade = true.obs;
+  void setOhosAutoQualityDegrade(bool value) {
+    ohosAutoQualityDegrade.value = value;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kOhosAutoQualityDegrade, value);
+  }
+
+  var ohosNetworkFluctuationNotice = true.obs;
+  void setOhosNetworkFluctuationNotice(bool value) {
+    ohosNetworkFluctuationNotice.value = value;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kOhosNetworkFluctuationNotice, value);
   }
 
   var autoExitEnable = false.obs;
@@ -2127,9 +2147,9 @@ class AppSettingsController extends GetxController {
     );
   }
 
-  /// 全屏播放是否自动横屏（iPad 竖屏状态栏由系统强制显示，
-  /// 只有横屏才能可靠隐藏；关闭则保持当前方向）。
-  var fullScreenForceLandscape = true.obs;
+  /// 全屏播放是否强制横屏。默认关闭并跟随视频方向；iPad 竖屏时
+  /// 状态栏可能无法可靠隐藏，用户仍可手动开启强制横屏。
+  var fullScreenForceLandscape = false.obs;
   void setFullScreenForceLandscape(bool value) {
     fullScreenForceLandscape.value = value;
     LocalStorageService.instance.setValue(
@@ -2511,6 +2531,13 @@ class AppSettingsController extends GetxController {
   void setMpvProfile(String e) {
     mpvProfile.value = e;
     LocalStorageService.instance.setValue(LocalStorageService.kMpvProfile, e);
+  }
+
+  var mpvLiveLatencyMode = "auto".obs;
+  void setMpvLiveLatencyMode(String e) {
+    mpvLiveLatencyMode.value = e;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kMpvLiveLatencyMode, e);
   }
 
   var mpvAdvancedOptions = "".obs;

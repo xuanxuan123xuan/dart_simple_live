@@ -1,106 +1,107 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
-import 'package:simple_live_app/app/sites.dart';
-import 'package:simple_live_app/modules/search/search_controller.dart';
-import 'package:simple_live_app/modules/search/search_list_view.dart';
+import 'package:simple_live_app/modules/search/search_aggregate_controller.dart';
+import 'package:simple_live_app/modules/search/search_aggregate_view.dart';
 
-class SearchPage extends GetView<AppSearchController> {
+class SearchPage extends StatefulWidget {
   const SearchPage({Key? key}) : super(key: key);
+
+  @override
+  State<SearchPage> createState() => _SearchPageState();
+}
+
+class _SearchPageState extends State<SearchPage> {
+  final controller = Get.find<SearchAggregateController>();
+  late final TextEditingController searchController;
+  late final RxInt searchMode;
+
+  @override
+  void initState() {
+    super.initState();
+    final args = Get.arguments;
+    final initialKeyword = args is Map ? args["keyword"]?.toString() ?? "" : "";
+    final initialMode = args is Map && args["searchMode"] is int
+        ? args["searchMode"] as int
+        : 0;
+    searchController = TextEditingController(text: initialKeyword);
+    searchMode = (initialMode == 1 ? 1 : 0).obs;
+    if (initialKeyword.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || controller.isClosed) {
+          return;
+        }
+        unawaited(controller.search(initialKeyword, searchMode.value));
+      });
+    }
+  }
+
+  void search() {
+    if (!mounted || controller.isClosed) {
+      return;
+    }
+    unawaited(controller.search(searchController.text, searchMode.value));
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    searchMode.close();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
+        leading: IconButton(
+          tooltip: "返回",
+          onPressed: Get.back,
+          icon: const Icon(Icons.arrow_back),
+        ),
+        titleSpacing: 0,
         title: TextField(
-          controller: controller.searchController,
+          controller: searchController,
           autofocus: true,
+          textInputAction: TextInputAction.search,
+          onSubmitted: (_) => search(),
           decoration: InputDecoration(
             hintText: "搜点什么吧",
-            border: OutlineInputBorder(
-              borderRadius: AppStyle.radius24,
-            ),
+            isDense: true,
+            border: OutlineInputBorder(borderRadius: AppStyle.radius24),
             contentPadding: AppStyle.edgeInsetsH12,
-            prefixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  onPressed: Get.back,
-                  icon: const Icon(Icons.arrow_back),
+            prefixIcon: Obx(
+              () => DropdownButtonHideUnderline(
+                child: DropdownButton<int>(
+                  value: searchMode.value,
+                  padding: AppStyle.edgeInsetsL8,
+                  iconSize: 18,
+                  items: const [
+                    DropdownMenuItem(value: 0, child: Text("房间")),
+                    DropdownMenuItem(value: 1, child: Text("主播")),
+                  ],
+                  onChanged: (value) {
+                    searchMode.value = value ?? 0;
+                    if (searchController.text.trim().isNotEmpty) search();
+                  },
                 ),
-                Obx(
-                  () => DropdownButton<int>(
-                    underline: const SizedBox(),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 0,
-                        child: Text("房间"),
-                      ),
-                      DropdownMenuItem(
-                        value: 1,
-                        child: Text("主播"),
-                      ),
-                    ],
-                    value: controller.searchMode.value,
-                    onChanged: (e) {
-                      controller.searchMode.value = e ?? 0;
-                      controller.doSearch();
-                    },
-                  ),
-                ),
-                AppStyle.hGap8,
-              ],
+              ),
             ),
             suffixIcon: IconButton(
-              onPressed: controller.doSearch,
+              tooltip: "搜索",
+              onPressed: search,
               icon: const Icon(Icons.search),
             ),
           ),
-          onSubmitted: (e) {
-            controller.doSearch();
-          },
-        ),
-        bottom: TabBar(
-          controller: controller.tabController,
-          padding: EdgeInsets.zero,
-          tabAlignment: TabAlignment.center,
-          tabs: Sites.supportSites
-              .map(
-                (e) => Tab(
-                  //text: e.name,
-                  child: Row(
-                    children: [
-                      Image.asset(
-                        e.logo,
-                        width: 24,
-                      ),
-                      AppStyle.hGap8,
-                      Text(e.name),
-                    ],
-                  ),
-                ),
-              )
-              .toList(),
-          labelPadding: AppStyle.edgeInsetsH20,
-          isScrollable: true,
-          indicatorSize: TabBarIndicatorSize.label,
         ),
       ),
-      body: TabBarView(
-        physics: const NeverScrollableScrollPhysics(),
-        controller: controller.tabController,
-        children: Sites.supportSites
-            .map((e) => SearchListView(
-                      e.id,
-                    )
-                // (e) => e.id == Constant.kDouyin
-                //     ? const DouyinSearchView()
-                //     : SearchListView(
-                //         e.id,
-                //       ),
-                )
-            .toList(),
+      body: Obx(
+        () => SearchAggregateView(
+          result: controller.result.value,
+        ),
       ),
     );
   }

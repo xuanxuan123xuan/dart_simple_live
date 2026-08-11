@@ -18,6 +18,7 @@ import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
+import 'package:simple_live_app/services/live_link_health_presentation.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
@@ -39,12 +40,14 @@ class LiveRoomPage extends GetView<LiveRoomController> {
 
   const LiveRoomPage({Key? key}) : super(key: key);
 
-  /// 打开网络诊断弹窗：测试到公共 DNS 的延迟与丢包。
+  /// 打开网络诊断弹窗：测试当前播放端点的 TCP 连接耗时与可达性。
   void showNetworkDiagnose(LiveRoomController controller) {
     Utils.showModalBottomSheetSafe(
       context: Get.context!,
       isScrollControlled: true,
-      builder: (context) => _NetworkDiagnosePanel(controller: controller),
+      builder: (context) => SingleChildScrollView(
+        child: _NetworkDiagnosePanel(controller: controller),
+      ),
     );
   }
 
@@ -703,7 +706,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   onError: controller.mediaError,
                   onControllerReady: controller.attachOhosVideoController,
                   onControllerDisposed: controller.detachOhosVideoController,
-                  onValueChanged: controller.updateOhosVideoState,
+                  onGenerationValueChanged:
+                      controller.updateOhosVideoStateForGeneration,
                   onCompleted: controller.mediaEnd,
                   initialVolume: controller.ohosVolume.value,
                   fit: fit,
@@ -1086,16 +1090,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   top: 12,
                   child: Container(
                     constraints: const BoxConstraints(maxWidth: 340),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
                       color: Colors.black.withAlpha(180),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       controller.networkHint.value,
-                      style: const TextStyle(
-                          fontSize: 12, color: Colors.white70),
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.white70),
                     ),
                   ),
                 ),
@@ -1953,7 +1957,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             ListTile(
               leading: const Icon(Icons.network_check_outlined),
               title: const Text("网络诊断"),
-              subtitle: const Text("测试延迟与丢包，判断网络还是平台问题"),
+              subtitle: const Text("测试到播放端点与公共 DNS 的连接，判断网络还是平台问题"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
@@ -2304,8 +2308,7 @@ class _SubtitleModelTile extends StatelessWidget {
   }
 }
 
-/// 网络诊断面板：测试到公共 DNS 的延迟与丢包，帮助判断卡顿是
-/// 网络问题还是平台问题。
+/// 网络诊断面板：测试当前播放端点的 TCP 连接耗时与可达性。
 class _NetworkDiagnosePanel extends StatefulWidget {
   final LiveRoomController controller;
 
@@ -2317,6 +2320,7 @@ class _NetworkDiagnosePanel extends StatefulWidget {
 
 class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
   final List<NetworkDiagnosisResult> _results = [];
+  LiveLinkHealthPresentation? _healthPresentation;
   bool _running = true;
   String _summary = "";
 
@@ -2332,22 +2336,100 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
       _results.clear();
       _summary = "";
     });
-    // 目标：公共 DNS + 当前直播平台页面域名。
-    final roomUrl = widget.controller.detail.value?.url ?? "";
-    final roomHost = Uri.tryParse(roomUrl)?.host ?? "";
-    final targets = <String>[
-      ...NetworkDiagnoseService.defaultTargets,
-      if (roomHost.isNotEmpty) roomHost,
-    ].toList();
-    final results = await NetworkDiagnoseService.diagnose(targets);
+    final playbackResult = await NetworkDiagnoseService.diagnosePlaybackUrl(
+      widget.controller.currentNetworkDiagnosePlaybackUrl,
+    );
+    final results = [
+      if (playbackResult != null) playbackResult,
+    ];
     if (!mounted) return;
+    final summary =
+        NetworkDiagnoseService.summarizePlaybackEndpoint(playbackResult);
+    final healthSnapshot = widget.controller.currentLiveLinkHealthSnapshot;
     setState(() {
       _results
         ..clear()
         ..addAll(results);
-      _summary = NetworkDiagnoseService.summarize(results);
+      _healthPresentation = healthSnapshot == null
+          ? null
+          : presentLiveLinkHealthSnapshot(
+              healthSnapshot,
+              currentBuffering:
+                  widget.controller.currentLiveLinkHealthBuffering,
+            );
+      _summary = summary;
       _running = false;
     });
+  }
+
+  Widget _buildHealthSection() {
+    final presentation = _healthPresentation;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(10),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  "直播链路健康度",
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                presentation?.levelLabel ?? liveLinkHealthDataUnavailableLabel,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                presentation?.scoreLabel ?? liveLinkHealthDataUnavailableLabel,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "主要原因：${presentation?.primaryCauseLabel ?? liveLinkHealthDataUnavailableLabel}",
+            style: const TextStyle(fontSize: 12),
+          ),
+          if (presentation != null) ...[
+            const SizedBox(height: 8),
+            for (final row in presentation.rows)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        row.label,
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        row.value,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
   }
 
   @override
@@ -2384,6 +2466,8 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                 child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
               )
             else ...[
+              _buildHealthSection(),
+              const SizedBox(height: 8),
               for (final r in _results)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
@@ -2397,26 +2481,27 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                       ),
                       Text(
                         r.lost == r.samples
-                            ? "不通"
+                            ? "不可达"
                             : "${r.avgMs.toStringAsFixed(0)}ms",
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: r.lossRate > 20 || r.lost == r.samples
+                          color: r.lost == r.samples
                               ? Colors.red
-                              : r.avgMs > 250
+                              : r.lost > 0 || r.avgMs > 250
                                   ? Colors.orange
                                   : Colors.green,
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        "丢包 ${r.lossRate.toStringAsFixed(0)}%",
-                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        r.lost > 0 ? "连接失败 ${r.lost}/${r.samples}" : "连接正常",
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        r.latencyLabel,
+                        r.lost == r.samples ? "不可达" : r.latencyLabel,
                         style: const TextStyle(fontSize: 12),
                       ),
                     ],
@@ -2441,4 +2526,3 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
     );
   }
 }
-

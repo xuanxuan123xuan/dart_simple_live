@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +24,7 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/history.dart';
+import 'package:simple_live_app/modules/live_room/player/ohos_playback_signal_adapter.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
@@ -36,6 +38,11 @@ import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
+import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
+import 'package:simple_live_app/services/live_link_health_collector.dart'
+    show didLivePlaybackHostChange;
+import 'package:simple_live_app/services/live_link_health_models.dart';
+import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_network_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
@@ -51,6 +58,12 @@ import 'package:url_launcher/url_launcher_string.dart';
 import 'package:video_player/video_player.dart';
 import 'package:window_manager/window_manager.dart';
 
+export 'live_room_auto_quality_buffer_tracker.dart'
+    show LiveRoomAutoQualityBufferTracker;
+
+import 'live_room_auto_quality_buffer_tracker.dart';
+import 'kuaishou_playback_recovery_tracker.dart';
+
 @visibleForTesting
 bool shouldAcceptOfflineRoomRefresh({
   required bool playbackActive,
@@ -58,6 +71,109 @@ bool shouldAcceptOfflineRoomRefresh({
   int requiredReports = 3,
 }) {
   return !playbackActive && consecutiveOfflineReports >= requiredReports;
+}
+
+/// 在线状态轮询的退避间隔（S2-T1）。
+///
+/// [state] 为当前房间直播状态，[failures] 为连续失败（unknown）次数。
+/// 规则：
+/// - live：10s（恢复常态，重置退避）；
+/// - offline：45s（低频确认，配合离线遮罩）；
+/// - unknown/失败：按 10s → 30s → 60s → 120s → 240s 指数增长，封顶 300s。
+@visibleForTesting
+Duration resolveOnlineRefreshDelay(
+  LiveStatusState state,
+  int failures,
+) {
+  if (state == LiveStatusState.live) {
+    return const Duration(seconds: 10);
+  }
+  if (state == LiveStatusState.offline) {
+    return const Duration(seconds: 45);
+  }
+  final step = (failures + 1).clamp(0, 6).toInt();
+  // step=1 -> 10s, 2 -> 30s, 3 -> 60s, 4 -> 120s, 5 -> 240s, 6+ -> 300s(封顶)
+  final delaySeconds = step <= 1 ? 10 : 15 * (1 << (step - 1));
+  final capped = delaySeconds > 300 ? 300 : delaySeconds;
+  return Duration(seconds: capped);
+}
+
+/// 根据本次状态响应更新连续 unknown/失败次数。
+///
+/// 请求异常同样会转换为 [LiveStatusState.unknown] 后走此入口，因此调用方
+/// 不应在 catch 中再次累加。明确 live 会恢复基础间隔；offline 使用独立的
+/// 45 秒复核间隔，不参与 unknown 退避计数。
+@visibleForTesting
+int resolveOnlineRefreshFailureCount({
+  required LiveStatusState incomingState,
+  required int currentFailures,
+}) {
+  if (incomingState == LiveStatusState.live) {
+    return 0;
+  }
+  if (incomingState == LiveStatusState.unknown) {
+    return currentFailures + 1;
+  }
+  return currentFailures;
+}
+
+/// Returns the minute-scale Kuaishou recheck interval while playback is
+/// healthy. The caller supplies the jitter so the policy remains testable.
+@visibleForTesting
+Duration resolveKuaishouStableRefreshDelay({int jitterSeconds = 0}) {
+  final boundedJitter = jitterSeconds.clamp(-30, 30).toInt();
+  return Duration(seconds: 150 + boundedJitter);
+}
+
+/// A buffering player is active, but not stable enough to suppress normal
+/// recovery behaviour or be treated as a healthy Kuaishou session.
+@visibleForTesting
+bool isLiveRoomPlaybackStable({
+  required bool initialized,
+  required bool playing,
+  required bool buffering,
+  required bool hasError,
+}) {
+  return initialized && playing && !buffering && !hasError;
+}
+
+/// Keeps the selected Kuaishou quality across a fresh detail snapshot. Names
+/// survive reordering; the old index is only a fallback for renamed entries.
+@visibleForTesting
+int resolveKuaishouRecoveryQualityIndex({
+  required List<String> qualities,
+  required String? previousQualityName,
+  required int previousQualityIndex,
+}) {
+  assert(qualities.isNotEmpty);
+  if (previousQualityName != null && previousQualityName.isNotEmpty) {
+    final matchingIndex = qualities.indexOf(previousQualityName);
+    if (matchingIndex >= 0) {
+      return matchingIndex;
+    }
+  }
+  return previousQualityIndex.clamp(0, qualities.length - 1).toInt();
+}
+
+/// Keeps a Kuaishou CDN selection stable when signed URLs are refreshed and
+/// the platform returns the lines in a different order.
+@visibleForTesting
+int resolveKuaishouRecoveryLineIndex({
+  required List<String> urls,
+  required String? previousUrl,
+  required int fallbackIndex,
+}) {
+  assert(urls.isNotEmpty);
+  final previousSignature = liveRoomLineMemorySignature(previousUrl);
+  if (previousSignature != null) {
+    final matchingIndex = urls.indexWhere(
+      (url) => liveRoomLineMemorySignature(url) == previousSignature,
+    );
+    if (matchingIndex >= 0) {
+      return matchingIndex;
+    }
+  }
+  return fallbackIndex.clamp(0, urls.length - 1).toInt();
 }
 
 @immutable
@@ -121,15 +237,70 @@ RoomLiveRefreshDecision resolveRoomLiveRefresh({
   );
 }
 
+/// A refresh snapshot is safe to publish only after its state transition has
+/// been accepted. This keeps an active room's metadata intact while explicit
+/// offline reports are still being confirmed.
+@visibleForTesting
+bool shouldCommitRoomDetailRefresh({
+  required LiveStatusState incomingState,
+  required RoomLiveRefreshDecision decision,
+}) {
+  return incomingState != LiveStatusState.unknown &&
+      incomingState == decision.state;
+}
+
+/// Keeps known Kuaishou presentation metadata when a fresh playback/status
+/// snapshot omits it. Session-bound data always comes from [incoming], so
+/// account cookies, danmaku credentials, and playback URLs are never mixed.
+@visibleForTesting
+LiveRoomDetail mergeKuaishouRoomDetailMetadata({
+  required LiveRoomDetail current,
+  required LiveRoomDetail incoming,
+}) {
+  String prefer(String next, String previous) =>
+      next.trim().isNotEmpty ? next : previous;
+  String? preferNullable(String? next, String? previous) =>
+      next?.trim().isNotEmpty == true ? next : previous;
+
+  return LiveRoomDetail(
+    roomId: prefer(incoming.roomId, current.roomId),
+    title: prefer(incoming.title, current.title),
+    cover: prefer(incoming.cover, current.cover),
+    userName: prefer(incoming.userName, current.userName),
+    userAvatar: prefer(incoming.userAvatar, current.userAvatar),
+    online: incoming.online,
+    introduction: preferNullable(incoming.introduction, current.introduction),
+    notice: preferNullable(incoming.notice, current.notice),
+    status: incoming.status,
+    liveStatusState: incoming.liveStatusState,
+    data: incoming.data,
+    danmakuData: incoming.danmakuData,
+    url: prefer(incoming.url, current.url),
+    isRecord: incoming.isRecord,
+    showTime: preferNullable(incoming.showTime, current.showTime),
+    categoryId: preferNullable(incoming.categoryId, current.categoryId),
+    categoryName: preferNullable(incoming.categoryName, current.categoryName),
+    categoryParentId:
+        preferNullable(incoming.categoryParentId, current.categoryParentId),
+    categoryParentName: preferNullable(
+      incoming.categoryParentName,
+      current.categoryParentName,
+    ),
+    categoryPic: preferNullable(incoming.categoryPic, current.categoryPic),
+  );
+}
+
 @immutable
 class LiveRoomQualityPreference {
   final int? qualityIndex;
   final int? lineIndex;
+  final String? lineSignature;
   final bool qualityLocked;
 
   const LiveRoomQualityPreference({
     required this.qualityIndex,
     required this.lineIndex,
+    this.lineSignature,
     required this.qualityLocked,
   });
 
@@ -144,15 +315,69 @@ class LiveRoomQualityPreference {
     }
     final quality = value["quality"];
     final line = value["line"];
+    final lineSignature = value["lineSignature"];
     final storedLocked = value["qualityLocked"];
     return LiveRoomQualityPreference(
       qualityIndex: quality is num ? quality.toInt() : null,
       lineIndex: line is num ? line.toInt() : null,
+      lineSignature: lineSignature is String && lineSignature.isNotEmpty
+          ? lineSignature
+          : null,
       // Before qualityLocked was persisted, a stored quality represented the
       // user's remembered selection. Preserve that legacy behaviour once.
       qualityLocked: storedLocked is bool ? storedLocked : quality is num,
     );
   }
+}
+
+/// Produces a stable line-memory identity without retaining a fragile list
+/// index. The tier, rather than the exact protocol, is intentional: FLV and
+/// RTMP share the same low-latency preference.
+@visibleForTesting
+String? liveRoomLineMemorySignature(String? url) {
+  final uri = Uri.tryParse(url?.trim() ?? '');
+  final host = uri?.host.toLowerCase();
+  if (host == null || host.isEmpty) {
+    return null;
+  }
+  final tier = classifyLiveStreamProtocol(url).latencyPriority;
+  return '$host|$tier';
+}
+
+@visibleForTesting
+int? resolveRememberedLiveRoomLineIndex({
+  required List<String> urls,
+  required LiveRoomQualityPreference preference,
+}) {
+  final bestLineIndices = lowestLatencyLineIndices(urls);
+  final signature = preference.lineSignature;
+  if (signature != null) {
+    for (final index in bestLineIndices) {
+      if (liveRoomLineMemorySignature(urls[index]) == signature) {
+        return index;
+      }
+    }
+    return null;
+  }
+
+  // Legacy values only contain an index. Keep the old behaviour until the
+  // next manual selection migrates it to a host+tier signature.
+  final legacyIndex = preference.lineIndex;
+  if (legacyIndex != null && bestLineIndices.contains(legacyIndex)) {
+    return legacyIndex;
+  }
+  return null;
+}
+
+String liveRoomLineProtocolLabel(String url) {
+  final protocol = classifyLiveStreamProtocol(url);
+  return switch (protocol) {
+    LiveStreamProtocol.flv => 'FLV',
+    LiveStreamProtocol.hls => 'HLS',
+    LiveStreamProtocol.fmp4 => 'fMP4',
+    LiveStreamProtocol.rtmp => 'RTMP',
+    LiveStreamProtocol.unknown => '未知协议',
+  };
 }
 
 @visibleForTesting
@@ -189,84 +414,11 @@ bool isCurrentLiveRoomPlaybackRequest({
       requestRevision == latestRequestRevision;
 }
 
-@visibleForTesting
-class LiveRoomAutoQualityBufferTracker {
-  final int requiredBufferStarts;
-  final Duration bufferingWindow;
-  final Duration stableResetAfter;
-  final Duration warmupDuration;
-
-  int _bufferingStarts = 0;
-  bool _isBuffering = false;
-  DateTime? _lastBufferingStartedAt;
-  DateTime? _stableSince;
-  DateTime? _warmupUntil;
-
-  LiveRoomAutoQualityBufferTracker({
-    this.requiredBufferStarts = 3,
-    this.bufferingWindow = const Duration(seconds: 30),
-    this.stableResetAfter = const Duration(seconds: 8),
-    this.warmupDuration = const Duration(seconds: 8),
-  });
-
-  void beginWarmup(DateTime now) {
-    reset();
-    _warmupUntil = now.add(warmupDuration);
-  }
-
-  void reset() {
-    _bufferingStarts = 0;
-    _isBuffering = false;
-    _lastBufferingStartedAt = null;
-    _stableSince = null;
-  }
-
-  /// Returns true after enough distinct buffering starts occur close together.
-  bool update({required bool buffering, required DateTime now}) {
-    if (!buffering) {
-      if (_isBuffering) {
-        _stableSince = now;
-      }
-      _isBuffering = false;
-      return false;
-    }
-    // A stream may emit the same buffering value more than once. Count only
-    // transitions into buffering.
-    if (_isBuffering) {
-      return false;
-    }
-    _isBuffering = true;
-
-    final warmupUntil = _warmupUntil;
-    if (warmupUntil != null && now.isBefore(warmupUntil)) {
-      return false;
-    }
-
-    final stableSince = _stableSince;
-    final lastStartedAt = _lastBufferingStartedAt;
-    if ((stableSince != null &&
-            now.difference(stableSince) >= stableResetAfter) ||
-        (lastStartedAt != null &&
-            now.difference(lastStartedAt) > bufferingWindow)) {
-      _bufferingStarts = 0;
-      _lastBufferingStartedAt = null;
-    }
-
-    _stableSince = null;
-    _lastBufferingStartedAt = now;
-    _bufferingStarts += 1;
-    if (_bufferingStarts < requiredBufferStarts) {
-      return false;
-    }
-
-    _bufferingStarts = 0;
-    _lastBufferingStartedAt = null;
-    return true;
-  }
-}
-
 class LiveRoomController extends PlayerController
     with WidgetsBindingObserver, WindowListener {
+  @override
+  String get liveLinkHealthTarget => '${rxSite.value.id}/${rxRoomId.value}';
+
   static const volumeSliderDialogTag = "live_room_volume_slider";
   final Site pSite;
   final String pRoomId;
@@ -352,19 +504,29 @@ class LiveRoomController extends PlayerController
 
   /// 画质是否被手动锁定（选"自动"时 false，选具体画质时 true）。
   final qualityLocked = false.obs;
+  int _qualitySelectionRevision = 0;
+
+  void markQualitySelectionAsManual() {
+    _qualitySelectionRevision += 1;
+  }
 
   /// 选"自动"：解锁画质，回到按 qualityLevel 设置的自动档。
   Future<void> useAutomaticQuality() async {
+    final selectionRevision = ++_qualitySelectionRevision;
     qualityLocked.value = false;
     saveQualityMemory();
     _autoQualityBufferTracker.reset();
-    await reloadQuality();
+    await reloadQuality(expectedSelectionRevision: selectionRevision);
   }
 
   /// 按当前 qualityLevel 设置重新加载画质。
-  Future<void> reloadQuality() async {
+  Future<void> reloadQuality({int? expectedSelectionRevision}) async {
     if (qualites.isEmpty) return;
     var qualityLevel = await getQualityLevel();
+    if (expectedSelectionRevision != null &&
+        expectedSelectionRevision != _qualitySelectionRevision) {
+      return;
+    }
     int target;
     if (qualityLevel == 2) {
       target = 0;
@@ -376,7 +538,7 @@ class LiveRoomController extends PlayerController
     if (target != currentQuality) {
       currentQuality = target;
       currentQualityInfo.value = qualites[target].quality;
-      await getPlayUrl();
+      await getPlayUrl(userInitiatedQualityChange: true);
     }
   }
 
@@ -401,13 +563,8 @@ class LiveRoomController extends PlayerController
     );
   }
 
-  /// 读取当前站点记忆的线路索引（无则 null）。
-  int? _loadLineMemory() {
-    return _loadQualityPreference().lineIndex;
-  }
-
-  /// 保存当前站点画质/线路记忆。
-  void saveQualityMemory() {
+  /// 保存当前站点画质记忆；线路只在用户主动切换时写入。
+  void saveQualityMemory({bool saveLine = false}) {
     try {
       final raw = LocalStorageService.instance
           .getValue(LocalStorageService.kRoomQualityMemory, "");
@@ -425,8 +582,21 @@ class LiveRoomController extends PlayerController
       } else {
         siteData.remove("quality");
       }
-      if (currentLineIndex >= 0) {
-        siteData["line"] = currentLineIndex;
+      if (saveLine) {
+        // New values must not keep a list index: URL ordering and count can
+        // change between room entries. Keep old indexes only until a manual
+        // selection provides a signature and performs the migration.
+        siteData.remove("line");
+        final lineUrl =
+            currentLineIndex >= 0 && currentLineIndex < playUrls.length
+                ? playUrls[currentLineIndex]
+                : null;
+        final signature = liveRoomLineMemorySignature(lineUrl);
+        if (signature == null) {
+          siteData.remove("lineSignature");
+        } else {
+          siteData["lineSignature"] = signature;
+        }
       }
       data[site.id] = siteData;
       LocalStorageService.instance.setValue(
@@ -447,6 +617,25 @@ class LiveRoomController extends PlayerController
   /// 当前播放线路索引
   var currentLineIndex = -1;
   var currentLineInfo = "".obs;
+
+  @override
+  String get currentNetworkDiagnosePlaybackUrl {
+    if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) {
+      return '';
+    }
+    final url = playUrls[currentLineIndex];
+    return AppSettingsController.instance.playerForceHttps.value
+        ? url.replaceAll('http://', 'https://')
+        : url;
+  }
+
+  String lineDisplayName(int index) {
+    final lineName = "线路${index + 1}";
+    if (index < 0 || index >= playUrls.length) {
+      return lineName;
+    }
+    return '$lineName ${liveRoomLineProtocolLabel(playUrls[index])}';
+  }
 
   /// 自动退出倒计时，单位秒
   var countdown = 60.obs;
@@ -495,6 +684,7 @@ class LiveRoomController extends PlayerController
   bool _roomDisposed = false;
   int _loadGeneration = 0;
   int _playbackRequestRevision = 0;
+  int _manualLineSelectionRevision = 0;
   final Set<String> _superChatFingerprints = <String>{};
   LiveRepeatedDanmuAggregator _liveEventFlowAggregator =
       LiveRepeatedDanmuAggregator();
@@ -506,9 +696,19 @@ class LiveRoomController extends PlayerController
   Timer? _superChatRefreshTimer;
   Timer? _chatBottomRestoreTimer;
   Timer? _onlineRefreshTimer;
+  Timer? _kuaishouContinuousBufferingTimer;
+  Timer? _liveLatencyTelemetryTimer;
+  final _liveLatencyTelemetryTracker = LiveLatencyTelemetryTracker();
   bool _onlineRefreshInFlight = false;
+  bool _liveLatencyTelemetryInFlight = false;
   bool _hasActivePlaybackSession = false;
   bool _playbackBootstrapInFlight = false;
+  int _kuaishouRecoverySessionRevision = 0;
+  bool _autoQualityWarmupStartedForRoom = false;
+  Future<void>? _kuaishouRecoveryFuture;
+
+  /// 连续轮询失败（含 unknown/offline）次数，用于指数退避。
+  int _onlineRefreshFailures = 0;
   DateTime? _ohosHealthyPlaybackSince;
   Duration _lastOhosPlaybackPosition = Duration.zero;
   bool _autoPipAttempting = false;
@@ -550,12 +750,16 @@ class LiveRoomController extends PlayerController
 
   final LiveRoomAutoQualityBufferTracker _autoQualityBufferTracker =
       LiveRoomAutoQualityBufferTracker();
+  final KuaishouPlaybackRecoveryTracker _kuaishouPlaybackRecoveryTracker =
+      KuaishouPlaybackRecoveryTracker();
+  final OhosPlaybackSignalAdapter _ohosPlaybackSignalAdapter =
+      OhosPlaybackSignalAdapter();
   DateTime? _lastAutoQualityDownAt;
   StreamSubscription<bool>? _autoQualityBufferingSubscription;
 
   void _setupAutoQualityAdjust() {
     _autoQualityBufferingSubscription?.cancel();
-    if (!hasMpvPlayer || Utils.isOhos) {
+    if (Utils.isOhos) {
       _autoQualityBufferingSubscription = null;
       return;
     }
@@ -564,29 +768,137 @@ class LiveRoomController extends PlayerController
       if (_roomDisposed) {
         return;
       }
-      final now = DateTime.now();
-      final shouldDegrade = _autoQualityBufferTracker.update(
-        buffering: buffering,
-        now: now,
-      );
-      // 时间窗口内连续缓冲 3 次、未手动锁定、且不在最低画质、且 10 秒冷却期外
-      if (shouldDegrade &&
-          !qualityLocked.value &&
-          currentQuality >= 0 &&
-          currentQuality < qualites.length - 1) {
-        if (_lastAutoQualityDownAt != null &&
-            now.difference(_lastAutoQualityDownAt!) <
-                const Duration(seconds: 10)) {
+      _observeKuaishouBuffering(buffering);
+      _observeAutoQualityBuffering(buffering);
+    });
+  }
+
+  void _observeAutoQualityBuffering(bool buffering) {
+    if (_roomDisposed || _kuaishouPlaybackRecoveryTracker.recoveryInFlight) {
+      return;
+    }
+    if (Utils.isOhos &&
+        !AppSettingsController.instance.ohosAutoQualityDegrade.value) {
+      return;
+    }
+    final now = DateTime.now();
+    final shouldDegrade = _autoQualityBufferTracker.update(
+      buffering: buffering,
+      now: now,
+    );
+    if (!shouldDegrade ||
+        qualityLocked.value ||
+        currentQuality < 0 ||
+        currentQuality >= qualites.length - 1) {
+      return;
+    }
+    if (_lastAutoQualityDownAt != null &&
+        now.difference(_lastAutoQualityDownAt!) < const Duration(seconds: 30)) {
+      return;
+    }
+    _lastAutoQualityDownAt = now;
+    currentQuality += 1;
+    currentQualityInfo.value = qualites[currentQuality].quality;
+    SmartDialog.showToast("网络波动，已自动降低清晰度");
+    unawaited(
+      getPlayUrl(
+        automaticReconnectReason: LiveReconnectReason.playbackUrlRefresh,
+      ),
+    );
+  }
+
+  @override
+  bool get shouldDelegateStreamErrorsToRoomController =>
+      site.id == Constant.kKuaishou;
+
+  void _observeKuaishouBuffering(bool buffering) {
+    if (site.id != Constant.kKuaishou || _roomDisposed) {
+      return;
+    }
+    final now = DateTime.now();
+    _kuaishouPlaybackRecoveryTracker.updateBuffering(
+      buffering: buffering,
+      now: now,
+    );
+    if (!buffering) {
+      _kuaishouContinuousBufferingTimer?.cancel();
+      _kuaishouContinuousBufferingTimer = null;
+      return;
+    }
+    if (_kuaishouPlaybackRecoveryTracker.recoveryInFlight ||
+        _kuaishouContinuousBufferingTimer != null) {
+      return;
+    }
+    _kuaishouContinuousBufferingTimer = Timer(
+      _kuaishouPlaybackRecoveryTracker.continuousRecoveryDelay(now),
+      () {
+        _kuaishouContinuousBufferingTimer = null;
+        if (_roomDisposed || site.id != Constant.kKuaishou) {
           return;
         }
-        _lastAutoQualityDownAt = now;
-        // 降一档：index 增大 = 更低画质
-        currentQuality += 1;
-        currentQualityInfo.value = qualites[currentQuality].quality;
-        SmartDialog.showToast("网络波动，已自动降低清晰度");
-        unawaited(getPlayUrl());
+        if (_kuaishouPlaybackRecoveryTracker
+            .triggerContinuousBufferingRecovery(DateTime.now())) {
+          unawaited(_recoverKuaishouPlaybackAfterBuffering());
+        }
+      },
+    );
+  }
+
+  void _resetKuaishouPlaybackRecoverySession() {
+    _kuaishouRecoverySessionRevision += 1;
+    _kuaishouRecoveryFuture = null;
+    _kuaishouContinuousBufferingTimer?.cancel();
+    _kuaishouContinuousBufferingTimer = null;
+    _kuaishouPlaybackRecoveryTracker.reset();
+  }
+
+  void _resetPlaybackHealthSession() {
+    if (!Utils.isOhos) {
+      resetAutoNetworkDiagnosisSession();
+    }
+    _autoQualityBufferTracker.reset();
+    _autoQualityWarmupStartedForRoom = false;
+    _lastAutoQualityDownAt = null;
+    _resetKuaishouPlaybackRecoverySession();
+  }
+
+  Future<void> _runKuaishouRecoverySingleFlight(
+    Future<void> Function() operation,
+  ) {
+    final existing = _kuaishouRecoveryFuture;
+    if (existing != null) {
+      return existing;
+    }
+    late final Future<void> future;
+    future = Future<void>.sync(operation).whenComplete(() {
+      if (identical(_kuaishouRecoveryFuture, future)) {
+        _kuaishouRecoveryFuture = null;
       }
     });
+    _kuaishouRecoveryFuture = future;
+    return future;
+  }
+
+  Future<void> _recoverKuaishouPlaybackAfterBuffering() async {
+    final recoverySessionRevision = _kuaishouRecoverySessionRevision;
+    try {
+      await _runKuaishouRecoverySingleFlight(() async {
+        if (recoverySessionRevision != _kuaishouRecoverySessionRevision) {
+          return;
+        }
+        await setPlayer(
+          refreshUrls: false,
+          reconnectReason: LiveReconnectReason.sustainedBuffering,
+        );
+      });
+    } catch (e, stackTrace) {
+      Log.e('快手缓冲恢复失败: $e', stackTrace);
+    } finally {
+      if (recoverySessionRevision == _kuaishouRecoverySessionRevision) {
+        _kuaishouPlaybackRecoveryTracker.finishRecovery();
+        _kuaishouPlaybackRecoveryTracker.markPlaybackReopened();
+      }
+    }
   }
 
   void scrollListener() {
@@ -1268,16 +1580,75 @@ class LiveRoomController extends PlayerController
       !_hasActivePlaybackSession &&
       !_hasActivePlaybackForRoomStatus;
 
+  /// 读取房间详情。快手请求通过 [KuaishouRequestTrace] 标记来源，
+  /// 供 core 侧按来源汇总请求量；其他平台不带来源标记。
+  Future<LiveRoomDetail> _fetchRoomDetailWithSource({
+    KuaishouRequestSource? source,
+  }) {
+    if (source == null) {
+      return site.liveSite.getRoomDetail(roomId: roomId);
+    }
+    return KuaishouRequestTrace.run(
+      source,
+      () => site.liveSite.getRoomDetail(roomId: roomId),
+    );
+  }
+
   void _restartOnlineRefreshTimer() {
     _onlineRefreshTimer?.cancel();
     _onlineRefreshTimer = null;
     if (_roomDisposed) {
       return;
     }
+
+    // 快手稳定播放时保留分钟级低频复核，避免完整停轮询后无法发现
+    // 失效的播放会话；非稳定路径仍使用原有状态退避。
+    if (site.id == Constant.kKuaishou && _isStablyPlaying()) {
+      final delay = resolveKuaishouStableRefreshDelay(
+        jitterSeconds: Random().nextInt(61) - 30,
+      );
+      Log.d("[ks-poll] schedule stable recheck after ${delay.inSeconds}s "
+          "state=${roomLiveState.value.name}");
+      _onlineRefreshTimer = Timer(delay, _refreshRoomStatus);
+      return;
+    }
+
     final delay = showOfflineOverlay
         ? const Duration(seconds: 45)
-        : const Duration(seconds: 10);
+        : _resolveOnlineRefreshDelay();
     _onlineRefreshTimer = Timer(delay, _refreshRoomStatus);
+  }
+
+  /// 是否正在稳定播放（作为快手轮询主信号）。
+  bool _isStablyPlaying() {
+    if (Utils.isOhos) {
+      final value = ohosVideoController?.value;
+      return value != null &&
+          isLiveRoomPlaybackStable(
+            initialized: value.isInitialized,
+            playing: value.isPlaying,
+            buffering: value.isBuffering,
+            hasError: value.hasError,
+          );
+    }
+    return isLiveRoomPlaybackStable(
+      initialized: _hasActivePlaybackSession,
+      playing: player.state.playing,
+      buffering: player.state.buffering,
+      hasError: false,
+    );
+  }
+
+  /// 根据当前状态决定下次轮询间隔：unknown/失败走指数退避。
+  ///
+  /// 连续失败次数由 [_onlineRefreshFailures] 记录；失败时按
+  /// 10s → 30s → 60s → 120s → 240s 指数增长，封顶 300s；
+  /// 恢复到 live 后重置为 10s。
+  Duration _resolveOnlineRefreshDelay() {
+    return resolveOnlineRefreshDelay(
+      roomLiveState.value,
+      _onlineRefreshFailures,
+    );
   }
 
   Future<void> _refreshRoomStatus() async {
@@ -1289,25 +1660,41 @@ class LiveRoomController extends PlayerController
     final refreshGeneration = _loadGeneration;
     try {
       final roomDetail = _sanitizeRoomDetail(
-        await site.liveSite
-            .getRoomDetail(roomId: roomId)
-            .timeout(const Duration(seconds: 8)),
+        await _fetchRoomDetailWithSource(
+          source: site.id == Constant.kKuaishou
+              ? KuaishouRequestSource.roomStatusPolling
+              : null,
+        ).timeout(const Duration(seconds: 8)),
       );
       if (!_isCurrentLoad(refreshGeneration)) {
         return;
       }
       final incomingState = roomDetail.resolvedLiveStatus;
-      if (incomingState != LiveStatusState.unknown) {
-        detail.value = roomDetail;
-        online.value = roomDetail.online;
-        _syncBackgroundPlaybackMetadata(roomDetail);
+      final decision = _applyRoomLiveState(incomingState);
+      if (shouldCommitRoomDetailRefresh(
+        incomingState: incomingState,
+        decision: decision,
+      )) {
+        final currentDetail = detail.value;
+        final committedDetail =
+            site.id == Constant.kKuaishou && currentDetail != null
+                ? mergeKuaishouRoomDetailMetadata(
+                    current: currentDetail,
+                    incoming: roomDetail,
+                  )
+                : roomDetail;
+        detail.value = committedDetail;
+        online.value = committedDetail.online;
+        _syncBackgroundPlaybackMetadata(committedDetail);
       }
-      _applyRoomLiveState(incomingState);
       if (incomingState == LiveStatusState.live) {
         await _bootstrapPlaybackIfNeeded();
       }
     } catch (e) {
       Log.d("刷新${site.name}直播状态失败，保留当前状态: $e");
+      if (!_isCurrentLoad(refreshGeneration)) {
+        return;
+      }
       _applyRoomLiveState(LiveStatusState.unknown);
     } finally {
       _onlineRefreshInFlight = false;
@@ -1317,7 +1704,13 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  void _applyRoomLiveState(LiveStatusState incomingState) {
+  RoomLiveRefreshDecision _applyRoomLiveState(
+    LiveStatusState incomingState,
+  ) {
+    _onlineRefreshFailures = resolveOnlineRefreshFailureCount(
+      incomingState: incomingState,
+      currentFailures: _onlineRefreshFailures,
+    );
     final decision = resolveRoomLiveRefresh(
       currentState: roomLiveState.value,
       incomingState: incomingState,
@@ -1340,6 +1733,7 @@ class LiveRoomController extends PlayerController
     if (statusChanged) {
       _restartSuperChatRefreshTimer();
     }
+    return decision;
   }
 
   Future<void> _bootstrapPlaybackIfNeeded() async {
@@ -1375,6 +1769,9 @@ class LiveRoomController extends PlayerController
     if (!Utils.isOhos) {
       return;
     }
+    _observeKuaishouBuffering(
+      value.isInitialized && !value.hasError && value.isBuffering,
+    );
     if (!value.isInitialized ||
         value.hasError ||
         value.isBuffering ||
@@ -1398,6 +1795,66 @@ class LiveRoomController extends PlayerController
       Log.d("鸿蒙播放器已稳定播放，重置错误重试计数");
       mediaErrorRetryCount = 0;
     }
+  }
+
+  void updateOhosVideoStateForGeneration(
+    int playerGeneration,
+    VideoPlayerValue value,
+  ) {
+    if (!Utils.isOhos ||
+        _roomDisposed ||
+        playerGeneration != ohosPlayerRevision.value) {
+      return;
+    }
+    final signals = _ohosPlaybackSignalAdapter.update(
+      roomGeneration: _loadGeneration,
+      playerGeneration: playerGeneration,
+      value: value,
+    );
+    if (signals.isEmpty) {
+      return;
+    }
+    for (final signal in signals) {
+      switch (signal.type) {
+        case OhosPlaybackSignalType.bufferingStarted:
+          recordLiveLinkHealthEvent(
+            LiveLinkEventType.bufferingStarted,
+            at: signal.occurredAt,
+          );
+          break;
+        case OhosPlaybackSignalType.bufferingEnded:
+          recordLiveLinkHealthEvent(
+            LiveLinkEventType.bufferingEnded,
+            at: signal.occurredAt,
+          );
+          break;
+        case OhosPlaybackSignalType.firstFrame:
+        case OhosPlaybackSignalType.nativeError:
+        case OhosPlaybackSignalType.initialized:
+        case OhosPlaybackSignalType.sourceReopened:
+          Log.d(
+            'OHOS playback signal=${signal.type.name} '
+            'roomGeneration=${signal.roomGeneration} '
+            'playerGeneration=${signal.playerGeneration} '
+            'source=${signal.sourceFingerprint} '
+            'error=${signal.nativeErrorCode ?? "none"}',
+          );
+          break;
+        case OhosPlaybackSignalType.playing:
+        case OhosPlaybackSignalType.positionAdvanced:
+        case OhosPlaybackSignalType.mediaHttpError:
+        case OhosPlaybackSignalType.sourceAssigned:
+        case OhosPlaybackSignalType.disposed:
+          break;
+      }
+    }
+    _observeAutoQualityBuffering(
+      value.isInitialized && !value.hasError && value.isBuffering,
+    );
+    observeAutoNetworkDiagnosisBuffering(
+      value.isInitialized && !value.hasError && value.isBuffering,
+    );
+    updateOhosVideoState(value);
   }
 
   void _refreshDanmakuOverlay(String reason) {
@@ -1651,6 +2108,7 @@ class LiveRoomController extends PlayerController
       getSuperChatMessage();
     }
 
+    _resetPlaybackHealthSession();
     loadData();
   }
 
@@ -1678,9 +2136,11 @@ class LiveRoomController extends PlayerController
     liveRoomRecommendationScrollController.dispose();
     autoExitTimer?.cancel();
     _autoQualityBufferingSubscription?.cancel();
+    _resetKuaishouPlaybackRecoverySession();
     _superChatRefreshTimer?.cancel();
     _liveEventFlowTimer?.cancel();
     _onlineRefreshTimer?.cancel();
+    _stopLiveLatencyTelemetry();
     _chatBottomRestoreTimer?.cancel();
     _cancelPendingDanmakuTimers();
     clearDanmakuReplayHistory();
@@ -1834,8 +2294,15 @@ class LiveRoomController extends PlayerController
       rebuildDanmakuView();
       addSysMsg("正在读取直播间信息");
       final detailStopwatch = Stopwatch()..start();
+      final detailRequest = _fetchRoomDetailWithSource(
+        source: site.id == Constant.kKuaishou
+            ? KuaishouRequestSource.userEnter
+            : null,
+      );
       final roomDetail = _sanitizeRoomDetail(
-        await site.liveSite.getRoomDetail(roomId: roomId),
+        site.id == Constant.kKuaishou
+            ? await detailRequest.timeout(const Duration(seconds: 12))
+            : await detailRequest,
       );
       detailStopwatch.stop();
       Log.i(
@@ -1921,10 +2388,26 @@ class LiveRoomController extends PlayerController
         return;
       }
       if (site.id == Constant.kKuaishou) {
-        roomLiveState.value = LiveStatusState.unknown;
-        offlineConfirmations.value = 0;
-        loadError.value = false;
-        _restartOnlineRefreshTimer();
+        // S2-T3：详情失败与播放地址未就绪分离。
+        // 明确限流/风控（403/429）显示可重试错误；其他失败静默恢复轮询，
+        // 避免黑屏转圈（保持冷启动方案 5.1 的恢复语义）。
+        final isHttpLimit = e is CoreError &&
+            (e.kind == CoreErrorKind.http) &&
+            (e.statusCode == 403 || e.statusCode == 429);
+        if (isHttpLimit) {
+          roomLiveState.value = LiveStatusState.unknown;
+          offlineConfirmations.value = 0;
+          loadError.value = true;
+          error = e;
+          errorStackTrace = stackTrace;
+          Log.w("快手详情请求被限流(${e.statusCode})，显示可重试错误");
+        } else {
+          roomLiveState.value = LiveStatusState.unknown;
+          offlineConfirmations.value = 0;
+          loadError.value = true;
+          error = e;
+          errorStackTrace = stackTrace;
+        }
       } else {
         loadError.value = true;
         error = e;
@@ -1977,7 +2460,9 @@ class LiveRoomController extends PlayerController
         errorStackTrace = StackTrace.current;
         return;
       }
-      qualites.value = playQualites;
+      // Site implementations may return a fixed-length list. RxList is
+      // mutated later during a URL reload, so keep an owned growable copy.
+      qualites.value = List<LivePlayQuality>.of(playQualites);
       final preference = _loadQualityPreference();
       qualityLocked.value = preference.qualityLocked;
       currentQuality = resolveInitialLiveRoomQualityIndex(
@@ -2068,27 +2553,24 @@ class LiveRoomController extends PlayerController
       }
       return false;
     }
-    final nextPlayUrls = playUrl.urls;
+    // Keep the observable list mutable: some site parsers return a fixed-
+    // length list and the next quality/line reload clears this list first.
+    final nextPlayUrls = List<String>.of(
+      sortLiveStreamUrlsByLatency(playUrl.urls),
+    );
     var nextLineIndex = currentLineIndex;
     if (resetLine || currentLineIndex < 0) {
-      // 优先恢复上次记忆的线路；无记忆则测速选最快。
-      final lineMemory = _loadLineMemory();
-      if (lineMemory != null &&
-          lineMemory >= 0 &&
-          lineMemory < nextPlayUrls.length) {
-        nextLineIndex = lineMemory;
-      } else {
-        nextLineIndex = 0;
-        // 多线路时测速选最快的（TCP 延迟，带超时，不影响播放）。
-        if (AppSettingsController.instance.autoSelectFastestLine.value &&
-            nextPlayUrls.length > 1) {
-          final fastest = await NetworkDiagnoseService.findFastestLine(
-            nextPlayUrls.toList(),
-          );
-          if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
-            return false;
-          }
-          nextLineIndex = fastest;
+      final bestLineIndices = lowestLatencyLineIndices(nextPlayUrls);
+      final autoSelect =
+          AppSettingsController.instance.autoSelectFastestLine.value;
+      nextLineIndex = bestLineIndices.first;
+      if (!autoSelect) {
+        final remembered = resolveRememberedLiveRoomLineIndex(
+          urls: nextPlayUrls,
+          preference: _loadQualityPreference(),
+        );
+        if (remembered != null) {
+          nextLineIndex = remembered;
         }
       }
     } else if (currentLineIndex >= nextPlayUrls.length) {
@@ -2101,12 +2583,134 @@ class LiveRoomController extends PlayerController
     playUrls.value = nextPlayUrls;
     playHeaders = playUrl.headers;
     currentLineIndex = nextLineIndex;
-    currentLineInfo.value = "线路${currentLineIndex + 1}";
+    currentLineInfo.value = lineDisplayName(currentLineIndex);
     return true;
   }
 
-  Future<void> getPlayUrl() async {
-    _autoQualityBufferTracker.beginWarmup(DateTime.now());
+  /// Kuaishou playback URLs live in LivePlayQuality.data rather than solely in
+  /// the room detail. Refresh both snapshots before resolving a replacement
+  /// line, and keep the previous snapshot when the refresh cannot produce a
+  /// usable URL.
+  Future<bool> _reloadKuaishouPlaybackUrls({
+    required int requestRevision,
+  }) async {
+    final loadGeneration = _loadGeneration;
+    if (site.id != Constant.kKuaishou ||
+        detail.value == null ||
+        !_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+      return false;
+    }
+
+    final previousDetail = detail.value!;
+    final previousOnline = online.value;
+    final previousQualities = List<LivePlayQuality>.of(qualites);
+    final previousQuality = currentQuality;
+    final previousQualityInfo = currentQualityInfo.value;
+    final previousPlayUrls = List<String>.of(playUrls);
+    final previousPlayHeaders = playHeaders;
+    final previousLineIndex = currentLineIndex;
+    final previousLineUrl =
+        previousLineIndex >= 0 && previousLineIndex < previousPlayUrls.length
+            ? previousPlayUrls[previousLineIndex]
+            : null;
+    final previousLineInfo = currentLineInfo.value;
+    final previousWaitingForPlaybackUrl = waitingForPlaybackUrl.value;
+    final previousQualityName =
+        previousQuality >= 0 && previousQuality < previousQualities.length
+            ? previousQualities[previousQuality].quality
+            : previousQualityInfo;
+    var snapshotReplaced = false;
+
+    void restorePreviousSnapshot() {
+      detail.value = previousDetail;
+      online.value = previousOnline;
+      qualites.value = previousQualities;
+      currentQuality = previousQuality;
+      currentQualityInfo.value = previousQualityInfo;
+      playUrls.value = previousPlayUrls;
+      playHeaders = previousPlayHeaders;
+      currentLineIndex = previousLineIndex;
+      currentLineInfo.value = previousLineInfo;
+      waitingForPlaybackUrl.value = previousWaitingForPlaybackUrl;
+    }
+
+    try {
+      final fetchedDetail = _sanitizeRoomDetail(
+        await _fetchRoomDetailWithSource(
+          source: KuaishouRequestSource.playbackRecovery,
+        ).timeout(const Duration(seconds: 12)),
+      );
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        return false;
+      }
+      final freshDetail = mergeKuaishouRoomDetailMetadata(
+        current: previousDetail,
+        incoming: fetchedDetail,
+      );
+      final freshQualities = List<LivePlayQuality>.of(
+        await site.liveSite.getPlayQualites(detail: freshDetail),
+      );
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration) ||
+          freshQualities.isEmpty) {
+        return false;
+      }
+
+      final nextQuality = resolveKuaishouRecoveryQualityIndex(
+        qualities: [for (final quality in freshQualities) quality.quality],
+        previousQualityName: previousQualityName,
+        previousQualityIndex: previousQuality,
+      );
+      // No await occurs in this block: observers see either the old snapshot
+      // or a complete fresh detail/quality pair.
+      detail.value = freshDetail;
+      online.value = freshDetail.online;
+      qualites.value = freshQualities;
+      currentQuality = nextQuality;
+      currentQualityInfo.value = freshQualities[nextQuality].quality;
+      snapshotReplaced = true;
+
+      final reloaded = await _reloadPlayUrls(
+        requestRevision: requestRevision,
+        silent: true,
+      );
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        return false;
+      }
+      if (reloaded) {
+        currentLineIndex = resolveKuaishouRecoveryLineIndex(
+          urls: playUrls,
+          previousUrl: previousLineUrl,
+          fallbackIndex: currentLineIndex,
+        );
+        currentLineInfo.value = lineDisplayName(currentLineIndex);
+        return true;
+      }
+
+      // A failed fresh URL lookup must not discard the still-playable source.
+      restorePreviousSnapshot();
+      return false;
+    } catch (e, stackTrace) {
+      Log.e('快手刷新播放详情失败: $e', stackTrace);
+      if (snapshotReplaced &&
+          _isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        restorePreviousSnapshot();
+      }
+      return false;
+    }
+  }
+
+  String? get _selectedPlaybackSource =>
+      currentLineIndex >= 0 && currentLineIndex < playUrls.length
+          ? playUrls[currentLineIndex]
+          : null;
+
+  Future<void> getPlayUrl({
+    bool userInitiatedQualityChange = false,
+    LiveReconnectReason? automaticReconnectReason,
+  }) async {
+    final previousSource = _selectedPlaybackSource;
+    final reconnectStartedAt =
+        automaticReconnectReason == null ? null : DateTime.now();
     final requestRevision = ++_playbackRequestRevision;
     final loadGeneration = _loadGeneration;
     playUrls.clear();
@@ -2121,17 +2725,142 @@ class LiveRoomController extends PlayerController
     if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
       return;
     }
+    if (!_autoQualityWarmupStartedForRoom) {
+      _autoQualityWarmupStartedForRoom = true;
+      final now = DateTime.now();
+      _autoQualityBufferTracker.beginWarmup(now);
+      _kuaishouPlaybackRecoveryTracker.beginWarmup(now);
+    }
     // 重置播放器错误重试次数
     mediaErrorRetryCount = 0;
     await initPlaylist(requestRevision: requestRevision);
+    if (_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+      if (userInitiatedQualityChange && _hasActivePlaybackSession) {
+        recordLiveLinkHealthEvent(LiveLinkEventType.qualityChangedByUser);
+      }
+      if (!Utils.isOhos &&
+          automaticReconnectReason != null &&
+          reconnectStartedAt != null) {
+        final completedAt = DateTime.now();
+        recordLiveLinkHealthEvent(
+          LiveLinkEventType.cdnReconnect,
+          at: completedAt,
+          reconnectReason: automaticReconnectReason,
+          reconnectHostChanged: didLivePlaybackHostChange(
+            previousSource,
+            _selectedPlaybackSource,
+          ),
+          reconnectRecoveryDuration: completedAt.difference(
+            reconnectStartedAt,
+          ),
+        );
+      }
+      _scheduleAutoSelectFastestLine(
+        requestRevision: requestRevision,
+        loadGeneration: loadGeneration,
+      );
+    }
   }
 
-  Future<void> changePlayLine(int index) async {
+  Future<void> changePlayLine(
+    int index, {
+    bool persist = true,
+    LiveReconnectReason? reconnectReason,
+  }) async {
+    final loadGeneration = _loadGeneration;
+    final reconnectHostChanged = reconnectReason == null
+        ? null
+        : didLivePlaybackHostChange(
+            _selectedPlaybackSource,
+            index >= 0 && index < playUrls.length ? playUrls[index] : null,
+          );
+    if (persist) {
+      _manualLineSelectionRevision += 1;
+    }
     currentLineIndex = index;
-    saveQualityMemory();
+    if (persist) {
+      saveQualityMemory(saveLine: true);
+    }
     // 切线时同样重置重试次数
     mediaErrorRetryCount = 0;
-    await setPlayer();
+    final reopened = await setPlayer(
+      reconnectReason: reconnectReason,
+      reconnectHostChanged: reconnectHostChanged,
+    );
+    if (!reopened || !_isCurrentLoad(loadGeneration)) {
+      return;
+    }
+    if (persist) {
+      recordLiveLinkHealthEvent(LiveLinkEventType.lineChangedByUser);
+    }
+  }
+
+  void _scheduleAutoSelectFastestLine({
+    required int requestRevision,
+    required int loadGeneration,
+  }) {
+    if (!AppSettingsController.instance.autoSelectFastestLine.value ||
+        !_hasActivePlaybackSession ||
+        !_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+      return;
+    }
+    final candidateIndices = lowestLatencyLineIndices(playUrls);
+    if (candidateIndices.length <= 1) {
+      return;
+    }
+    final initialLineIndex = currentLineIndex;
+    final manualSelectionRevision = _manualLineSelectionRevision;
+    final candidates = [
+      for (final index in candidateIndices) playUrls[index],
+    ];
+    Log.d(
+      '播放器已开始打开，后台测速最低延迟协议档：'
+      '${candidates.length} 条线路',
+    );
+    unawaited(
+      _selectFastestLineAfterPlaybackStart(
+        requestRevision: requestRevision,
+        loadGeneration: loadGeneration,
+        initialLineIndex: initialLineIndex,
+        manualSelectionRevision: manualSelectionRevision,
+        candidateIndices: candidateIndices,
+        candidates: candidates,
+      ),
+    );
+  }
+
+  Future<void> _selectFastestLineAfterPlaybackStart({
+    required int requestRevision,
+    required int loadGeneration,
+    required int initialLineIndex,
+    required int manualSelectionRevision,
+    required List<int> candidateIndices,
+    required List<String> candidates,
+  }) async {
+    int fastest;
+    try {
+      fastest = await NetworkDiagnoseService.findFastestLine(candidates);
+    } catch (e, stackTrace) {
+      Log.e('后台线路测速失败: $e', stackTrace);
+      return;
+    }
+    if (!AppSettingsController.instance.autoSelectFastestLine.value ||
+        !_hasActivePlaybackSession ||
+        !_isCurrentPlaybackRequest(requestRevision, loadGeneration) ||
+        manualSelectionRevision != _manualLineSelectionRevision ||
+        currentLineIndex != initialLineIndex) {
+      return;
+    }
+    final candidateIndex = fastest.clamp(0, candidates.length - 1).toInt();
+    final selectedLineIndex = candidateIndices[candidateIndex];
+    if (selectedLineIndex == currentLineIndex) {
+      return;
+    }
+    Log.i(
+      '后台测速选择线路${selectedLineIndex + 1}，'
+      '原线路${currentLineIndex + 1}',
+    );
+    await changePlayLine(selectedLineIndex, persist: false);
   }
 
   Future<void> initPlaylist({required int requestRevision}) async {
@@ -2151,29 +2880,59 @@ class LiveRoomController extends PlayerController
     if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) {
       return;
     }
+    // Stop the shared lightweight sampler before either backend changes
+    // source. Its generation gate prevents an older native read from being
+    // accepted after this point.
+    await resetLiveLatencyChase();
+    if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+      return;
+    }
+    // A previous room/line may have been a portrait stream. Reset the hint
+    // for every backend until the newly opened source reports its dimensions.
+    isVertical.value = false;
     if (Utils.isOhos) {
-      currentLineInfo.value = "线路${currentLineIndex + 1}";
+      currentLineInfo.value = lineDisplayName(currentLineIndex);
       errorMsg.value = "";
-      // A previous room/line may have been a portrait stream. Reset the hint
-      // until AVPlayer reports the dimensions of the newly opened source.
-      isVertical.value = false;
+      final now = DateTime.now();
+      _autoQualityBufferTracker.beginWarmup(now);
+      await startLivePlaybackLightweightSampling(
+        source: playUrls[currentLineIndex],
+      );
       _ohosHealthyPlaybackSince = null;
       _lastOhosPlaybackPosition = Duration.zero;
-      ohosPlayerRevision.value += 1;
+      final nextPlayerGeneration = ohosPlayerRevision.value + 1;
+      final assigned = _ohosPlaybackSignalAdapter.beginSource(
+        roomGeneration: loadGeneration,
+        playerGeneration: nextPlayerGeneration,
+        source: currentNetworkDiagnosePlaybackUrl,
+        at: now,
+      );
+      Log.d(
+        'OHOS playback signal=${assigned.type.name} '
+        'roomGeneration=${assigned.roomGeneration} '
+        'playerGeneration=${assigned.playerGeneration} '
+        'source=${assigned.sourceFingerprint}',
+      );
+      ohosPlayerRevision.value = nextPlayerGeneration;
       _hasActivePlaybackSession = true;
       waitingForPlaybackUrl.value = false;
+      if (site.id == Constant.kKuaishou) {
+        _restartOnlineRefreshTimer();
+      }
       return;
     }
     final reopenCompleter = Completer<void>();
     _playerReopenCompleter = reopenCompleter;
     try {
-      currentLineInfo.value = "线路${currentLineIndex + 1}";
+      currentLineInfo.value = lineDisplayName(currentLineIndex);
       errorMsg.value = "";
 
       var finalUrl = playUrls[currentLineIndex];
       if (AppSettingsController.instance.playerForceHttps.value) {
         finalUrl = finalUrl.replaceAll("http://", "https://");
       }
+      final streamProtocol = classifyLiveStreamProtocol(finalUrl);
+      _stopLiveLatencyTelemetry();
 
       final previousWidth = player.state.width;
       final previousHeight = player.state.height;
@@ -2181,6 +2940,7 @@ class LiveRoomController extends PlayerController
       Log.i(
         "准备打开播放器：target=${site.id}/$roomId "
         "quality=${currentQualityInfo.value} line=${currentLineIndex + 1}/${playUrls.length} "
+        "protocol=${streamProtocol.label} "
         "previousPlaying=$wasPlaying previousSize=${previousWidth}x$previousHeight "
         "${MpvOptionsService.diagnosticsSummary()}",
       );
@@ -2191,12 +2951,15 @@ class LiveRoomController extends PlayerController
       if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         return;
       }
+      await MpvOptionsService.applyLiveLatencyOptions(player, streamProtocol);
 
       await _stopDesktopPlayerBeforeOpen();
       if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         return;
       }
 
+      // Warmup 必须覆盖 player.open() 期间产生的起播 buffering 事件。
+      markStreamOpening();
       await player.open(
         Media(
           finalUrl,
@@ -2209,13 +2972,27 @@ class LiveRoomController extends PlayerController
         }
         return;
       }
+      await startLivePlaybackLightweightSampling(source: finalUrl);
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        return;
+      }
       _hasActivePlaybackSession = true;
       waitingForPlaybackUrl.value = false;
+      // 播放已建立：快手改为重启分钟级低频复核，而不是完全停掉轮询。
+      if (site.id == Constant.kKuaishou) {
+        _restartOnlineRefreshTimer();
+      }
       openStopwatch.stop();
       Log.i(
         "播放器打开完成：${site.id}/$roomId ${openStopwatch.elapsedMilliseconds}ms "
         "line=${currentLineIndex + 1}/${playUrls.length} "
+        "protocol=${streamProtocol.label} "
         "size=${player.state.width}x${player.state.height}",
+      );
+      _startLiveLatencyTelemetry(
+        protocol: streamProtocol,
+        requestRevision: requestRevision,
+        loadGeneration: loadGeneration,
       );
       unawaited(
         LiveSubtitleService.instance.syncPreviewFromSettings(
@@ -2223,12 +3000,91 @@ class LiveRoomController extends PlayerController
           httpHeaders: playHeaders,
         ),
       );
-      Log.d("播放链接\n$finalUrl");
     } finally {
       if (identical(_playerReopenCompleter, reopenCompleter)) {
         _playerReopenCompleter = null;
       }
       reopenCompleter.complete();
+    }
+  }
+
+  void _startLiveLatencyTelemetry({
+    required LiveStreamProtocol protocol,
+    required int requestRevision,
+    required int loadGeneration,
+  }) {
+    _stopLiveLatencyTelemetry();
+    final openedAt = DateTime.now();
+    unawaited(
+      _sampleLiveLatencyTelemetry(
+        protocol: protocol,
+        openedAt: openedAt,
+        requestRevision: requestRevision,
+        loadGeneration: loadGeneration,
+      ),
+    );
+    _liveLatencyTelemetryTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => unawaited(
+        _sampleLiveLatencyTelemetry(
+          protocol: protocol,
+          openedAt: openedAt,
+          requestRevision: requestRevision,
+          loadGeneration: loadGeneration,
+        ),
+      ),
+    );
+  }
+
+  void _stopLiveLatencyTelemetry() {
+    _liveLatencyTelemetryTimer?.cancel();
+    _liveLatencyTelemetryTimer = null;
+    _liveLatencyTelemetryTracker.reset();
+  }
+
+  Future<void> _sampleLiveLatencyTelemetry({
+    required LiveStreamProtocol protocol,
+    required DateTime openedAt,
+    required int requestRevision,
+    required int loadGeneration,
+  }) async {
+    if (_liveLatencyTelemetryInFlight ||
+        _roomDisposed ||
+        !_hasActivePlaybackSession ||
+        !_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+      return;
+    }
+    _liveLatencyTelemetryInFlight = true;
+    try {
+      final state = player.state;
+      final nativeProperties = await sampleMpvLiveLatencyProperties(
+        player,
+        demuxerCacheDurationOverride: latestLivePlaybackCacheTelemetry,
+      );
+      if (_roomDisposed ||
+          !_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        return;
+      }
+      final sample = LiveLatencyTelemetrySample(
+        wallClock: DateTime.now(),
+        position: state.position,
+        playing: state.playing,
+        buffering: state.buffering,
+        nativeProperties: nativeProperties,
+      );
+      Log.writeLog(
+        formatLiveLatencyTelemetry(
+          target: '${site.id}/$roomId',
+          lineIndex: currentLineIndex,
+          lineCount: playUrls.length,
+          protocol: protocol.label,
+          elapsed: sample.wallClock.difference(openedAt),
+          sample: sample,
+          delta: _liveLatencyTelemetryTracker.record(sample),
+        ),
+      );
+    } finally {
+      _liveLatencyTelemetryInFlight = false;
     }
   }
 
@@ -2247,55 +3103,126 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  Future<void> setPlayer({
+  Future<bool> setPlayer({
     bool refreshUrls = false,
     bool rotateOhosLine = false,
+    LiveReconnectReason? reconnectReason,
+    bool? reconnectHostChanged,
   }) async {
-    _autoQualityBufferTracker.beginWarmup(DateTime.now());
+    final previousSource = _selectedPlaybackSource;
+    final reconnectStartedAt =
+        reconnectReason == null && !refreshUrls ? null : DateTime.now();
     final requestRevision = ++_playbackRequestRevision;
     final loadGeneration = _loadGeneration;
-    if (refreshUrls) {
-      final previousLineIndex = currentLineIndex;
-      var reloaded = await _reloadPlayUrls(
-        requestRevision: requestRevision,
-        silent: true,
-      );
-      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
-        return;
+    var playbackUrlRefreshed = false;
+    try {
+      if (refreshUrls) {
+        final previousLineIndex = currentLineIndex;
+        final reloaded = site.id == Constant.kKuaishou
+            ? await _reloadKuaishouPlaybackUrls(
+                requestRevision: requestRevision,
+              )
+            : await _reloadPlayUrls(
+                requestRevision: requestRevision,
+                silent: true,
+              );
+        if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+          return false;
+        }
+        if (!reloaded) {
+          // The old source is still worth reopening when the platform API is
+          // temporarily unavailable. Returning here leaves the errored widget
+          // on screen forever and prevents the next watchdog retry.
+          Log.d("刷新播放地址失败，回退为重新打开当前线路");
+        } else if (rotateOhosLine && Utils.isOhos && playUrls.length > 1) {
+          playbackUrlRefreshed = true;
+          // A fresh URL from the same CDN can still point to the unhealthy edge
+          // node. On the second retry, move to another source before reopening.
+          currentLineIndex = (previousLineIndex + 1) % playUrls.length;
+          currentLineInfo.value = lineDisplayName(currentLineIndex);
+          Log.d("鸿蒙播放恢复切换到线路${currentLineIndex + 1}");
+        } else {
+          playbackUrlRefreshed = true;
+        }
       }
-      if (!reloaded) {
-        // The old source is still worth reopening when the platform API is
-        // temporarily unavailable. Returning here leaves the errored widget
-        // on screen forever and prevents the next watchdog retry.
-        Log.d("刷新播放地址失败，回退为重新打开当前线路");
-      } else if (rotateOhosLine && Utils.isOhos && playUrls.length > 1) {
-        // A fresh URL from the same CDN can still point to the unhealthy edge
-        // node. On the second retry, move to another source before reopening.
-        currentLineIndex = (previousLineIndex + 1) % playUrls.length;
-        currentLineInfo.value = "线路${currentLineIndex + 1}";
-        Log.d("鸿蒙播放恢复切换到线路${currentLineIndex + 1}");
+      if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) {
+        return false;
       }
+      _hasActivePlaybackSession = false;
+      await initPlaylist(requestRevision: requestRevision);
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration) ||
+          !_hasActivePlaybackSession) {
+        return false;
+      }
+      final recordedReason = reconnectReason ??
+          (playbackUrlRefreshed
+              ? LiveReconnectReason.playbackUrlRefresh
+              : null);
+      if (recordedReason != null && !Utils.isOhos) {
+        final completedAt = DateTime.now();
+        recordLiveLinkHealthEvent(
+          LiveLinkEventType.cdnReconnect,
+          at: completedAt,
+          reconnectReason: recordedReason,
+          reconnectHostChanged: reconnectHostChanged ??
+              didLivePlaybackHostChange(
+                previousSource,
+                _selectedPlaybackSource,
+              ),
+          reconnectRecoveryDuration: reconnectStartedAt == null
+              ? null
+              : completedAt.difference(reconnectStartedAt),
+        );
+      }
+      return true;
+    } catch (e, stackTrace) {
+      if (_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        _hasActivePlaybackSession = false;
+      }
+      Log.e("重新打开播放器失败: $e", stackTrace);
+      return false;
     }
-    await initPlaylist(requestRevision: requestRevision);
   }
 
   bool get _shouldRefreshUrlsOnPlaybackRetry =>
-      Utils.isOhos || site.id == Constant.kHuya || site.id == Constant.kDouyu;
+      site.id == Constant.kHuya ||
+      site.id == Constant.kDouyu ||
+      site.id == Constant.kKuaishou;
 
   @override
   void mediaEnd() async {
+    if (_roomDisposed || _roomSwitching) {
+      return;
+    }
+    final recoveryGeneration = _loadGeneration;
+    if (site.id == Constant.kKuaishou) {
+      await _runKuaishouRecoverySingleFlight(
+        () => _handleMediaEnd(recoveryGeneration),
+      );
+      return;
+    }
+    await _handleMediaEnd(recoveryGeneration);
+  }
+
+  Future<void> _handleMediaEnd(int recoveryGeneration) async {
     super.mediaEnd();
     if (mediaErrorRetryCount < 2) {
-      Log.d("播放结束，尝试第${mediaErrorRetryCount + 1}次刷新");
+      Log.d("播放结束，尝试第${mediaErrorRetryCount + 1}次恢复");
       if (mediaErrorRetryCount == 1) {
         // 第二次重试前稍等一秒
         await Future.delayed(const Duration(seconds: 1));
+        if (!_isCurrentLoad(recoveryGeneration)) {
+          return;
+        }
       }
-      final rotateOhosLine = Utils.isOhos && mediaErrorRetryCount == 1;
+      final refreshUrls =
+          mediaErrorRetryCount > 0 && _shouldRefreshUrlsOnPlaybackRetry;
+      final rotateOhosLine = Utils.isOhos && refreshUrls;
       mediaErrorRetryCount += 1;
       await setPlayer(
-        refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
+        refreshUrls: refreshUrls,
         rotateOhosLine: rotateOhosLine,
+        reconnectReason: LiveReconnectReason.mediaEnd,
       );
       return;
     }
@@ -2304,6 +3231,9 @@ class LiveRoomController extends PlayerController
     // 依次尝试剩余线路，全部失败后再判定为已下播。
     if (playUrls.length - 1 == currentLineIndex) {
       _hasActivePlaybackSession = false;
+      // S2-T1 修复：播放中断后恢复状态轮询，重新以详情确认直播状态
+      // （此前稳定播放期取消了轮询，若不恢复则下播/复播都无法被发现）。
+      _restartOnlineRefreshTimer();
       if (Utils.isOhos) {
         // AVPlayer completion is not sufficient evidence that a live room is
         // offline. Keep the room active; the independent room-status polling
@@ -2324,13 +3254,20 @@ class LiveRoomController extends PlayerController
         // 仍判定直播中且未达重试上限：回退到线路 0 并刷新 URL 重试一次。
         currentLineIndex = 0;
         mediaErrorRetryCount += 1;
-        await setPlayer(refreshUrls: true);
+        await setPlayer(
+          refreshUrls: true,
+          reconnectReason: LiveReconnectReason.mediaEnd,
+        );
         return;
       }
       errorMsg.value = "直播流已中断，正在确认直播状态";
       await _tryAutoSwitchToNextLiveRoom(reason: "live_end");
     } else {
-      await changePlayLine(currentLineIndex + 1);
+      await changePlayLine(
+        currentLineIndex + 1,
+        persist: false,
+        reconnectReason: LiveReconnectReason.automaticLineFailover,
+      );
 
       //setPlayer();
     }
@@ -2339,24 +3276,49 @@ class LiveRoomController extends PlayerController
   int mediaErrorRetryCount = 0;
   @override
   void mediaError(String error) async {
+    if (_roomDisposed || _roomSwitching) {
+      return;
+    }
+    final recoveryGeneration = _loadGeneration;
+    if (site.id == Constant.kKuaishou) {
+      await _runKuaishouRecoverySingleFlight(
+        () => _handleMediaError(error, recoveryGeneration),
+      );
+      return;
+    }
+    await _handleMediaError(error, recoveryGeneration);
+  }
+
+  Future<void> _handleMediaError(
+    String error,
+    int recoveryGeneration,
+  ) async {
     super.mediaError(error);
     if (mediaErrorRetryCount < 2) {
-      Log.d("播放失败，尝试第${mediaErrorRetryCount + 1}次刷新");
+      Log.d("播放失败，尝试第${mediaErrorRetryCount + 1}次恢复");
       if (mediaErrorRetryCount == 1) {
         // 第二次重试前稍等一秒
         await Future.delayed(const Duration(seconds: 1));
+        if (!_isCurrentLoad(recoveryGeneration)) {
+          return;
+        }
       }
-      final rotateOhosLine = Utils.isOhos && mediaErrorRetryCount == 1;
+      final refreshUrls =
+          mediaErrorRetryCount > 0 && _shouldRefreshUrlsOnPlaybackRetry;
+      final rotateOhosLine = Utils.isOhos && refreshUrls;
       mediaErrorRetryCount += 1;
       await setPlayer(
-        refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
+        refreshUrls: refreshUrls,
         rotateOhosLine: rotateOhosLine,
+        reconnectReason: LiveReconnectReason.mediaError,
       );
       return;
     }
 
     if (playUrls.length - 1 == currentLineIndex) {
       _hasActivePlaybackSession = false;
+      // S2-T1 修复：播放失败后恢复状态轮询，重新以详情确认直播状态。
+      _restartOnlineRefreshTimer();
       if (site.id == Constant.kHuya) {
         // 已判定下播或已达重试上限时停止重试，走切房/播放失败处理，
         // 避免主播下播/断流后无限回退重试。重试计数不清零，保证有界。
@@ -2370,7 +3332,10 @@ class LiveRoomController extends PlayerController
         // 仍判定直播中且未达重试上限：回退到线路 0 并刷新 URL 重试一次。
         currentLineIndex = 0;
         mediaErrorRetryCount += 1;
-        await setPlayer(refreshUrls: true);
+        await setPlayer(
+          refreshUrls: true,
+          reconnectReason: LiveReconnectReason.mediaError,
+        );
         return;
       }
       errorMsg.value = "播放失败";
@@ -2379,7 +3344,11 @@ class LiveRoomController extends PlayerController
     } else {
       //currentLineIndex += 1;
       //setPlayer();
-      await changePlayLine(currentLineIndex + 1);
+      await changePlayLine(
+        currentLineIndex + 1,
+        persist: false,
+        reconnectReason: LiveReconnectReason.automaticLineFailover,
+      );
     }
   }
 
@@ -2711,11 +3680,12 @@ class LiveRoomController extends PlayerController
           if (v == -1) {
             unawaited(useAutomaticQuality());
           } else {
+            markQualitySelectionAsManual();
             qualityLocked.value = true;
             currentQuality = v ?? 0;
             currentQualityInfo.value = qualites[currentQuality].quality;
             saveQualityMemory();
-            getPlayUrl();
+            getPlayUrl(userInitiatedQualityChange: true);
           }
         },
         child: ListView.builder(
@@ -2753,10 +3723,7 @@ class LiveRoomController extends PlayerController
           itemBuilder: (_, i) {
             return RadioListTile(
               value: i,
-              title: Text("线路${i + 1}"),
-              secondary: Text(
-                playUrls[i].contains(".flv") ? "FLV" : "HLS",
-              ),
+              title: Text(lineDisplayName(i)),
             );
           },
         ),
@@ -3529,7 +4496,11 @@ class LiveRoomController extends PlayerController
     final wasPlaying = player.state.playing;
     try {
       if (wasPlaying) {
+        await suspendLiveLatencyChase(
+          MpvLiveLatencyProtectionReason.userPaused,
+        );
         await player.pause();
+        recordLiveLinkHealthEvent(LiveLinkEventType.playbackPausedByUser);
       }
       final result = await AppNavigator.toMultiRoom(
         [currentRoom, addedRoom],
@@ -3544,6 +4515,8 @@ class LiveRoomController extends PlayerController
       if (!_roomDisposed && !isPlayerClosing) {
         if (wasPlaying) {
           await player.play();
+          await resumeLiveLatencyChase();
+          recordLiveLinkHealthEvent(LiveLinkEventType.playbackResumedByUser);
         }
         if (fullScreenState.value) {
           await restoreFullScreenSystemUi();
@@ -3681,6 +4654,8 @@ class LiveRoomController extends PlayerController
         CurrentRoomService.instance.setRoom(currentSite, currentRoomId);
         _roomDisposed = false;
         _loadGeneration += 1;
+        await resetLiveLatencyChase();
+        _onlineRefreshFailures = 0;
         tempMutedUsers.clear();
         danmakuViewportHeight.value = 0;
 
@@ -3700,13 +4675,21 @@ class LiveRoomController extends PlayerController
         liveDanmaku = currentSite.liveSite.getDanmaku();
 
         // 停止当前播放
+        _stopLiveLatencyTelemetry();
         await stopBackgroundPlaybackService();
         if (!Utils.isOhos) {
           await player.stop();
         }
 
+        // 换房清理网络诊断与自动降画质会话（S3-T2）：
+        // 诊断计数/冷却/提示/Timer 与诊断代次一起重置，旧房间异步结果不得串房；
+        // 降画质 tracker 的计数与降档冷却一并清零，新流打开时的
+        // beginWarmup 语义保留。
+        _resetPlaybackHealthSession();
+
         // 重新拉取房间信息
         loadData();
+        await restoreUserIntentPlayerVolumeForRoom();
 
         final pendingSite = _pendingRoomSite;
         final pendingRoomId = _pendingRoomId;
@@ -3740,6 +4723,12 @@ ${errorStackTrace ?? ""}''');
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       Log.d("进入后台:$state");
+      unawaited(
+        suspendLiveLatencyChase(
+          MpvLiveLatencyProtectionReason.lifecycleInterrupted,
+        ),
+      );
+      recordLiveLinkHealthEvent(LiveLinkEventType.appBackgrounded);
       isBackground = true;
       _backgroundedAt ??= DateTime.now();
       _positionBeforeBackground ??= _lastKnownPlayerPosition;
@@ -3764,6 +4753,7 @@ ${errorStackTrace ?? ""}''');
       }
     } else if (state == AppLifecycleState.resumed) {
       Log.d("返回前台");
+      recordLiveLinkHealthEvent(LiveLinkEventType.appForegrounded);
       _refreshAutoExitCountdown();
       isBackground = false;
       unawaited(
@@ -3774,6 +4764,9 @@ ${errorStackTrace ?? ""}''');
       var positionBeforeBackground = _positionBeforeBackground;
       var ohosWasPlayingBeforeBackground = _ohosWasPlayingBeforeBackground;
       var wasPlayingBeforeBackground = _wasPlayingBeforeBackground;
+      // Always release the lifecycle gate. The user-pause gate remains
+      // independent, so this does not restart a stream paused by the user.
+      unawaited(resumeLiveLatencyChase(appForegrounded: true));
       _backgroundedAt = null;
       _positionBeforeBackground = null;
       _ohosWasPlayingBeforeBackground = null;
@@ -3831,13 +4824,19 @@ ${errorStackTrace ?? ""}''');
           // 命中就走 setPlayer(refreshUrls) 重连，避免 play() 造成假播放。
           if (_ohosPlaybackLooksStalled(controller)) {
             Log.d("$reason 后鸿蒙播放器疑似断流，重新加载");
-            await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+            await setPlayer(
+              refreshUrls: false,
+              reconnectReason: LiveReconnectReason.playbackUrlRefresh,
+            );
             return;
           }
           return;
         }
       }
-      await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+      await setPlayer(
+        refreshUrls: false,
+        reconnectReason: LiveReconnectReason.playbackUrlRefresh,
+      );
       return;
     }
     if (since == null ||
@@ -3864,7 +4863,10 @@ ${errorStackTrace ?? ""}''');
       return;
     }
     Log.d("$reason 后检测到播放停滞，尝试恢复");
-    await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+    await setPlayer(
+      refreshUrls: _shouldRefreshUrlsOnPlaybackRetry,
+      reconnectReason: LiveReconnectReason.playbackUrlRefresh,
+    );
   }
 
   /// 返回前台时判定鸿蒙 AVPlayer 是否已断流：出错或长时间无进度推进。

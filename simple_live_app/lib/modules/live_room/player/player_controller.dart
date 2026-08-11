@@ -21,7 +21,16 @@ import 'package:simple_live_app/app/custom_throttle.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_tracker.dart';
+import 'package:simple_live_app/modules/live_room/player/player_volume_session_policy.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
+import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
+import 'package:simple_live_app/services/live_link_health_collector.dart';
+import 'package:simple_live_app/services/live_link_health_media_kit_adapter.dart';
+import 'package:simple_live_app/services/live_link_health_models.dart';
+import 'package:simple_live_app/services/live_link_health_tracker.dart';
+import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
+import 'package:simple_live_app/services/mpv_live_latency_chase_sampling_loop.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
@@ -61,6 +70,28 @@ mixin PlayerMixin {
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
   GlobalKey globalDanmuKey = GlobalKey();
   GlobalKey ohosScreenshotKey = GlobalKey();
+  PlaybackDisplayLease? _playbackDisplayLease;
+
+  void initPlaybackDisplayLease() {
+    _playbackDisplayLease ??= PlaybackDisplayCoordinator.instance.acquire(
+      debugLabel: 'single-live-room',
+    );
+  }
+
+  void _setKeepScreenAwake(bool enabled) {
+    _playbackDisplayLease?.setKeepScreenAwake(enabled);
+  }
+
+  void setPlaybackKeepScreenAwake(bool enabled) {
+    _setKeepScreenAwake(enabled);
+  }
+
+  Future<void> releasePlaybackDisplayLease() async {
+    final displayLease = _playbackDisplayLease;
+    _playbackDisplayLease = null;
+    displayLease?.dispose();
+    await PlaybackDisplayCoordinator.instance.settle();
+  }
 
   /// media_kit 播放器实例。
   ///
@@ -72,7 +103,8 @@ mixin PlayerMixin {
       title: "Simple Live Player",
       logLevel: AppSettingsController.instance.logEnable.value
           ? MPVLogLevel.info
-          : MPVLogLevel.error,
+          // Audio underruns are emitted by libmpv at warning level.
+          : MPVLogLevel.warn,
     ),
   );
 
@@ -92,6 +124,93 @@ mixin PlayerMixin {
 
   /// 当前平台是否存在可用的 media_kit 播放器。
   bool get hasMpvPlayer => !Utils.isOhos;
+
+  /// Safe, signature-free target used by shadow health logs.
+  String get liveLinkHealthTarget => 'unknown';
+
+  late final MpvLiveLatencyChaseService _liveLatencyChaser =
+      MpvLiveLatencyChaseService(
+    writeSpeed: _writeLiveLatencyChaseSpeed,
+    readSpeed: _readLiveLatencyChaseSpeed,
+    onWriteError: (error) => Log.d('live latency chase speed skipped: $error'),
+  );
+  late final MpvLiveLatencyChaseSamplingLoop _liveLatencyChaseSamplingLoop =
+      MpvLiveLatencyChaseSamplingLoop(
+    sample: _sampleLivePlaybackLightweight,
+    nextInterval: _nextLivePlaybackSampleInterval,
+    onError: (error) =>
+        Log.d('live latency chase cache sample skipped: $error'),
+  );
+  final LiveLinkHealthShadowCollector _liveLinkHealthCollector =
+      LiveLinkHealthShadowCollector(
+    tracker: LiveLinkHealthTracker(
+      capabilities: LiveLinkHealthCapabilities(
+        audioUnderrunEvents: !Utils.isOhos,
+        // OHOS currently exposes only a widget rebuild request here, not a
+        // reliable async playback-success callback. Report the metric as
+        // unsupported instead of presenting a misleading zero reconnects.
+        automaticReconnectEvents: !Utils.isOhos,
+      ),
+    ),
+  );
+  StreamSubscription<bool>? _livePlaybackBufferingSubscription;
+  int? _livePlaybackSamplingGeneration;
+  int? _liveLatencyChaseServiceGeneration;
+  DateTime? _nextLivePlaybackHealthSampleAt;
+  DateTime? _lastLiveLatencyChaseAudioUnderrunAt;
+  DateTime? _latestLivePlaybackCacheSampledAt;
+  double? _latestLivePlaybackCacheDurationSeconds;
+  bool? _livePlaybackBuffering;
+  String? _livePlaybackSource;
+  LiveStreamProtocol? _livePlaybackProtocol;
+  int _livePlaybackGeneration = 0;
+  int _liveLatencyChaseActivationRevision = 0;
+  bool _liveLatencyChaseSuspended = true;
+  bool _liveLatencyChaseAppActive = true;
+  bool _liveLatencyChaseUserPaused = false;
+
+  LiveLinkHealthSnapshot? get currentLiveLinkHealthSnapshot =>
+      _liveLinkHealthCollector.snapshot();
+
+  MpvTelemetryValue get latestLivePlaybackCacheTelemetry {
+    final sampledAt = _latestLivePlaybackCacheSampledAt;
+    if (sampledAt == null ||
+        DateTime.now().difference(sampledAt) > const Duration(seconds: 3)) {
+      return const MpvTelemetryValue.unsupported();
+    }
+    return MpvTelemetryValue.parse(_latestLivePlaybackCacheDurationSeconds);
+  }
+
+  bool get _isLiveLatencyChaseActivationAllowed =>
+      _liveLatencyChaseAppActive && !_liveLatencyChaseUserPaused;
+
+  bool? get currentLiveLinkHealthBuffering => _livePlaybackBuffering;
+
+  Future<void> _writeLiveLatencyChaseSpeed(double speed) async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) {
+      return;
+    }
+    final dynamic native = platform;
+    await native.setProperty('speed', speed.toStringAsFixed(3));
+  }
+
+  Future<double?> _readLiveLatencyChaseSpeed() async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) {
+      return null;
+    }
+    try {
+      final dynamic native = platform;
+      final dynamic value = await native.getProperty('speed');
+      final speed = value is num
+          ? value.toDouble()
+          : double.tryParse(value?.toString() ?? '');
+      return speed != null && speed.isFinite && speed > 0 ? speed : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// 初始化播放器并设置静态 mpv 参数。
   ///
@@ -115,6 +234,383 @@ mixin PlayerMixin {
     // media_kit 仓库更新导致的问题，临时解决办法
     if (Platform.isAndroid) {
       await nativePlayer.setProperty('force-seekable', 'yes');
+    }
+  }
+
+  Future<void> startLivePlaybackLightweightSampling({
+    required String source,
+    DateTime? openedAt,
+  }) async {
+    final generation = _livePlaybackGeneration;
+    final canonicalSource = canonicalizeLivePlaybackSource(source);
+    if (canonicalSource.isEmpty || !_liveLinkHealthCollector.isActive) {
+      return;
+    }
+    final activationRevision = ++_liveLatencyChaseActivationRevision;
+    if (_livePlaybackSource != canonicalSource) {
+      _lastLiveLatencyChaseAudioUnderrunAt = null;
+    }
+    _livePlaybackSource = canonicalSource;
+    _livePlaybackProtocol = classifyLiveStreamProtocol(source);
+    _liveLatencyChaseSuspended = !_isLiveLatencyChaseActivationAllowed;
+    final now = openedAt ?? DateTime.now();
+    if (!Utils.isOhos) {
+      await _liveLatencyChaser.start(
+        latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
+        protocol: _livePlaybackProtocol!,
+        startedAt: now,
+      );
+      if (generation == _livePlaybackGeneration &&
+          canonicalSource == _livePlaybackSource &&
+          activationRevision == _liveLatencyChaseActivationRevision &&
+          _isLiveLatencyChaseActivationAllowed) {
+        _liveLatencyChaseServiceGeneration = _liveLatencyChaser.generation;
+      }
+    }
+    if (generation != _livePlaybackGeneration ||
+        canonicalSource != _livePlaybackSource) {
+      return;
+    }
+    _liveLinkHealthCollector.addEvent(
+      LiveLinkHealthEvent(
+        generation: generation,
+        occurredAt: now,
+        type: LiveLinkEventType.streamOpened,
+      ),
+    );
+    if (!Utils.isOhos) {
+      _livePlaybackBufferingSubscription ??=
+          player.stream.buffering.listen((buffering) {
+        _recordLivePlaybackBuffering(buffering, at: DateTime.now());
+        if (buffering) {
+          unawaited(
+            protectLiveLatencyChase(
+              MpvLiveLatencyProtectionReason.buffering,
+            ),
+          );
+        }
+      });
+    }
+    if (activationRevision == _liveLatencyChaseActivationRevision &&
+        _isLiveLatencyChaseActivationAllowed) {
+      _liveLatencyChaseSuspended = false;
+      _nextLivePlaybackHealthSampleAt = now;
+      _liveLatencyChaseSamplingLoop.start();
+    }
+  }
+
+  Duration? _nextLivePlaybackSampleInterval() {
+    if (_liveLatencyChaseSuspended ||
+        _livePlaybackSource == null ||
+        !_liveLinkHealthCollector.isActive) {
+      return null;
+    }
+    return MpvLiveLatencyChaseSamplingLoop.nextDelay(
+      chaseInterval:
+          Utils.isOhos ? null : _liveLatencyChaser.recommendedSampleInterval,
+      healthDueAt: _nextLivePlaybackHealthSampleAt,
+    );
+  }
+
+  Future<void> _sampleLivePlaybackLightweight() async {
+    final generation = _livePlaybackGeneration;
+    final source = _livePlaybackSource;
+    final chaseGeneration = _liveLatencyChaseServiceGeneration;
+    if (_liveLatencyChaseSuspended ||
+        _livePlaybackSamplingGeneration != null ||
+        source == null) {
+      return;
+    }
+    _livePlaybackSamplingGeneration = generation;
+    try {
+      final sampledAt = DateTime.now();
+      final healthDueAt = _nextLivePlaybackHealthSampleAt;
+      final shouldCollectHealth =
+          healthDueAt == null || !sampledAt.isBefore(healthDueAt);
+      if (shouldCollectHealth) {
+        _nextLivePlaybackHealthSampleAt =
+            sampledAt.add(LiveLinkHealthTracker.sampleInterval);
+      }
+      if (Utils.isOhos) {
+        if (!shouldCollectHealth) return;
+        final controller = _ohosVideoController;
+        if (controller == null) {
+          return;
+        }
+        final value = controller.value;
+        _recordLivePlaybackBuffering(
+          value.isBuffering || !value.isInitialized,
+          at: sampledAt,
+        );
+        _recordLiveLinkHealthSample(
+          LiveLinkHealthSample(
+            generation: generation,
+            sampledAt: sampledAt,
+            position: value.position,
+            playing: value.isPlaying,
+            buffering: value.isBuffering || !value.isInitialized,
+            playbackSpeed: value.playbackSpeed,
+            streamActive:
+                value.isInitialized && (value.isPlaying || value.isBuffering),
+          ),
+        );
+        return;
+      }
+
+      final state = player.state;
+      final playlist = state.playlist;
+      if (playlist.medias.isEmpty ||
+          playlist.index < 0 ||
+          playlist.index >= playlist.medias.length) {
+        return;
+      }
+      final dynamic media = playlist.medias[playlist.index];
+      final currentSource = canonicalizeLivePlaybackSource(
+        media.uri?.toString() ?? '',
+      );
+      if (currentSource != source) {
+        return;
+      }
+      final cacheDurationFuture = sampleMpvDemuxerCacheDuration(player);
+      final throughputFuture =
+          shouldCollectHealth ? sampleMpvLiveHealthThroughput(player) : null;
+      final cacheDurationSeconds = await cacheDurationFuture;
+      final throughput = await throughputFuture;
+      if (generation != _livePlaybackGeneration ||
+          source != _livePlaybackSource) {
+        return;
+      }
+      _latestLivePlaybackCacheSampledAt = sampledAt;
+      _latestLivePlaybackCacheDurationSeconds = cacheDurationSeconds;
+      if (shouldCollectHealth && throughput != null) {
+        _recordLiveLinkHealthSample(
+          LiveLinkHealthSample(
+            generation: generation,
+            sampledAt: sampledAt,
+            position: state.position,
+            playing: state.playing,
+            buffering: state.buffering,
+            playbackSpeed: _liveLatencyChaser.currentSpeed,
+            streamActive: state.playing || state.buffering,
+            demuxerCacheSeconds: cacheDurationSeconds,
+            receiveBytesPerSecond: throughput.receiveBytesPerSecond,
+            estimatedMediaBitsPerSecond: throughput.estimatedMediaBitsPerSecond,
+          ),
+        );
+      }
+      if (!_liveLatencyChaseSuspended &&
+          state.playing &&
+          chaseGeneration != null &&
+          chaseGeneration == _liveLatencyChaseServiceGeneration) {
+        await _liveLatencyChaser.observe(
+          cacheDurationSeconds: cacheDurationSeconds,
+          isBuffering: state.buffering,
+          sampledAt: sampledAt,
+          generation: chaseGeneration,
+        );
+      }
+    } catch (error) {
+      Log.d('live playback lightweight sample skipped: $error');
+      if (!Utils.isOhos &&
+          !_liveLatencyChaseSuspended &&
+          generation == _livePlaybackGeneration &&
+          source == _livePlaybackSource &&
+          chaseGeneration == _liveLatencyChaseServiceGeneration) {
+        await protectLiveLatencyChase(
+          MpvLiveLatencyProtectionReason.telemetryUnavailable,
+        );
+      }
+    } finally {
+      if (_livePlaybackSamplingGeneration == generation) {
+        _livePlaybackSamplingGeneration = null;
+      }
+    }
+  }
+
+  Future<void> protectLiveLatencyChase(
+    MpvLiveLatencyProtectionReason reason, {
+    DateTime? sampledAt,
+  }) async {
+    if (Utils.isOhos) return;
+    if (reason == MpvLiveLatencyProtectionReason.audioUnderrun) {
+      final now = sampledAt ?? DateTime.now();
+      final previous = _lastLiveLatencyChaseAudioUnderrunAt;
+      if (previous != null &&
+          now.difference(previous) < const Duration(milliseconds: 500)) {
+        return;
+      }
+      _lastLiveLatencyChaseAudioUnderrunAt = now;
+    }
+    final chaseGeneration = _liveLatencyChaseServiceGeneration;
+    if (chaseGeneration == null) return;
+    await _liveLatencyChaser.protect(
+      sampledAt: sampledAt,
+      reason: reason,
+      generation: chaseGeneration,
+    );
+  }
+
+  Future<void> suspendLiveLatencyChase(
+    MpvLiveLatencyProtectionReason reason, {
+    DateTime? sampledAt,
+  }) async {
+    if (reason == MpvLiveLatencyProtectionReason.lifecycleInterrupted) {
+      _liveLatencyChaseAppActive = false;
+    } else if (reason == MpvLiveLatencyProtectionReason.userPaused) {
+      _liveLatencyChaseUserPaused = true;
+    }
+    _liveLatencyChaseActivationRevision += 1;
+    if (_liveLatencyChaseSuspended) {
+      _liveLatencyChaseSamplingLoop.stop();
+      return;
+    }
+    _liveLatencyChaseSuspended = true;
+    _liveLatencyChaseSamplingLoop.stop();
+    await protectLiveLatencyChase(reason, sampledAt: sampledAt);
+  }
+
+  Future<void> resumeLiveLatencyChase({bool appForegrounded = false}) {
+    if (appForegrounded) {
+      _liveLatencyChaseAppActive = true;
+    } else {
+      _liveLatencyChaseUserPaused = false;
+    }
+    if (!_isLiveLatencyChaseActivationAllowed) {
+      return Future<void>.value();
+    }
+    if (!_liveLatencyChaseSuspended) {
+      return Future<void>.value();
+    }
+    final activationRevision = ++_liveLatencyChaseActivationRevision;
+    return _resumeLiveLatencyChase(activationRevision);
+  }
+
+  Future<void> _resumeLiveLatencyChase(int activationRevision) async {
+    if (!_liveLatencyChaseSuspended) return;
+    final generation = _livePlaybackGeneration;
+    final source = _livePlaybackSource;
+    final protocol = _livePlaybackProtocol;
+    if (source == null ||
+        protocol == null ||
+        !_isLiveLatencyChaseActivationAllowed ||
+        !_liveLinkHealthCollector.isActive) {
+      return;
+    }
+    if (!Utils.isOhos) {
+      await _liveLatencyChaser.start(
+        latencyMode: AppSettingsController.instance.mpvLiveLatencyMode.value,
+        protocol: protocol,
+        startedAt: DateTime.now(),
+      );
+      if (generation != _livePlaybackGeneration ||
+          source != _livePlaybackSource ||
+          activationRevision != _liveLatencyChaseActivationRevision ||
+          !_liveLatencyChaseSuspended ||
+          !_isLiveLatencyChaseActivationAllowed) {
+        return;
+      }
+      _liveLatencyChaseServiceGeneration = _liveLatencyChaser.generation;
+    }
+    if (generation != _livePlaybackGeneration ||
+        source != _livePlaybackSource ||
+        activationRevision != _liveLatencyChaseActivationRevision ||
+        !_liveLatencyChaseSuspended ||
+        !_isLiveLatencyChaseActivationAllowed) {
+      return;
+    }
+    _liveLatencyChaseSuspended = false;
+    _nextLivePlaybackHealthSampleAt = DateTime.now();
+    _liveLatencyChaseSamplingLoop.start();
+  }
+
+  void _recordLiveLinkHealthSample(LiveLinkHealthSample sample) {
+    final summary = _liveLinkHealthCollector.addSample(sample);
+    if (summary != null) {
+      Log.writeLog(summary);
+    }
+  }
+
+  void _recordLivePlaybackBuffering(bool buffering, {required DateTime at}) {
+    if (_livePlaybackBuffering == buffering) {
+      return;
+    }
+    _livePlaybackBuffering = buffering;
+    recordLiveLinkHealthEvent(
+      buffering
+          ? LiveLinkEventType.bufferingStarted
+          : LiveLinkEventType.bufferingEnded,
+      at: at,
+    );
+  }
+
+  void recordLiveLinkHealthEvent(
+    LiveLinkEventType type, {
+    DateTime? at,
+    LiveReconnectReason? reconnectReason,
+    bool? reconnectHostChanged,
+    Duration? reconnectRecoveryDuration,
+  }) {
+    _liveLinkHealthCollector.addEvent(
+      LiveLinkHealthEvent(
+        generation: _livePlaybackGeneration,
+        occurredAt: at ?? DateTime.now(),
+        type: type,
+        reconnectReason: reconnectReason,
+        reconnectHostChanged: reconnectHostChanged,
+        reconnectRecoveryDuration: reconnectRecoveryDuration,
+      ),
+    );
+  }
+
+  Future<void> _cancelLivePlaybackSamplingInfrastructure() async {
+    _liveLatencyChaseSamplingLoop.stop();
+    _nextLivePlaybackHealthSampleAt = null;
+    await _livePlaybackBufferingSubscription?.cancel();
+    _livePlaybackBufferingSubscription = null;
+    _livePlaybackBuffering = null;
+  }
+
+  Future<void> resetLiveLatencyChase() async {
+    final chaseGeneration = _liveLatencyChaseServiceGeneration;
+    _liveLatencyChaseActivationRevision += 1;
+    _liveLatencyChaseSuspended = true;
+    _livePlaybackGeneration += 1;
+    _liveLatencyChaseServiceGeneration = null;
+    _lastLiveLatencyChaseAudioUnderrunAt = null;
+    _latestLivePlaybackCacheSampledAt = null;
+    _latestLivePlaybackCacheDurationSeconds = null;
+    await _cancelLivePlaybackSamplingInfrastructure();
+    _livePlaybackSource = null;
+    _livePlaybackProtocol = null;
+    _liveLinkHealthCollector.startGeneration(
+      generation: _livePlaybackGeneration,
+      target: liveLinkHealthTarget,
+    );
+    if (!Utils.isOhos) {
+      if (chaseGeneration != null) {
+        await _liveLatencyChaser.protect(
+          reason: MpvLiveLatencyProtectionReason.sourceChanged,
+          generation: chaseGeneration,
+        );
+      }
+      await _liveLatencyChaser.reset();
+    }
+  }
+
+  Future<void> stopLiveLatencyChase() async {
+    _liveLatencyChaseActivationRevision += 1;
+    _liveLatencyChaseSuspended = true;
+    _livePlaybackGeneration += 1;
+    _liveLatencyChaseServiceGeneration = null;
+    _lastLiveLatencyChaseAudioUnderrunAt = null;
+    _latestLivePlaybackCacheSampledAt = null;
+    _latestLivePlaybackCacheDurationSeconds = null;
+    await _cancelLivePlaybackSamplingInfrastructure();
+    _livePlaybackSource = null;
+    _livePlaybackProtocol = null;
+    _liveLinkHealthCollector.stop();
+    if (!Utils.isOhos) {
+      await _liveLatencyChaser.stop();
     }
   }
 
@@ -142,6 +638,9 @@ mixin PlayerMixin {
   final RxBool ohosPlaying = false.obs;
   final RxBool ohosBuffering = true.obs;
   final RxBool ohosScreenshotInProgress = false.obs;
+
+  /// Native OHOS 0..1 mirror. Persisted 0..100 user intent remains
+  /// [AppSettingsController.playerVolume] and is the source of truth.
   final RxDouble ohosVolume = 1.0.obs;
   final RxDouble ohosAspectRatio = (16 / 9).obs;
   final RxInt ohosScaleRevision = 0.obs;
@@ -155,14 +654,19 @@ mixin PlayerMixin {
     _ohosVideoController = controller;
     BackgroundPlaybackService.instance.attachOhosController(controller);
     updateOhosVideoState(controller.value);
+    if (_livePlaybackSource != null && _liveLinkHealthCollector.isActive) {
+      _liveLatencyChaseSamplingLoop.start();
+    }
   }
 
   void detachOhosVideoController(VideoPlayerController controller) {
     if (identical(_ohosVideoController, controller)) {
       BackgroundPlaybackService.instance.detachOhosController(controller);
       _ohosVideoController = null;
+      _liveLatencyChaseSamplingLoop.stop();
       ohosPlaying.value = false;
       ohosBuffering.value = false;
+      _setKeepScreenAwake(false);
     }
   }
 
@@ -170,6 +674,7 @@ mixin PlayerMixin {
     final wasPlaying = ohosPlaying.value;
     ohosPlaying.value = value.isPlaying;
     ohosBuffering.value = value.isBuffering || !value.isInitialized;
+    _setKeepScreenAwake(value.isPlaying);
     if (value.aspectRatio > 0) {
       ohosAspectRatio.value = value.aspectRatio;
     }
@@ -197,9 +702,15 @@ mixin PlayerMixin {
       return;
     }
     if (controller.value.isPlaying) {
+      await suspendLiveLatencyChase(
+        MpvLiveLatencyProtectionReason.userPaused,
+      );
       await controller.pause();
+      recordLiveLinkHealthEvent(LiveLinkEventType.playbackPausedByUser);
     } else {
       await controller.play();
+      await resumeLiveLatencyChase();
+      recordLiveLinkHealthEvent(LiveLinkEventType.playbackResumedByUser);
     }
     updateOhosVideoState(controller.value);
   }
@@ -219,7 +730,7 @@ mixin PlayerStateMixin on PlayerMixin {
   RxBool showDanmakuState = false.obs;
 
   RxBool mutedState = false.obs;
-  double _volumeBeforeMute = 100.0;
+  double _volumeBeforeMute = 0.0;
 
   void onPlayerWindowModeExited() {}
 
@@ -522,15 +1033,12 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   final pip = Floating();
   StreamSubscription<PiPStatus>? _pipSubscription;
   StreamSubscription<bool>? _ohosPipSubscription;
-  PlaybackDisplayLease? _playbackDisplayLease;
 
   //final VolumeController volumeController = VolumeController();
 
   /// 初始化一些系统状态
   void initSystem() async {
-    _playbackDisplayLease ??= PlaybackDisplayCoordinator.instance.acquire(
-      debugLabel: 'single-live-room',
-    );
+    initPlaybackDisplayLease();
     if (Platform.isAndroid || Platform.isIOS) {
       VolumeController.instance.showSystemUI = false;
     }
@@ -553,10 +1061,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     _pipSubscription?.cancel();
     _ohosPipSubscription?.cancel();
     //pip.dispose();
-    final displayLease = _playbackDisplayLease;
-    _playbackDisplayLease = null;
-    displayLease?.dispose();
-    await PlaybackDisplayCoordinator.instance.settle();
+    await releasePlaybackDisplayLease();
 
     await resetPreferredOrientation();
     if (Platform.isAndroid ||
@@ -623,8 +1128,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       }
     } else if (Platform.isAndroid || Platform.isIOS) {
       fullScreenState.value = true;
-      // 开关开启（默认）时全屏总是横屏：iPad 竖屏系统强制显示状态栏，
-      // 只有横屏才能可靠隐藏。关闭则保持当前方向（竖屏全屏状态栏隐藏不了）。
+      // 开关开启时全屏总是横屏：iPad 竖屏系统强制显示状态栏，
+      // 只有横屏才能可靠隐藏。默认关闭并跟随视频方向。
       if (!isVertical.value ||
           AppSettingsController.instance.fullScreenForceLandscape.value) {
         //横屏
@@ -632,21 +1137,43 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       }
       await restoreFullScreenSystemUi();
     } else {
-      fullScreenState.value = true;
-      _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
-      await _applyWindowsFullScreenChrome();
-      await windowManager.setFullScreen(true);
-      await _waitForWindowsFullScreenState(true);
-      await _applyWindowsFullScreenChrome();
-      unawaited(
-        Future.delayed(const Duration(milliseconds: 900), () async {
-          if (!fullScreenState.value || smallWindowState.value) {
-            return;
-          }
+      await _serializeDesktopWindowModeTransition(() async {
+        if (fullScreenState.value || smallWindowState.value) {
+          return;
+        }
+        Log.d('Desktop fullscreen: enter start');
+        fullScreenState.value = true;
+        try {
+          _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
           await _applyWindowsFullScreenChrome();
-        }),
-      );
-      await Future.delayed(const Duration(milliseconds: 32));
+          await windowManager
+              .setFullScreen(true)
+              .timeout(const Duration(seconds: 2));
+          await _waitForWindowsFullScreenState(true);
+          await _applyWindowsFullScreenChrome();
+          unawaited(
+            Future.delayed(const Duration(milliseconds: 900), () async {
+              if (!fullScreenState.value || smallWindowState.value) {
+                return;
+              }
+              await _applyWindowsFullScreenChrome();
+            }),
+          );
+          await Future.delayed(const Duration(milliseconds: 32));
+          Log.d('Desktop fullscreen: enter complete');
+        } catch (e, stackTrace) {
+          fullScreenState.value = false;
+          try {
+            await windowManager
+                .setFullScreen(false)
+                .timeout(const Duration(seconds: 2));
+            await _restoreWindowsWindowChrome();
+          } catch (rollbackError) {
+            Log.d('Desktop fullscreen: enter rollback failed: $rollbackError');
+          }
+          Log.e('Desktop fullscreen: enter failed: $e', stackTrace);
+        }
+      });
     }
     //danmakuController?.clear();
   }
@@ -662,7 +1189,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         isPlayerClosing) {
       return;
     }
-    Log.d('SystemUi: restoreFullScreenSystemUi enter fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
+    Log.d(
+        'SystemUi: restoreFullScreenSystemUi enter fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
     _playbackDisplayLease?.setImmersiveSystemUi(true);
     await PlaybackDisplayCoordinator.instance.settle();
     if (Platform.isIOS) {
@@ -674,7 +1202,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         if (!fullScreenState.value ||
             smallWindowState.value ||
             isPlayerClosing) {
-          Log.d('SystemUi: restoreFullScreenSystemUi abort at ${ms}ms fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
+          Log.d(
+              'SystemUi: restoreFullScreenSystemUi abort at ${ms}ms fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
           return;
         }
         Log.d('SystemUi: reapply hidden at ${ms}ms');
@@ -708,9 +1237,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         _pendingExitFullscreen = true;
         return;
       }
-      // Keep the fullscreen surface alive until HarmonyOS reports a portrait
-      // viewport. This avoids rebuilding the room in a landscape viewport and
-      // also keeps the native AVPlayer texture attached throughout the move.
+      // Keep the fullscreen surface alive while the platform direction policy
+      // is released, so the native AVPlayer texture remains attached.
       ohosFullscreenTransition.value = true;
       lockControlsState.value = false;
       showLockEdgeState.value = false;
@@ -728,15 +1256,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           "恢复系统栏",
         ),
       );
-      unawaited(
-        _runOhosSystemUiOperation(
-          SystemChrome.setPreferredOrientations([
-            DeviceOrientation.portraitUp,
-          ]),
-          "恢复屏幕方向",
-        ),
+      await _runOhosSystemUiOperation(
+        SystemChrome.setPreferredOrientations(DeviceOrientation.values),
+        "恢复屏幕方向",
       );
-      await _waitForOhosViewport(portrait: true);
       fullScreenState.value = false;
       ohosFullscreenTransition.value = false;
       onPlayerWindowModeExited();
@@ -749,15 +1272,32 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       await resetPreferredOrientation();
       await Future.delayed(const Duration(milliseconds: 32));
     } else {
-      await windowManager.setFullScreen(false);
-      await _waitForWindowsFullScreenState(false);
-      await _restoreWindowsWindowChrome();
-      await _refreshWindowsWindowBounds();
-      if (_windowMaximizedBeforeFullScreen) {
-        await windowManager.maximize();
-        await _waitForWindowMaximizedState(true);
-      }
-      _windowMaximizedBeforeFullScreen = false;
+      await _serializeDesktopWindowModeTransition(() async {
+        if (!fullScreenState.value || smallWindowState.value) {
+          return;
+        }
+        Log.d('Desktop fullscreen: exit start');
+        try {
+          await windowManager
+              .setFullScreen(false)
+              .timeout(const Duration(seconds: 2));
+          await _waitForWindowsFullScreenState(false);
+          await _restoreWindowsWindowChrome();
+          await _refreshWindowsWindowBounds();
+          if (_windowMaximizedBeforeFullScreen) {
+            await windowManager.maximize();
+            await _waitForWindowMaximizedState(true);
+          }
+          Log.d('Desktop fullscreen: exit complete');
+        } catch (e, stackTrace) {
+          Log.e('Desktop fullscreen: exit failed: $e', stackTrace);
+        } finally {
+          _windowMaximizedBeforeFullScreen = false;
+          fullScreenState.value = false;
+        }
+      });
+      onPlayerWindowModeExited();
+      return;
     }
     fullScreenState.value = false;
     onPlayerWindowModeExited();
@@ -796,8 +1336,25 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   Size? _lastWindowSize;
   Offset? _lastWindowPosition;
+  Future<void>? _desktopWindowModeTransition;
   bool _windowMaximizedBeforeFullScreen = false;
   bool _windowMaximizedBeforeSmallWindow = false;
+
+  Future<void> _serializeDesktopWindowModeTransition(
+    Future<void> Function() operation,
+  ) async {
+    while (_desktopWindowModeTransition != null) {
+      await _desktopWindowModeTransition;
+    }
+    final completer = Completer<void>();
+    _desktopWindowModeTransition = completer.future;
+    try {
+      await operation();
+    } finally {
+      _desktopWindowModeTransition = null;
+      completer.complete();
+    }
+  }
 
   Future<void> _waitForWindowMaximizedState(bool value) async {
     if (!Platform.isWindows) {
@@ -871,7 +1428,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
 
     try {
-      await _windowsChromeChannel.invokeMethod<void>('apply');
+      await _windowsChromeChannel
+          .invokeMethod<void>('apply')
+          .timeout(const Duration(seconds: 2));
     } catch (e) {
       Log.logPrint(e);
     }
@@ -884,7 +1443,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
 
     try {
-      await _windowsChromeChannel.invokeMethod<void>('restore');
+      await _windowsChromeChannel
+          .invokeMethod<void>('restore')
+          .timeout(const Duration(seconds: 2));
     } catch (e) {
       Log.logPrint(e);
     }
@@ -985,9 +1546,11 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   Future<void> toggleMute() async {
     if (Utils.isOhos) {
       if (mutedState.value) {
-        final restoreVolume = _volumeBeforeMute <= 0
-            ? AppSettingsController.instance.playerVolume.value
-            : _volumeBeforeMute;
+        final restoreVolume =
+            PlayerVolumeSessionPolicy.volumeToRestoreAfterMute(
+          lastAudibleVolume: _volumeBeforeMute,
+          userIntentVolume: AppSettingsController.instance.playerVolume.value,
+        );
         await setSessionPlayerVolume(restoreVolume);
       } else {
         _volumeBeforeMute = ohosVolume.value * 100;
@@ -996,16 +1559,28 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       return;
     }
     if (mutedState.value) {
-      final restoreVolume =
-          _volumeBeforeMute <= 0 ? 100.0 : _volumeBeforeMute.clamp(0.0, 100.0);
+      final restoreVolume = PlayerVolumeSessionPolicy.volumeToRestoreAfterMute(
+        lastAudibleVolume: _volumeBeforeMute,
+        userIntentVolume: AppSettingsController.instance.playerVolume.value,
+      );
       await setSessionPlayerVolume(restoreVolume);
       return;
     }
     _volumeBeforeMute = player.state.volume <= 0
         ? AppSettingsController.instance.playerVolume.value
         : player.state.volume;
-    mutedState.value = true;
-    await player.setVolume(0);
+    await setSessionPlayerVolume(0);
+  }
+
+  /// Ends transient mute state and reapplies the persisted user volume intent.
+  Future<void> restoreUserIntentPlayerVolumeForRoom() async {
+    final state = PlayerVolumeSessionPolicy.forNewRoom(
+      userIntentVolume: AppSettingsController.instance.playerVolume.value,
+      lastAudibleVolume: _volumeBeforeMute,
+    );
+    _volumeBeforeMute = state.lastAudibleVolume;
+    mutedState.value = state.muted;
+    await setSessionPlayerVolume(state.outputVolume);
   }
 
   Future<void> setSessionPlayerVolume(
@@ -1413,7 +1988,8 @@ mixin PlayerGestureControlMixin
     on PlayerStateMixin, PlayerMixin, PlayerSystemMixin {
   /// 单击显示/隐藏控制器
   void onTap() {
-    Log.d('PlayerGesture: onTap showControls=${showControlsState.value} lock=${lockControlsState.value} fullScreen=${fullScreenState.value}');
+    Log.d(
+        'PlayerGesture: onTap showControls=${showControlsState.value} lock=${lockControlsState.value} fullScreen=${fullScreenState.value}');
     if (lockControlsState.value && fullScreenState.value) {
       return;
     }
@@ -1681,8 +2257,8 @@ class PlayerController extends BaseController
   @override
   void onInit() {
     if (Utils.isOhos) {
-      ohosVolume.value =
-          AppSettingsController.instance.playerVolume.value / 100;
+      initPlaybackDisplayLease();
+      unawaited(restoreUserIntentPlayerVolumeForRoom());
       if (AppSettingsController.instance.autoFullScreen.value) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!isPlayerClosing && !fullScreenState.value) {
@@ -1690,15 +2266,13 @@ class PlayerController extends BaseController
           }
         });
       }
-      mutedState.value = ohosVolume.value <= 0;
       showControls();
       super.onInit();
       return;
     }
     initSystem();
     initStream();
-    //设置音量
-    player.setVolume(AppSettingsController.instance.playerVolume.value);
+    unawaited(restoreUserIntentPlayerVolumeForRoom());
     super.onInit();
   }
 
@@ -1713,15 +2287,77 @@ class PlayerController extends BaseController
   // Fix Issue #57: 流错误重试计数器
   int _streamErrorRetryCount = 0;
   DateTime? _lastStreamErrorTime;
+  bool _streamErrorRecoveryInFlight = false;
   Timer? _surfaceHealthCheckTimer;
 
-  /// 自动网络诊断提示（缓冲 2 次以上触发，显示在画面左上角）。
+  /// 自动网络诊断提示（达到 tracker 阈值的独立缓冲开始时触发，
+  /// 显示在画面左上角）。
   final networkHint = "".obs;
-  int _bufferingCount = 0;
-  DateTime? _lastBufferingTime;
   bool _autoDiagnoseRunning = false;
   Timer? _networkHintTimer;
   DateTime? _lastAutoDiagnoseAt;
+  bool _hasMarkedInitialStreamOpening = false;
+
+  /// 自动网络诊断的独立缓冲开始统计器（与自动降画质各持有独立实例，
+  /// 只复用同构算法，不共享可变状态）。
+  final LiveRoomAutoQualityBufferTracker _autoDiagnosisTracker =
+      LiveRoomAutoQualityBufferTracker(
+    requiredBufferStarts: 2,
+    bufferingWindow: const Duration(seconds: 30),
+    stableResetAfter: const Duration(seconds: 30),
+    warmupDuration: const Duration(seconds: 8),
+  );
+
+  /// 诊断会话代次：换房重置时递增；旧房间的异步诊断结果返回后，
+  /// 若代次不匹配则只能丢弃，不得写入新房间的 networkHint。
+  int _diagnosisGeneration = 0;
+
+  /// 当前正在执行的诊断所属代次（与 [_autoDiagnoseRunning] 配合，
+  /// 使换房后的旧诊断不再阻塞新房间诊断）。
+  int? _runningDiagnoseGeneration;
+
+  /// 重置自动网络诊断会话（换房时由 LiveRoomController 调用）。
+  ///
+  /// 一次性处理：缓冲计数归零、边沿状态归零、诊断冷却清空、
+  /// 取消旧提示 Timer、清空 networkHint、递增诊断代次，
+  /// 使旧房间的异步诊断结果只能被丢弃，并恢复到尚未首次开流状态。
+  ///
+  /// 注意：[_autoDiagnoseRunning]/[_runningDiagnoseGeneration] 故意不在
+  /// 此处重置——旧诊断终会经由 _runAutoNetworkDiagnose 的 finally 自清理，
+  /// 且代次互斥（[:2055]）保证残留标志不阻塞新房间诊断。
+  void resetAutoNetworkDiagnosisSession() {
+    _autoDiagnosisTracker.reset();
+    _hasMarkedInitialStreamOpening = false;
+    _lastAutoDiagnoseAt = null;
+    _networkHintTimer?.cancel();
+    _networkHintTimer = null;
+    networkHint.value = "";
+    _diagnosisGeneration += 1;
+    Log.d("[player-diag] session reset generation=$_diagnosisGeneration");
+  }
+
+  /// 在诊断会话的首次 `player.open()` 前开始忽略起播缓冲。
+  ///
+  /// 调用方应在真正的 `player.open()` 前紧邻调用。媒体错误、播放结束、
+  /// 切线路或降画质导致的后续重开不会清零诊断计数，也不会重新开始 warmup。
+  /// 返回 true 表示本次确实启动了会话 warmup，false 表示已启动过。
+  bool markStreamOpening({DateTime? now}) {
+    if (_hasMarkedInitialStreamOpening) {
+      Log.d("[player-diag] stream opening ignored (session already warmed up)");
+      return false;
+    }
+    _hasMarkedInitialStreamOpening = true;
+    _autoDiagnosisTracker.beginWarmup(now ?? DateTime.now());
+    Log.d("[player-diag] initial stream opening, warmup begins");
+    return true;
+  }
+
+  /// 房间控制器可覆写为 true，让流错误回到房间级重试/刷新流程。
+  /// 默认 false，保持现有平台的播放器内解码器重试行为。
+  bool get shouldDelegateStreamErrorsToRoomController => false;
+
+  /// 当前实际播放 URL。子类提供后，诊断会使用其真实 host/port。
+  String get currentNetworkDiagnosePlaybackUrl => '';
 
   void initStream() {
     _errorSubscription = player.stream.error.listen((event) {
@@ -1732,13 +2368,36 @@ class PlayerController extends BaseController
         return;
       }
 
-      // Fix Issue #57: 检测流错误并自动重试
+      // Fix Issue #57: 流错误默认由播放器内重试；需要房间级刷新 URL 的平台
+      // 可覆写 shouldDelegateStreamErrorsToRoomController 交回 mediaError。
       if (_isStreamError(event)) {
-        _handleStreamError(event);
+        if (shouldDelegateStreamErrorsToRoomController) {
+          final now = DateTime.now();
+          if (_lastStreamErrorTime != null &&
+              now.difference(_lastStreamErrorTime!) <
+                  const Duration(seconds: 2)) {
+            return;
+          }
+          _lastStreamErrorTime = now;
+          Log.d("[player] delegating stream error to room controller");
+          unawaited(
+            suspendLiveLatencyChase(
+              MpvLiveLatencyProtectionReason.sourceChanged,
+            ),
+          );
+          mediaError(event);
+        } else {
+          _handleStreamError(event);
+        }
         return;
       }
 
       //SmartDialog.showToast(event);
+      unawaited(
+        suspendLiveLatencyChase(
+          MpvLiveLatencyProtectionReason.sourceChanged,
+        ),
+      );
       mediaError(event);
     });
 
@@ -1749,15 +2408,41 @@ class PlayerController extends BaseController
         Log.d("Playing");
         // 播放成功，重置流错误计数
         _streamErrorRetryCount = 0;
+        unawaited(resumeLiveLatencyChase());
+      } else if (!isPlayerClosing) {
+        unawaited(
+          suspendLiveLatencyChase(
+            MpvLiveLatencyProtectionReason.userPaused,
+          ),
+        );
       }
     });
 
     _completedSubscription = player.stream.completed.listen((event) {
       if (event) {
+        unawaited(
+          suspendLiveLatencyChase(
+            MpvLiveLatencyProtectionReason.sourceChanged,
+          ),
+        );
         mediaEnd();
       }
     });
     _logSubscription = player.stream.log.listen((event) {
+      final eventType = classifyMpvLiveLinkLog(
+        prefix: event.prefix,
+        text: event.text,
+      );
+      if (eventType != null) {
+        recordLiveLinkHealthEvent(eventType);
+        if (eventType == LiveLinkEventType.audioUnderrun) {
+          unawaited(
+            protectLiveLatencyChase(
+              MpvLiveLatencyProtectionReason.audioUnderrun,
+            ),
+          );
+        }
+      }
       Log.d("播放器日志：$event");
     });
     _widthSubscription = player.stream.width.listen((event) {
@@ -1796,55 +2481,89 @@ class PlayerController extends BaseController
     // Fix Issue #57: 启动Surface健康检查
     _startSurfaceHealthCheck();
 
-    // 缓冲转圈 2 次以上自动触发网络诊断提示。
+    // 缓冲边沿计数：按 false->true 计数独立缓冲开始，达到阈值自动触发网络诊断。
     _bufferingSubscription = player.stream.buffering.listen((buffering) {
-      if (!buffering || isPlayerClosing) {
-        return;
-      }
-      final now = DateTime.now();
-      if (_lastBufferingTime != null &&
-          now.difference(_lastBufferingTime!) <
-              const Duration(milliseconds: 300)) {
-        return;
-      }
-      _lastBufferingTime = now;
-      _bufferingCount += 1;
-      if (_bufferingCount >= 2 && networkHint.value.isEmpty) {
-        // 两次诊断之间至少间隔 30 秒，避免持续缓冲时反复触发网络诊断。
-        if (_lastAutoDiagnoseAt != null &&
-            now.difference(_lastAutoDiagnoseAt!) <
-                const Duration(seconds: 30)) {
-          return;
-        }
-        _lastAutoDiagnoseAt = now;
-        unawaited(_runAutoNetworkDiagnose());
-      }
+      Log.d("[player-diag] buffering event=$buffering");
+      observeAutoNetworkDiagnosisBuffering(buffering);
     });
   }
 
-  /// 自动网络诊断：缓冲 2 次以上时测延迟/丢包，提示显示在画面左上角，
-  /// 8 秒后自动消失。
+  void observeAutoNetworkDiagnosisBuffering(bool buffering) {
+    if (isPlayerClosing ||
+        (Utils.isOhos &&
+            !AppSettingsController
+                .instance.ohosNetworkFluctuationNotice.value)) {
+      return;
+    }
+    final now = DateTime.now();
+    final shouldDiagnose = _autoDiagnosisTracker.update(
+      buffering: buffering,
+      now: now,
+    );
+    if (!shouldDiagnose) {
+      return;
+    }
+    if (_lastAutoDiagnoseAt != null &&
+        now.difference(_lastAutoDiagnoseAt!) < const Duration(seconds: 30)) {
+      Log.d("[player-diag] diagnose skipped (cooldown 30s)");
+      return;
+    }
+    _lastAutoDiagnoseAt = now;
+    unawaited(_runAutoNetworkDiagnose());
+  }
+
+  /// 自动网络诊断：缓冲 [LiveRoomAutoQualityBufferTracker.requiredBufferStarts]
+  /// 次独立开始时测连接，提示显示在画面左上角，8 秒后自动消失。
+  /// 结果写入前校验诊断代次，防止旧房间结果串房。
   Future<void> _runAutoNetworkDiagnose() async {
-    if (_autoDiagnoseRunning) {
+    final generation = _diagnosisGeneration;
+    // 同一代次内并发诊断互斥；换房（代次变化）后旧诊断不再阻塞新房间诊断。
+    if (_autoDiagnoseRunning && _runningDiagnoseGeneration == generation) {
+      Log.d("[player-diag] diagnose skipped (already running)");
       return;
     }
     _autoDiagnoseRunning = true;
+    _runningDiagnoseGeneration = generation;
     networkHint.value = "网络检测中…";
-    final results = await NetworkDiagnoseService.diagnose(
-      NetworkDiagnoseService.defaultTargets,
-      samples: 3,
-    );
-    _autoDiagnoseRunning = false;
-    if (isPlayerClosing) {
-      return;
-    }
-    networkHint.value = NetworkDiagnoseService.summarize(results);
-    _networkHintTimer?.cancel();
-    _networkHintTimer = Timer(const Duration(seconds: 8), () {
-      if (networkHint.value.isNotEmpty) {
+    Log.d(
+        "[player-diag] playback endpoint diagnose start samples=3 generation=$generation");
+    try {
+      final playbackResult = await NetworkDiagnoseService.diagnosePlaybackUrl(
+        currentNetworkDiagnosePlaybackUrl,
+        samples: 3,
+      );
+      final allResults = [
+        if (playbackResult != null) playbackResult,
+      ];
+      Log.d(
+          "[player-diag] diagnose done ${allResults.map((r) => '${r.host}:lost=${r.lost}/${r.samples}').join(' ')} generation=$generation");
+      // 旧房间诊断结果：代次不匹配或已换房，丢弃。
+      if (isPlayerClosing || generation != _diagnosisGeneration) {
+        Log.d("[player-diag] diagnose result dropped (stale generation)");
+        return;
+      }
+      networkHint.value =
+          NetworkDiagnoseService.summarizePlaybackEndpoint(playbackResult);
+      _networkHintTimer?.cancel();
+      _networkHintTimer = Timer(const Duration(seconds: 8), () {
+        if (generation == _diagnosisGeneration &&
+            networkHint.value.isNotEmpty) {
+          networkHint.value = "";
+        }
+      });
+    } catch (e) {
+      // 诊断失败：清空"网络检测中…"残留，避免卡住提示。
+      if (generation == _diagnosisGeneration) {
         networkHint.value = "";
       }
-    });
+      Log.d("[player-diag] diagnose error generation=$generation: $e");
+    } finally {
+      // 仅当仍是当前运行代次时释放标志，避免旧代次 finally 误清新代次状态。
+      if (_runningDiagnoseGeneration == generation) {
+        _autoDiagnoseRunning = false;
+        _runningDiagnoseGeneration = null;
+      }
+    }
   }
 
   void disposeStream() {
@@ -1859,21 +2578,6 @@ class PlayerController extends BaseController
     _bufferingSubscription?.cancel();
     _networkHintTimer?.cancel();
     _surfaceHealthCheckTimer?.cancel();
-  }
-
-  void _setKeepScreenAwake(bool enabled) {
-    // HarmonyOS 没有可用的屏幕常亮机制：wakelock_plus 在鸿蒙侧未实现
-    // （FlutterPlaybackDisplayGateway 通过 _isSupportedMobile 排除了 OHOS），
-    // 仓库中也没有 keepScreenOn / WindowFlag 类的鸿蒙接入。直接 return
-    // 避免 MissingPluginException，保持现状即可；若后续鸿蒙 SDK 提供
-    // 保持唤醒能力，再在 PlaybackDisplayGateway 内按平台接入。
-    if (!Utils.isOhos) {
-      _playbackDisplayLease?.setKeepScreenAwake(enabled);
-    }
-  }
-
-  void setPlaybackKeepScreenAwake(bool enabled) {
-    _setKeepScreenAwake(enabled);
   }
 
   // Fix Issue #57: 判断是否为流错误（网络/解码错误）
@@ -1891,14 +2595,19 @@ class PlayerController extends BaseController
     final now = DateTime.now();
 
     // 防止短时间内重复触发
-    if (_lastStreamErrorTime != null &&
-        now.difference(_lastStreamErrorTime!) < const Duration(seconds: 2)) {
+    if (_streamErrorRecoveryInFlight ||
+        (_lastStreamErrorTime != null &&
+            now.difference(_lastStreamErrorTime!) <
+                const Duration(seconds: 2))) {
       return;
     }
     _lastStreamErrorTime = now;
 
     if (_streamErrorRetryCount >= 3) {
       Log.e("流错误重试次数已达上限(3次)，停止重试: $error", StackTrace.current);
+      await suspendLiveLatencyChase(
+        MpvLiveLatencyProtectionReason.sourceChanged,
+      );
       mediaError(error);
       return;
     }
@@ -1909,23 +2618,74 @@ class PlayerController extends BaseController
       false,
     );
 
-    // 等待1秒后重新打开当前流
-    await Future.delayed(const Duration(seconds: 1));
-
+    _streamErrorRecoveryInFlight = true;
+    final expectedGeneration = _livePlaybackGeneration;
+    final previousSourceIdentity = _livePlaybackSource;
+    final reconnectStartedAt = now;
     try {
-      final currentMedia = player.state.playlist.medias.isNotEmpty
-          ? player.state.playlist.medias[player.state.playlist.index]
+      await suspendLiveLatencyChase(
+        MpvLiveLatencyProtectionReason.sourceChanged,
+      );
+      // 等待1秒后重新打开当前流
+      await Future.delayed(const Duration(seconds: 1));
+      if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
+        return;
+      }
+      final playlist = player.state.playlist;
+      final currentMedia = playlist.medias.isNotEmpty &&
+              playlist.index >= 0 &&
+              playlist.index < playlist.medias.length
+          ? playlist.medias[playlist.index]
           : null;
 
       if (currentMedia != null && !_playerClosing) {
+        final source = currentMedia.uri.toString();
+        final sourceIdentity = canonicalizeLivePlaybackSource(source);
+        if (sourceIdentity.isEmpty ||
+            (previousSourceIdentity != null &&
+                sourceIdentity != previousSourceIdentity)) {
+          return;
+        }
         Log.i("正在重启解码器...");
         await player.pause();
         await Future.delayed(const Duration(milliseconds: 200));
+        if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
+          return;
+        }
         await player.open(currentMedia);
+        if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
+          return;
+        }
+        await resetLiveLatencyChase();
+        final recoveryGeneration = _livePlaybackGeneration;
+        await startLivePlaybackLightweightSampling(source: source);
+        if (_playerClosing ||
+            recoveryGeneration != _livePlaybackGeneration ||
+            sourceIdentity != _livePlaybackSource) {
+          return;
+        }
+        final completedAt = DateTime.now();
+        recordLiveLinkHealthEvent(
+          LiveLinkEventType.cdnReconnect,
+          at: completedAt,
+          reconnectReason: LiveReconnectReason.mediaError,
+          reconnectHostChanged: didLivePlaybackHostChange(
+            previousSourceIdentity,
+            sourceIdentity,
+          ),
+          reconnectRecoveryDuration: completedAt.difference(reconnectStartedAt),
+        );
       }
     } catch (e, stackTrace) {
       Log.e("重启解码器失败: $e", stackTrace);
-      mediaError(error);
+      if (!_playerClosing && expectedGeneration == _livePlaybackGeneration) {
+        await suspendLiveLatencyChase(
+          MpvLiveLatencyProtectionReason.sourceChanged,
+        );
+        mediaError(error);
+      }
+    } finally {
+      _streamErrorRecoveryInFlight = false;
     }
   }
 
@@ -1936,9 +2696,13 @@ class PlayerController extends BaseController
     // 短暂暂停再恢复，触发Surface重建
     try {
       if (player.state.playing && !_playerClosing) {
+        await suspendLiveLatencyChase(
+          MpvLiveLatencyProtectionReason.playbackStalled,
+        );
         await player.pause();
         await Future.delayed(const Duration(milliseconds: 300));
         await player.play();
+        await resumeLiveLatencyChase();
       }
     } catch (e, stackTrace) {
       Log.e("恢复Surface失败: $e", stackTrace);
@@ -2169,6 +2933,7 @@ class PlayerController extends BaseController
     }
     _playerClosing = true;
     _setKeepScreenAwake(false);
+    await releasePlaybackDisplayLease();
     if (Utils.isOhos) {
       if (fullScreenState.value) {
         await exitFull();
@@ -2214,9 +2979,11 @@ class PlayerController extends BaseController
       );
       _ohosVideoController = null;
       disposeDanmakuController();
+      await stopLiveLatencyChase();
       return;
     }
     await stopBackgroundPlaybackService();
+    await stopLiveLatencyChase();
     await player.stop();
     if (smallWindowState.value) {
       await exitSmallWindow();

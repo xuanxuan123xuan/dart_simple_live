@@ -1,4 +1,5 @@
 import 'package:simple_live_core/src/model/live_anchor_item.dart';
+import '../common/core_cancellation.dart';
 
 import '../interface/live_danmaku.dart';
 import '../model/live_category_result.dart';
@@ -28,14 +29,22 @@ class LiveSite {
   }
 
   /// 搜索直播间
-  Future<LiveSearchRoomResult> searchRooms(String keyword, {int page = 1}) {
+  Future<LiveSearchRoomResult> searchRooms(
+    String keyword, {
+    int page = 1,
+    CoreCancellation? cancellation,
+  }) {
     return Future.value(
       LiveSearchRoomResult(hasMore: false, items: <LiveRoomItem>[]),
     );
   }
 
   /// 搜索直播间
-  Future<LiveSearchAnchorResult> searchAnchors(String keyword, {int page = 1}) {
+  Future<LiveSearchAnchorResult> searchAnchors(
+    String keyword, {
+    int page = 1,
+    CoreCancellation? cancellation,
+  }) {
     return Future.value(
       LiveSearchAnchorResult(hasMore: false, items: <LiveAnchorItem>[]),
     );

@@ -33,6 +33,10 @@ int? followStatusForLiveState(LiveStatusState state) {
   };
 }
 
+/// Kuaishou follow refresh is status-only. Metadata detail requests would
+/// consume the active account and defeat the anonymous follow-status channel.
+bool shouldRefreshFollowMetadata(String siteId) => siteId != Constant.kKuaishou;
+
 class FollowService extends GetxService {
   static const Duration updateStatusCooldown = Duration(seconds: 30);
   static const Duration refreshProgressCompletionHold = Duration(seconds: 2);
@@ -61,6 +65,9 @@ class FollowService extends GetxService {
 
   /// 未直播的用户列表
   RxList<FollowUser> notLiveList = RxList<FollowUser>();
+
+  /// 本轮未取得明确状态（含刷新中/受限）的用户。
+  RxList<FollowUser> unknownList = RxList<FollowUser>();
 
   /// 用户自定义的tag
   RxList<FollowUserTag> followTagList = RxList<FollowUserTag>();
@@ -341,6 +348,12 @@ class FollowService extends GetxService {
     );
   }
 
+  void cancelFollowPageRefresh() {
+    _updateGeneration++;
+    (Sites.allSites[Constant.kKuaishou]?.liveSite as KuaishouSite?)
+        ?.cancelScope('kuaishou:follow-refresh');
+  }
+
   Future<_FollowRefreshItemResult> _updateLiveStatus(
     FollowUser item, {
     int? generation,
@@ -350,6 +363,10 @@ class FollowService extends GetxService {
   }) async {
     final previousStatus = item.liveStatus.value;
     final notifyReady = _liveNotifyReadyIds.contains(item.id);
+    item.liveCheckState.value = FollowLiveCheckState.refreshing;
+    if (item.siteId == Constant.kKuaishou) {
+      item.liveStatus.value = 0;
+    }
     try {
       if (item.siteId == Constant.kDouyin && douyinLimiter != null) {
         await douyinLimiter.beforeRequest(workerIndex);
@@ -357,10 +374,18 @@ class FollowService extends GetxService {
       var site = Sites.allSites[item.siteId]!;
       // Status is the latency-sensitive path. Metadata is refreshed in a
       // separate bounded stage after every visible status has been updated.
-      final liveState =
-          await site.liveSite.getLiveStatusState(roomId: item.roomId);
+      final liveState = item.siteId == Constant.kKuaishou
+          ? await KuaishouRequestTrace.run(
+              KuaishouRequestSource.followStatus,
+              () => site.liveSite.getLiveStatusState(roomId: item.roomId),
+              scopeId: 'kuaishou:follow-refresh',
+              forceNetwork: true,
+            )
+          : await site.liveSite.getLiveStatusState(roomId: item.roomId);
       final nextStatus = followStatusForLiveState(liveState);
       if (nextStatus == null) {
+        item.liveStatus.value = 0;
+        item.liveCheckState.value = FollowLiveCheckState.unknown;
         return const _FollowRefreshItemResult(
           _FollowRefreshItemOutcome.deferred,
         );
@@ -374,6 +399,7 @@ class FollowService extends GetxService {
         douyinLimiter.onSuccess();
       }
       item.liveStatus.value = nextStatus;
+      item.liveCheckState.value = FollowLiveCheckState.fresh;
       if (!isLiving) {
         item.liveStartTime = null;
         _liveNotifySentIds.remove(item.id);
@@ -407,8 +433,13 @@ class FollowService extends GetxService {
           );
         }
       }
+      if (_isKuaishouLimited(item, e)) {
+        limited = true;
+      }
       Log.logPrint(e);
       if (limited) {
+        item.liveStatus.value = 0;
+        item.liveCheckState.value = FollowLiveCheckState.limited;
         if (pauseRemainingOnLimited) {
           return const _FollowRefreshItemResult(
             _FollowRefreshItemOutcome.deferred,
@@ -418,11 +449,13 @@ class FollowService extends GetxService {
           );
         }
         return const _FollowRefreshItemResult(
-          _FollowRefreshItemOutcome.failed,
+          _FollowRefreshItemOutcome.deferred,
           limited: true,
+          keepPending: true,
         );
       }
       item.liveStatus.value = 0;
+      item.liveCheckState.value = FollowLiveCheckState.unknown;
       item.liveStartTime = null;
       return _FollowRefreshItemResult(
         _FollowRefreshItemOutcome.failed,
@@ -495,6 +528,13 @@ class FollowService extends GetxService {
     return item.siteId == Constant.kDouyin &&
         error is CoreError &&
         error.statusCode == 444;
+  }
+
+  /// 快手协调器冷却（[KuaishouCooldownError]）视为限流信号。
+  bool _isKuaishouLimited(FollowUser item, Object error) {
+    return item.siteId == Constant.kKuaishou &&
+        (error is KuaishouCooldownError ||
+            (error is CoreError && error.statusCode == 429));
   }
 
   void _handleDouyinLimited({required bool pauseRemainingOnLimited}) {
@@ -760,11 +800,14 @@ class FollowService extends GetxService {
     required bool refreshProgressUi,
     required bool reconcileDouyinIdentity,
   }) async {
-    if (targets.isEmpty) {
+    final metadataTargets =
+        targets.where((item) => shouldRefreshFollowMetadata(item.siteId));
+    if (metadataTargets.isEmpty) {
       return;
     }
-    final orderedTargets =
-        _orderRefreshBucketBySite(_distinctFollowUsers(targets));
+    final orderedTargets = _orderRefreshBucketBySite(
+      _distinctFollowUsers(metadataTargets.toList(growable: false)),
+    );
     final generation = _updateGeneration;
     var completed = 0;
     var successCount = 0;
@@ -1027,6 +1070,12 @@ class FollowService extends GetxService {
         hasFullDouyinCookie: hasFullDouyinCookie,
       );
       final allowedTargets = filteredTargets.allowedTargets;
+      for (final item in allowedTargets.where(
+        (item) => item.siteId == Constant.kKuaishou,
+      )) {
+        item.liveStatus.value = 0;
+        item.liveCheckState.value = FollowLiveCheckState.refreshing;
+      }
       final orderedAllowedKeys = allowedTargets.map(_refreshTargetKey).toList();
       final targetByKey = <String, FollowUser>{
         for (final item in allowedTargets) _refreshTargetKey(item): item,
@@ -1048,6 +1097,14 @@ class FollowService extends GetxService {
       final douyinLimiter = douyinTargetCount > 0
           ? DouyinFollowRefreshLimiter.forTargetCount(douyinTargetCount)
           : null;
+      final kuaishouTargetCount = filteredTargets.allowedTargets
+          .where((item) => item.siteId == Constant.kKuaishou)
+          .length;
+      if (kuaishouTargetCount > 0) {
+        final kuaishouSite =
+            Sites.allSites[Constant.kKuaishou]?.liveSite as KuaishouSite?;
+        kuaishouSite?.beginAnonymousStatusRefresh();
+      }
 
       final resumedSuccessCount = persistedTask?.successCount ?? 0;
       final resumedFailedCount = persistedTask?.failedCount ?? 0;
@@ -1156,6 +1213,14 @@ class FollowService extends GetxService {
             }
             if (result.pauseRemaining) {
               pausedForResume = true;
+              for (final key in pendingKeys) {
+                final pendingItem = targetByKey[key];
+                if (pendingItem?.siteId == Constant.kKuaishou) {
+                  pendingItem!.liveStatus.value = 0;
+                  pendingItem.liveCheckState.value =
+                      FollowLiveCheckState.limited;
+                }
+              }
               deferredCount =
                   filteredTargets.deferredTargets.length + pendingKeys.length;
             }
@@ -1338,7 +1403,10 @@ class FollowService extends GetxService {
       sortFollowUsers(followList.where((x) => x.liveStatus.value == 2)),
     );
     notLiveList.assignAll(
-      sortFollowUsers(followList.where((x) => x.liveStatus.value != 2)),
+      sortFollowUsers(followList.where((x) => x.liveStatus.value == 1)),
+    );
+    unknownList.assignAll(
+      sortFollowUsers(followList.where((x) => x.liveStatus.value == 0)),
     );
     _updatedListController.add(0);
   }
@@ -1423,8 +1491,7 @@ class FollowService extends GetxService {
     var content = generateJson();
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) => 
-      AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text("导出为文本"),
         content: TextField(
           controller: TextEditingController(text: content),
@@ -1542,7 +1609,7 @@ class FollowService extends GetxService {
 
   @override
   void onClose() {
-    _updateGeneration++;
+    cancelFollowPageRefresh();
     updating.value = false;
     _cancelRefreshProgressReset();
     _resetRefreshProgress();

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:video_player/video_player.dart';
@@ -18,6 +20,98 @@ VideoPlayerValue _value({
 }
 
 void main() {
+  test('OHOS playback state owns a display lease and drives keep-awake', () {
+    final player = File(
+      'lib/modules/live_room/player/player_controller.dart',
+    ).readAsStringSync();
+
+    expect(player, contains('initPlaybackDisplayLease();'));
+    expect(player, contains('_setKeepScreenAwake(value.isPlaying);'));
+    expect(player, contains('await releasePlaybackDisplayLease();'));
+    expect(
+      player,
+      isNot(contains('if (!Utils.isOhos) {\n      _playbackDisplayLease')),
+    );
+  });
+
+  test('OHOS assigns each source generation once and selects by headers', () {
+    final nativePlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
+
+    expect(
+      nativePlayer,
+      contains('assignMediaSourceIfNeeded(generation: number)'),
+    );
+    expect(nativePlayer, contains('SOURCE_ASSIGNMENT_ASSIGNING'));
+    expect(nativePlayer, contains('SOURCE_ASSIGNMENT_ASSIGNED'));
+    expect(nativePlayer, contains('generation === this.playerGeneration'));
+    expect(
+      nativePlayer,
+      contains(
+        'this.disposed || creationGeneration !== this.playerGeneration',
+      ),
+    );
+    expect(nativePlayer, contains('Object.keys(this.headers).length > 0'));
+    expect(nativePlayer, contains('player.url = this.getIUri();'));
+    expect(
+      nativePlayer,
+      contains('player.setMediaSource(mediaSource, playbackStrategy)'),
+    );
+    expect(
+      nativePlayer,
+      contains('let playbackStrategy: media.PlaybackStrategy = {};'),
+    );
+    expect(nativePlayer, isNot(contains('preferredBufferDuration')));
+    expect(nativePlayer, contains('Events.START_RENDER_FRAME'));
+  });
+
+  test('OHOS native errors are structured and sanitized', () {
+    final nativePlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
+    final sendError = RegExp(
+      r'sendError\(error: BusinessError\): void \{([\s\S]*?)\n  \}',
+    ).firstMatch(nativePlayer)!.group(1)!;
+
+    for (final field in const [
+      'nativeErrorCode',
+      'nativeState',
+      'sourceAssignmentState',
+      'sourceKind',
+      'prepared',
+      'firstFrameRendered',
+    ]) {
+      expect(sendError, contains('details.set("$field"'));
+    }
+    expect(sendError, isNot(contains('url')));
+    expect(sendError, isNot(contains('headers')));
+    expect(sendError, contains(r'HarmonyOS AVPlayer error ${error.code}'));
+    expect(nativePlayer, contains('this.sendError(err);'));
+  });
+
+  test('OHOS ignores only prepared non-fatal operation errors', () {
+    final nativePlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
+    final ignoreError = RegExp(
+      r'shouldIgnorePreparedPlaybackError\(error: BusinessError\): boolean \{([\s\S]*?)\n  \}',
+    ).firstMatch(nativePlayer)!.group(1)!;
+
+    expect(ignoreError, contains('this.prepared'));
+    expect(ignoreError, contains('SOURCE_ASSIGNMENT_ASSIGNED'));
+    expect(ignoreError, contains('OPERATE_ERROR'));
+    expect(ignoreError, contains('AVPLAYER_STATE_ERROR'));
+    expect(ignoreError, isNot(contains('5400103')));
+    expect(
+      nativePlayer,
+      contains('if (this.shouldIgnorePreparedPlaybackError(err))'),
+    );
+  });
+
   test('reports continuous buffering after eight seconds', () {
     final started = DateTime(2026, 7, 14, 12);
     final value = _value(position: Duration.zero, buffering: true);

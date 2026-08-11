@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "可选新版本号（如 1.13 或 1.13.1）；留空则使用 pubspec 当前版本"
+        description: "可选构建版本号（如 1.13 或 1.13.1）；只在 runner 临时生效，不提交源码分支"
         required: false
         type: string
       publish_release:
@@ -33,7 +33,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-all-${{ github.ref }}
@@ -106,10 +106,6 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          if [[ "$GITHUB_REF" != refs/heads/* ]]; then
-            echo "::error::自动更新版本只能从分支运行，不能从 tag 运行。" >&2
-            exit 1
-          fi
           dart run simple_live_app/tool/app_version.dart set "$REQUESTED_VERSION"
 
       - name: 同步派生版本文件
@@ -129,36 +125,6 @@ jobs:
       - name: 运行测试
         working-directory: simple_live_app
         run: flutter test --no-pub
-
-      - name: 提交版本更新
-        shell: bash
-        run: |
-          set -e
-          if git diff --quiet -- \
-            simple_live_app/pubspec.yaml \
-            simple_live_app/ohos/AppScope/app.json5 \
-            simple_live_app/lib/generated/app_version.g.dart; then
-            echo "版本派生文件已经同步，无需提交。"
-            exit 0
-          fi
-          if [[ "$GITHUB_REF" != refs/heads/* ]]; then
-            echo "::error::自动提交版本同步结果只能从分支运行。" >&2
-            exit 1
-          fi
-          version="$(dart run simple_live_app/tool/app_version.dart print name)"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- \
-            simple_live_app/pubspec.yaml \
-            simple_live_app/ohos/AppScope/app.json5 \
-            simple_live_app/lib/generated/app_version.g.dart
-          git commit -m "chore: release v$version"
-          # 推送前先 fetch + rebase：避免远端有并发提交时 non-fast-forward 被拒
-          # （如另一个 workflow/手动 push 先到）。版本文件冲突概率低，冲突则失败留人工处理。
-          git fetch origin "$GITHUB_REF_NAME" || true
-          git pull --rebase origin "$GITHUB_REF_NAME" || \
-            { echo "::warning::远端有新提交且 rebase 冲突，推送可能失败。" >&2; }
-          git push origin "HEAD:$GITHUB_REF_NAME"
 
       - name: 解析发布元数据
         id: release
@@ -235,6 +201,11 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: 应用临时发布版本
+        run: >-
+          dart run simple_live_app/tool/app_version.dart set
+          "${{ needs.prepare.outputs.version }}"
 
       - name: 恢复依赖包
         working-directory: simple_live_app
@@ -386,6 +357,11 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      - name: 应用临时发布版本
+        run: >-
+          dart run simple_live_app/tool/app_version.dart set
+          "${{ needs.prepare.outputs.version }}"
+
       - name: 恢复依赖包
         working-directory: simple_live_app
         run: flutter pub get
@@ -517,6 +493,11 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      - name: 应用临时发布版本
+        run: >-
+          dart run simple_live_app/tool/app_version.dart set
+          "${{ needs.prepare.outputs.version }}"
+
       - name: 启用 macOS 桌面并恢复依赖
         working-directory: simple_live_app
         run: |
@@ -571,6 +552,12 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: 应用临时发布版本
+        shell: pwsh
+        run: >-
+          dart run simple_live_app/tool/app_version.dart set
+          "${{ needs.prepare.outputs.version }}"
 
       - name: 启用 Windows 桌面并恢复依赖
         working-directory: simple_live_app
@@ -636,6 +623,11 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: 应用临时发布版本
+        run: >-
+          dart run simple_live_app/tool/app_version.dart set
+          "${{ needs.prepare.outputs.version }}"
 
       - name: 安装 Linux 构建依赖
         run: |
@@ -763,6 +755,8 @@ jobs:
         run: |
           $flutter = Join-Path $env:FLUTTER_OHOS_ROOT "bin\flutter.bat"
           $dart = Join-Path $env:FLUTTER_OHOS_ROOT "bin\dart.bat"
+          & $dart run tool/app_version.dart set "${{ needs.prepare.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) { throw "Version apply failed" }
           & $flutter pub get
           if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed" }
           & $dart run tool/app_version.dart check
@@ -822,6 +816,10 @@ jobs:
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    # 仅最终发布 job 可创建 Release、更新固定 tag 和 ipa-source。
+    # prepare 与各平台构建 job 保持 contents: read，不能回写源码分支。
+    permissions:
+      contents: write
     steps:
       - name: 校验构建任务
         shell: bash

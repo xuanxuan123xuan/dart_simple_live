@@ -1,6 +1,7 @@
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_tv_app/app/constant.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
+import 'package:simple_live_tv_app/services/local_storage_service.dart';
 
 class Sites {
   static final Map<String, Site> allSites = {
@@ -36,13 +37,34 @@ class Sites {
       id: Constant.kKuaishou,
       logo: "assets/images/kuaishou.png",
       name: "快手直播",
-      liveSite: KuaishouSite(),
+      liveSite: KuaishouSite(
+        categorySnapshotStore: _KuaishouCategorySnapshotStore(),
+      ),
       index: 4,
     ),
   };
 
   static List<Site> get supportSites {
     return allSites.values.toList();
+  }
+}
+
+class _KuaishouCategorySnapshotStore implements KuaishouCategorySnapshotStore {
+  @override
+  Future<Map<String, dynamic>?> read() async {
+    final value = LocalStorageService.instance.getValue<dynamic>(
+      LocalStorageService.kKuaishouCategorySnapshot,
+      null,
+    );
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  }
+
+  @override
+  Future<void> write(Map<String, dynamic> snapshot) async {
+    await LocalStorageService.instance.setValue(
+      LocalStorageService.kKuaishouCategorySnapshot,
+      snapshot,
+    );
   }
 }
 

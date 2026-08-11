@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+import 'package:simple_live_tv_app/app/constant.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/log.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
@@ -123,6 +124,20 @@ class MultiRoomPlayerController extends GetxController {
     }
   }
 
+  /// 读取多屏同播格子房间详情。
+  ///
+  /// 快手请求通过 [KuaishouRequestTrace] 标记为多开来源，保留高优先级但
+  /// 仍遵守协调器最小间隔，与手机/桌面端多开行为保持一致；其他平台不标记来源。
+  Future<LiveRoomDetail> _fetchRoomDetail() {
+    if (item.site.id != Constant.kKuaishou) {
+      return item.site.liveSite.getRoomDetail(roomId: item.roomId);
+    }
+    return KuaishouRequestTrace.run(
+      KuaishouRequestSource.multiRoom,
+      () => item.site.liveSite.getRoomDetail(roomId: item.roomId),
+    );
+  }
+
   Future<void> load() async {
     loading.value = true;
     errorText.value = "";
@@ -130,8 +145,7 @@ class MultiRoomPlayerController extends GetxController {
     try {
       await player.stop();
       Log.i("多屏同播开始加载房间：${item.site.id}/${item.roomId}");
-      final roomDetail =
-          await item.site.liveSite.getRoomDetail(roomId: item.roomId);
+      final roomDetail = await _fetchRoomDetail();
       if (_disposed) {
         return;
       }

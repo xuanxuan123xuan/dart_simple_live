@@ -147,6 +147,19 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                   ),
                   AppStyle.divider,
                   Obx(
+                    () => SettingsMenu(
+                      title: "直播延迟档位",
+                      subtitle: "自动按 FLV/RTMP 与 HLS/fMP4 使用不同缓冲策略，重开直播间后生效",
+                      value: AppSettingsController
+                          .instance.mpvLiveLatencyMode.value,
+                      valueMap: MpvOptionsService.liveLatencyModeLabels,
+                      onChanged: (e) {
+                        AppSettingsController.instance.setMpvLiveLatencyMode(e);
+                      },
+                    ),
+                  ),
+                  AppStyle.divider,
+                  Obx(
                     () => SettingsSwitch(
                       value: AppSettingsController
                           .instance.customPlayerOutput.value,
@@ -279,9 +292,8 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                               builder: (shareBtnContext) {
                                 return IconButton(
                                   onPressed: () {
-                                    final box =
-                                        shareBtnContext.findRenderObject()
-                                            as RenderBox?;
+                                    final box = shareBtnContext
+                                        .findRenderObject() as RenderBox?;
                                     controller.shareLogFile(
                                       item,
                                       sharePositionOrigin: box == null

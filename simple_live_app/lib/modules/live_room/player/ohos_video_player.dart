@@ -6,6 +6,11 @@ import 'package:video_player/video_player.dart';
 
 enum OhosPlaybackHealthIssue { bufferingTimeout, playbackStall }
 
+typedef OhosVideoValueChanged = void Function(
+  int playerGeneration,
+  VideoPlayerValue value,
+);
+
 const ohosBufferingTimeout = Duration(seconds: 8);
 const ohosPlaybackStallTimeout = Duration(seconds: 12);
 
@@ -81,10 +86,11 @@ class OhosVideoPlayer extends StatefulWidget {
     this.onControllerReady,
     this.onControllerDisposed,
     this.onValueChanged,
+    this.onGenerationValueChanged,
     this.onCompleted,
     this.fit = BoxFit.contain,
     this.forcedAspectRatio,
-    this.initialVolume = 1.0,
+    required this.initialVolume,
   });
 
   final String url;
@@ -94,9 +100,15 @@ class OhosVideoPlayer extends StatefulWidget {
   final ValueChanged<VideoPlayerController>? onControllerReady;
   final ValueChanged<VideoPlayerController>? onControllerDisposed;
   final ValueChanged<VideoPlayerValue>? onValueChanged;
+  final OhosVideoValueChanged? onGenerationValueChanged;
   final VoidCallback? onCompleted;
   final BoxFit fit;
   final double? forcedAspectRatio;
+
+  /// Current session volume on the native 0..1 scale.
+  ///
+  /// The owning controller keeps the persisted user intent on a 0..100 scale;
+  /// every native controller reconstruction must receive its current value.
   final double initialVolume;
 
   @override
@@ -216,6 +228,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     }
     final value = controller.value;
     widget.onValueChanged?.call(value);
+    widget.onGenerationValueChanged?.call(widget.revision, value);
     if (looksLikeOhosPlaybackCompleted(
           current: value,
           previous: _previousValue,

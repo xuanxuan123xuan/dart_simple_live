@@ -178,6 +178,16 @@ void main() {
     await danmaku.stop();
   });
 
+  test('anonymous playback without danmaku data stays silent', () async {
+    final closeMessages = <String>[];
+    final danmaku = KuaishouDanmaku()..onClose = closeMessages.add;
+
+    await danmaku.start(null);
+
+    expect(closeMessages, isEmpty);
+    await danmaku.stop();
+  });
+
   test('stopping Kuaishou danmaku cancels credential retry', () async {
     final timers = <_FakeTimer>[];
     var resolverCalls = 0;
@@ -205,6 +215,90 @@ void main() {
     await _flushAsync();
 
     expect(resolverCalls, 1);
+  });
+
+  test('credential retry stops after exhausting the attempt budget', () async {
+    final timers = <_FakeTimer>[];
+    final closeMessages = <String>[];
+    var resolverCalls = 0;
+    final danmaku = KuaishouDanmaku(
+      credentialRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+      maxCredentialRetryAttempts: 3,
+    )..onClose = closeMessages.add;
+
+    await danmaku.start(
+      _missingCredentials(
+        resolver: () async {
+          resolverCalls += 1;
+          return null;
+        },
+      ),
+    );
+
+    // 首次失败已计数；再触发两次后预算（3 次）耗尽，停止自动重试。
+    expect(resolverCalls, 1);
+    for (var i = 0; i < 3; i++) {
+      final active = timers.where((t) => t.isActive).toList();
+      if (active.isEmpty) {
+        break;
+      }
+      active.first.fire();
+      await _flushAsync();
+    }
+
+    expect(closeMessages.any((m) => m.contains('停止自动重试')), isTrue);
+    final activeTimers = timers.where((t) => t.isActive).toList();
+    expect(activeTimers, isEmpty, reason: '预算耗尽后不应再安排重试定时器');
+  });
+
+  test('cooldown idle time does not consume the retry duration budget',
+      () async {
+    final timers = <_FakeTimer>[];
+    final closeMessages = <String>[];
+    var resolverCalls = 0;
+    var now = DateTime(2026, 1, 1);
+    var cooldownActive = false;
+    final danmaku = KuaishouDanmaku(
+      credentialRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+      maxCredentialRetryDuration: const Duration(seconds: 60),
+      credentialCooldownCheck: () => cooldownActive,
+      credentialRetryNow: () => now,
+    )..onClose = closeMessages.add;
+
+    await danmaku.start(
+      _missingCredentials(
+        resolver: () async {
+          resolverCalls += 1;
+          return null;
+        },
+      ),
+    );
+    expect(resolverCalls, 1);
+
+    // 进入冷却并推进时间 120s（> 60s 时长预算）：空转期间应推进 startedAt，
+    // 使冷却时间不计入时长预算，恢复后仍可继续重试。
+    cooldownActive = true;
+    now = now.add(const Duration(seconds: 120));
+    final coolingTimer = timers.where((t) => t.isActive).toList().first;
+    coolingTimer.fire();
+    await _flushAsync();
+    // 冷却空转不发请求。
+    expect(resolverCalls, 1);
+
+    // 冷却结束：恢复重试，不应因时长预算耗尽而停止。
+    cooldownActive = false;
+    final resumeTimer = timers.where((t) => t.isActive).toList().first;
+    resumeTimer.fire();
+    await _flushAsync();
+    expect(resolverCalls, 2, reason: '冷却空转时间不应计入时长预算');
   });
 
   group('kuaishou emoji refresh', () {
@@ -375,4 +469,3 @@ class _ProtoWriter {
 
   Uint8List takeBytes() => _builder.takeBytes();
 }
-

@@ -6,6 +6,9 @@ class RoutePath {
   /// 搜索
   static const kSearch = "/search";
 
+  /// 平台搜索
+  static const kSearchSite = "/search/site";
+
   /// 分类详情
   static const kCategoryDetail = "/category/detail";
 
@@ -68,6 +71,9 @@ class RoutePath {
 
   /// 快手 Web登录
   static const kKuaishouWebLogin = "/settings/account/kuaishou/web_login";
+
+  /// 快手账号管理
+  static const kKuaishouAccount = "/settings/account/kuaishou";
 
   /// 数据同步
   static const kLocalSync = "/local_sync";

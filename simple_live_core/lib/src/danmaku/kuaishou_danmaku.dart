@@ -96,13 +96,36 @@ class KuaishouDanmaku extends LiveDanmaku {
     WebSocketRetryTimerFactory? socketRetryTimerFactory,
     WebSocketRetryTimerFactory? credentialRetryTimerFactory,
     this.credentialRetryDelay = const Duration(seconds: 5),
+    this.credentialCooldownCheck,
+    this.maxCredentialRetryAttempts = _kMaxCredentialRetryAttempts,
+    this.maxCredentialRetryDuration = _kMaxCredentialRetryDuration,
+    DateTime Function()? credentialRetryNow,
   })  : _connector = connector,
         _socketRetryTimerFactory = socketRetryTimerFactory,
         _credentialRetryTimerFactory =
-            credentialRetryTimerFactory ?? _defaultCredentialRetryTimer {
+            credentialRetryTimerFactory ?? _defaultCredentialRetryTimer,
+        _credentialNow = credentialRetryNow ?? DateTime.now {
     heartbeatTime = 20 * 1000;
     _maybeRefreshEmoji();
   }
+
+  /// S5-T3：凭证自动重试的收敛参数（阶段 6 真机验收后再定稿）。
+  ///
+  /// 背景（docs/快手直播请求频率限制设计.md 7.2 / 9.5）：房间 HTML 缺
+  /// liveStreamId/token 时，`_resolveDanmakuCredentials` 会再抓房间详情并
+  /// 请求 websocketinfo，而凭证重试每 5s 一次、无总次数/总时长上限，形成
+  /// "越失败越请求"的正反馈（受限后延长恢复）。这里给自动重试加硬上限：
+  ///
+  /// 1. 连续解析失败 [maxCredentialRetryAttempts] 次（默认 10）即停止；
+  /// 2. 从首次失败起超过 [maxCredentialRetryDuration]（默认 60s）也停止；
+  ///    达到上限后等待显式触发（重新 start / 房间刷新），不再后台请求。
+  ///
+  /// 另按失败次数线性退避重试间隔（基础 [credentialRetryDelay] × 次数，
+  /// 封顶 [_kMaxCredentialRetryBackoffFactor] 倍，默认 30s），保证"播放画面
+  /// 已可用而弹幕凭证缺失"时不会继续高频打详情/websocketinfo 接口。
+  static const int _kMaxCredentialRetryAttempts = 10;
+  static const Duration _kMaxCredentialRetryDuration = Duration(seconds: 60);
+  static const int _kMaxCredentialRetryBackoffFactor = 6;
 
   /// 全局只拉取一次最新表情映射（进程内）；cookie 变化（用户登录
   /// 后带 cookie 再刷一次）除外。失败静默走内置表。
@@ -123,12 +146,31 @@ class KuaishouDanmaku extends LiveDanmaku {
   final WebSocketRetryTimerFactory? _socketRetryTimerFactory;
   final WebSocketRetryTimerFactory _credentialRetryTimerFactory;
   final Duration credentialRetryDelay;
+
+  /// 可选：协调器冷却检查，如 `() => site.coordinator.inCooldown`。
+  ///
+  /// KuaishouDanmaku 不持有 KuaishouSite 引用（`kuaishou_site.dart` 用
+  /// `KuaishouDanmaku()` 无参构造），resolver 闭包也不暴露协调器，因此
+  /// 由接线方注入冷却状态检查。默认 null = 不检查，保持与现有调用方兼容。
+  /// 注入后：冷却期间凭证重试暂停（不发起任何敏感请求），冷却结束自动恢复，
+  /// 且不消耗重试预算。阶段 6 在站点侧接线。
+  final bool Function()? credentialCooldownCheck;
+
+  /// 凭证自动重试的总次数/总时长上限（S5-T3，阶段 6 真机验收后定稿）。
+  final int maxCredentialRetryAttempts;
+  final Duration maxCredentialRetryDuration;
+
+  /// 凭证重试计时的时钟源（可注入以便测试总时长上限）。
+  final DateTime Function() _credentialNow;
+
   WebScoketUtils? webScoketUtils;
   KuaishouDanmakuArgs? danmakuArgs;
   Timer? _credentialRetryTimer;
   KuaishouDanmakuCredentialResolver? _credentialResolver;
   int _startGeneration = 0;
   bool _credentialRetryNotified = false;
+  int _credentialRetryAttempts = 0;
+  DateTime? _credentialRetryStartedAt;
 
   static Timer _defaultCredentialRetryTimer(
     Duration delay,
@@ -143,6 +185,11 @@ class KuaishouDanmaku extends LiveDanmaku {
     _credentialRetryTimer?.cancel();
     _credentialRetryTimer = null;
     _credentialRetryNotified = false;
+    _credentialRetryAttempts = 0;
+    _credentialRetryStartedAt = null;
+    if (args == null) {
+      return;
+    }
     if (args is! KuaishouDanmakuArgs) {
       onClose?.call("快手弹幕凭证尚未就绪，请稍后刷新直播间重试");
       return;
@@ -160,6 +207,14 @@ class KuaishouDanmaku extends LiveDanmaku {
 
   Future<void> _resolveCredentials(int generation) async {
     if (generation != _startGeneration) {
+      return;
+    }
+    // S5-T3：协调器冷却期间暂停凭证请求（不发起任何敏感请求），仅保留
+    // 本地轮询定时器，冷却结束后自动恢复；冷却等待不消耗重试预算——
+    // 将时长起点推进到当前时刻，使冷却空转时间不计入 60s 时长上限。
+    if (credentialCooldownCheck?.call() ?? false) {
+      _credentialRetryStartedAt = _credentialNow();
+      _armCredentialRetryTimer(generation);
       return;
     }
     final resolver = _credentialResolver;
@@ -183,7 +238,29 @@ class KuaishouDanmaku extends LiveDanmaku {
     _scheduleCredentialRetry(generation);
   }
 
+  /// S5-T3：记录一次凭证解析失败并安排下一次重试；
+  /// 超过总次数/总时长上限后停止自动重试，等待显式触发（重新 start / 刷新）。
   void _scheduleCredentialRetry(int generation) {
+    if (generation != _startGeneration || _credentialRetryTimer != null) {
+      return;
+    }
+    _credentialRetryAttempts += 1;
+    _credentialRetryStartedAt ??= _credentialNow();
+    if (_credentialRetryBudgetExhausted()) {
+      onClose?.call(
+        "快手弹幕凭证持续获取失败，已停止自动重试，请刷新直播间重试",
+      );
+      return;
+    }
+    _armCredentialRetryTimer(generation);
+  }
+
+  /// 安排一次凭证重试定时器（含冷却等待期的空转轮询，不发请求）。
+  ///
+  /// 重试间隔按失败次数线性退避：`credentialRetryDelay × attempts`，
+  /// 封顶 [_kMaxCredentialRetryBackoffFactor] 倍，避免"播放画面已可用而弹幕
+  /// 凭证缺失"时继续高频打详情/websocketinfo 接口（设计文档 9.5）。
+  void _armCredentialRetryTimer(int generation) {
     if (generation != _startGeneration || _credentialRetryTimer != null) {
       return;
     }
@@ -191,8 +268,12 @@ class KuaishouDanmaku extends LiveDanmaku {
       _credentialRetryNotified = true;
       onClose?.call("快手弹幕凭证尚未就绪，正在自动重试");
     }
+    final factor = _credentialRetryAttempts.clamp(
+      1,
+      _kMaxCredentialRetryBackoffFactor,
+    );
     _credentialRetryTimer = _credentialRetryTimerFactory(
-      credentialRetryDelay,
+      credentialRetryDelay * factor,
       () {
         _credentialRetryTimer = null;
         if (generation != _startGeneration) {
@@ -201,6 +282,19 @@ class KuaishouDanmaku extends LiveDanmaku {
         unawaited(_resolveCredentials(generation));
       },
     );
+  }
+
+  /// 自动重试预算是否已耗尽：次数达上限，或自首次失败起总时长达上限。
+  bool _credentialRetryBudgetExhausted() {
+    if (_credentialRetryAttempts >= maxCredentialRetryAttempts) {
+      return true;
+    }
+    final startedAt = _credentialRetryStartedAt;
+    if (startedAt != null &&
+        _credentialNow().difference(startedAt) >= maxCredentialRetryDuration) {
+      return true;
+    }
+    return false;
   }
 
   Future<void> _connect(
@@ -246,6 +340,8 @@ class KuaishouDanmaku extends LiveDanmaku {
     _credentialRetryTimer = null;
     _credentialResolver = null;
     _credentialRetryNotified = false;
+    _credentialRetryAttempts = 0;
+    _credentialRetryStartedAt = null;
     onMessage = null;
     onClose = null;
     onReady = null;

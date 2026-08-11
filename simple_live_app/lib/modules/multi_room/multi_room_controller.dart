@@ -18,8 +18,28 @@ import 'package:simple_live_app/modules/multi_room/multi_room_playback_recovery.
 import 'package:simple_live_app/modules/multi_room/player_mutation_queue.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/memory_pressure_monitor.dart';
+import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
+import 'package:simple_live_core/simple_live_core.dart';
+
+MpvLiveLatencyPlaybackRole resolveMultiRoomLiveLatencyRole({
+  required String roomKey,
+  required int roomIndex,
+  required String? focusedRoomKey,
+  required bool mainSubLayoutActive,
+}) {
+  if (focusedRoomKey != null) {
+    return roomKey == focusedRoomKey
+        ? MpvLiveLatencyPlaybackRole.multiRoomPrimaryVisible
+        : MpvLiveLatencyPlaybackRole.multiRoomSecondaryOrInactive;
+  }
+  if (mainSubLayoutActive && roomIndex == 0) {
+    return MpvLiveLatencyPlaybackRole.multiRoomPrimaryVisible;
+  }
+  return MpvLiveLatencyPlaybackRole.multiRoomSecondaryOrInactive;
+}
 
 class MultiRoomController extends GetxController with WidgetsBindingObserver {
   final List<MultiRoomItem> initialRooms;
@@ -67,6 +87,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     // 画面仍会被聚焦分支覆盖，看起来像“按钮没反应”。
     focusedRoomKey.value = null;
     mainSubLayout.value = !mainSubLayout.value;
+    _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
     _scheduleResumePlayers();
@@ -86,6 +107,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     _normalizeChatTarget(chatTargetKey, 0);
     mainSubLayout.value = true;
     focusedRoomKey.value = null;
+    _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
     _scheduleResumePlayers();
@@ -156,6 +178,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     _mainSubLayoutBeforeFocus = mainSubLayout.value;
     focusedRoomKey.value = key;
+    _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
     _scheduleResumePlayers();
@@ -169,6 +192,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (restoreMainSub != null) {
       mainSubLayout.value = restoreMainSub;
     }
+    _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
     _scheduleResumePlayers();
@@ -260,6 +284,12 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
       existing = Get.find<MultiRoomPlayerController>(tag: tag);
       existing.onActivateAudio = _scheduleResumePlayers;
+      unawaited(
+        existing.updateLiveLatencyParticipation(
+          role: _liveLatencyRoleFor(item),
+          appActive: _appActive,
+        ),
+      );
       return existing;
     }
     if (_closing || isClosed) {
@@ -275,6 +305,8 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         initialQualityIndex: _pendingQualities.remove(item.key),
         initialLineIndex: _pendingLines.remove(item.key),
         initialPaused: allPaused.value,
+        initialAppActive: _appActive,
+        initialLiveLatencyRole: _liveLatencyRoleFor(item),
         mutationQueue: _playerMutationQueue,
       ),
       tag: tag,
@@ -289,6 +321,28 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     playerController.onActivateAudio = _scheduleResumePlayers;
     return playerController;
+  }
+
+  MpvLiveLatencyPlaybackRole _liveLatencyRoleFor(MultiRoomItem item) {
+    return resolveMultiRoomLiveLatencyRole(
+      roomKey: item.key,
+      roomIndex: rooms.indexWhere((room) => room.key == item.key),
+      focusedRoomKey: focusedRoomKey.value,
+      mainSubLayoutActive: isMainSubLayoutActive,
+    );
+  }
+
+  void _syncLiveLatencyParticipation() {
+    for (final room in rooms) {
+      final controller = _existingPlayerFor(room);
+      if (controller == null) continue;
+      unawaited(
+        controller.updateLiveLatencyParticipation(
+          role: _liveLatencyRoleFor(room),
+          appActive: _appActive,
+        ),
+      );
+    }
   }
 
   void _onPlayerOpened() {
@@ -334,6 +388,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
       Get.delete<MultiRoomPlayerController>(tag: tag);
     }
+    _syncLiveLatencyParticipation();
     if (rooms.isEmpty) {
       SmartDialog.showToast("已关闭全部多开直播间");
       Get.back();
@@ -349,6 +404,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     final item = rooms.removeAt(oldIndex);
     rooms.insert(newIndex, item);
     _normalizeChatTarget(chatTargetKey, newIndex);
+    _syncLiveLatencyParticipation();
     _scheduleResumePlayers();
   }
 
@@ -493,11 +549,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         !_appActive ||
         _adaptiveEvaluationRunning ||
         isRefreshingAll.value ||
-        openingSingleRoom.value ||
-        !AppSettingsController.instance.multiRoomAdaptiveQuality.value ||
-        // 自动调节只在主次布局（有主画面保护概念）下生效；
-        // 普通布局所有格子等大，不自动降级，避免干扰用户观看。
-        !isMainSubLayoutActive) {
+        openingSingleRoom.value) {
       return;
     }
     _adaptiveEvaluationRunning = true;
@@ -512,16 +564,22 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         final room = roomSnapshot[i];
         final player = _existingPlayerFor(room);
         if (player == null) continue;
-        samples.add(
-          await player.sampleTelemetry(
-            sampledAt: now,
-            isPrimary: i == 0 && isMainSubLayoutActive,
-            isFocused: room.key == focusKey,
-            isChatTarget: room.key == chatKey,
-          ),
+        final sample = await player.sampleTelemetry(
+          sampledAt: now,
+          isPrimary: i == 0 && isMainSubLayoutActive,
+          isFocused: room.key == focusKey,
+          isChatTarget: room.key == chatKey,
         );
+        samples.add(sample);
+        _logLiveLatencyTelemetry(room, player, sample);
       }
       if (_closing || isClosed || !_appActive) return;
+      if (!AppSettingsController.instance.multiRoomAdaptiveQuality.value ||
+          // 自动调节只在主次布局（有主画面保护概念）下生效；
+          // 普通布局所有格子等大，不自动降级，避免干扰用户观看。
+          !isMainSubLayoutActive) {
+        return;
+      }
       final bandwidthBudgetMbps = PlatformUtils.isMobileApp ? 24.0 : 48.0;
       final decision = _adaptiveQuality.evaluate(
         now: now,
@@ -552,6 +610,32 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     } finally {
       _adaptiveEvaluationRunning = false;
     }
+  }
+
+  void _logLiveLatencyTelemetry(
+    MultiRoomItem room,
+    MultiRoomPlayerController player,
+    MultiRoomPlaybackTelemetry sample,
+  ) {
+    final urls = player.playUrls;
+    final lineIndex = player.lineIndex;
+    final protocol = lineIndex >= 0 && lineIndex < urls.length
+        ? classifyLiveStreamProtocol(urls[lineIndex])
+        : LiveStreamProtocol.unknown;
+    final cacheLabel = sample.demuxerCacheDurationSeconds == null
+        ? 'unsupported'
+        : '${sample.demuxerCacheDurationSeconds!.toStringAsFixed(3)}s';
+    final openedAt = sample.lastOpenedAt;
+    final elapsedLabel = openedAt == null
+        ? 'unknown'
+        : '${(sample.sampledAt.difference(openedAt).inMilliseconds / 1000).toStringAsFixed(1)}s';
+    Log.writeLog(
+      '[live-latency] mode=multi target=${room.site.id}/${room.roomId} '
+      'line=${lineIndex + 1}/${urls.length} protocol=${protocol.label} '
+      'elapsed=$elapsedLabel demuxerCache=$cacheLabel '
+      'buffering=${sample.isBuffering} bufferCount=${sample.bufferingCount} '
+      'bufferDuration=${(sample.bufferingDuration.inMilliseconds / 1000).toStringAsFixed(1)}s',
+    );
   }
 
   Future<void> _recoverDesiredPlayers(int generation) async {
@@ -593,6 +677,10 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       if (_closing || isClosed) return;
       _appActive = true;
+      _recordLiveLinkHealthEventForAll(
+        LiveLinkEventType.appForegrounded,
+      );
+      _syncLiveLatencyParticipation();
       _scheduleResumePlayers(delay: Duration.zero);
       if (_danmakuSuspendedForLifecycle) {
         _danmakuSuspendedForLifecycle = false;
@@ -605,12 +693,22 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       _appActive = false;
+      _recordLiveLinkHealthEventForAll(
+        LiveLinkEventType.appBackgrounded,
+      );
+      _syncLiveLatencyParticipation();
       _cancelPlaybackRecovery();
       // 后台挂起：断开所有格子弹幕长连接，省心跳与流量，前台恢复。
       if (!_danmakuSuspendedForLifecycle) {
         _danmakuSuspendedForLifecycle = true;
         _suspendDanmakuAll();
       }
+    }
+  }
+
+  void _recordLiveLinkHealthEventForAll(LiveLinkEventType type) {
+    for (final room in rooms) {
+      _existingPlayerFor(room)?.recordLiveLinkHealthEvent(type);
     }
   }
 
@@ -648,6 +746,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     rooms.add(room);
     _normalizeLayoutAfterRoomChange();
+    _syncLiveLatencyParticipation();
     SmartDialog.showToast("已加入 ${item.userName}");
     _scheduleResumePlayers();
   }
@@ -675,6 +774,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     rooms.add(room);
     _normalizeLayoutAfterRoomChange();
+    _syncLiveLatencyParticipation();
     SmartDialog.showToast("已加入 ${item.userName}");
     _scheduleResumePlayers();
   }

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 const mpvCacheSpeedProperty = 'cache-speed';
+const mpvDemuxerCacheDurationProperty = 'demuxer-cache-duration';
 const mpvVideoWidthProperty = 'video-params/w';
 const mpvVideoHeightProperty = 'video-params/h';
 const mpvEstimatedFpsProperty = 'estimated-vf-fps';
@@ -8,12 +9,14 @@ const mpvEstimatedFpsProperty = 'estimated-vf-fps';
 class MultiRoomNativeTelemetryProperties {
   const MultiRoomNativeTelemetryProperties({
     this.bandwidthBytesPerSecond,
+    this.demuxerCacheDurationSeconds,
     this.width,
     this.height,
     this.framesPerSecond,
   });
 
   final double? bandwidthBytesPerSecond;
+  final double? demuxerCacheDurationSeconds;
   final int? width;
   final int? height;
   final double? framesPerSecond;
@@ -28,6 +31,9 @@ MultiRoomNativeTelemetryProperties parseMpvTelemetryProperties(
   return MultiRoomNativeTelemetryProperties(
     bandwidthBytesPerSecond: _parseNonNegativeFiniteDouble(
       properties[mpvCacheSpeedProperty],
+    ),
+    demuxerCacheDurationSeconds: _parseNonNegativeFiniteDouble(
+      properties[mpvDemuxerCacheDurationProperty],
     ),
     width: _parsePositiveInt(properties[mpvVideoWidthProperty]),
     height: _parsePositiveInt(properties[mpvVideoHeightProperty]),
@@ -68,6 +74,7 @@ class MultiRoomPlaybackTelemetry {
     required this.qualityCount,
     this.userTargetQualityIndex,
     this.bandwidthBytesPerSecond,
+    this.demuxerCacheDurationSeconds,
     this.width,
     this.height,
     this.framesPerSecond,
@@ -88,6 +95,7 @@ class MultiRoomPlaybackTelemetry {
   final int qualityCount;
   final int? userTargetQualityIndex;
   final double? bandwidthBytesPerSecond;
+  final double? demuxerCacheDurationSeconds;
   final int? width;
   final int? height;
   final double? framesPerSecond;

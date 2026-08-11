@@ -81,13 +81,13 @@ class AccountPage extends GetView<AccountController> {
                 height: 36,
               ),
               title: const Text("快手直播"),
-              subtitle: Text(controller.getKuaishouCookieSummaryText()),
-              trailing: controller.canUseKuaishouWebLogin
-                  ? TextButton(
-                      onPressed: controller.kuaishouWebLogin,
-                      child: const Text("网页登录"),
-                    )
-                  : const Icon(Icons.chevron_right),
+              subtitle: Text(
+                controller.getKuaishouCookieSummaryText(),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
               onTap: controller.kuaishouTap,
             ),
           ),

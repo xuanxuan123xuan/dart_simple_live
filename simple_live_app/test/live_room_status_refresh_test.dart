@@ -86,4 +86,300 @@ void main() {
       expect(decision.liveStatus, isTrue);
     });
   });
+
+  group('room detail refresh commit guard', () {
+    test('does not publish an offline snapshot rejected by active playback',
+        () {
+      final decision = resolveRoomLiveRefresh(
+        currentState: LiveStatusState.live,
+        incomingState: LiveStatusState.offline,
+        consecutiveOfflineReports: 0,
+        currentLiveStatus: true,
+        playbackActive: true,
+      );
+
+      expect(
+        shouldCommitRoomDetailRefresh(
+          incomingState: LiveStatusState.offline,
+          decision: decision,
+        ),
+        isFalse,
+      );
+    });
+
+    test('publishes only a confirmed offline snapshot', () {
+      final decision = resolveRoomLiveRefresh(
+        currentState: LiveStatusState.live,
+        incomingState: LiveStatusState.offline,
+        consecutiveOfflineReports: 2,
+        currentLiveStatus: true,
+        playbackActive: false,
+      );
+
+      expect(
+        shouldCommitRoomDetailRefresh(
+          incomingState: LiveStatusState.offline,
+          decision: decision,
+        ),
+        isTrue,
+      );
+    });
+
+    test('never publishes an unknown snapshot', () {
+      const decision = RoomLiveRefreshDecision(
+        state: LiveStatusState.live,
+        consecutiveOfflineReports: 0,
+        liveStatus: true,
+      );
+
+      expect(
+        shouldCommitRoomDetailRefresh(
+          incomingState: LiveStatusState.unknown,
+          decision: decision,
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('Kuaishou room metadata retention', () {
+    test('keeps presentation fields while adopting fresh session data', () {
+      final oldData = <String, Object>{'play': 'old'};
+      final newData = <String, Object>{'play': 'new'};
+      final oldDanmaku = Object();
+      final newDanmaku = Object();
+      final merged = mergeKuaishouRoomDetailMetadata(
+        current: _roomDetail(
+          title: '原直播标题',
+          cover: 'https://example.com/old-cover.jpg',
+          userName: '原主播',
+          userAvatar: 'https://example.com/old-avatar.jpg',
+          online: 10,
+          data: oldData,
+          danmakuData: oldDanmaku,
+        ),
+        incoming: _roomDetail(
+          title: ' ',
+          cover: '',
+          userName: '',
+          userAvatar: '',
+          online: 42,
+          data: newData,
+          danmakuData: newDanmaku,
+        ),
+      );
+
+      expect(merged.title, '原直播标题');
+      expect(merged.cover, 'https://example.com/old-cover.jpg');
+      expect(merged.userName, '原主播');
+      expect(merged.userAvatar, 'https://example.com/old-avatar.jpg');
+      expect(merged.online, 42);
+      expect(merged.data, same(newData));
+      expect(merged.danmakuData, same(newDanmaku));
+    });
+
+    test('accepts fresh non-empty presentation fields', () {
+      final merged = mergeKuaishouRoomDetailMetadata(
+        current: _roomDetail(
+          title: '旧标题',
+          cover: 'old-cover',
+          userName: '旧主播',
+          userAvatar: 'old-avatar',
+        ),
+        incoming: _roomDetail(
+          title: '新标题',
+          cover: 'new-cover',
+          userName: '新主播',
+          userAvatar: 'new-avatar',
+        ),
+      );
+
+      expect(merged.title, '新标题');
+      expect(merged.cover, 'new-cover');
+      expect(merged.userName, '新主播');
+      expect(merged.userAvatar, 'new-avatar');
+    });
+  });
+
+  group('online refresh backoff', () {
+    test('normal unknown responses increment the backoff exactly once', () {
+      final firstFailure = resolveOnlineRefreshFailureCount(
+        incomingState: LiveStatusState.unknown,
+        currentFailures: 0,
+      );
+      final secondFailure = resolveOnlineRefreshFailureCount(
+        incomingState: LiveStatusState.unknown,
+        currentFailures: firstFailure,
+      );
+
+      expect(firstFailure, 1);
+      expect(secondFailure, 2);
+      expect(
+        resolveOnlineRefreshDelay(
+          LiveStatusState.unknown,
+          firstFailure,
+        ),
+        const Duration(seconds: 30),
+      );
+    });
+
+    test('live clears failures while offline preserves the existing count', () {
+      expect(
+        resolveOnlineRefreshFailureCount(
+          incomingState: LiveStatusState.live,
+          currentFailures: 5,
+        ),
+        0,
+      );
+      expect(
+        resolveOnlineRefreshFailureCount(
+          incomingState: LiveStatusState.offline,
+          currentFailures: 5,
+        ),
+        5,
+      );
+    });
+
+    test('live state resets to the 10s base interval', () {
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.live, 5),
+        const Duration(seconds: 10),
+      );
+    });
+
+    test('offline uses the low-frequency 45s interval', () {
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.offline, 0),
+        const Duration(seconds: 45),
+      );
+    });
+
+    test('unknown backoff grows exponentially and caps at 300s', () {
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 0),
+        const Duration(seconds: 10),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 1),
+        const Duration(seconds: 30),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 2),
+        const Duration(seconds: 60),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 3),
+        const Duration(seconds: 120),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 4),
+        const Duration(seconds: 240),
+      );
+      expect(
+        resolveOnlineRefreshDelay(LiveStatusState.unknown, 100),
+        const Duration(seconds: 300),
+      );
+    });
+  });
+
+  group('Kuaishou stable playback recheck', () {
+    test('jittered recheck remains within the 120-180 second boundary', () {
+      expect(
+        resolveKuaishouStableRefreshDelay(jitterSeconds: -999),
+        const Duration(seconds: 120),
+      );
+      expect(
+        resolveKuaishouStableRefreshDelay(jitterSeconds: 999),
+        const Duration(seconds: 180),
+      );
+      expect(
+        resolveKuaishouStableRefreshDelay(jitterSeconds: 0),
+        const Duration(seconds: 150),
+      );
+    });
+
+    test('buffering playback is not considered stable', () {
+      expect(
+        isLiveRoomPlaybackStable(
+          initialized: true,
+          playing: true,
+          buffering: true,
+          hasError: false,
+        ),
+        isFalse,
+      );
+      expect(
+        isLiveRoomPlaybackStable(
+          initialized: true,
+          playing: true,
+          buffering: false,
+          hasError: false,
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('Kuaishou recovery quality retention', () {
+    test('prefers the prior quality name before falling back to its index', () {
+      expect(
+        resolveKuaishouRecoveryQualityIndex(
+          qualities: const ['HD', 'FHD', 'SD'],
+          previousQualityName: 'FHD',
+          previousQualityIndex: 0,
+        ),
+        1,
+      );
+      expect(
+        resolveKuaishouRecoveryQualityIndex(
+          qualities: const ['FHD', 'HD'],
+          previousQualityName: 'missing',
+          previousQualityIndex: 99,
+        ),
+        1,
+      );
+    });
+
+    test('keeps a CDN line by signature after signed URL reordering', () {
+      expect(
+        resolveKuaishouRecoveryLineIndex(
+          urls: const [
+            'https://b.example.com/live.flv?token=new-b',
+            'https://a.example.com/live.flv?token=new-a',
+          ],
+          previousUrl: 'https://a.example.com/live.flv?token=old-a',
+          fallbackIndex: 0,
+        ),
+        1,
+      );
+    });
+  });
+}
+
+LiveRoomDetail _roomDetail({
+  String roomId = 'room-id',
+  String title = 'title',
+  String cover = 'cover',
+  String userName = 'anchor',
+  String userAvatar = 'avatar',
+  int online = 1,
+  bool status = true,
+  LiveStatusState liveStatusState = LiveStatusState.live,
+  Object? data,
+  Object? danmakuData,
+  String url = 'https://live.kuaishou.com/u/room-id',
+}) {
+  return LiveRoomDetail(
+    roomId: roomId,
+    title: title,
+    cover: cover,
+    userName: userName,
+    userAvatar: userAvatar,
+    online: online,
+    status: status,
+    liveStatusState: liveStatusState,
+    data: data,
+    danmakuData: danmakuData,
+    url: url,
+  );
 }

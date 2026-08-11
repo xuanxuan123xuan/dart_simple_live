@@ -1,3 +1,5 @@
+enum CoreErrorKind { network, http, response, search, cancelled, unknown }
+
 class CoreError extends Error {
   /// 错误码
   final int statusCode;
@@ -5,7 +7,15 @@ class CoreError extends Error {
   /// 错误信息
   final String message;
 
-  CoreError(this.message, {this.statusCode = 0});
+  final CoreErrorKind kind;
+  final Object? cause;
+
+  CoreError(
+    this.message, {
+    this.statusCode = 0,
+    this.kind = CoreErrorKind.unknown,
+    this.cause,
+  });
   @override
   String toString() {
     if (statusCode != 0) {
@@ -39,4 +49,16 @@ class CoreError extends Error {
         return "连接服务器失败，请稍后再试($statusCode)";
     }
   }
+}
+
+class CoreCancelledError extends CoreError {
+  CoreCancelledError({Object? cause})
+      : super(
+          "请求已取消",
+          kind: CoreErrorKind.cancelled,
+          cause: cause,
+        );
+
+  @override
+  String toString() => message;
 }

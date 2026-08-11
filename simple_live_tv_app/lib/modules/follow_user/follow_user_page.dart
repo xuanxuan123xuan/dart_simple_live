@@ -38,6 +38,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
 
   @override
   void dispose() {
+    FollowUserService.instance.onFollowPageExited();
     _scrollController.dispose();
     _pageFocusNode.dispose();
     for (final node in _focusNodes.values) {

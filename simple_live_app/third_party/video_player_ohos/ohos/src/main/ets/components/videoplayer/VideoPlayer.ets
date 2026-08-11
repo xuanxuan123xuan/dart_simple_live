@@ -31,10 +31,15 @@ const FORMAT_DASH: String = 'dash';
 const FORMAT_HLS: String = 'hls';
 const FORMAT_OTHER: String = 'other';
 
+const SOURCE_ASSIGNMENT_IDLE: string = 'idle';
+const SOURCE_ASSIGNMENT_ASSIGNING: string = 'assigning';
+const SOURCE_ASSIGNMENT_ASSIGNED: string = 'assigned';
+const SOURCE_ASSIGNMENT_FAILED: string = 'failed';
+const SOURCE_KIND_DIRECT_URL: string = 'directUrl';
+const SOURCE_KIND_MEDIA_SOURCE_WITH_HEADERS: string = 'mediaSourceWithHeaders';
+const SOURCE_KIND_RAW_FILE: string = 'rawFile';
 const OPERATE_ERROR: number = 801;
 const AVPLAYER_STATE_ERROR: number = 5400102;
-const AVPLAYER_IO_ERROR: number = 5400103;
-const MAX_ERROR_COUNT: number = 3;
 
 const TAG = 'VideoPlayer'
 export class VideoPlayer {
@@ -55,17 +60,24 @@ export class VideoPlayer {
   private eventSink: QueuingEventSink | null = null;
   private interruptMode: audio.InterruptMode = audio.InterruptMode.INDEPENDENT_MODE;
   private fd: number = -1;
-  private errorCount: number = 0;
   private headers: Record<string, string> | null;
+  private playerGeneration: number = 0;
+  private sourceAssignmentState: string = SOURCE_ASSIGNMENT_IDLE;
+  private sourceKind: string = SOURCE_KIND_RAW_FILE;
+  private prepared: boolean = false;
+  private firstFrameRendered: boolean = false;
+  private disposed: boolean = false;
 
   constructor(playerModel: PlayerModel, textureEntry: SurfaceTextureEntry, rawFile: resourceManager.RawFileDescriptor | null, url: string | null, eventChannel: EventChannel, AudioFocus: Boolean, headers: Record<string, string> | null) {
     this.playerModel = playerModel;
     this.textureEntry = textureEntry;
+    this.playerGeneration = textureEntry.getTextureId();
     this.surfaceId = textureEntry.getSurfaceId().toString();
     this.rawFile = rawFile;
     this.url = url;
     this.eventChannel = eventChannel;
     this.headers = headers;
+    this.sourceKind = this.resolveSourceKind();
     if (AudioFocus == true) {
       this.interruptMode = audio.InterruptMode.SHARE_MODE;
       Log.i(TAG, "set interruptMode : " + this.interruptMode);
@@ -79,7 +91,13 @@ export class VideoPlayer {
   async createAVPlayer() {
     Log.i(TAG + ":" + this.textureEntry.getTextureId(), " createAVPlayer");
     if (this.avPlayer == null) {
-      this.avPlayer = await media.createAVPlayer();
+      const creationGeneration = this.playerGeneration;
+      const createdPlayer = await media.createAVPlayer();
+      if (this.disposed || creationGeneration !== this.playerGeneration || this.avPlayer != null) {
+        createdPlayer.release();
+        return;
+      }
+      this.avPlayer = createdPlayer;
     }
     if (this.avPlayer != null) {
       this.eventSink = new QueuingEventSink();
@@ -90,20 +108,70 @@ export class VideoPlayer {
 
       await this.bindState();
 
-      /// 同时使用avPlayer.url和avPlayer.setMediaSource会导致直播视频无法正确播放
-      if (!this.headers) {
-        if (this.url) {
-          this.avPlayer.url = this.getIUri();
-        } else {
-          this.avPlayer.fdSrc = this.rawFile!;
-        }
+      await this.assignMediaSourceIfNeeded(this.playerGeneration);
+    }
+  }
+
+  private hasRequestHeaders(): boolean {
+    return this.headers != null && Object.keys(this.headers).length > 0;
+  }
+
+  private resolveSourceKind(): string {
+    if (this.url == null) {
+      return SOURCE_KIND_RAW_FILE;
+    }
+    return this.hasRequestHeaders() ?
+      SOURCE_KIND_MEDIA_SOURCE_WITH_HEADERS : SOURCE_KIND_DIRECT_URL;
+  }
+
+  private isCurrentGeneration(generation: number, player: media.AVPlayer): boolean {
+    return !this.disposed && generation === this.playerGeneration && this.avPlayer === player;
+  }
+
+  private beginNewSourceGeneration(): void {
+    this.playerGeneration += 1;
+    this.sourceAssignmentState = SOURCE_ASSIGNMENT_IDLE;
+    this.sourceKind = this.resolveSourceKind();
+    this.prepared = false;
+    this.firstFrameRendered = false;
+  }
+
+  private async assignMediaSourceIfNeeded(generation: number): Promise<void> {
+    const player = this.avPlayer;
+    if (player == null || !this.isCurrentGeneration(generation, player)) {
+      return;
+    }
+    if (this.sourceAssignmentState === SOURCE_ASSIGNMENT_ASSIGNING ||
+      this.sourceAssignmentState === SOURCE_ASSIGNMENT_ASSIGNED) {
+      return;
+    }
+    this.sourceAssignmentState = SOURCE_ASSIGNMENT_ASSIGNING;
+    this.sourceKind = this.resolveSourceKind();
+    Log.i(TAG, `source assigning generation=${generation} kind=${this.sourceKind}`);
+    try {
+      if (this.url == null) {
+        player.fdSrc = this.rawFile!;
+      } else if (this.sourceKind === SOURCE_KIND_DIRECT_URL) {
+        player.url = this.getIUri();
       } else {
-        let mediaSource: media.MediaSource = media.createMediaSourceWithUrl(this.url, this.headers);
-        /// 网络直播视频必须设置之后才能正常缓存
+        let mediaSource: media.MediaSource = media.createMediaSourceWithUrl(
+          this.getIUri(), this.headers ?? {});
         let playbackStrategy: media.PlaybackStrategy = {};
-        // 设置媒体来源和播放策略
-        await this.avPlayer.setMediaSource(mediaSource, playbackStrategy);
+        await player.setMediaSource(mediaSource, playbackStrategy);
       }
+      if (!this.isCurrentGeneration(generation, player)) {
+        return;
+      }
+      this.sourceAssignmentState = SOURCE_ASSIGNMENT_ASSIGNED;
+      Log.i(TAG, `source assigned generation=${generation} kind=${this.sourceKind}`);
+    } catch (error) {
+      if (!this.isCurrentGeneration(generation, player)) {
+        return;
+      }
+      this.sourceAssignmentState = SOURCE_ASSIGNMENT_FAILED;
+      const nativeError = error as BusinessError;
+      Log.e(TAG, `source failed generation=${generation} kind=${this.sourceKind} code=${nativeError.code}`);
+      this.sendError(nativeError);
     }
   }
 
@@ -116,29 +184,26 @@ export class VideoPlayer {
       Log.e(TAG, "bindState, avPlayer is null");
       return;
     }
+    const boundPlayer = this.avPlayer;
     this.avPlayer.on(Events.STATE_CHANGE, async (state: media.AVPlayerState) => {
       let avplayerStatus: string = state;
       Log.i(TAG, "bindState, on avPlayer, step1");
-      if (this.avPlayer == null) {
-        Log.e(TAG, "bindState, avPlayer is null, step2");
+      if (this.disposed || this.avPlayer == null || this.avPlayer !== boundPlayer) {
+        Log.i(TAG, "ignore stale avPlayer state callback");
         return;
       }
       Log.i(TAG, "bindState, on STATE_CHANGE, avplayerStatus=" + avplayerStatus);
       switch (avplayerStatus) {
         case AvplayerStatus.IDLE:
           this.resetProgress();
-          if (this.url) {
-            this.avPlayer.url = this.getIUri();
-          } else {
-            this.avPlayer.fdSrc = this.rawFile!;
-          }
+          await this.assignMediaSourceIfNeeded(this.playerGeneration);
           break;
         case AvplayerStatus.INITIALIZED:
           this.avPlayer.surfaceId = this.surfaceId;
           this.avPlayer.prepare();
           break;
         case AvplayerStatus.PREPARED:
-          this.errorCount = 0;
+          this.prepared = true;
           this.avPlayer.videoScaleType = 0;
           this.avPlayer.audioInterruptMode = this.interruptMode;
           this.setVideoSize();
@@ -148,6 +213,7 @@ export class VideoPlayer {
         case AvplayerStatus.PLAYING:
           this.status = CommonConstants.STATUS_START;
           this.watchStatus();
+          Log.i(TAG, `playing generation=${this.playerGeneration}`);
           break;
         case AvplayerStatus.PAUSED:
           this.status = CommonConstants.STATUS_PAUSE;
@@ -193,38 +259,45 @@ export class VideoPlayer {
       this.sendBufferingUpdate(infoType, value);
     });
 
+    this.avPlayer.on(Events.START_RENDER_FRAME, () => {
+      if (this.disposed || this.avPlayer !== boundPlayer) {
+        return;
+      }
+      this.firstFrameRendered = true;
+      Log.i(TAG, `first frame generation=${this.playerGeneration}`);
+    });
+
     this.avPlayer.on(Events.ERROR, (err: BusinessError) => {
-      // 播放直播视频时，设置 loop 会报错，而 loop 一定会设置(video_player.dart 中初始化之后会 _applyLooping)，所以屏蔽掉该报错
-      // message: Unsupport Capability: The stream is live stream, not support loop
-      /// Ignore harmless state-operation races, but never swallow an I/O
-      /// failure. Suppressing 5400103 leaves AVPlayer permanently buffering
-      /// and prevents Flutter from refreshing an expired live URL.
-      if(err.code == OPERATE_ERROR || err.code == AVPLAYER_STATE_ERROR) {
-        Log.e(TAG, "AvPlayer Avoid Error Reporting: " + JSON.stringify(err));
+      if (this.disposed || this.avPlayer !== boundPlayer) {
         return;
       }
-      if (err.code == AVPLAYER_IO_ERROR) {
-        Log.e(TAG, "AvPlayer I/O Error: " + JSON.stringify(err));
-        this.sendError(err);
+      // video_player applies looping after initialization. HarmonyOS reports
+      // that unsupported operation for live streams as 801, and can also emit
+      // a transient state error while applying adjacent controller settings.
+      // Once this source is prepared these errors do not invalidate playback;
+      // the progress watchdog remains responsible for detecting a real stall.
+      if (this.shouldIgnorePreparedPlaybackError(err)) {
+        Log.w(TAG, `ignore non-fatal native error code=${err.code} state=${this.avPlayer?.state ?? 'released'} generation=${this.playerGeneration}`);
         return;
       }
-      Log.e(TAG, "avPlayer Events.ERROR: " + JSON.stringify(err));
-      this.errorCount++;
-      if (this.errorCount > MAX_ERROR_COUNT) {
-        Log.e(TAG, "avPlayer consecutive errors exceed limit, stop retrying");
-        this.avPlayer?.release();
-        this.sendError(err);
-        return;
-      }
-      this.avPlayer?.reset();
+      Log.e(TAG, `native error code=${err.code} state=${this.avPlayer?.state ?? 'released'} generation=${this.playerGeneration}`);
       this.sendError(err);
     })
+  }
+
+  private shouldIgnorePreparedPlaybackError(error: BusinessError): boolean {
+    if (!this.prepared || this.sourceAssignmentState !== SOURCE_ASSIGNMENT_ASSIGNED) {
+      return false;
+    }
+    return error.code === OPERATE_ERROR || error.code === AVPLAYER_STATE_ERROR;
   }
 
   /**
    * Release the video player.
    */
   release() {
+    this.disposed = true;
+    this.playerGeneration += 1;
     if (this.avPlayer !== null) {
       this.avPlayer.release();
       this.eventChannel?.setStreamHandler(null);
@@ -287,7 +360,7 @@ export class VideoPlayer {
   }
 
   setLooping(isLooping: boolean) {
-    if (this.avPlayer != null) {
+    if (this.avPlayer != null && (isLooping || this.avPlayer.duration > 0)) {
       this.avPlayer.loop = isLooping;
     }
     this.loop = isLooping;
@@ -340,6 +413,7 @@ export class VideoPlayer {
     } else {
       this.rawFile = globalVideoList[this.index].src;
     }
+    this.beginNewSourceGeneration();
     this.avPlayer.reset();
   }
 
@@ -367,6 +441,7 @@ export class VideoPlayer {
     } else {
       this.rawFile = globalVideoList[this.index].src;
     }
+    this.beginNewSourceGeneration();
     this.avPlayer.reset();
   }
 
@@ -635,8 +710,15 @@ export class VideoPlayer {
     this.eventSink?.success(event);
   }
 
-  sendError(error: Object): void {
-    this.eventSink?.error("videoError", "video player had error！", error);
+  sendError(error: BusinessError): void {
+    let details: HashMap<string, Object> = new HashMap<string, Object>();
+    details.set("nativeErrorCode", error.code);
+    details.set("nativeState", this.avPlayer?.state ?? AvplayerStatus.RELEASED);
+    details.set("sourceAssignmentState", this.sourceAssignmentState);
+    details.set("sourceKind", this.sourceKind);
+    details.set("prepared", this.prepared);
+    details.set("firstFrameRendered", this.firstFrameRendered);
+    this.eventSink?.error("videoError", `HarmonyOS AVPlayer error ${error.code}`, details);
   }
 
   getIUri(): string {

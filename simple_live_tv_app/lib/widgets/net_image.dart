@@ -20,6 +20,18 @@ class NetImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (picUrl.isEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(borderRadius),
+        child: Image.asset(
+          'assets/images/logo.png',
+          fit: fit,
+          height: height,
+          width: width,
+          cacheWidth: cacheWidth,
+        ),
+      );
+    }
     var pic = picUrl;
     if (pic.startsWith("//")) {
       pic = 'https:$pic';

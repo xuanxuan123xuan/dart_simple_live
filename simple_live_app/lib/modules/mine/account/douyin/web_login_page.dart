@@ -56,9 +56,18 @@ class DouyinWebLoginPage extends GetView<DouyinWebLoginController> {
                 leading: const Icon(Icons.error_outline),
                 title: const Text('登录网页加载失败'),
                 subtitle: Text(error),
-                trailing: TextButton(
-                  onPressed: controller.reload,
-                  child: const Text('重试'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      onPressed: controller.fallbackToCookieLogin,
+                      child: const Text('改用 Cookie 登录'),
+                    ),
+                    TextButton(
+                      onPressed: controller.reload,
+                      child: const Text('重试'),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -74,9 +83,9 @@ class DouyinWebLoginPage extends GetView<DouyinWebLoginController> {
                     onLoadStop: controller.onLoadStop,
                     onProgressChanged: controller.onProgressChanged,
                     onReceivedError: controller.onReceivedError,
+                    onReceivedHttpError: controller.onReceivedHttpError,
                     initialSettings: InAppWebViewSettings(
                       userAgent: controller.userAgent,
-                      useShouldOverrideUrlLoading: true,
                       javaScriptEnabled: true,
                       domStorageEnabled: true,
                       sharedCookiesEnabled: true,

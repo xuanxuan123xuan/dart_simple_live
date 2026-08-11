@@ -8,6 +8,17 @@ void main() {
     expect(() => KuaishouWebLoginController(), returnsNormally);
   });
 
+  test('only the backup account requires a fresh browser session', () {
+    expect(
+      requiresFreshKuaishouLoginSession(KuaishouAccountSlot.primary),
+      isFalse,
+    );
+    expect(
+      requiresFreshKuaishouLoginSession(KuaishouAccountSlot.secondary),
+      isTrue,
+    );
+  });
+
   group('hasKuaishouAuthenticatedSession', () {
     test('does not treat the anonymous kwfv1 cookie as a login', () {
       expect(

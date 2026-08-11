@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:get/get.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
@@ -9,11 +11,25 @@ class CategoryController extends BasePageController<AppLiveCategory> {
   var siteId = Constant.kBiliBili.obs;
   var site = Sites.allSites[Constant.kBiliBili]!;
   int _siteSwitchGeneration = 0;
+  bool _hasLoadedOnce = false;
+  StreamSubscription<List<LiveCategory>>? _kuaishouUpdates;
 
   @override
   void onInit() {
+    _listenToKuaishouUpdates();
     refreshData();
     super.onInit();
+  }
+
+  void _listenToKuaishouUpdates() {
+    _kuaishouUpdates?.cancel();
+    final liveSite = site.liveSite;
+    if (liveSite is! KuaishouSite) return;
+    _kuaishouUpdates = liveSite.categoryUpdates.listen((categories) {
+      list.assignAll(
+        categories.map((item) => AppLiveCategory.fromLiveCategory(item, site)),
+      );
+    });
   }
 
   Future<void> setSite(String id) async {
@@ -38,6 +54,7 @@ class CategoryController extends BasePageController<AppLiveCategory> {
 
       site = nextSite;
       siteId.value = id;
+      _listenToKuaishouUpdates();
       currentPage = 2;
       canLoadMore.value = false;
       pageEmpty.value = categories.isEmpty;
@@ -61,10 +78,36 @@ class CategoryController extends BasePageController<AppLiveCategory> {
   @override
   Future<List<AppLiveCategory>> getData(int page, int pageSize) async {
     var result = await site.liveSite.getCategores();
-
+    _hasLoadedOnce = true;
     return result
         .map((e) => AppLiveCategory.fromLiveCategory(e, site))
         .toList();
+  }
+
+  @override
+  Future refreshData() async {
+    if (!_hasLoadedOnce || site.liveSite is! KuaishouSite) {
+      return super.refreshData();
+    }
+    if (!tryBeginRefresh()) return;
+    try {
+      loadding.value = true;
+      final result = await (site.liveSite as KuaishouSite).refreshCategories();
+      list.assignAll(
+        result.map((item) => AppLiveCategory.fromLiveCategory(item, site)),
+      );
+    } catch (error) {
+      handleError(error, showPageError: list.isEmpty);
+    } finally {
+      loadding.value = false;
+      pageLoadding.value = false;
+    }
+  }
+
+  @override
+  void onClose() {
+    _kuaishouUpdates?.cancel();
+    super.onClose();
   }
 }
 
