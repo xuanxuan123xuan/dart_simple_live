@@ -241,6 +241,7 @@
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
 				A261E453836422CA4D990339 /* [CP] Embed Pods Frameworks */,
+				5349474E5348455250410001 /* Sign SherpaOnnxC.framework */,
 			);
 			buildRules = (
 			);
@@ -419,6 +420,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		5349474E5348455250410001 /* Sign SherpaOnnxC.framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Sign SherpaOnnxC.framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "framework=\"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/SherpaOnnxC.framework\"\nif [ ! -d \"$framework\" ]; then\n  echo \"warning: SherpaOnnxC.framework was not embedded; skipping ad-hoc signing\"\n  exit 0\nfi\nidentity=\"${EXPANDED_CODE_SIGN_IDENTITY:--}\"\necho \"Signing $framework with identity $identity\"\nif [ \"$identity\" = \"-\" ]; then\n  /usr/bin/codesign --force --deep --sign - --timestamp=none \"$framework\"\nelse\n  /usr/bin/codesign --force --deep --sign \"$identity\" \"$framework\"\nfi\n/usr/bin/codesign --verify --deep --strict --verbose=2 \"$framework\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
