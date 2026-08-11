@@ -45,7 +45,7 @@ Simple Live 会一直坚持**免费、开源、不向用户收费**。目前项�
 
 | 版本 | 源 URL |
 |---|---|
-| **稳定版（推荐）** | `https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/ipa-source/apps-stable.json` |
+| **稳定版（推荐）** | `https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/ipa-stable/apps.json` |
 | dev 测试版 | `https://raw.githubusercontent.com/xuanxuan123xuan/dart_simple_live/ipa-source/apps.json` |
 
 用法：**LiveContainer（或 AltStore/SideStore）→ 源 → 添加源**，粘贴 URL 即可。构建发布后源内点更新拿到最新 IPA。

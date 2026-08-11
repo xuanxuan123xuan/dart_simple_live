@@ -6,11 +6,15 @@ version="${2:-}"
 
 case "$channel" in
   dev)
+    source_branch="ipa-source"
+    source_template="apps.json"
     source_file="apps.json"
     ios_tag="ios-dev"
     ;;
   stable)
-    source_file="apps-stable.json"
+    source_branch="ipa-stable"
+    source_template="apps-stable.json"
+    source_file="apps.json"
     ios_tag="ios-stable"
     ;;
   *)
@@ -24,8 +28,7 @@ if [[ -z "$version" ]]; then
   exit 2
 fi
 
-source_branch="ipa-source"
-source_worktree="${RUNNER_TEMP:?}/ipa-source-worktree"
+source_worktree="${RUNNER_TEMP:?}/${source_branch}-worktree"
 template_dir="${GITHUB_WORKSPACE:?}/ipa-source"
 repository="${GITHUB_REPOSITORY:?}"
 
@@ -46,24 +49,25 @@ else
   git -C "$source_worktree" rm -rf . >/dev/null 2>&1 || true
 fi
 
-for template in apps.json apps-stable.json icon.png; do
-  if [[ -f "$template_dir/$template" && ! -f "$source_worktree/$template" ]]; then
-    cp "$template_dir/$template" "$source_worktree/$template"
-  fi
-done
+if [[ ! -f "$source_worktree/$source_file" ]]; then
+  cp "$template_dir/$source_template" "$source_worktree/$source_file"
+fi
+if [[ ! -f "$source_worktree/icon.png" ]]; then
+  cp "$template_dir/icon.png" "$source_worktree/icon.png"
+fi
 
 if [[ ! -f "$source_worktree/$source_file" ]]; then
-  echo "Missing IPA source template: ipa-source/$source_file" >&2
+  echo "Missing IPA source file: $source_branch/$source_file" >&2
   exit 1
 fi
 
-node - "$source_worktree/$source_file" "$version" "$repository" "$source_file" "$ios_tag" <<'JS'
+node - "$source_worktree/$source_file" "$version" "$repository" "$source_branch" "$source_file" "$ios_tag" <<'JS'
 const fs = require('fs');
 
-const [path, version, repository, sourceFile, iosTag] = process.argv.slice(2);
+const [path, version, repository, sourceBranch, sourceFile, iosTag] = process.argv.slice(2);
 const data = JSON.parse(fs.readFileSync(path, 'utf8'));
 data.sourceURL =
-  `https://raw.githubusercontent.com/${repository}/ipa-source/${sourceFile}`;
+  `https://raw.githubusercontent.com/${repository}/${sourceBranch}/${sourceFile}`;
 
 const app = data.apps[0];
 app.version = version;
@@ -71,7 +75,7 @@ app.versionDate = new Date().toISOString().slice(0, 10);
 app.downloadURL =
   `https://github.com/${repository}/releases/download/${iosTag}/simple-live.ipa`;
 app.iconURL =
-  `https://raw.githubusercontent.com/${repository}/ipa-source/icon.png`;
+  `https://raw.githubusercontent.com/${repository}/${sourceBranch}/icon.png`;
 
 fs.writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
 JS
@@ -85,8 +89,7 @@ git -C "$source_worktree" \
     exit 0
   }
 
-# dev and stable releases can finish at nearly the same time. Rebase and retry
-# so updates to the two independent JSON files are both retained.
+# 同一通道的两个发布可能同时结束；rebase 后重试，避免后完成者推送失败。
 for attempt in 1 2 3; do
   if git -C "$source_worktree" push origin "HEAD:refs/heads/$source_branch"; then
     echo "IPA source updated: $source_branch/$source_file -> $version"

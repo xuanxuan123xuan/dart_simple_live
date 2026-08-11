@@ -2,14 +2,6 @@ name: 构建HarmonyOS HAP
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - stable
-    paths:
-      - "simple_live_app/**"
-      - "simple_live_core/**"
-      - "third_party/**"
-      - ".github/workflows/build_ohos_hap.yml"
 
 concurrency:
   group: ohos-hap-${{ github.ref }}

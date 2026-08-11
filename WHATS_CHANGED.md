@@ -24,6 +24,6 @@
 
 ### 鸿蒙与发布流程
 - 改进 HarmonyOS 播放状态适配、画中画、屏幕方向和显示控制
-- IPA 源统一由 `ipa-source` 分支维护，稳定版与 dev 测试版分别使用 `ios-stable` / `ios-dev` 标签
+- 稳定版与 dev 测试版 IPA 源分别由 `ipa-stable` / `ipa-source` 分支维护，并使用 `ios-stable` / `ios-dev` 标签
 - 修复 Release workflow 回写源码分支的问题，构建过程不再让 GitHub 虚拟机更新 `dev` 或 `stable`
 - 更新五大直播平台图标，并在 README 增加反馈群、项目赞助方式和后续更新计划

@@ -816,7 +816,7 @@ jobs:
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    # 仅最终发布 job 可创建 Release、更新固定 tag 和 ipa-source。
+    # 仅最终发布 job 可创建 Release、更新固定 tag 和独立 IPA 源分支。
     # prepare 与各平台构建 job 保持 contents: read，不能回写源码分支。
     permissions:
       contents: write
@@ -982,14 +982,16 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          # 源码分支只决定发布通道；源 JSON 统一写入独立 ipa-source 分支。
+          # dev 与 stable 分别写入 ipa-source / ipa-stable，互不覆盖。
           if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
             CHANNEL="dev"
+            SOURCE_BRANCH="ipa-source"
             SOURCE_FILE="apps.json"
             IOS_TAG="ios-dev"
           else
             CHANNEL="stable"
-            SOURCE_FILE="apps-stable.json"
+            SOURCE_BRANCH="ipa-stable"
+            SOURCE_FILE="apps.json"
             IOS_TAG="ios-stable"
           fi
 
@@ -1007,4 +1009,4 @@ jobs:
           fi
           bash "$GITHUB_WORKSPACE/.github/scripts/update_ipa_source.sh" \
             "$CHANNEL" "$VERSION"
-          echo "iOS 源已更新：ipa-source/$SOURCE_FILE / $IOS_TAG / $VERSION"
+          echo "iOS 源已更新：$SOURCE_BRANCH/$SOURCE_FILE / $IOS_TAG / $VERSION"
