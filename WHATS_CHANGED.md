@@ -2,24 +2,28 @@
 
 > 每次版本更新的变更记录。发布 Release 时该文件内容会附带到简介的 "What's Changed" 部分。
 
-## v1.13.0 (2026-08-03)
+## v1.13.2 (2026-08-11)
 
-### 弹窗稳定性（iOS / LiveContainer）
-- 修复所有弹窗"打开后自动关闭"：根因是 LiveContainer / iOS 26 触摸事件重复投递，第二次触摸命中遮罩触发关闭
-- 统一防护：右侧弹窗（showRightDialog）、底部弹窗（showBottomSheet / showModalBottomSheetSafe）、居中弹窗（showDialogSafe）、下拉菜单（PopupMenuButton → showRightDialog）全部加 1s 遮罩防穿透窗口
-- 可取消 Timer 根治跨测试 flaky
+### 快手直播稳定性
+- 新增主账号、备用账号双 Cookie 管理与匿名兜底；账号请求相互隔离，失败时按策略恢复，不因普通限流误判账号失效
+- 加入进程级请求协调、同房请求合并、短缓存、优先级队列和全局冷却，减少多开、关注刷新与直播间复核之间的请求竞争
+- 识别 HTTP 200 中的“请求过快”限流页，按服务端限流处理；限流期间不切换账号、不暂停 Cookie 槽位
+- 修复错误快照把直播误判为下播的问题；发生限流或信息稀疏时保留主播头像、ID、标题、封面和现有播放会话
+- 改进播放卡顿、回退和地址恢复逻辑，收敛弹幕重连与后台轮询
 
-### 状态栏（iOS 26）
-- 排查并定位：Flutter 3.22 引擎未适配 iOS 26 scene-based 状态栏管理，`SystemChrome` 隐藏失效
-- 原生强制隐藏通道（simple_live/status_bar）+ 周期重检（最长 3s）+ 周期重试（5 次）对抗系统恢复
-- LiveContainer 下系统状态栏被容器接管，增加顶部黑条视觉兜底
+### 播放延迟与网络诊断
+- 加入协议感知缓存、mpv 追帧、自动选线、线路记忆与播放遥测，兼顾低延迟和弱网稳定性
+- 增加直播链路健康采样、缓冲边沿计数、恢复信号和真实播放端点诊断，网络波动时按问题层级自动恢复
+- 多开同屏接入共享链路健康与自适应画质策略，降低多路播放时的卡顿和资源占用
+- 修复切换房间或平台后音量丢失，并让全屏方向默认跟随视频方向
 
-### Flutter 升级（dev 分支）
-- 全平台 Flutter 3.22 → 3.41.x：intl 0.19.0 → 0.20.2、onPopInvoked → onPopInvokedWithResult
-- 鸿蒙可同步升级（[flutter_flutter_ohos](https://github.com/xuanxuan123xuan/flutter_flutter_ohos) 镜像 oh-3.41.9-release 分支）
-- workflow 版本校验、VS/Xcode 注释同步更新
+### 搜索与账号体验
+- 新增虎牙、斗鱼、哔哩哔哩、抖音、快手五平台聚合搜索，结果按平台分区展示，单站页保留完整分页
+- 完善搜索取消、错误提示、分页来源与并发竞态处理，并同步 TV 端 Core 治理
+- 改进抖音 Cookie 鉴权、网页登录兜底与账号信息展示
 
-### 构建与发布
-- AltStore / LiveContainer 双 IPA 源（稳定版 + dev 测试版），README 展示
-- Release 结构优化：SHA-256 校验值进简介（不再作为 asset）、Android 主 app 不再发布 universal APK 与 AAB、简介精简
-- iOS workflow 发布固定 tag `ios-dev` / `ios-stable` 供源使用
+### 鸿蒙与发布流程
+- 改进 HarmonyOS 播放状态适配、画中画、屏幕方向和显示控制
+- IPA 源统一由 `ipa-source` 分支维护，稳定版与 dev 测试版分别使用 `ios-stable` / `ios-dev` 标签
+- 修复 Release workflow 回写源码分支的问题，构建过程不再让 GitHub 虚拟机更新 `dev` 或 `stable`
+- 更新五大直播平台图标，并在 README 增加反馈群、项目赞助方式和后续更新计划
