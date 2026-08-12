@@ -539,7 +539,8 @@ class KuaishouDanmaku extends LiveDanmaku {
 
   /// 把弹幕文本中的 `[表情名]` token 转成图文混合片段；
   /// 未命中 [kuaishouEmojiAssets] 的方括号文本保持原样，避免误伤普通文本。
-  static final RegExp _kuaishouEmojiPattern = RegExp(r'\[[^\[\]]{1,16}\]');
+  static final RegExp _kuaishouEmojiPattern = RegExp(r'\[[^\[\]\r\n]{1,64}\]');
+  static final Set<String> _reportedUnknownEmojiTokens = <String>{};
 
   List<LiveMessageSpan> _buildEmojiSpans(String content) {
     final spans = <LiveMessageSpan>[];
@@ -548,11 +549,15 @@ class KuaishouDanmaku extends LiveDanmaku {
       if (match.start > start) {
         spans.add(LiveMessageSpan.text(content.substring(start, match.start)));
       }
-      final url = resolveKuaishouEmoji(match.group(0)!);
+      final token = match.group(0)!;
+      final url = resolveKuaishouEmoji(token);
       if (url != null) {
-        spans.add(LiveMessageSpan.image(url));
+        spans.add(LiveMessageSpan.image(url, fallbackText: token));
       } else {
-        spans.add(LiveMessageSpan.text(match.group(0)!));
+        spans.add(LiveMessageSpan.text(token));
+        if (_reportedUnknownEmojiTokens.add(token)) {
+          CoreLog.d('快手未映射表情 token: $token');
+        }
       }
       start = match.end;
     }

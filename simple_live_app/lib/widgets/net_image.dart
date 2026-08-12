@@ -7,11 +7,15 @@ class NetImage extends StatelessWidget {
   final double? height;
   final BoxFit? fit;
   final double borderRadius;
+  final Widget? loadingWidget;
+  final Widget? errorWidget;
   const NetImage(this.picUrl,
       {this.width,
       this.height,
       this.fit = BoxFit.cover,
       this.borderRadius = 0,
+      this.loadingWidget,
+      this.errorWidget,
       Key? key})
       : super(key: key);
 
@@ -36,6 +40,9 @@ class NetImage extends StatelessWidget {
           fit: fit,
           height: height,
           width: width,
+          errorBuilder: errorWidget == null
+              ? null
+              : (context, error, stackTrace) => errorWidget!,
         ),
       );
     }
@@ -50,18 +57,20 @@ class NetImage extends StatelessWidget {
         borderRadius: BorderRadius.circular(borderRadius),
         loadStateChanged: (e) {
           if (e.extendedImageLoadState == LoadState.loading) {
-            return const Icon(
-              Icons.image,
-              color: Colors.grey,
-              size: 24,
-            );
+            return loadingWidget ??
+                const Icon(
+                  Icons.image,
+                  color: Colors.grey,
+                  size: 24,
+                );
           }
           if (e.extendedImageLoadState == LoadState.failed) {
-            return const Icon(
-              Icons.broken_image,
-              color: Colors.grey,
-              size: 24,
-            );
+            return errorWidget ??
+                const Icon(
+                  Icons.broken_image,
+                  color: Colors.grey,
+                  size: 24,
+                );
           }
           return null;
         },

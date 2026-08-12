@@ -1480,7 +1480,12 @@ class LiveRoomController extends PlayerController
       } else if (span.isImage) {
         final imageUrl = (span.imageUrl ?? "").trim();
         if (imageUrl.isNotEmpty) {
-          parts.add(DanmakuContentPart.image(imageUrl));
+          parts.add(
+            DanmakuContentPart.image(
+              imageUrl,
+              fallbackText: span.fallbackText,
+            ),
+          );
         }
       }
     }

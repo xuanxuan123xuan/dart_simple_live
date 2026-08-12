@@ -215,36 +215,18 @@ class _DanmakuScreenState extends State<DanmakuScreen>
       }
     } else {
       // 在这里提前创建 Paragraph 缓存防止卡顿
-      final contentSize = Utils.measureContent(
+      final layout = Utils.prepareContent(
         content,
         _option.fontSize,
         _option.fontWeight,
         _option.emojiScale,
         _option.fontFamily,
+        _option.showStroke,
       );
-      final danmakuWidth = contentSize.width;
-      final danmakuHeight = contentSize.height;
-
-      final ui.Paragraph paragraph = Utils.generateParagraph(
-        content,
-        danmakuWidth,
-        _option.fontSize,
-        _option.fontWeight,
-        _option.emojiScale,
-        _option.fontFamily,
-      );
-
-      ui.Paragraph? strokeParagraph;
-      if (_option.showStroke) {
-        strokeParagraph = Utils.generateStrokeParagraph(
-          content,
-          danmakuWidth,
-          _option.fontSize,
-          _option.fontWeight,
-          _option.emojiScale,
-          _option.fontFamily,
-        );
-      }
+      final danmakuWidth = layout.size.width;
+      final danmakuHeight = layout.size.height;
+      final paragraph = layout.paragraph;
+      final strokeParagraph = layout.strokeParagraph;
 
       int idx = 1;
       for (double yPosition in _trackYPositions) {
@@ -411,10 +393,11 @@ class _DanmakuScreenState extends State<DanmakuScreen>
       needRestart = true;
     }
 
-    if (option.fontSize != _option.fontSize) {
-      needClearParagraph = true;
-    }
-    if (option.emojiScale != _option.emojiScale) {
+    if (option.fontSize != _option.fontSize ||
+        option.fontWeight != _option.fontWeight ||
+        option.fontFamily != _option.fontFamily ||
+        option.emojiScale != _option.emojiScale ||
+        option.showStroke != _option.showStroke) {
       needClearParagraph = true;
     }
     if (option.duration != _option.duration) {
@@ -438,37 +421,33 @@ class _DanmakuScreenState extends State<DanmakuScreen>
     _option = option;
     _controller.option = _option;
 
-    /// 清理已经存在的 Paragraph 缓存
+    /// 用新样式重算活动弹幕的完整单行布局和碰撞宽高。
     if (needClearParagraph) {
-      for (DanmakuItem item in _scrollDanmakuItems) {
-        if (item.paragraph != null) {
-          item.paragraph = null;
-        }
-        if (item.strokeParagraph != null) {
-          item.strokeParagraph = null;
-        }
-      }
-      for (DanmakuItem item in _topDanmakuItems) {
-        if (item.paragraph != null) {
-          item.paragraph = null;
-        }
-        if (item.strokeParagraph != null) {
-          item.strokeParagraph = null;
-        }
-      }
-      for (DanmakuItem item in _bottomDanmakuItems) {
-        if (item.paragraph != null) {
-          item.paragraph = null;
-        }
-        if (item.strokeParagraph != null) {
-          item.strokeParagraph = null;
-        }
-      }
+      _rebuildLayouts(_scrollDanmakuItems);
+      _rebuildLayouts(_topDanmakuItems);
+      _rebuildLayouts(_bottomDanmakuItems);
     }
     if (needRestart) {
       _animationController.repeat();
     }
     setState(() {});
+  }
+
+  void _rebuildLayouts(List<DanmakuItem> items) {
+    for (final item in items) {
+      final layout = Utils.prepareContent(
+        item.content,
+        _option.fontSize,
+        _option.fontWeight,
+        _option.emojiScale,
+        _option.fontFamily,
+        _option.showStroke,
+      );
+      item.width = layout.size.width;
+      item.height = layout.size.height;
+      item.paragraph = layout.paragraph;
+      item.strokeParagraph = layout.strokeParagraph;
+    }
   }
 
   bool _isSameOption(DanmakuOption a, DanmakuOption b) {
@@ -603,15 +582,19 @@ class _DanmakuScreenState extends State<DanmakuScreen>
     _danmakuHeight = textPainter.height;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final trackHeight = _danmakuHeight * _option.lineHeight.clamp(1.0, 3.0);
+        final contentHeight = max(
+          _danmakuHeight,
+          _option.fontSize * _option.emojiScale,
+        );
+        final trackHeight = contentHeight * _option.lineHeight.clamp(1.0, 3.0);
 
         /// 计算视图宽度
         if (constraints.maxWidth != _viewWidth) {
           _viewWidth = constraints.maxWidth;
         }
 
-        _trackCount = (constraints.maxHeight * _option.area / trackHeight)
-            .floor();
+        _trackCount =
+            (constraints.maxHeight * _option.area / trackHeight).floor();
 
         /// 为字幕留出余量
         if (_option.safeArea && _option.area == 1.0) {
@@ -641,6 +624,7 @@ class _DanmakuScreenState extends State<DanmakuScreen>
                             _option.fontSize,
                             _option.fontWeight,
                             _option.fontFamily,
+                            _option.emojiScale,
                             _option.showStroke,
                             _danmakuHeight,
                             _running,
@@ -665,6 +649,7 @@ class _DanmakuScreenState extends State<DanmakuScreen>
                             _option.fontSize,
                             _option.fontWeight,
                             _option.fontFamily,
+                            _option.emojiScale,
                             _option.showStroke,
                             _danmakuHeight,
                             _running,

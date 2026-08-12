@@ -43,7 +43,8 @@ class ChatMessageItem extends StatelessWidget {
     final settings = AppSettingsController.instance;
     final emojiEnabled = settings.danmuRenderEmoji.value;
 
-    Widget content({required TextStyle userStyle, required TextStyle messageStyle}) {
+    Widget content(
+        {required TextStyle userStyle, required TextStyle messageStyle}) {
       return ChatMessageText(
         userName: message.userName,
         remark: remark,
@@ -74,11 +75,14 @@ class ChatMessageItem extends StatelessWidget {
                         bottomRight: Radius.circular(12),
                       ),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     child: content(
-                      userStyle: TextStyle(color: Colors.grey, fontSize: textSize),
+                      userStyle:
+                          TextStyle(color: Colors.grey, fontSize: textSize),
                       messageStyle: TextStyle(
-                        color: Get.isDarkMode ? Colors.white : AppColors.black333,
+                        color:
+                            Get.isDarkMode ? Colors.white : AppColors.black333,
                         fontSize: textSize,
                       ),
                     ),
@@ -99,7 +103,7 @@ class ChatMessageItem extends StatelessWidget {
 
 /// 用户名 + 备注 + 正文（含表情图片原位渲染），点击/长按用户交互。
 class ChatMessageText extends StatelessWidget {
-  static final RegExp _emojiTokenPattern = RegExp(r'\[[^\[\]]{1,16}\]');
+  static final RegExp _emojiTokenPattern = RegExp(r'\[[^\[\]\r\n]{1,64}\]');
 
   final String userName;
   final String? remark;
@@ -146,7 +150,10 @@ class ChatMessageText extends StatelessWidget {
             if (span.isText)
               TextSpan(text: span.text)
             else if (span.isImage)
-              _buildImageSpan(span.imageUrl!.trim()),
+              _buildImageSpan(
+                span.imageUrl!.trim(),
+                fallbackText: span.fallbackText,
+              ),
         if (richSpans.isEmpty) ...[
           ..._buildFallbackContentSpans(),
         ],
@@ -173,7 +180,12 @@ class ChatMessageText extends StatelessWidget {
       if (match.start > start) {
         result.add(TextSpan(text: message.substring(start, match.start)));
       }
-      result.add(_buildImageSpan(urls[imageIndex]));
+      result.add(
+        _buildImageSpan(
+          urls[imageIndex],
+          fallbackText: match.group(0),
+        ),
+      );
       imageIndex += 1;
       start = match.end;
     }
@@ -186,16 +198,38 @@ class ChatMessageText extends StatelessWidget {
     return result;
   }
 
-  WidgetSpan _buildImageSpan(String url) {
+  WidgetSpan _buildImageSpan(String url, {String? fallbackText}) {
+    final hasFallback = fallbackText?.isNotEmpty ?? false;
+    final imageSize = (messageStyle.fontSize ?? 14) * 1.35;
+    final fallbackPainter = TextPainter(
+      text: TextSpan(text: fallbackText ?? '', style: messageStyle),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final contentWidth =
+        fallbackPainter.width > imageSize ? fallbackPainter.width : imageSize;
+    final fallback = SizedBox(
+      width: contentWidth,
+      height: imageSize,
+      child: Center(
+        child: Text(
+          fallbackText ?? '',
+          style: messageStyle,
+          maxLines: 1,
+        ),
+      ),
+    );
     return WidgetSpan(
       alignment: PlaceholderAlignment.middle,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2),
         child: NetImage(
           url,
-          width: (messageStyle.fontSize ?? 14) * 1.35,
-          height: (messageStyle.fontSize ?? 14) * 1.35,
+          width: contentWidth,
+          height: imageSize,
           fit: BoxFit.contain,
+          loadingWidget: hasFallback ? fallback : null,
+          errorWidget: hasFallback ? fallback : null,
         ),
       ),
     );

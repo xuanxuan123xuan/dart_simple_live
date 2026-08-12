@@ -67,14 +67,21 @@ class LiveMessage {
 class LiveMessageSpan {
   final String? text;
   final String? imageUrl;
+  final String? fallbackText;
 
-  const LiveMessageSpan.text(this.text) : imageUrl = null;
-  const LiveMessageSpan.image(this.imageUrl) : text = null;
+  const LiveMessageSpan.text(this.text)
+      : imageUrl = null,
+        fallbackText = null;
+  const LiveMessageSpan.image(this.imageUrl, {this.fallbackText}) : text = null;
 
   bool get isImage => imageUrl != null && imageUrl!.trim().isNotEmpty;
   bool get isText => text != null && text!.isNotEmpty;
 
-  Map<String, dynamic> toJson() => {"text": text, "imageUrl": imageUrl};
+  Map<String, dynamic> toJson() => {
+        "text": text,
+        "imageUrl": imageUrl,
+        if (fallbackText != null) "fallbackText": fallbackText,
+      };
 }
 
 class LiveMessageColor {

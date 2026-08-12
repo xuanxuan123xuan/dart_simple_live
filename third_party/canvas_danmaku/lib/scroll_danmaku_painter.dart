@@ -10,6 +10,7 @@ class ScrollDanmakuPainter extends CustomPainter {
   final double fontSize;
   final int fontWeight;
   final String? fontFamily;
+  final double emojiScale;
   final bool showStroke;
   final double danmakuHeight;
   final bool running;
@@ -30,6 +31,7 @@ class ScrollDanmakuPainter extends CustomPainter {
     this.fontSize,
     this.fontWeight,
     this.fontFamily,
+    this.emojiScale,
     this.showStroke,
     this.danmakuHeight,
     this.running,
@@ -51,8 +53,7 @@ class ScrollDanmakuPainter extends CustomPainter {
         item.lastDrawTick ??= item.creationTime;
         final endPosition = -item.width;
         final distance = startPosition - endPosition;
-        item.xPosition =
-            item.xPosition +
+        item.xPosition = item.xPosition +
             (((item.lastDrawTick! - tick) / totalDuration) * distance);
 
         if (item.xPosition < -item.width || item.xPosition > size.width) {
@@ -61,20 +62,20 @@ class ScrollDanmakuPainter extends CustomPainter {
 
         item.paragraph ??= Utils.generateParagraph(
           item.content,
-          size.width,
+          item.width,
           fontSize,
           fontWeight,
-          1.25,
+          emojiScale,
           fontFamily,
         );
 
         if (showStroke) {
           item.strokeParagraph ??= Utils.generateStrokeParagraph(
             item.content,
-            size.width,
+            item.width,
             fontSize,
             fontWeight,
-            1.25,
+            emojiScale,
             fontFamily,
           );
           if (item.strokeParagraph != null) {
@@ -101,6 +102,10 @@ class ScrollDanmakuPainter extends CustomPainter {
           item.content,
           offset,
           emojiImageCache,
+          fontSize,
+          fontWeight,
+          emojiScale,
+          fontFamily,
         );
         item.lastDrawTick = tick;
       }
@@ -113,8 +118,7 @@ class ScrollDanmakuPainter extends CustomPainter {
         item.lastDrawTick ??= item.creationTime;
         final endPosition = -item.width;
         final distance = startPosition - endPosition;
-        item.xPosition =
-            item.xPosition +
+        item.xPosition = item.xPosition +
             (((item.lastDrawTick! - tick) / totalDuration) * distance);
 
         if (item.xPosition < -item.width || item.xPosition > size.width) {
@@ -123,20 +127,20 @@ class ScrollDanmakuPainter extends CustomPainter {
 
         item.paragraph ??= Utils.generateParagraph(
           item.content,
-          size.width,
+          item.width,
           fontSize,
           fontWeight,
-          1.25,
+          emojiScale,
           fontFamily,
         );
 
         if (showStroke) {
           item.strokeParagraph ??= Utils.generateStrokeParagraph(
             item.content,
-            size.width,
+            item.width,
             fontSize,
             fontWeight,
-            1.25,
+            emojiScale,
             fontFamily,
           );
           if (item.strokeParagraph != null) {
@@ -163,6 +167,10 @@ class ScrollDanmakuPainter extends CustomPainter {
           item.content,
           offset,
           emojiImageCache,
+          fontSize,
+          fontWeight,
+          emojiScale,
+          fontFamily,
         );
         item.lastDrawTick = tick;
       }

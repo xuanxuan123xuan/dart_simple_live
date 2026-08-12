@@ -1,9 +1,23 @@
+import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '/models/danmaku_content_item.dart';
 
+class PreparedDanmakuLayout {
+  final Size size;
+  final ui.Paragraph paragraph;
+  final ui.Paragraph? strokeParagraph;
+
+  const PreparedDanmakuLayout({
+    required this.size,
+    required this.paragraph,
+    this.strokeParagraph,
+  });
+}
+
 class Utils {
-  static final RegExp _emojiTokenPattern = RegExp(r'\[[^\[\]]{1,16}\]');
+  static final RegExp _emojiTokenPattern = RegExp(r'\[[^\[\]\r\n]{1,64}\]');
+  static const double _singleLineLayoutWidth = 1000000;
 
   static String normalizeImageUrl(String url) {
     final value = url.trim();
@@ -23,27 +37,46 @@ class Utils {
     double emojiScale = 1.25,
     String? fontFamily,
   ]) {
-    final parts = contentParts(content);
-    final text = parts
-        .where((part) => part.isText)
-        .map((part) => part.text ?? "")
-        .join();
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          fontSize: fontSize,
-          fontWeight: FontWeight.values[fontWeight],
-          fontFamily: fontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    final imageCount = imageUrlsForContent(content).length;
-    final imageSize = fontSize * emojiScale;
-    return Size(
-      textPainter.width + imageCount * imageSize,
-      textPainter.height > imageSize ? textPainter.height : imageSize,
+    return prepareContent(
+      content,
+      fontSize,
+      fontWeight,
+      emojiScale,
+      fontFamily,
+      false,
+    ).size;
+  }
+
+  static PreparedDanmakuLayout prepareContent(
+    DanmakuContentItem content,
+    double fontSize,
+    int fontWeight, [
+    double emojiScale = 1.25,
+    String? fontFamily,
+    bool showStroke = true,
+  ]) {
+    final paragraph = _buildParagraph(
+      content,
+      fontSize,
+      fontWeight,
+      emojiScale,
+      fontFamily,
+    );
+    final width = paragraph.longestLine.ceilToDouble();
+    final height = paragraph.height.ceilToDouble();
+    return PreparedDanmakuLayout(
+      size: Size(width, height),
+      paragraph: paragraph,
+      strokeParagraph: showStroke
+          ? _buildParagraph(
+              content,
+              fontSize,
+              fontWeight,
+              emojiScale,
+              fontFamily,
+              stroke: true,
+            )
+          : null,
     );
   }
 
@@ -55,18 +88,13 @@ class Utils {
     double emojiScale = 1.25,
     String? fontFamily,
   ]) {
-    final builder = ui.ParagraphBuilder(
-      ui.ParagraphStyle(
-        textAlign: TextAlign.left,
-        fontSize: fontSize,
-        fontWeight: FontWeight.values[fontWeight],
-        fontFamily: fontFamily,
-        textDirection: TextDirection.ltr,
-      ),
-    )..pushStyle(ui.TextStyle(color: content.color, fontFamily: fontFamily));
-    _appendContent(builder, content, fontSize, emojiScale);
-    return builder.build()
-      ..layout(ui.ParagraphConstraints(width: danmakuWidth));
+    return _buildParagraph(
+      content,
+      fontSize,
+      fontWeight,
+      emojiScale,
+      fontFamily,
+    );
   }
 
   static ui.Paragraph generateStrokeParagraph(
@@ -77,24 +105,54 @@ class Utils {
     double emojiScale = 1.25,
     String? fontFamily,
   ]) {
+    return _buildParagraph(
+      content,
+      fontSize,
+      fontWeight,
+      emojiScale,
+      fontFamily,
+      stroke: true,
+    );
+  }
+
+  static ui.Paragraph _buildParagraph(
+    DanmakuContentItem content,
+    double fontSize,
+    int fontWeight,
+    double emojiScale,
+    String? fontFamily, {
+    bool stroke = false,
+  }) {
     final Paint strokePaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
       ..color = Colors.black;
-
-    final ui.ParagraphBuilder strokeBuilder = ui.ParagraphBuilder(
+    final builder = ui.ParagraphBuilder(
       ui.ParagraphStyle(
         textAlign: TextAlign.left,
         fontSize: fontSize,
         fontWeight: FontWeight.values[fontWeight],
         fontFamily: fontFamily,
         textDirection: TextDirection.ltr,
+        maxLines: 1,
       ),
-    )..pushStyle(ui.TextStyle(foreground: strokePaint, fontFamily: fontFamily));
-    _appendContent(strokeBuilder, content, fontSize, emojiScale);
-
-    return strokeBuilder.build()
-      ..layout(ui.ParagraphConstraints(width: danmakuWidth));
+    )..pushStyle(
+        ui.TextStyle(
+          color: stroke ? null : content.color,
+          foreground: stroke ? strokePaint : null,
+          fontFamily: fontFamily,
+        ),
+      );
+    _appendContent(
+      builder,
+      content,
+      fontSize,
+      fontWeight,
+      emojiScale,
+      fontFamily,
+    );
+    return builder.build()
+      ..layout(const ui.ParagraphConstraints(width: _singleLineLayoutWidth));
   }
 
   static void drawEmojiImages(
@@ -103,24 +161,60 @@ class Utils {
     DanmakuContentItem content,
     Offset offset,
     Map<String, ui.Image> imageCache,
+    double fontSize,
+    int fontWeight,
+    double emojiScale,
+    String? fontFamily,
   ) {
-    final imageUrls = imageUrlsForContent(content);
-    if (imageUrls.isEmpty) {
+    final imageParts = contentParts(
+      content,
+    ).where((part) => part.isImage).toList(growable: false);
+    if (imageParts.isEmpty) {
       return;
     }
     final boxes = paragraph.getBoxesForPlaceholders();
     final paint = Paint()..filterQuality = FilterQuality.medium;
-    for (var i = 0; i < imageUrls.length && i < boxes.length; i++) {
-      final image = imageCache[imageUrls[i]];
+    final imageSize = fontSize * emojiScale;
+    for (var i = 0; i < imageParts.length && i < boxes.length; i++) {
+      final part = imageParts[i];
+      final image = imageCache[normalizeImageUrl(part.imageUrl ?? '')];
+      final box = boxes[i];
       if (image == null) {
+        final fallbackText = part.fallbackText ?? '';
+        if (fallbackText.isNotEmpty) {
+          final fallbackPainter = TextPainter(
+            text: TextSpan(
+              text: fallbackText,
+              style: TextStyle(
+                color: content.color,
+                fontSize: fontSize,
+                fontWeight: FontWeight.values[fontWeight],
+                fontFamily: fontFamily,
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+            maxLines: 1,
+          )..layout();
+          fallbackPainter.paint(
+            canvas,
+            Offset(
+              offset.dx +
+                  box.left +
+                  (box.right - box.left - fallbackPainter.width) / 2,
+              offset.dy +
+                  box.top +
+                  (box.bottom - box.top - fallbackPainter.height) / 2,
+            ),
+          );
+        }
         continue;
       }
-      final box = boxes[i];
-      final dst = Rect.fromLTRB(
-        offset.dx + box.left,
-        offset.dy + box.top,
-        offset.dx + box.right,
-        offset.dy + box.bottom,
+      final drawSize = min(imageSize, box.bottom - box.top);
+      final dst = Rect.fromLTWH(
+        offset.dx + box.left + (box.right - box.left - drawSize) / 2,
+        offset.dy + box.top + (box.bottom - box.top - drawSize) / 2,
+        drawSize,
+        drawSize,
       );
       canvas.drawImageRect(
         image,
@@ -157,7 +251,12 @@ class Utils {
           DanmakuContentPart.text(content.text.substring(start, match.start)),
         );
       }
-      result.add(DanmakuContentPart.image(imageUrls[imageIndex]));
+      result.add(
+        DanmakuContentPart.image(
+          imageUrls[imageIndex],
+          fallbackText: match.group(0),
+        ),
+      );
       imageIndex += 1;
       start = match.end;
     }
@@ -182,19 +281,49 @@ class Utils {
     ui.ParagraphBuilder builder,
     DanmakuContentItem content,
     double fontSize,
+    int fontWeight,
     double emojiScale,
+    String? fontFamily,
   ) {
     final imageSize = fontSize * emojiScale;
     for (final part in contentParts(content)) {
       if (part.isText) {
         builder.addText(part.text ?? "");
       } else if (part.isImage && (part.imageUrl ?? "").trim().isNotEmpty) {
+        final fallbackWidth = _measureTextWidth(
+          part.fallbackText ?? '',
+          fontSize,
+          fontWeight,
+          fontFamily,
+        );
         builder.addPlaceholder(
-          imageSize,
+          max(imageSize, fallbackWidth).ceilToDouble(),
           imageSize,
           ui.PlaceholderAlignment.middle,
         );
       }
     }
+  }
+
+  static double _measureTextWidth(
+    String text,
+    double fontSize,
+    int fontWeight,
+    String? fontFamily,
+  ) {
+    if (text.isEmpty) return 0;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: FontWeight.values[fontWeight],
+          fontFamily: fontFamily,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    return painter.width;
   }
 }

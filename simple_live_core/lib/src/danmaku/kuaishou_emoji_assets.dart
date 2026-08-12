@@ -10,6 +10,7 @@ import 'dart:convert';
 
 import 'package:simple_live_core/src/common/core_log.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/danmaku/kuaishou_mobile_emoji_assets.dart';
 
 const Map<String, String> kuaishouEmojiAssets = {
   '[666]':
@@ -431,9 +432,11 @@ const Map<String, String> kuaishouEmojiAssets = {
 /// 运行时从快手接口拉取的最新映射（优先于内置静态表）。
 Map<String, String> _dynamicKuaishouEmoji = const {};
 
-/// 解析单个表情 token（如 `[奸笑]`）：动态覆盖优先，内置表兜底。
+/// 解析单个表情 token：运行时映射、移动端词库、网页词库依次兜底。
 String? resolveKuaishouEmoji(String token) =>
-    _dynamicKuaishouEmoji[token] ?? kuaishouEmojiAssets[token];
+    _dynamicKuaishouEmoji[token] ??
+    kuaishouMobileEmojiAssets[token] ??
+    kuaishouEmojiAssets[token];
 
 const String kuaishouEmojiPanelUrl =
     'https://live.kuaishou.com/live_api/emoji/panel';
@@ -469,13 +472,33 @@ Future<void> refreshKuaishouEmoji({
     final map = <String, String>{};
     data.forEach((key, value) {
       if (key is String && value is String) {
-        map[key] = value.startsWith('//') ? 'https:$value' : value;
+        final url = _normalizeKuaishouEmojiUrl(value);
+        if (url != null) {
+          map[key] = url;
+        }
       }
     });
     if (map.isEmpty) return;
-    _dynamicKuaishouEmoji = map;
+    _dynamicKuaishouEmoji = {
+      ..._dynamicKuaishouEmoji,
+      ...map,
+    };
     CoreLog.d('快手表情映射已刷新：${map.length} 项');
   } catch (e) {
     CoreLog.d('快手表情映射解析失败: $e');
   }
+}
+
+String? _normalizeKuaishouEmojiUrl(String value) {
+  var url = value.trim();
+  if (url.startsWith('//')) {
+    url = 'https:$url';
+  } else if (url.startsWith('http://')) {
+    url = 'https://${url.substring('http://'.length)}';
+  }
+  final uri = Uri.tryParse(url);
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+    return null;
+  }
+  return uri.toString();
 }

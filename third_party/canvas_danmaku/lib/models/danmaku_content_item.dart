@@ -39,9 +39,13 @@ class DanmakuContentItem {
 class DanmakuContentPart {
   final String? text;
   final String? imageUrl;
+  final String? fallbackText;
 
-  const DanmakuContentPart.text(this.text) : imageUrl = null;
-  const DanmakuContentPart.image(this.imageUrl) : text = null;
+  const DanmakuContentPart.text(this.text)
+      : imageUrl = null,
+        fallbackText = null;
+  const DanmakuContentPart.image(this.imageUrl, {this.fallbackText})
+      : text = null;
 
   bool get isText => text != null;
   bool get isImage => imageUrl != null;
@@ -153,8 +157,8 @@ class SpecialDanmakuContentItem extends DanmakuContentItem {
   ) {
     double toRadix(double? value, dynamic rawValue) =>
         (value! > 1 || (rawValue is String && !rawValue.contains('.')))
-        ? value /= videoSize
-        : value;
+            ? value /= videoSize
+            : value;
 
     double? convert(value) {
       if (value is num) {
@@ -176,18 +180,18 @@ class SpecialDanmakuContentItem extends DanmakuContentItem {
   }
 
   static int _parseInt(dynamic digit) => switch (digit) {
-    int() => digit,
-    double() => digit.toInt(),
-    String() => int.tryParse(digit) ?? 0,
-    _ => throw UnimplementedError(),
-  };
+        int() => digit,
+        double() => digit.toInt(),
+        String() => int.tryParse(digit) ?? 0,
+        _ => throw UnimplementedError(),
+      };
 
   static double _parseDouble(dynamic digit) => switch (digit) {
-    int() => digit.toDouble(),
-    double() => digit,
-    String() => double.tryParse(digit) ?? 0,
-    _ => throw UnimplementedError(),
-  };
+        int() => digit.toDouble(),
+        double() => digit,
+        String() => double.tryParse(digit) ?? 0,
+        _ => throw UnimplementedError(),
+      };
 
   static Tween<T> _makeTween<T>(T start, T end) {
     return start == end

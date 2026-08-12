@@ -6,9 +6,32 @@ import 'dart:typed_data';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/web_socket_util.dart';
 import 'package:simple_live_core/src/danmaku/kuaishou_emoji_assets.dart';
+import 'package:simple_live_core/src/danmaku/kuaishou_mobile_emoji_assets.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('mobile emoji catalog matches the official Android snapshot', () {
+    expect(kuaishouMobileEmojiClientVersion, '14.7.10.49551');
+    expect(kuaishouMobileEmojiAssetCount, 258);
+    expect(kuaishouMobileEmojiAssets, hasLength(258));
+    expect(kuaishouMobileEmojiAssets.keys.toSet(), hasLength(258));
+    for (final entry in kuaishouMobileEmojiAssets.entries) {
+      expect(entry.key, matches(RegExp(r'^\[[^\[\]\r\n]{1,64}\]$')));
+      final uri = Uri.parse(entry.value);
+      expect(uri.scheme, 'https');
+      expect(uri.host, isNotEmpty);
+    }
+    for (final token in const [
+      '[都市丽人]',
+      '[猪猪]',
+      '[尊嘟假嘟]',
+      '[憨笑哪吒]',
+    ]) {
+      expect(kuaishouMobileEmojiAssets[token], isNotNull);
+      expect(resolveKuaishouEmoji(token), kuaishouMobileEmojiAssets[token]);
+    }
+  });
+
   test('builds server Kww from the kwfv1 cookie', () {
     expect(
       KuaishouSite.resolveServerKww('did=1; kwfv1=abc%2B123', 'fallback'),
@@ -48,10 +71,11 @@ void main() {
     expect(msg.spans![0].isText, isTrue);
     expect(msg.spans![0].text, '你好');
     expect(msg.spans![1].isImage, isTrue);
-    expect(msg.spans![1].imageUrl, kuaishouEmojiAssets['[奸笑]']);
+    expect(msg.spans![1].imageUrl, kuaishouMobileEmojiAssets['[奸笑]']);
+    expect(msg.spans![1].fallbackText, '[奸笑]');
     expect(msg.spans![2].isText, isTrue);
     expect(msg.spans![2].text, '呀');
-    expect(msg.imageUrls, contains(kuaishouEmojiAssets['[奸笑]']));
+    expect(msg.imageUrls, contains(kuaishouMobileEmojiAssets['[奸笑]']));
   });
 
   test('unknown bracket tokens stay as plain text', () {
@@ -86,12 +110,38 @@ void main() {
     final msg = messages.single;
     expect(msg.spans, hasLength(3));
     expect(msg.spans![0].isImage, isTrue);
-    expect(msg.spans![0].imageUrl, kuaishouEmojiAssets['[666]']);
+    expect(msg.spans![0].imageUrl, kuaishouMobileEmojiAssets['[666]']);
+    expect(msg.spans![0].fallbackText, '[666]');
     expect(msg.spans![1].isText, isTrue);
     expect(msg.spans![1].text, '[不存在的]');
     expect(msg.spans![2].isText, isTrue);
     expect(msg.spans![2].text, '哈');
     expect(msg.imageUrls, hasLength(1));
+  });
+
+  test('parses official emoji tokens longer than the old 16 character limit',
+      () async {
+    const token = '[这是一个超过十六字符限制的移动端官方表情名称]';
+    await refreshKuaishouEmoji(
+      fetcher: () async =>
+          '{"data":{"$token":"https://cdn.test/emoji/long.png"}}',
+    );
+    final messages = <LiveMessage>[];
+    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+
+    danmaku.decodeMessage(
+      _socketMessage(
+        _feedPushWithContent('前$token后'),
+        compressionType: 0,
+      ),
+    );
+
+    expect(messages.single.spans, hasLength(3));
+    expect(messages.single.spans![1].fallbackText, token);
+    expect(
+      messages.single.spans![1].imageUrl,
+      'https://cdn.test/emoji/long.png',
+    );
   });
 
   test('decodes gzip-compressed Kuaishou comment feed', () {
@@ -302,14 +352,14 @@ void main() {
   });
 
   group('kuaishou emoji refresh', () {
-    test('静态表兜底：未刷新时命中内置映射', () {
+    test('移动端词库兜底：未刷新时命中内置映射', () {
       expect(
         resolveKuaishouEmoji('[奸笑]'),
-        kuaishouEmojiAssets['[奸笑]'],
+        kuaishouMobileEmojiAssets['[奸笑]'],
       );
     });
 
-    test('动态映射覆盖优先，未覆盖项仍走静态表', () async {
+    test('动态映射覆盖优先，未覆盖项仍走移动端词库', () async {
       await refreshKuaishouEmoji(
         fetcher: () async =>
             '{"data":{"[新表情]":"//cdn.test/emoji/new.png","[奸笑]":"//cdn.test/emoji/jx.png"}}',
@@ -322,8 +372,54 @@ void main() {
         resolveKuaishouEmoji('[奸笑]'),
         'https://cdn.test/emoji/jx.png',
       );
-      // 动态表未覆盖的静态项仍可解析。
-      expect(resolveKuaishouEmoji('[666]'), kuaishouEmojiAssets['[666]']);
+      // 动态表未覆盖的移动端内置项仍可解析。
+      expect(
+        resolveKuaishouEmoji('[666]'),
+        kuaishouMobileEmojiAssets['[666]'],
+      );
+    });
+
+    test('动态映射覆盖移动端完整词库', () async {
+      const token = '[都市丽人]';
+      final mobileUrl = kuaishouMobileEmojiAssets[token];
+      expect(mobileUrl, isNotNull);
+
+      await refreshKuaishouEmoji(
+        fetcher: () async =>
+            '{"data":{"$token":"https://cdn.test/emoji/runtime.png"}}',
+      );
+
+      expect(
+        resolveKuaishouEmoji(token),
+        'https://cdn.test/emoji/runtime.png',
+      );
+      expect(resolveKuaishouEmoji(token), isNot(mobileUrl));
+    });
+
+    test('多次官方刷新采用合并更新且 URL 统一为 HTTPS', () async {
+      await refreshKuaishouEmoji(
+        fetcher: () async =>
+            '{"data":{"[移动增量一]":"http://cdn.test/emoji/a.png"}}',
+      );
+      await refreshKuaishouEmoji(
+        fetcher: () async => '{"data":{"[移动增量二]":"//cdn.test/emoji/b.png"}}',
+      );
+
+      expect(
+        resolveKuaishouEmoji('[移动增量一]'),
+        'https://cdn.test/emoji/a.png',
+      );
+      expect(
+        resolveKuaishouEmoji('[移动增量二]'),
+        'https://cdn.test/emoji/b.png',
+      );
+    });
+
+    test('官方刷新忽略非 HTTPS 可规范化 URL', () async {
+      await refreshKuaishouEmoji(
+        fetcher: () async => '{"data":{"[非法地址]":"file:///tmp/emoji.png"}}',
+      );
+      expect(resolveKuaishouEmoji('[非法地址]'), isNull);
     });
 
     test('刷新失败静默降级，内置表仍可用', () async {

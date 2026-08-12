@@ -11,6 +11,7 @@ class StaticDanmakuPainter extends CustomPainter {
   final double fontSize;
   final int fontWeight;
   final String? fontFamily;
+  final double emojiScale;
   final bool showStroke;
   final double danmakuHeight;
   final bool running;
@@ -29,6 +30,7 @@ class StaticDanmakuPainter extends CustomPainter {
     this.fontSize,
     this.fontWeight,
     this.fontFamily,
+    this.emojiScale,
     this.showStroke,
     this.danmakuHeight,
     this.running,
@@ -44,10 +46,10 @@ class StaticDanmakuPainter extends CustomPainter {
       // 如果 Paragraph 没有缓存，则创建并缓存它
       item.paragraph ??= Utils.generateParagraph(
         item.content,
-        size.width,
+        item.width,
         fontSize,
         fontWeight,
-        1.25,
+        emojiScale,
         fontFamily,
       );
 
@@ -55,10 +57,10 @@ class StaticDanmakuPainter extends CustomPainter {
       if (showStroke) {
         item.strokeParagraph ??= Utils.generateStrokeParagraph(
           item.content,
-          size.width,
+          item.width,
           fontSize,
           fontWeight,
-          1.25,
+          emojiScale,
           fontFamily,
         );
 
@@ -86,6 +88,10 @@ class StaticDanmakuPainter extends CustomPainter {
         item.content,
         offset,
         emojiImageCache,
+        fontSize,
+        fontWeight,
+        emojiScale,
+        fontFamily,
       );
     }
     // 绘制底部弹幕 (翻转绘制)
@@ -94,10 +100,10 @@ class StaticDanmakuPainter extends CustomPainter {
       // 如果 Paragraph 没有缓存，则创建并缓存它
       item.paragraph ??= Utils.generateParagraph(
         item.content,
-        size.width,
+        item.width,
         fontSize,
         fontWeight,
-        1.25,
+        emojiScale,
         fontFamily,
       );
 
@@ -105,10 +111,10 @@ class StaticDanmakuPainter extends CustomPainter {
       if (showStroke) {
         item.strokeParagraph ??= Utils.generateStrokeParagraph(
           item.content,
-          size.width,
+          item.width,
           fontSize,
           fontWeight,
-          1.25,
+          emojiScale,
           fontFamily,
         );
 
@@ -117,7 +123,7 @@ class StaticDanmakuPainter extends CustomPainter {
             item.strokeParagraph!,
             Offset(
               item.xPosition,
-              (size.height - item.yPosition - danmakuHeight),
+              (size.height - item.yPosition - item.height),
             ),
           );
         }
@@ -127,7 +133,7 @@ class StaticDanmakuPainter extends CustomPainter {
         canvas.drawRect(
           Offset(
                 item.xPosition,
-                (size.height - item.yPosition - danmakuHeight),
+                (size.height - item.yPosition - item.height),
               ).translate(-2, 2) &
               (Size(item.width, item.height) + const Offset(4, 0)),
           selfSendPaint,
@@ -137,7 +143,7 @@ class StaticDanmakuPainter extends CustomPainter {
       // 白色部分
       final offset = Offset(
         item.xPosition,
-        size.height - item.yPosition - danmakuHeight,
+        size.height - item.yPosition - item.height,
       );
       canvas.drawParagraph(item.paragraph!, offset);
       Utils.drawEmojiImages(
@@ -146,6 +152,10 @@ class StaticDanmakuPainter extends CustomPainter {
         item.content,
         offset,
         emojiImageCache,
+        fontSize,
+        fontWeight,
+        emojiScale,
+        fontFamily,
       );
     }
   }

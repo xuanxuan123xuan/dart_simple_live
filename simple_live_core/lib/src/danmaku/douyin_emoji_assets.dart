@@ -10,6 +10,7 @@ import 'dart:convert';
 
 import 'package:simple_live_core/src/common/core_log.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/danmaku/douyin_mobile_emoji_assets.dart';
 import 'package:simple_live_core/src/douyin_site.dart';
 import 'package:simple_live_core/src/scripts/douyin_sign.dart';
 
@@ -161,9 +162,11 @@ const Map<String, String> douyinEmojiAssets = {
 /// 注意：接口返回的是带签名/有效期的 douyinpic CDN URL，刷新即可续期。
 Map<String, String> _dynamicDouyinEmoji = const {};
 
-/// 解析单个表情 token（如 `[微笑]`）：动态覆盖优先，内置表兜底。
+/// 解析单个表情 token：动态映射、移动端目录、网页词库依次兜底。
 String? resolveDouyinEmoji(String token) =>
-    _dynamicDouyinEmoji[token] ?? douyinEmojiAssets[token];
+    _dynamicDouyinEmoji[token] ??
+    douyinMobileEmojiAssets[token] ??
+    douyinEmojiAssets[token];
 
 /// 抖音 web 表情列表接口（同前端页面请求，参数集一致）。
 const String douyinEmojiListBaseUrl =
@@ -174,7 +177,7 @@ const String douyinEmojiListBaseUrl =
     '&browser_platform=Win32&browser_name=Edge&browser_version=151.0.0.0'
     '&os_name=Windows&os_version=10';
 
-/// 拉取抖音最新表情映射并覆盖静态表。
+/// 拉取抖音最新表情映射并合并到现有动态表。
 ///
 /// 策略：先匿名请求；失败且 [cookie] 非空（用户配置的登录态）时
 /// 再带 cookie 重试一次。匿名成功则不暴露用户 cookie。
@@ -221,17 +224,34 @@ Future<bool> refreshDouyinEmoji({
       final urlList =
           (item['emoji_url'] as Map<String, dynamic>?)?['url_list'];
       if (name is String && urlList is List && urlList.isNotEmpty) {
-        map[name] = urlList.first.toString();
+        final url = _normalizeDouyinEmojiUrl(urlList.first.toString());
+        if (url != null) {
+          map[name] = url;
+        }
       }
     }
     if (map.isEmpty) return false;
-    _dynamicDouyinEmoji = map;
+    _dynamicDouyinEmoji = {..._dynamicDouyinEmoji, ...map};
     CoreLog.d('抖音表情映射已刷新：${map.length} 项');
     return true;
   } catch (e) {
     CoreLog.d('抖音表情映射解析失败: $e');
     return false;
   }
+}
+
+String? _normalizeDouyinEmojiUrl(String value) {
+  var url = value.trim();
+  if (url.startsWith('//')) {
+    url = 'https:$url';
+  } else if (url.startsWith('http://')) {
+    url = 'https://${url.substring('http://'.length)}';
+  }
+  final uri = Uri.tryParse(url);
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+    return null;
+  }
+  return uri.toString();
 }
 
 /// 请求抖音 emoji 列表（真实网络路径，计算 a_bogus 签名）。

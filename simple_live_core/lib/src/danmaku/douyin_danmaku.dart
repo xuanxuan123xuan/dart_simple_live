@@ -31,6 +31,7 @@ class DouyinDanmakuArgs {
 }
 
 class DouyinDanmaku implements LiveDanmaku {
+  static final Set<String> _reportedUnknownEmojiTokens = <String>{};
   DouyinDanmaku() {
     _maybeRefreshEmoji();
   }
@@ -278,6 +279,8 @@ class DouyinDanmaku implements LiveDanmaku {
     for (final span in spans) {
       if (span.isText) {
         buffer.write(span.text);
+      } else if (span.isImage) {
+        buffer.write(span.fallbackText ?? '');
       }
     }
     return buffer.toString().trim();
@@ -290,12 +293,13 @@ class DouyinDanmaku implements LiveDanmaku {
     }
     for (final piece in chatMessage.rtfContent.piecesList) {
       if (piece.hasImageValue() && piece.imageValue.hasImage()) {
-        final imageUrl = _extractImageUrl(piece.imageValue.image);
+        final image = piece.imageValue.image;
+        final fallback = _extractImageFallbackText(image);
+        final imageUrl = _extractImageUrl(image);
         if (imageUrl != null) {
-          spans.add(LiveMessageSpan.image(imageUrl));
+          spans.add(LiveMessageSpan.image(imageUrl, fallbackText: fallback));
           continue;
         }
-        final fallback = _extractImageFallbackText(piece.imageValue.image);
         if (fallback != null) {
           _appendTextWithEmojiFallback(spans, fallback);
         }
@@ -318,19 +322,22 @@ class DouyinDanmaku implements LiveDanmaku {
       return;
     }
     var start = 0;
-    for (final match in RegExp(r'\[[^\[\]]{1,16}\]').allMatches(text)) {
+    for (final match in RegExp(r'\[[^\[\]\r\n]{1,64}\]').allMatches(text)) {
       final token = match.group(0);
       if (token == null) {
         continue;
       }
       final asset = resolveDouyinEmoji(token);
       if (asset == null) {
+        if (_reportedUnknownEmojiTokens.add(token)) {
+          CoreLog.d('抖音未映射表情 token: $token');
+        }
         continue;
       }
       if (match.start > start) {
         spans.add(LiveMessageSpan.text(text.substring(start, match.start)));
       }
-      spans.add(LiveMessageSpan.image(asset));
+      spans.add(LiveMessageSpan.image(asset, fallbackText: token));
       start = match.end;
     }
     if (start < text.length) {
