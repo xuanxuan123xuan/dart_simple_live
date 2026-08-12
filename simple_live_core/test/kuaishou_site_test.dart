@@ -385,6 +385,87 @@ void main() {
         contains('kuaishou.live.web_st=secret'),
       );
     });
+
+    test('follow status does not retry the secondary account per room',
+        () async {
+      var requests = 0;
+      var fallbackLookups = 0;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              requests++;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouRateLimitedPage(roomId: 'limited-room'),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(authenticatedDioFactory: () => dio)
+        ..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        )
+        ..accountFallbackProvider = (_) {
+          fallbackLookups++;
+          return const KuaishouAccountFallbackSession(
+            sessionKey: 'secondary',
+            cookie: 'kuaishou.live.web_st=secondary-token',
+            kww: '',
+          );
+        };
+
+      await expectLater(
+        site.getFollowLiveStatusState(roomId: 'limited-room'),
+        throwsA(isA<CoreError>()),
+      );
+
+      expect(requests, 1);
+      expect(fallbackLookups, 0);
+    });
+
+    test('follow status physical requests can run concurrently', () async {
+      var inFlight = 0;
+      var maxInFlight = 0;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) async {
+              inFlight++;
+              if (inFlight > maxInFlight) maxInFlight = inFlight;
+              await Future<void>.delayed(const Duration(milliseconds: 20));
+              inFlight--;
+              final roomId = options.uri.pathSegments.last;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouOfflinePage(roomId: roomId),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(authenticatedDioFactory: () => dio)
+        ..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        );
+
+      final states = await Future.wait([
+        site.getFollowLiveStatusState(roomId: 'room-a'),
+        site.getFollowLiveStatusState(roomId: 'room-b'),
+      ]);
+
+      expect(states, everyElement(LiveStatusState.offline));
+      expect(maxInFlight, 2);
+    });
   });
 
   group('KuaishouSite account transport isolation', () {

@@ -36,6 +36,15 @@ void main() {
     expect(session.isAvailable(DateTime(2026, 1, 3)), isFalse);
   });
 
+  test('temporary follow cooldown makes a configured account unavailable', () {
+    final session = KuaishouAccountSession(KuaishouAccountSlot.primary)
+      ..cookie = 'kuaishou.live.web_st=token'
+      ..cooldownUntil = DateTime(2026, 8, 12, 12, 5);
+
+    expect(session.isAvailable(DateTime(2026, 8, 12, 12)), isFalse);
+    expect(session.isAvailable(DateTime(2026, 8, 12, 12, 6)), isTrue);
+  });
+
   test('next Shanghai midnight covers month and year rollover', () {
     final monthEnd = nextShanghaiMidnight(DateTime.utc(2026, 11, 30, 15, 59));
     expect(monthEnd.toUtc(), DateTime.utc(2026, 11, 30, 16));

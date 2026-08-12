@@ -179,4 +179,33 @@ void main() {
       forceNetwork: true,
     );
   });
+
+  test('Kuaishou follow limiter starts at two and ramps to four', () async {
+    final limiter = KuaishouFollowRefreshLimiter(
+      rampUpSuccessThreshold: 2,
+    );
+
+    await limiter.beforeRequest();
+    await limiter.beforeRequest();
+    var thirdAcquired = false;
+    final third = limiter.beforeRequest().then((_) {
+      thirdAcquired = true;
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(limiter.currentConcurrency, 2);
+    expect(limiter.inFlight, 2);
+    expect(thirdAcquired, isFalse);
+
+    limiter.afterRequest(success: true);
+    await third;
+    limiter.afterRequest(success: true);
+
+    expect(limiter.currentConcurrency, 4);
+    expect(thirdAcquired, isTrue);
+    limiter.afterRequest(success: true);
+    limiter.resetAfterAccountSwitch();
+    expect(limiter.currentConcurrency, 2);
+    expect(limiter.successCount, 0);
+  });
 }

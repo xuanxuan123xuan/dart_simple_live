@@ -121,6 +121,9 @@ class KuaishouAccountService extends GetxService {
   static KuaishouAccountService get instance =>
       Get.find<KuaishouAccountService>();
 
+  static const Duration followRateLimitCooldown = Duration(minutes: 5);
+  static const Duration followChallengeCooldown = Duration(minutes: 2);
+
   final primary = KuaishouAccountSession(KuaishouAccountSlot.primary);
   final secondary = KuaishouAccountSession(KuaishouAccountSlot.secondary);
   final mode = KuaishouAccountPoolMode.primary.obs;
@@ -388,6 +391,48 @@ class KuaishouAccountService extends GetxService {
     setSite();
   }
 
+  /// Suspend the account rejected during follow refresh and move the remaining
+  /// batch to the other account. False means no healthy fallback remains.
+  bool failoverFollowBatch({
+    required String attemptedSessionKey,
+    required int statusCode,
+    DateTime? now,
+  }) {
+    final slot = KuaishouAccountSlot.values.firstWhereOrNull(
+      (value) => value.name == attemptedSessionKey,
+    );
+    if (slot == null) return false;
+
+    final current = now ?? DateTime.now();
+    final session = sessionFor(slot);
+    if (statusCode == 401) {
+      session.credentialState = KuaishouCredentialState.invalid;
+      session.suspendedReason = 'credentialInvalid';
+    } else {
+      final duration = statusCode == 429
+          ? followRateLimitCooldown
+          : followChallengeCooldown;
+      final nextCooldown = current.add(duration);
+      if (session.cooldownUntil?.isAfter(nextCooldown) != true) {
+        session.cooldownUntil = nextCooldown;
+      }
+      session.suspendedReason =
+          statusCode == 429 ? 'rateLimited' : 'securityChallenge';
+    }
+
+    if (_isSlotActive(slot)) {
+      _degradeFrom(slot);
+    }
+    _persist();
+    _syncLegacyObservables();
+    setSite();
+
+    final fallback = activeSession;
+    return fallback != null &&
+        fallback.slot != slot &&
+        fallback.isAvailable(current);
+  }
+
   void refreshAvailability([DateTime? now]) {
     final current = now ?? DateTime.now();
     final previousMode = mode.value;
@@ -399,6 +444,7 @@ class KuaishouAccountService extends GetxService {
         session.suspendedReason = null;
       }
       if (session.cooldownUntil?.isAfter(current) == false) {
+        recovered = recovered || session.cooldownUntil != null;
         session.cooldownUntil = null;
       }
     }

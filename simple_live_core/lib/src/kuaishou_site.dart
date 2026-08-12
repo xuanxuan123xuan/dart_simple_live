@@ -1295,6 +1295,11 @@ class KuaishouSite extends LiveSite {
         transport: firstTransport,
       );
     } catch (firstError, firstStackTrace) {
+      // Follow refresh owns account failover at the batch level. Retrying the
+      // secondary account here would make every failed room issue twice.
+      if (source == KuaishouRequestSource.followStatus) {
+        Error.throwWithStackTrace(firstError, firstStackTrace);
+      }
       final fallbackTransport =
           _preferredCookieTransport(excluding: firstTransport);
       if (fallbackTransport != null) {
@@ -1567,25 +1572,31 @@ class KuaishouSite extends LiveSite {
     final source = KuaishouRequestTrace.current;
     final authenticated = headers['cookie']?.toString().isNotEmpty == true;
     try {
-      final resultText = await coordinator.schedule<String>(
-        priority: _priorityForSource(source),
-        key: '${transport.cacheNamespace}:http:room_page:'
-            '${authenticated ? "auth" : "anon"}:$roomId',
-        logLabel: maskedRoom,
-        scopeId: KuaishouRequestTrace.scopeId,
-        timeout: const Duration(seconds: 5),
-        task: () {
-          if (authenticated) {
-            _ensureTransportAvailable(transport, source);
-          }
-          return HttpClient.instance.getText(
-            url,
-            queryParameters: const {},
-            header: headers,
-            timeout: const Duration(seconds: 5),
-          );
-        },
-      );
+      Future<String> request() {
+        if (authenticated) {
+          _ensureTransportAvailable(transport, source);
+        }
+        return HttpClient.instance.getText(
+          url,
+          queryParameters: const {},
+          header: headers,
+          timeout: const Duration(seconds: 5),
+        );
+      }
+
+      // Follow refresh is bounded by the app-level 2->4 adaptive limiter.
+      // Bypass the single coordinator lane so its workers are truly parallel.
+      final resultText = source == KuaishouRequestSource.followStatus
+          ? await request()
+          : await coordinator.schedule<String>(
+              priority: _priorityForSource(source),
+              key: '${transport.cacheNamespace}:http:room_page:'
+                  '${authenticated ? "auth" : "anon"}:$roomId',
+              logLabel: maskedRoom,
+              scopeId: KuaishouRequestTrace.scopeId,
+              timeout: const Duration(seconds: 5),
+              task: request,
+            );
       _ensureCurrentSession(transport, sessionEpoch);
       _throwIfExplicitRateLimit(resultText);
       if (authenticated && looksLikeCredentialInvalidPage(resultText)) {
@@ -2018,6 +2029,20 @@ class KuaishouSite extends LiveSite {
     }
   }
 
+  /// Follow-list entry point. Account failover belongs to the whole batch, so
+  /// this method deliberately propagates risk/auth errors to its caller.
+  Future<LiveStatusState> getFollowLiveStatusState({
+    required String roomId,
+  }) async {
+    final detail = await KuaishouRequestTrace.run(
+      KuaishouRequestSource.followStatus,
+      () => _getRoomDetailWithinBudget(roomId),
+      scopeId: KuaishouRequestTrace.scopeId,
+      forceNetwork: KuaishouRequestTrace.forceNetwork,
+    );
+    return detail.resolvedLiveStatus;
+  }
+
   /// 兼容旧调用名。关注状态现已恢复为 Cookie 请求，并在主账号失败时
   /// 使用备用账号；不再建立匿名房间请求。
   Future<LiveStatusState> getAnonymousLiveStatusState({
@@ -2137,25 +2162,30 @@ class KuaishouSite extends LiveSite {
     final requestHeaders = _headersWithCookieFor(transport);
     final requestCookieHeader = requestHeaders['cookie']?.toString() ?? '';
     try {
-      final response = await coordinator.schedule<Response<String>>(
-        priority: _priorityForSource(KuaishouRequestTrace.current),
-        key: '${transport.cacheNamespace}:http:cookie_handshake:$roomId',
-        logLabel: maskedRoom,
-        scopeId: KuaishouRequestTrace.scopeId,
-        timeout: const Duration(seconds: 5),
-        task: () {
-          _ensureTransportAvailable(transport, KuaishouRequestTrace.current);
-          return dio
-              .get<String>(
-                url,
-                options: Options(
-                  headers: requestHeaders,
-                  responseType: ResponseType.plain,
-                ),
-              )
-              .timeout(const Duration(seconds: 4));
-        },
-      );
+      final source = KuaishouRequestTrace.current;
+      Future<Response<String>> request() {
+        _ensureTransportAvailable(transport, source);
+        return dio
+            .get<String>(
+              url,
+              options: Options(
+                headers: requestHeaders,
+                responseType: ResponseType.plain,
+              ),
+            )
+            .timeout(const Duration(seconds: 4));
+      }
+
+      final response = source == KuaishouRequestSource.followStatus
+          ? await request()
+          : await coordinator.schedule<Response<String>>(
+              priority: _priorityForSource(source),
+              key: '${transport.cacheNamespace}:http:cookie_handshake:$roomId',
+              logLabel: maskedRoom,
+              scopeId: KuaishouRequestTrace.scopeId,
+              timeout: const Duration(seconds: 5),
+              task: request,
+            );
       final responseStatus = response.statusCode ?? 0;
       _throwIfExplicitRateLimit(response.data ?? '');
       if (responseStatus == 401 ||

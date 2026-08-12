@@ -19,6 +19,7 @@ import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/live_notification_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
@@ -407,33 +408,40 @@ class FollowService extends GetxService {
     FollowUser item, {
     int? generation,
     DouyinFollowRefreshLimiter? douyinLimiter,
+    KuaishouFollowRefreshLimiter? kuaishouLimiter,
     int workerIndex = 0,
     bool pauseRemainingOnLimited = false,
   }) async {
     final previousStatus = item.liveStatus.value;
     final notifyReady = _liveNotifyReadyIds.contains(item.id);
+    var kuaishouAcquired = false;
+    var kuaishouSucceeded = false;
+    String? attemptedKuaishouSession;
     item.liveCheckState.value = FollowLiveCheckState.refreshing;
-    if (item.siteId == Constant.kKuaishou) {
-      item.liveStatus.value = 0;
-    }
     try {
       if (item.siteId == Constant.kDouyin && douyinLimiter != null) {
         await douyinLimiter.beforeRequest(workerIndex);
       }
       var site = Sites.allSites[item.siteId]!;
+      if (item.siteId == Constant.kKuaishou && kuaishouLimiter != null) {
+        await kuaishouLimiter.beforeRequest();
+        kuaishouAcquired = true;
+        attemptedKuaishouSession =
+            (site.liveSite as KuaishouSite).activeAccountSessionKey;
+      }
       // Status is the latency-sensitive path. Metadata is refreshed in a
       // separate bounded stage after every visible status has been updated.
       final liveState = item.siteId == Constant.kKuaishou
           ? await KuaishouRequestTrace.run(
               KuaishouRequestSource.followStatus,
-              () => site.liveSite.getLiveStatusState(roomId: item.roomId),
+              () => (site.liveSite as KuaishouSite)
+                  .getFollowLiveStatusState(roomId: item.roomId),
               scopeId: 'kuaishou:follow-refresh',
               forceNetwork: true,
             )
           : await site.liveSite.getLiveStatusState(roomId: item.roomId);
       final nextStatus = followStatusForLiveState(liveState);
       if (nextStatus == null) {
-        item.liveStatus.value = 0;
         item.liveCheckState.value = FollowLiveCheckState.unknown;
         return const _FollowRefreshItemResult(
           _FollowRefreshItemOutcome.deferred,
@@ -446,6 +454,9 @@ class FollowService extends GetxService {
       }
       if (item.siteId == Constant.kDouyin && douyinLimiter != null) {
         douyinLimiter.onSuccess();
+      }
+      if (item.siteId == Constant.kKuaishou) {
+        kuaishouSucceeded = true;
       }
       item.liveStatus.value = nextStatus;
       item.liveCheckState.value = FollowLiveCheckState.fresh;
@@ -482,12 +493,35 @@ class FollowService extends GetxService {
           );
         }
       }
-      if (_isKuaishouLimited(item, e)) {
+      final kuaishouFailureStatus = _kuaishouBatchFailureStatus(item, e);
+      if (kuaishouFailureStatus != null) {
         limited = true;
+        var switched = false;
+        if (Get.isRegistered<KuaishouAccountService>() &&
+            attemptedKuaishouSession != null) {
+          final accounts = KuaishouAccountService.instance;
+          if (kuaishouFailureStatus == 0) {
+            switched =
+                accounts.activeSession?.slot.name != attemptedKuaishouSession;
+          } else {
+            switched = accounts.failoverFollowBatch(
+              attemptedSessionKey: attemptedKuaishouSession,
+              statusCode: kuaishouFailureStatus,
+            );
+          }
+        }
+        item.liveCheckState.value = FollowLiveCheckState.limited;
+        return _FollowRefreshItemResult(
+          _FollowRefreshItemOutcome.deferred,
+          limited: true,
+          keepPending: true,
+          pauseRemaining: true,
+          restartWithFallback: switched,
+          stopBatch: !switched,
+        );
       }
       Log.logPrint(e);
       if (limited) {
-        item.liveStatus.value = 0;
         item.liveCheckState.value = FollowLiveCheckState.limited;
         if (pauseRemainingOnLimited) {
           return const _FollowRefreshItemResult(
@@ -503,13 +537,19 @@ class FollowService extends GetxService {
           keepPending: true,
         );
       }
-      item.liveStatus.value = 0;
       item.liveCheckState.value = FollowLiveCheckState.unknown;
-      item.liveStartTime = null;
+      if (item.siteId != Constant.kKuaishou) {
+        item.liveStatus.value = 0;
+        item.liveStartTime = null;
+      }
       return _FollowRefreshItemResult(
         _FollowRefreshItemOutcome.failed,
         limited: limited,
       );
+    } finally {
+      if (kuaishouAcquired) {
+        kuaishouLimiter?.afterRequest(success: kuaishouSucceeded);
+      }
     }
   }
 
@@ -567,11 +607,15 @@ class FollowService extends GetxService {
         error.statusCode == 444;
   }
 
-  /// 快手协调器冷却（[KuaishouCooldownError]）视为限流信号。
-  bool _isKuaishouLimited(FollowUser item, Object error) {
-    return item.siteId == Constant.kKuaishou &&
-        (error is KuaishouCooldownError ||
-            (error is CoreError && error.statusCode == 429));
+  /// Returns 0 when another in-flight request already switched the account.
+  int? _kuaishouBatchFailureStatus(FollowUser item, Object error) {
+    if (item.siteId != Constant.kKuaishou) return null;
+    if (error is KuaishouCooldownError) return 0;
+    if (error is! CoreError) return null;
+    return switch (error.statusCode) {
+      401 || 403 || 429 => error.statusCode,
+      _ => null,
+    };
   }
 
   void _handleDouyinLimited({required bool pauseRemainingOnLimited}) {
@@ -1083,12 +1127,6 @@ class FollowService extends GetxService {
         hasFullDouyinCookie: hasFullDouyinCookie,
       );
       final allowedTargets = filteredTargets.allowedTargets;
-      for (final item in allowedTargets.where(
-        (item) => item.siteId == Constant.kKuaishou,
-      )) {
-        item.liveStatus.value = 0;
-        item.liveCheckState.value = FollowLiveCheckState.refreshing;
-      }
       final orderedAllowedKeys = allowedTargets.map(_refreshTargetKey).toList();
       final targetByKey = <String, FollowUser>{
         for (final item in allowedTargets) _refreshTargetKey(item): item,
@@ -1110,6 +1148,12 @@ class FollowService extends GetxService {
       final douyinLimiter = douyinTargetCount > 0
           ? DouyinFollowRefreshLimiter.forTargetCount(douyinTargetCount)
           : null;
+      final kuaishouTargetCount = filteredTargets.allowedTargets
+          .where((item) => item.siteId == Constant.kKuaishou)
+          .length;
+      final kuaishouLimiter = kuaishouTargetCount > 0
+          ? KuaishouFollowRefreshLimiter()
+          : null;
       final resumedSuccessCount = persistedTask?.successCount ?? 0;
       final resumedFailedCount = persistedTask?.failedCount ?? 0;
       var completed = resumeTask ? resumedSuccessCount + resumedFailedCount : 0;
@@ -1118,6 +1162,8 @@ class FollowService extends GetxService {
       var deferredCount = filteredTargets.deferredTargets.length;
       var limitedCount = 0;
       var pausedForResume = false;
+      var restartWithKuaishouFallback = false;
+      var stopForKuaishouLimit = false;
       var autoResumeAttempt = 0;
 
       if (scope.includeAllNormals) {
@@ -1177,6 +1223,7 @@ class FollowService extends GetxService {
           pendingKeys.map((key) => targetByKey[key]).whereType<FollowUser>(),
         );
         pausedForResume = false;
+        restartWithKuaishouFallback = false;
 
         Future<void> worker(int workerId) async {
           while (taskQueue.isNotEmpty) {
@@ -1188,6 +1235,7 @@ class FollowService extends GetxService {
               item,
               generation: generation,
               douyinLimiter: douyinLimiter,
+              kuaishouLimiter: kuaishouLimiter,
               workerIndex: workerId,
               pauseRemainingOnLimited: scope.includeAllNormals,
             );
@@ -1217,11 +1265,14 @@ class FollowService extends GetxService {
             }
             if (result.pauseRemaining) {
               pausedForResume = true;
+              restartWithKuaishouFallback =
+                  restartWithKuaishouFallback || result.restartWithFallback;
+              stopForKuaishouLimit = stopForKuaishouLimit || result.stopBatch;
               for (final key in pendingKeys) {
                 final pendingItem = targetByKey[key];
-                if (pendingItem?.siteId == Constant.kKuaishou) {
-                  pendingItem!.liveStatus.value = 0;
-                  pendingItem.liveCheckState.value =
+                if (result.stopBatch &&
+                    pendingItem?.siteId == Constant.kKuaishou) {
+                  pendingItem!.liveCheckState.value =
                       FollowLiveCheckState.limited;
                 }
               }
@@ -1258,6 +1309,18 @@ class FollowService extends GetxService {
 
         if (generation != _updateGeneration) {
           return;
+        }
+        if (stopForKuaishouLimit) {
+          Log.w("快手主备账号均不可用，已停止本轮剩余关注刷新");
+          SmartDialog.showToast("快手主备账号均受限，已停止本轮刷新");
+          break;
+        }
+        if (restartWithKuaishouFallback) {
+          Log.w("快手当前账号受限，已切换备用账号继续剩余任务");
+          SmartDialog.showToast("快手账号受限，已切换备用账号继续刷新");
+          kuaishouLimiter?.resetAfterAccountSwitch();
+          deferredCount = filteredTargets.deferredTargets.length;
+          continue;
         }
         if (!pausedForResume || pendingKeys.isEmpty) {
           break;
@@ -1636,12 +1699,16 @@ class _FollowRefreshItemResult {
   final bool limited;
   final bool keepPending;
   final bool pauseRemaining;
+  final bool restartWithFallback;
+  final bool stopBatch;
 
   const _FollowRefreshItemResult(
     this.outcome, {
     this.limited = false,
     this.keepPending = false,
     this.pauseRemaining = false,
+    this.restartWithFallback = false,
+    this.stopBatch = false,
   });
 }
 
@@ -1696,6 +1763,60 @@ class _PersistedFollowRefreshTaskState {
       orderedKeys: readList(targets["orderedKeys"]),
       pendingKeys: readList(targets["pendingKeys"]),
     );
+  }
+}
+
+/// Starts Kuaishou follow refresh with two physical lanes, then opens up to
+/// four after several confirmed successes.
+class KuaishouFollowRefreshLimiter {
+  KuaishouFollowRefreshLimiter({
+    this.initialConcurrency = 2,
+    this.maxConcurrency = 4,
+    this.rampUpSuccessThreshold = 4,
+  }) : _currentConcurrency = initialConcurrency;
+
+  final int initialConcurrency;
+  final int maxConcurrency;
+  final int rampUpSuccessThreshold;
+  int _currentConcurrency;
+  int _inFlight = 0;
+  int _successCount = 0;
+  final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
+
+  int get currentConcurrency => _currentConcurrency;
+  int get inFlight => _inFlight;
+  int get successCount => _successCount;
+
+  Future<void> beforeRequest() async {
+    while (_inFlight >= _currentConcurrency) {
+      final waiter = Completer<void>();
+      _waiters.add(waiter);
+      await waiter.future;
+    }
+    _inFlight++;
+  }
+
+  void afterRequest({required bool success}) {
+    if (_inFlight > 0) {
+      _inFlight--;
+    }
+    if (success) {
+      _successCount++;
+      if (_successCount >= rampUpSuccessThreshold) {
+        _currentConcurrency = maxConcurrency;
+      }
+    }
+    while (_waiters.isNotEmpty) {
+      final waiter = _waiters.removeFirst();
+      if (!waiter.isCompleted) {
+        waiter.complete();
+      }
+    }
+  }
+
+  void resetAfterAccountSwitch() {
+    _currentConcurrency = initialConcurrency;
+    _successCount = 0;
   }
 }
 
