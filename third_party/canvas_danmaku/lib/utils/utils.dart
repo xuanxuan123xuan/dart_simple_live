@@ -18,6 +18,7 @@ class PreparedDanmakuLayout {
 class Utils {
   static final RegExp _emojiTokenPattern = RegExp(r'\[[^\[\]\r\n]{1,64}\]');
   static const double _singleLineLayoutWidth = 1000000;
+  static const double _strokeOverflow = 2;
 
   static String normalizeImageUrl(String url) {
     final value = url.trim();
@@ -62,7 +63,12 @@ class Utils {
       emojiScale,
       fontFamily,
     );
-    final width = paragraph.longestLine.ceilToDouble();
+    final contentWidth = max(
+      paragraph.longestLine,
+      paragraph.maxIntrinsicWidth,
+    );
+    final width = contentWidth.ceilToDouble() +
+        (showStroke ? _strokeOverflow : 0);
     final height = paragraph.height.ceilToDouble();
     return PreparedDanmakuLayout(
       size: Size(width, height),
@@ -182,7 +188,7 @@ class Utils {
       if (image == null) {
         final fallbackText = part.fallbackText ?? '';
         if (fallbackText.isNotEmpty) {
-          final fallbackPainter = TextPainter(
+          var fallbackPainter = TextPainter(
             text: TextSpan(
               text: fallbackText,
               style: TextStyle(
@@ -195,6 +201,24 @@ class Utils {
             textDirection: TextDirection.ltr,
             maxLines: 1,
           )..layout();
+          final availableWidth = box.right - box.left;
+          if (fallbackPainter.width > availableWidth) {
+            final fittedFontSize =
+                fontSize * availableWidth / fallbackPainter.width;
+            fallbackPainter = TextPainter(
+              text: TextSpan(
+                text: fallbackText,
+                style: TextStyle(
+                  color: content.color,
+                  fontSize: fittedFontSize,
+                  fontWeight: FontWeight.values[fontWeight],
+                  fontFamily: fontFamily,
+                ),
+              ),
+              textDirection: TextDirection.ltr,
+              maxLines: 1,
+            )..layout();
+          }
           fallbackPainter.paint(
             canvas,
             Offset(
@@ -290,40 +314,12 @@ class Utils {
       if (part.isText) {
         builder.addText(part.text ?? "");
       } else if (part.isImage && (part.imageUrl ?? "").trim().isNotEmpty) {
-        final fallbackWidth = _measureTextWidth(
-          part.fallbackText ?? '',
-          fontSize,
-          fontWeight,
-          fontFamily,
-        );
         builder.addPlaceholder(
-          max(imageSize, fallbackWidth).ceilToDouble(),
+          imageSize,
           imageSize,
           ui.PlaceholderAlignment.middle,
         );
       }
     }
-  }
-
-  static double _measureTextWidth(
-    String text,
-    double fontSize,
-    int fontWeight,
-    String? fontFamily,
-  ) {
-    if (text.isEmpty) return 0;
-    final painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          fontSize: fontSize,
-          fontWeight: FontWeight.values[fontWeight],
-          fontFamily: fontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout();
-    return painter.width;
   }
 }

@@ -29,7 +29,10 @@ void main() {
 
     expect(layout.size.width, greaterThan(320));
     expect(lines, hasLength(1));
-    expect(layout.size.width, layout.paragraph.longestLine.ceilToDouble());
+    expect(
+      layout.size.width,
+      greaterThanOrEqualTo(layout.paragraph.longestLine.ceilToDouble()),
+    );
     expect(
       layout.paragraph.getBoxesForRange(
         leadingText.length + 1 + trailingText.length - 1,
@@ -40,30 +43,83 @@ void main() {
     );
   });
 
-  test('fallback token width is reserved and responds to style changes', () {
-    const token = '[憨笑哪吒]';
+  test(
+    'emoji placeholder stays compact regardless of fallback token length',
+    () {
+      const token = '[憨笑哪吒]';
+      final content = DanmakuContentItem(
+        token,
+        parts: const [
+          DanmakuContentPart.image(
+            'https://cdn.test/emoji.png',
+            fallbackText: token,
+          ),
+        ],
+      );
+
+      final normal = Utils.prepareContent(content, 16, 4, 1.0, null, false);
+      final larger = Utils.prepareContent(content, 28, 4, 1.5, null, false);
+      final box = normal.paragraph.getBoxesForPlaceholders().single;
+      expect(box.right - box.left, 16);
+      expect(larger.size.width, greaterThan(normal.size.width));
+      expect(larger.size.height, greaterThan(normal.size.height));
+    },
+  );
+
+  test('consecutive emoji placeholders do not reserve token-sized gaps', () {
     final content = DanmakuContentItem(
-      token,
+      '[憨笑哪吒][尊嘟假嘟]尾字',
       parts: const [
         DanmakuContentPart.image(
-          'https://cdn.test/emoji.png',
-          fallbackText: token,
+          'https://cdn.test/emoji-1.png',
+          fallbackText: '[憨笑哪吒]',
         ),
+        DanmakuContentPart.image(
+          'https://cdn.test/emoji-2.png',
+          fallbackText: '[尊嘟假嘟]',
+        ),
+        DanmakuContentPart.text('尾字'),
       ],
     );
 
-    final normal = Utils.prepareContent(content, 16, 4, 1.0, null, false);
-    final larger = Utils.prepareContent(content, 28, 4, 1.5, null, false);
-    final fallbackPainter = TextPainter(
-      text: const TextSpan(text: token, style: TextStyle(fontSize: 16)),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout();
+    final layout = Utils.prepareContent(content, 20, 4, 1.25, null, false);
+    final boxes = layout.paragraph.getBoxesForPlaceholders();
 
-    final box = normal.paragraph.getBoxesForPlaceholders().single;
-    expect(box.right - box.left, greaterThanOrEqualTo(fallbackPainter.width));
-    expect(larger.size.width, greaterThan(normal.size.width));
-    expect(larger.size.height, greaterThan(normal.size.height));
+    expect(boxes, hasLength(2));
+    expect(boxes[0].right - boxes[0].left, 25);
+    expect(boxes[1].right - boxes[1].left, 25);
+    expect(boxes[1].left, boxes[0].right);
+    expect(
+      layout.paragraph.getBoxesForRange(3, 4),
+      isNotEmpty,
+      reason: '连续表情后的最后一个字必须保留',
+    );
+  });
+
+  test('Douyin long emoji names use the same compact placeholder', () {
+    final content = DanmakuContentItem(
+      '[鲸鱼点赞][尴尬流汗]尾字',
+      parts: const [
+        DanmakuContentPart.image(
+          'asset://assets/images/douyin_emoji/jingyudianzan.png',
+          fallbackText: '[鲸鱼点赞]',
+        ),
+        DanmakuContentPart.image(
+          'asset://assets/images/douyin_emoji/gangaliuhan.png',
+          fallbackText: '[尴尬流汗]',
+        ),
+        DanmakuContentPart.text('尾字'),
+      ],
+    );
+
+    final layout = Utils.prepareContent(content, 20, 4, 1.25, null, false);
+    final boxes = layout.paragraph.getBoxesForPlaceholders();
+
+    expect(boxes, hasLength(2));
+    expect(boxes[0].right - boxes[0].left, 25);
+    expect(boxes[1].right - boxes[1].left, 25);
+    expect(boxes[1].left, boxes[0].right);
+    expect(layout.paragraph.getBoxesForRange(3, 4), isNotEmpty);
   });
 
   test('missing image paints the literal fallback token', () async {

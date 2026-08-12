@@ -201,17 +201,11 @@ class ChatMessageText extends StatelessWidget {
   WidgetSpan _buildImageSpan(String url, {String? fallbackText}) {
     final hasFallback = fallbackText?.isNotEmpty ?? false;
     final imageSize = (messageStyle.fontSize ?? 14) * 1.35;
-    final fallbackPainter = TextPainter(
-      text: TextSpan(text: fallbackText ?? '', style: messageStyle),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout();
-    final contentWidth =
-        fallbackPainter.width > imageSize ? fallbackPainter.width : imageSize;
     final fallback = SizedBox(
-      width: contentWidth,
+      width: imageSize,
       height: imageSize,
-      child: Center(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
         child: Text(
           fallbackText ?? '',
           style: messageStyle,
@@ -221,16 +215,13 @@ class ChatMessageText extends StatelessWidget {
     );
     return WidgetSpan(
       alignment: PlaceholderAlignment.middle,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: NetImage(
-          url,
-          width: contentWidth,
-          height: imageSize,
-          fit: BoxFit.contain,
-          loadingWidget: hasFallback ? fallback : null,
-          errorWidget: hasFallback ? fallback : null,
-        ),
+      child: NetImage(
+        url,
+        width: imageSize,
+        height: imageSize,
+        fit: BoxFit.contain,
+        loadingWidget: hasFallback ? fallback : null,
+        errorWidget: hasFallback ? fallback : null,
       ),
     );
   }
