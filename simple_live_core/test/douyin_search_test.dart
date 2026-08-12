@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/scripts/douyin_sign.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -125,7 +126,7 @@ void main() {
 
     await site.searchRooms('signed');
 
-    expect(signerUserAgent, DouyinSite.kDefaultUserAgent);
+    expect(signerUserAgent, DouyinSite.kSearchUserAgent);
     expect(interceptor.searchOptions?.uri.queryParameters['msToken'], 'token');
     expect(
       interceptor.searchOptions?.uri.queryParameters['a_bogus'],
@@ -135,6 +136,84 @@ void main() {
       interceptor.searchOptions?.headers['user-agent'],
       signerUserAgent,
     );
+    expect(
+      interceptor.searchOptions?.uri.queryParameters['browser_name'],
+      'Edge',
+    );
+    expect(
+      interceptor.searchOptions?.uri.queryParameters['browser_version'],
+      '125.0.0.0',
+    );
+  });
+
+  test('a_bogus URL preparation preserves one browser msToken', () {
+    final prepared = DouyinSign.prepareAbogusUri(
+      'https://www.douyin.com/aweme/v1/web/live/search/'
+      '?aid=6383&msToken=browser-session-token',
+      generatedMsToken: 'unrelated-generated-token',
+    );
+
+    expect(prepared.queryParametersAll['msToken'], ['browser-session-token']);
+  });
+
+  test('a_bogus URL preparation adds a generated token when absent', () {
+    final prepared = DouyinSign.prepareAbogusUri(
+      'https://www.douyin.com/aweme/v1/web/live/search/?aid=6383',
+      generatedMsToken: 'generated-token',
+    );
+
+    expect(prepared.queryParametersAll['msToken'], ['generated-token']);
+  });
+
+  test('reuses browser session tokens when signing configured Cookie search',
+      () async {
+    interceptor.respondToSearchWith(_searchResponse());
+    String? unsignedUrl;
+    final site = DouyinSite(abogusSigner: (url, userAgent) {
+      unsignedUrl = url;
+      return _signedSearchUrl(url, userAgent);
+    })
+      ..cookie = 'sessionid=user-session; ttwid=user-ttwid; '
+          'msToken=browser-ms-token; tt_webid=7399999999999999999; '
+          's_v_web_id=verify_browser_session';
+
+    await site.searchRooms('session');
+
+    final unsignedQuery = Uri.parse(unsignedUrl!).queryParameters;
+    expect(unsignedQuery['msToken'], 'browser-ms-token');
+    expect(unsignedQuery['webid'], '7399999999999999999');
+    expect(unsignedQuery['verifyFp'], 'verify_browser_session');
+    expect(unsignedQuery['fp'], 'verify_browser_session');
+    expect(
+      interceptor.searchOptions?.uri.queryParameters['msToken'],
+      'browser-ms-token',
+    );
+    expect(
+      interceptor.searchOptions?.headers['user-agent'],
+      DouyinSite.kSearchUserAgent,
+    );
+    expect(
+        interceptor.searchOptions?.headers['origin'], 'https://www.douyin.com');
+  });
+
+  test('uses a stable per-site fallback webid instead of the shared constant',
+      () async {
+    interceptor.respondToSearchWith(_searchResponse());
+    final unsignedUrls = <String>[];
+    final site = DouyinSite(abogusSigner: (url, userAgent) {
+      unsignedUrls.add(url);
+      return _signedSearchUrl(url, userAgent);
+    })
+      ..cookie = 'sessionid=user-session';
+
+    await site.searchRooms('first');
+    await site.searchRooms('second');
+
+    final firstWebId = Uri.parse(unsignedUrls[0]).queryParameters['webid'];
+    final secondWebId = Uri.parse(unsignedUrls[1]).queryParameters['webid'];
+    expect(firstWebId, matches(RegExp(r'^7\d{18}$')));
+    expect(secondWebId, firstWebId);
+    expect(firstWebId, isNot('7382872326016435738'));
   });
 
   test('uses a configured Cookie without an anonymous HEAD preflight',
@@ -239,7 +318,7 @@ String _signedSearchUrl(String url, String userAgent) {
   final uri = Uri.parse(url);
   return uri.replace(queryParameters: {
     ...uri.queryParameters,
-    'msToken': 'token',
+    'msToken': uri.queryParameters['msToken'] ?? 'token',
     'a_bogus': 'signature',
   }).toString();
 }

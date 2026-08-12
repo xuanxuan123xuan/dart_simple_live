@@ -10655,22 +10655,43 @@ function getMSSDKSignature(msStub, userAgent) {
         memoryLimit: 4 * 1024 * 1024,
         maxStackSize: 64 * 1024,
       );
-      final msToken = generateMsToken(107);
-      var params = ('$url&msToken=$msToken').split('?')[1];
-      var query = params.contains("?") ? params.split("?")[1] : params;
+      final signedBaseUri = prepareAbogusUri(url);
+      final query = signedBaseUri.query;
       var jsCode = kABogus;
       flutterJs.eval(jsCode);
       // 执行getABogus函数
       var aBogus = flutterJs.eval("getABogus('$query', '$userAgent')");
-      var newUrl =
-          '$url&msToken=${Uri.encodeComponent(msToken)}&a_bogus=${Uri.encodeComponent(aBogus)}';
-      return newUrl;
+      return signedBaseUri.replace(
+        queryParameters: {
+          ...signedBaseUri.queryParameters,
+          'a_bogus': aBogus.toString(),
+        },
+      ).toString();
     } catch (e) {
       CoreLog.d("Douyin getAbogusUrl 签名失败: $e");
       throw Exception("Douyin getAbogusUrl 签名失败: $e");
     } finally {
       flutterJs?.dispose();
     }
+  }
+
+  /// Adds exactly one msToken before calculating a_bogus. If the URL already
+  /// carries the token issued by the browser session, it must be preserved.
+  static Uri prepareAbogusUri(
+    String url, {
+    String? generatedMsToken,
+  }) {
+    final sourceUri = Uri.parse(url);
+    final existingMsToken = sourceUri.queryParameters['msToken']?.trim();
+    final msToken = existingMsToken != null && existingMsToken.isNotEmpty
+        ? existingMsToken
+        : (generatedMsToken ?? generateMsToken(107));
+    return sourceUri.replace(
+      queryParameters: {
+        ...sourceUri.queryParameters,
+        'msToken': msToken,
+      },
+    );
   }
 
   static String getSignature(String roomId, String uniqueId) {
@@ -10719,9 +10740,8 @@ function getMSSDKSignature(msStub, userAgent) {
       "ac": "",
       "identity": "audience",
     };
-    final sigParams = params.entries
-        .map((e) => "${e.key}=${e.value}")
-        .join(',');
+    final sigParams =
+        params.entries.map((e) => "${e.key}=${e.value}").join(',');
     // 需要导入crypto库: import 'package:crypto/crypto.dart';
     final bytes = sigParams.codeUnits;
     final digest = md5.convert(bytes);

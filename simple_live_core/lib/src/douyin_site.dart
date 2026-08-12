@@ -70,12 +70,20 @@ class DouyinSite implements LiveSite {
   static const String kDefaultUserAgent =
       "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400";
 
+  /// Keep the search fingerprint internally consistent. Search used to sign
+  /// with QQBrowser/Chrome 116 while declaring Edge 125 in both the query and
+  /// client-hint headers, which is a strong anti-bot signal.
+  static const String kSearchUserAgent =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0";
+
   static const String kDefaultReferer = "https://live.douyin.com";
 
   static const String kDefaultAuthority = "live.douyin.com";
   static const Duration _webCookieCacheTtl = Duration(minutes: 5);
   static final Map<String, String> _webCookieCache = <String, String>{};
   static final Map<String, DateTime> _webCookieCacheAt = <String, DateTime>{};
+  late final String _fallbackSearchWebId = _generateSearchWebId();
 
   /// 默认 Cookie - 只需要 ttwid 字段即可获取所有画质（包括蓝光）
   /// 经过测试验证，LOGIN_STATUS=1 等其他字段都是可选的
@@ -1196,8 +1204,9 @@ class DouyinSite implements LiveSite {
         "offset": ((page - 1) * 10).toString(),
         "count": "10",
         "pc_client_type": "1",
-        "version_code": "170400",
-        "version_name": "17.4.0",
+        "version_code": "190600",
+        "version_name": "19.6.0",
+        "update_version_code": "170400",
         "cookie_enabled": "true",
         "screen_width": "1980",
         "screen_height": "1080",
@@ -1216,7 +1225,6 @@ class DouyinSite implements LiveSite {
         "downlink": "10",
         "effective_type": "4g",
         "round_trip_time": "100",
-        "webid": "7382872326016435738",
       },
     );
     final requestHeaders = await getRequestHeaders();
@@ -1225,6 +1233,13 @@ class DouyinSite implements LiveSite {
     if (savedCookie.isNotEmpty) {
       dyCookie = _ensureCookieEndsWithSemicolon(savedCookie);
     }
+    final configuredCookies = _parseCookieValue(savedCookie);
+    uri = uri.replace(
+      queryParameters: {
+        ...uri.queryParameters,
+        ..._searchSessionQueryParameters(configuredCookies),
+      },
+    );
     // A user-provided Cookie already represents one coherent browser session.
     // Do not precede every search with an anonymous live.douyin.com HEAD: that
     // extra request can itself be rate-limited (444), and any fresh anonymous
@@ -1267,7 +1282,7 @@ class DouyinSite implements LiveSite {
     _throwIfCancelled(cancellation);
     late final String requestUrl;
     try {
-      requestUrl = _abogusSigner(uri.toString(), kDefaultUserAgent);
+      requestUrl = _abogusSigner(uri.toString(), kSearchUserAgent);
     } catch (error) {
       throw CoreError(
         "抖音直播搜索请求签名失败",
@@ -1285,6 +1300,7 @@ class DouyinSite implements LiveSite {
         'accept': 'application/json, text/plain, */*',
         'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'cookie': dyCookie,
+        'origin': 'https://www.douyin.com',
         'priority': 'u=1, i',
         'referer':
             'https://www.douyin.com/search/${Uri.encodeComponent(keyword)}?type=live',
@@ -1295,7 +1311,7 @@ class DouyinSite implements LiveSite {
         'sec-fetch-dest': 'empty',
         'sec-fetch-mode': 'cors',
         'sec-fetch-site': 'same-origin',
-        'user-agent': kDefaultUserAgent,
+        'user-agent': kSearchUserAgent,
       },
       cancellation: cancellation,
     );
@@ -1367,6 +1383,59 @@ class DouyinSite implements LiveSite {
       return cookie;
     }
     return "$cookie;";
+  }
+
+  Map<String, String> _searchSessionQueryParameters(
+    Map<String, String> cookies,
+  ) {
+    final result = <String, String>{};
+    final cookieWebId = _firstCookieValue(
+      cookies,
+      const ['tt_webid', 'tt_webid_v2', 'webid'],
+    );
+    result['webid'] =
+        _isValidWebId(cookieWebId) ? cookieWebId! : _fallbackSearchWebId;
+
+    final msToken = _firstCookieValue(cookies, const ['msToken']);
+    if (msToken != null && msToken.isNotEmpty) {
+      // DouyinSign reuses an existing msToken when present, keeping the
+      // a_bogus signature bound to the browser session that issued the Cookie.
+      result['msToken'] = msToken;
+    }
+
+    final verifyFp = _firstCookieValue(
+      cookies,
+      const ['s_v_web_id', 'verifyFp', 'verify_fp'],
+    );
+    if (verifyFp != null && verifyFp.isNotEmpty) {
+      result['verifyFp'] = verifyFp;
+      result['fp'] = verifyFp;
+    }
+    return result;
+  }
+
+  String? _firstCookieValue(
+    Map<String, String> cookies,
+    List<String> candidates,
+  ) {
+    for (final candidate in candidates) {
+      final normalized = candidate.toLowerCase();
+      for (final entry in cookies.entries) {
+        if (entry.key.toLowerCase() == normalized && entry.value.isNotEmpty) {
+          return entry.value;
+        }
+      }
+    }
+    return null;
+  }
+
+  bool _isValidWebId(String? value) {
+    return value != null && RegExp(r'^\d{16,22}$').hasMatch(value);
+  }
+
+  String _generateSearchWebId() {
+    final random = Random.secure();
+    return '7${List.generate(18, (_) => random.nextInt(10)).join()}';
   }
 
   DouyinSearchAuthError _douyinSearchAuthError() {
