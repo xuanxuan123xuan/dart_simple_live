@@ -385,7 +385,9 @@ class DouyinDanmaku implements LiveDanmaku {
     onMessage?.call(
       LiveMessage(
         type: LiveMessageType.online,
-        data: roomUserSeqMessage.totalUser.toInt(),
+        // total 是当前房间内的在线人数；totalUser 是本场累计进入人数。
+        // 火焰图标展示实时观看人数时不能使用累计值。
+        data: roomUserSeqMessage.total.toInt(),
         color: LiveMessageColor.white,
         message: "",
         userName: "",
