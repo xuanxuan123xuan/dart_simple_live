@@ -7,7 +7,7 @@
       "name": "Simple Live (dev)",
       "bundleIdentifier": "com.simplelive.app",
       "developerName": "xuanxuan123xuan",
-      "version": "1.13.12",
+      "version": "1.13.13",
       "versionDate": "2026-08-12",
       "versionDescription": "dev 分支测试版：Flutter 3.41 升级中，功能可能不稳定",
       "downloadURL": "https://github.com/xuanxuan123xuan/dart_simple_live/releases/download/ios-dev/simple-live.ipa",
