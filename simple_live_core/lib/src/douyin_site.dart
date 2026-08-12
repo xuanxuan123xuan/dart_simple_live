@@ -1225,28 +1225,31 @@ class DouyinSite implements LiveSite {
     if (savedCookie.isNotEmpty) {
       dyCookie = _ensureCookieEndsWithSemicolon(savedCookie);
     }
-    dynamic headResp;
-    try {
-      headResp = await HttpClient.instance.head(
-        'https://live.douyin.com',
-        header: requestHeaders,
-        cancellation: cancellation,
-      );
-    } catch (e) {
-      if (e is CoreCancelledError) {
-        rethrow;
-      }
-      if (dyCookie.isEmpty) {
-        rethrow;
-      }
-      _logDebug("抖音搜索预取 Cookie 的 HEAD 请求失败，使用已保存 Cookie 继续：$e");
-    }
-    if (headResp != null) {
-      if (headResp.statusCode == 444) {
-        throw CoreError("", statusCode: 444, kind: CoreErrorKind.http);
+    // A user-provided Cookie already represents one coherent browser session.
+    // Do not precede every search with an anonymous live.douyin.com HEAD: that
+    // extra request can itself be rate-limited (444), and any fresh anonymous
+    // ttwid/nonce does not belong to the configured login session. Only obtain
+    // a fresh anonymous ttwid when the built-in fallback Cookie is being used.
+    if (cookie.trim().isEmpty) {
+      dynamic headResp;
+      try {
+        headResp = await HttpClient.instance.head(
+          'https://live.douyin.com',
+          header: requestHeaders,
+          cancellation: cancellation,
+        );
+        if (headResp.statusCode == 444) {
+          throw CoreError("", statusCode: 444, kind: CoreErrorKind.http);
+        }
+      } catch (error) {
+        if (error is CoreCancelledError ||
+            (error is CoreError && error.statusCode == 444)) {
+          rethrow;
+        }
+        _logDebug("抖音搜索预取 Cookie 失败，使用内置 ttwid 继续：$error");
       }
       final headCookies = <String>[];
-      headResp.headers["set-cookie"]?.forEach((element) {
+      headResp?.headers["set-cookie"]?.forEach((element) {
         final headCookie = element.split(";").first.trim();
         final separatorIndex = headCookie.indexOf("=");
         if (separatorIndex <= 0) {
@@ -1258,11 +1261,7 @@ class DouyinSite implements LiveSite {
           headCookies.add(headCookie);
         }
       });
-      dyCookie = _mergeCookieValues(
-        savedCookie,
-        headCookies.join("; "),
-        preferBase: cookie.trim().isNotEmpty,
-      );
+      dyCookie = _mergeCookieValues(savedCookie, headCookies.join("; "));
     }
     // HEAD has completed; do not begin the search GET after cancellation.
     _throwIfCancelled(cancellation);

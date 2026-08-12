@@ -12,7 +12,7 @@ import 'package:simple_live_core/simple_live_core.dart';
 class SearchAggregateController extends GetxController {
   SearchAggregateController({
     List<Site>? sites,
-    this.timeout = const Duration(seconds: 10),
+    this.timeout = const Duration(seconds: 20),
   }) : _sites = List<Site>.unmodifiable(sites ?? Sites.supportSites);
 
   final List<Site> _sites;

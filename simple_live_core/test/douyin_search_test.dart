@@ -137,13 +137,8 @@ void main() {
     );
   });
 
-  test('keeps configured cookie values when HEAD returns duplicate names',
+  test('uses a configured Cookie without an anonymous HEAD preflight',
       () async {
-    interceptor.respondToHeadWithCookies([
-      'ttwid=head-ttwid; Path=/',
-      '__ac_nonce=head-nonce; Path=/',
-      'foo_ttwid=must-not-be-copied; Path=/',
-    ]);
     interceptor.respondToSearchWith(_searchResponse());
     final site = _testSite()
       ..cookie = 'ttwid=user-ttwid; sessionid=user-session; '
@@ -159,6 +154,9 @@ void main() {
       'token': 'value=with=equals',
     });
     expect(RegExp(r'(^|;\s*)ttwid=').allMatches(cookie), hasLength(1));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
   });
 
   test('lets a HEAD ttwid replace the built-in default cookie', () async {

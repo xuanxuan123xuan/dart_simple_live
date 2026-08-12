@@ -141,11 +141,13 @@ class KuaishouSite extends LiveSite {
     Dio Function()? authenticatedDioFactory,
     CookieJar Function()? cookieJarFactory,
     KuaishouRequestCoordinator? coordinator,
+    KuaishouRequestCoordinator? searchCoordinator,
     KuaishouCategorySnapshotStore? categorySnapshotStore,
   })  : _authenticatedDioFactory = authenticatedDioFactory ?? Dio.new,
         _cookieJarFactory = cookieJarFactory ?? CookieJar.new,
         _categorySnapshotStore = categorySnapshotStore,
-        coordinator = coordinator ?? KuaishouRequestCoordinator() {
+        coordinator = coordinator ?? KuaishouRequestCoordinator(),
+        searchCoordinator = searchCoordinator ?? KuaishouRequestCoordinator() {
     id = "kuaishou";
     name = "快手直播";
   }
@@ -194,6 +196,12 @@ class KuaishouSite extends LiveSite {
   /// 快手敏感请求的进程级协调器：全局最小间隔、优先级、同房合并与短缓存。
   final KuaishouRequestCoordinator coordinator;
 
+  /// 用户主动搜索使用独立的公开 API 单通道。
+  ///
+  /// 搜索仍然串行、合并且有硬超时，但不会排在房间详情、关注刷新等长任务
+  /// 后面，避免聚合搜索的总时间预算在请求真正发出前就耗尽。
+  final KuaishouRequestCoordinator searchCoordinator;
+
   final Dio Function() _authenticatedDioFactory;
   final CookieJar Function() _cookieJarFactory;
   final KuaishouCategorySnapshotStore? _categorySnapshotStore;
@@ -201,7 +209,10 @@ class KuaishouSite extends LiveSite {
       StreamController<List<LiveCategory>>.broadcast();
   Stream<List<LiveCategory>> get categoryUpdates => _categoryUpdates.stream;
 
-  void cancelScope(String scopeId) => coordinator.cancelScope(scopeId);
+  void cancelScope(String scopeId) {
+    coordinator.cancelScope(scopeId);
+    searchCoordinator.cancelScope(scopeId);
+  }
 
   /// 房间详情成功缓存 TTL（短窗口复用，播放地址有效期未核实前取保守值）。
   static const Duration _detailCacheTtl = Duration(seconds: 15);
@@ -856,12 +867,12 @@ class KuaishouSite extends LiveSite {
     int page = 1,
     CoreCancellation? cancellation,
   }) async {
-    final result = await coordinator.schedule<dynamic>(
+    final result = await searchCoordinator.schedule<dynamic>(
       priority: KuaishouRequestPriority.interactivePublic,
       key: 'http:search_live:${keyword.hashCode}:$page',
       traffic: KuaishouRequestTraffic.publicApi,
       scopeId: KuaishouRequestTrace.scopeId ?? 'kuaishou:search',
-      timeout: const Duration(seconds: 8),
+      timeout: const Duration(seconds: 9),
       task: () => _getPublicJson(
         "https://live.kuaishou.com/live_api/search/liveStream",
         queryParameters: {
@@ -872,6 +883,7 @@ class KuaishouSite extends LiveSite {
         },
         headers: _searchHeaders(keyword),
         cancellation: cancellation,
+        timeout: const Duration(seconds: 4),
       ),
     );
     _throwIfExplicitRateLimit(result);
@@ -986,12 +998,12 @@ class KuaishouSite extends LiveSite {
     int page = 1,
     CoreCancellation? cancellation,
   }) async {
-    final result = await coordinator.schedule<dynamic>(
+    final result = await searchCoordinator.schedule<dynamic>(
       priority: KuaishouRequestPriority.interactivePublic,
       key: 'http:search_author:${keyword.hashCode}:$page',
       traffic: KuaishouRequestTraffic.publicApi,
       scopeId: KuaishouRequestTrace.scopeId ?? 'kuaishou:search',
-      timeout: const Duration(seconds: 8),
+      timeout: const Duration(seconds: 9),
       task: () => _getPublicJson(
         "https://live.kuaishou.com/live_api/search/author",
         queryParameters: {
@@ -1004,6 +1016,7 @@ class KuaishouSite extends LiveSite {
         },
         headers: _searchHeaders(keyword),
         cancellation: cancellation,
+        timeout: const Duration(seconds: 4),
       ),
     );
     _throwIfExplicitRateLimit(result);
@@ -1081,17 +1094,18 @@ class KuaishouSite extends LiveSite {
     String keyword, {
     CoreCancellation? cancellation,
   }) async {
-    final result = await coordinator.schedule<dynamic>(
+    final result = await searchCoordinator.schedule<dynamic>(
       priority: KuaishouRequestPriority.interactivePublic,
       key: 'http:search_overview:${keyword.hashCode}',
       traffic: KuaishouRequestTraffic.publicApi,
       scopeId: KuaishouRequestTrace.scopeId ?? 'kuaishou:search',
-      timeout: const Duration(seconds: 8),
+      timeout: const Duration(seconds: 9),
       task: () => _getPublicJson(
         "https://live.kuaishou.com/live_api/search/overview",
         queryParameters: {"keyword": keyword, "ussid": ""},
         headers: _searchHeaders(keyword),
         cancellation: cancellation,
+        timeout: const Duration(seconds: 4),
       ),
     );
     _throwIfExplicitRateLimit(result);
@@ -1278,7 +1292,7 @@ class KuaishouSite extends LiveSite {
     if (_isUserTriggered(source)) {
       coordinator.cancelScope(_categoryRefreshScope);
       coordinator.cancelScope('kuaishou:follow-refresh');
-      coordinator.cancelScope('kuaishou:search');
+      searchCoordinator.cancelScope('kuaishou:search');
     }
     final firstTransport = _preferredCookieTransport();
     if (firstTransport == null) {
