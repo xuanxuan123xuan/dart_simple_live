@@ -242,7 +242,7 @@ jobs:
           retention-days: 14
 
   android_tv:
-    name: Android TV APK 与 AAB
+    name: Android TV APK
     needs: prepare
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -292,43 +292,14 @@ jobs:
           --build-name=${{ needs.prepare.outputs.version }}
           --build-number=${{ needs.prepare.outputs.build_number }}
 
-      - name: 暂存 TV 通用 APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/release-android-tv"
-          cp simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk \
-            "$RUNNER_TEMP/release-android-tv/simple-live-tv-${{ needs.prepare.outputs.version }}-android-universal.apk"
-
-      - name: 构建 TV 分架构 APK
-        working-directory: simple_live_tv_app
-        run: >-
-          flutter build apk --release --split-per-abi --no-pub
-          --build-name=${{ needs.prepare.outputs.version }}
-          --build-number=${{ needs.prepare.outputs.build_number }}
-
-      - name: 构建 TV AAB
-        working-directory: simple_live_tv_app
-        run: >-
-          flutter build appbundle --release --no-pub
-          --build-name=${{ needs.prepare.outputs.version }}
-          --build-number=${{ needs.prepare.outputs.build_number }}
-
       - name: 暂存 Android TV 产物
         shell: bash
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/release-android-tv"
           mkdir -p "$out"
-          src="simple_live_tv_app/build/app/outputs/flutter-apk"
-          cp "$src/app-armeabi-v7a-release.apk" \
-            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-armeabi-v7a.apk"
-          cp "$src/app-arm64-v8a-release.apk" \
-            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-arm64-v8a.apk"
-          cp "$src/app-x86_64-release.apk" \
-            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-x86_64.apk"
-          cp simple_live_tv_app/build/app/outputs/bundle/release/app-release.aab \
-            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android.aab"
+          cp simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk \
+            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-universal.apk"
           (cd "$out" && sha256sum -- * > SHA256SUMS-android-tv.txt)
 
       - uses: actions/upload-artifact@v4
@@ -475,7 +446,7 @@ jobs:
           rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision" || true
 
   macos:
-    name: macOS DMG、PKG 与 ZIP
+    name: macOS DMG
     needs: prepare
     runs-on: macos-14
     timeout-minutes: 75
@@ -512,7 +483,7 @@ jobs:
 
       - name: 构建 macOS 安装包
         working-directory: simple_live_app
-        run: fastforge package --platform macos --targets dmg,pkg,zip --skip-clean
+        run: fastforge package --platform macos --targets dmg --skip-clean
 
       - name: 暂存 macOS 产物
         shell: bash
@@ -524,10 +495,9 @@ jobs:
             extension="${file##*.}"
             cp "$file" \
               "$out/simple-live-${{ needs.prepare.outputs.version }}-macos.$extension"
-          done < <(find simple_live_app/build/dist -type f \
-            \( -name '*.dmg' -o -name '*.pkg' -o -name '*.zip' \) -print0)
+          done < <(find simple_live_app/build/dist -type f -name '*.dmg' -print0)
           count="$(find "$out" -type f | wc -l | tr -d ' ')"
-          [[ "$count" -ge 3 ]]
+          [[ "$count" -ge 1 ]]
           (cd "$out" && shasum -a 256 -- * > SHA256SUMS-macos.txt)
 
       - uses: actions/upload-artifact@v4
@@ -538,7 +508,7 @@ jobs:
           retention-days: 14
 
   windows:
-    name: Windows EXE、MSIX 与 ZIP
+    name: Windows EXE 与 ZIP
     needs: prepare
     # Flutter 3.41 支持 VS 2022/2026；保留 windows-2022 镜像稳定构建。
     runs-on: windows-2022
@@ -577,7 +547,7 @@ jobs:
       - name: 构建 Windows 安装包
         working-directory: simple_live_app
         shell: pwsh
-        run: fastforge package --platform windows --targets exe,msix,zip --skip-clean
+        run: fastforge package --platform windows --targets exe,zip --skip-clean
 
       - name: 暂存 Windows 产物
         shell: pwsh
@@ -585,8 +555,8 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP "release-windows"
           New-Item -ItemType Directory -Force $out | Out-Null
           $files = Get-ChildItem -LiteralPath "simple_live_app\build\dist" -Recurse -File |
-            Where-Object { $_.Extension -in ".exe", ".msix", ".zip" }
-          if ($files.Count -lt 3) { throw "Expected EXE, MSIX and ZIP outputs." }
+            Where-Object { $_.Extension -in ".exe", ".zip" }
+          if ($files.Count -lt 2) { throw "Expected EXE and ZIP outputs." }
           foreach ($file in $files) {
             $extension = $file.Extension.ToLowerInvariant()
             $target = Join-Path $out "simple-live-${{ needs.prepare.outputs.version }}-windows$extension"
@@ -610,7 +580,7 @@ jobs:
           retention-days: 14
 
   linux:
-    name: Linux AppImage、DEB、RPM 与 ZIP
+    name: Linux AppImage 与 DEB
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -634,7 +604,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libasound2-dev libmpv-dev mpv libepoxy-dev rpm patchelf \
+            libasound2-dev libmpv-dev mpv libepoxy-dev patchelf \
             plocate libfuse2t64
           wget -q -O "$RUNNER_TEMP/appimagetool" \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
@@ -656,7 +626,7 @@ jobs:
         working-directory: simple_live_app
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: fastforge package --platform linux --targets appimage,deb,rpm,zip --skip-clean
+        run: fastforge package --platform linux --targets appimage,deb --skip-clean
 
       - name: 暂存 Linux 产物
         shell: bash
@@ -672,9 +642,9 @@ jobs:
             cp "$file" \
               "$out/simple-live-${{ needs.prepare.outputs.version }}-linux.$extension"
           done < <(find simple_live_app/build/dist -type f \
-            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.zip' \) -print0)
+            \( -name '*.AppImage' -o -name '*.deb' \) -print0)
           count="$(find "$out" -type f | wc -l | tr -d ' ')"
-          [[ "$count" -ge 4 ]]
+          [[ "$count" -ge 2 ]]
           (cd "$out" && sha256sum -- * > SHA256SUMS-linux.txt)
 
       - uses: actions/upload-artifact@v4

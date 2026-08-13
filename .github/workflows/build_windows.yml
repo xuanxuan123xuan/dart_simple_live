@@ -17,7 +17,7 @@ env:
 
 jobs:
   build:
-    name: 构建 Windows EXE、MSIX 与 ZIP
+    name: 构建 Windows EXE 与 ZIP
     # Flutter 3.41 支持 VS 2022/2026；保留 windows-2022 镜像稳定构建。
     runs-on: windows-2022
     timeout-minutes: 75
@@ -51,7 +51,7 @@ jobs:
       - name: 构建 Windows 安装包
         working-directory: simple_live_app
         shell: pwsh
-        run: fastforge package --platform windows --targets exe,msix,zip --skip-clean
+        run: fastforge package --platform windows --targets exe,zip --skip-clean
 
       - name: 上传 Windows 产物
         uses: actions/upload-artifact@v4

@@ -16,7 +16,7 @@ env:
 
 jobs:
   build:
-    name: 构建 Android TV APK 与 AAB
+    name: 构建 Android TV APK
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
@@ -64,26 +64,10 @@ jobs:
         working-directory: simple_live_tv_app
         run: flutter build apk --release --no-pub
 
-      - name: 构建 TV 分架构 APK
-        working-directory: simple_live_tv_app
-        run: flutter build apk --release --split-per-abi --no-pub
-
-      - name: 构建 TV AAB
-        working-directory: simple_live_tv_app
-        run: flutter build appbundle --release --no-pub
-
       - name: 上传 APK
         uses: actions/upload-artifact@v4
         with:
           name: android-tv-apk
-          path: simple_live_tv_app/build/app/outputs/flutter-apk/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: 上传 AAB
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-tv-aab
-          path: simple_live_tv_app/build/app/outputs/bundle/release/*.aab
+          path: simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14

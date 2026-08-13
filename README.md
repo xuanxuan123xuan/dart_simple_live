@@ -142,10 +142,10 @@ Simple Live 会一直坚持**免费、开源、不向用户收费**。目前项�
 |---|---|---|
 | Android | ✅ | 分架构 APK |
 | iOS | ✅ | 未签名 IPA 或 AltStore 侧载 |
-| Windows | ✅ | zip |
-| macOS | ✅ | dmg / zip |
-| Linux | ✅ | zip / deb |
-| Android TV | ✅ | 拆分 APK（按 ABI） |
+| Windows | ✅ | EXE / ZIP |
+| macOS | ✅ | DMG |
+| Linux | ✅ | AppImage / DEB |
+| Android TV | ✅ | Universal APK |
 | TV-windows | ✅ | TV 的 UI 在 Windows 上运行，支持多开 |
 | HarmonyOS NEXT | ✅ | 随全平台升级（runner 需换 oh-3.41.9-release） |
 
