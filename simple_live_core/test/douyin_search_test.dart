@@ -115,6 +115,38 @@ void main() {
     );
   });
 
+  test('decodes a text response with a UTF-8 BOM', () async {
+    interceptor.respondToSearchWithText(
+      '\ufeff${jsonEncode(_searchResponse())}',
+    );
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('bom');
+
+    expect(result.items, hasLength(1));
+    expect(result.items.single.roomId, 'room-1');
+  });
+
+  test('classifies an HTML challenge instead of a network failure', () async {
+    interceptor.respondToSearchWithText(
+      '<!doctype html><html><script>window.__ac_nonce="nonce"</script></html>',
+    );
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    await expectLater(
+      site.searchRooms('challenge'),
+      throwsA(
+        isA<CoreError>()
+            .having((error) => error.kind, 'kind', CoreErrorKind.search)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('验证页面'),
+            ),
+      ),
+    );
+  });
+
   test('signs the search URL after HEAD with the same user agent', () async {
     interceptor.respondToHead();
     interceptor.respondToSearchWith(_searchResponse());
@@ -144,6 +176,23 @@ void main() {
       interceptor.searchOptions?.uri.queryParameters['browser_version'],
       '125.0.0.0',
     );
+  });
+
+  test('uses a standalone live-search context', () async {
+    interceptor.respondToSearchWith(_searchResponse());
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    await site.searchRooms('standalone');
+
+    final query = interceptor.searchOptions!.uri.queryParameters;
+    expect(query['search_channel'], 'aweme_live');
+    expect(query['search_source'], 'switch_tab');
+    expect(query.containsKey('search_id'), isFalse);
+    expect(query['from_group_id'], isEmpty);
+    expect(query['need_filter_settings'], '1');
+    expect(query['list_type'], 'single');
+    expect(query['version_code'], '170400');
+    expect(query['version_name'], '17.4.0');
   });
 
   test('a_bogus URL preparation preserves one browser msToken', () {
@@ -236,6 +285,92 @@ void main() {
     expect(interceptor.requests, [
       _DouyinSearchInterceptor.searchRequest,
     ]);
+  });
+
+  test('normalizes a previously saved JSON Cookie before sending', () async {
+    interceptor.respondToSearchWith(_searchResponse());
+    final site = _testSite()
+      ..cookie = '''{
+  "cookie": "ttwid=user-ttwid; sessionid=user-session"
+}''';
+
+    await site.searchRooms('json-cookie');
+
+    final cookie = _searchCookie(interceptor);
+    expect(_parseCookieHeader(cookie), {
+      'ttwid': 'user-ttwid',
+      'sessionid': 'user-session',
+    });
+    expect(cookie, isNot(contains('{')));
+    expect(cookie, isNot(contains('\n')));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
+  });
+
+  test('uses the response has_more flag instead of the first-page size',
+      () async {
+    interceptor.respondToSearchWith({
+      ..._searchResponse(),
+      'has_more': 1,
+    });
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('more');
+
+    expect(result.items, hasLength(1));
+    expect(result.hasMore, isTrue);
+  });
+
+  test('uses upstream compatibility only after a successful empty response',
+      () async {
+    interceptor.respondToHeadWithCookies([
+      'ttwid=head-ttwid; Path=/',
+      '__ac_nonce=head-nonce; Path=/',
+    ]);
+    interceptor.respondToSearchSequence([
+      {'status_code': 0, 'data': [], 'has_more': 0},
+      _searchResponse(),
+    ]);
+    final site = _testSite()
+      ..cookie = 'sessionid=user-session; ttwid=user-ttwid';
+
+    final result = await site.searchRooms('compatibility');
+
+    expect(result.items, hasLength(1));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+      _DouyinSearchInterceptor.headRequest,
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
+    final primary = interceptor.searchOptionsHistory[0];
+    final fallback = interceptor.searchOptionsHistory[1];
+    expect(primary.uri.queryParameters['a_bogus'], 'signature');
+    expect(fallback.uri.queryParameters.containsKey('a_bogus'), isFalse);
+    expect(fallback.uri.queryParameters.containsKey('msToken'), isFalse);
+    expect(fallback.uri.queryParameters['webid'], '7382872326016435738');
+    expect(fallback.uri.queryParameters.containsKey('list_type'), isFalse);
+    expect(fallback.headers['user-agent'], DouyinSite.kDefaultUserAgent);
+    expect(_parseCookieHeader(fallback.headers['cookie'] as String), {
+      'sessionid': 'user-session',
+      'ttwid': 'head-ttwid',
+      '__ac_nonce': 'head-nonce',
+    });
+  });
+
+  test('keeps a genuinely empty result when both strategies are empty',
+      () async {
+    interceptor.respondToHead();
+    interceptor.respondToSearchSequence([
+      {'status_code': 0, 'data': [], 'has_more': 0},
+      {'status_code': 0, 'data': [], 'has_more': 0},
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('empty');
+
+    expect(result.items, isEmpty);
+    expect(interceptor.searchOptionsHistory, hasLength(2));
   });
 
   test('lets a HEAD ttwid replace the built-in default cookie', () async {
@@ -374,8 +509,10 @@ class _DouyinSearchInterceptor extends Interceptor {
   bool _cancelHead = false;
   bool _failHead = false;
   List<String> _headCookies = const [];
-  Object? _searchResponse;
+  String? _searchResponse;
+  final List<String> _searchResponseSequence = [];
   RequestOptions? searchOptions;
+  final List<RequestOptions> searchOptionsHistory = [];
 
   void cancelHead() {
     _cancelHead = true;
@@ -398,7 +535,20 @@ class _DouyinSearchInterceptor extends Interceptor {
   }
 
   void respondToSearchWith(Object response) {
+    _searchResponse = jsonEncode(response);
+    _searchResponseSequence.clear();
+  }
+
+  void respondToSearchWithText(String response) {
     _searchResponse = response;
+    _searchResponseSequence.clear();
+  }
+
+  void respondToSearchSequence(List<Object> responses) {
+    _searchResponse = null;
+    _searchResponseSequence
+      ..clear()
+      ..addAll(responses.map(jsonEncode));
   }
 
   @override
@@ -433,12 +583,16 @@ class _DouyinSearchInterceptor extends Interceptor {
       return;
     }
 
-    if (request == searchRequest && _searchResponse != null) {
+    if (request == searchRequest &&
+        (_searchResponseSequence.isNotEmpty || _searchResponse != null)) {
       searchOptions = options;
-      handler.resolve(Response<Object>(
+      searchOptionsHistory.add(options);
+      handler.resolve(Response<String>(
         requestOptions: options,
         statusCode: 200,
-        data: _searchResponse,
+        data: _searchResponseSequence.isNotEmpty
+            ? _searchResponseSequence.removeAt(0)
+            : _searchResponse,
       ));
       return;
     }

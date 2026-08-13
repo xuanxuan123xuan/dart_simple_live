@@ -120,7 +120,7 @@ class DouyinSite implements LiveSite {
     try {
       // 如果用户已设置 cookie，直接使用用户的 cookie
       if (cookie.isNotEmpty) {
-        headers["cookie"] = cookie;
+        headers["cookie"] = DouyinCookieHelper.normalizeInput(cookie);
         return headers;
       }
 
@@ -1197,15 +1197,19 @@ class DouyinSite implements LiveSite {
         "channel": "channel_pc_web",
         "search_channel": "aweme_live",
         "keyword": keyword,
+        // Match the live-tab request context used by Douyin's web client and
+        // by the current upstream implementation.
         "search_source": "switch_tab",
         "query_correct_type": "1",
         "is_filter_search": "0",
         "from_group_id": "",
         "offset": ((page - 1) * 10).toString(),
         "count": "10",
+        "need_filter_settings": page == 1 ? "1" : "0",
+        "list_type": "single",
         "pc_client_type": "1",
-        "version_code": "190600",
-        "version_name": "19.6.0",
+        "version_code": "170400",
+        "version_name": "17.4.0",
         "update_version_code": "170400",
         "cookie_enabled": "true",
         "screen_width": "1980",
@@ -1292,7 +1296,11 @@ class DouyinSite implements LiveSite {
     }
     _throwIfCancelled(cancellation);
 
-    var result = await HttpClient.instance.getJson(
+    // The live-search payload can be large. Dio's automatic JSON transformer
+    // has been observed to fail with DioExceptionType.unknown on Windows
+    // before exposing the HTTP response. Read the response as text and decode
+    // it here so a valid payload is not reported as a network failure.
+    final responseText = await HttpClient.instance.getText(
       requestUrl,
       queryParameters: {},
       header: {
@@ -1316,20 +1324,77 @@ class DouyinSite implements LiveSite {
       cancellation: cancellation,
     );
     _throwIfCancelled(cancellation);
-    if (result == "" || result == 'blocked') {
+    final normalizedResponse =
+        responseText.trimLeft().replaceFirst('\ufeff', '');
+    if (normalizedResponse.isEmpty || normalizedResponse == 'blocked') {
       throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
+    }
+    dynamic result;
+    try {
+      result = json.decode(normalizedResponse);
+    } catch (error) {
+      final lowerResponse = normalizedResponse.toLowerCase();
+      if (lowerResponse.startsWith('<!doctype html') ||
+          lowerResponse.startsWith('<html') ||
+          lowerResponse.contains('__ac_nonce') ||
+          lowerResponse.contains('captcha')) {
+        throw CoreError(
+          "抖音直播搜索返回了验证页面，请重新网页登录后再试",
+          kind: CoreErrorKind.search,
+          cause: error,
+        );
+      }
+      throw _invalidDouyinSearchResponse(error);
     }
     if (result is! Map) {
       throw _invalidDouyinSearchResponse();
     }
-    final statusCode = int.tryParse(result["status_code"]?.toString() ?? "");
+    var statusCode = int.tryParse(result["status_code"]?.toString() ?? "");
+    var responseData = result["data"];
+    _logDebug(
+      "抖音搜索主请求：status=${statusCode ?? 'missing'}，"
+      "data=${responseData is List ? responseData.length : 'invalid'}，"
+      "has_more=${result['has_more'] ?? 'missing'}",
+    );
     if (statusCode == 2483) {
       throw _douyinSearchAuthError();
     }
     if (statusCode != null && statusCode != 0) {
       throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
     }
-    final data = result["data"];
+    if (statusCode == 0 && responseData is List && responseData.isEmpty) {
+      try {
+        final upstreamResult = await _retrySearchWithUpstreamStrategy(
+          uri: uri,
+          keyword: keyword,
+          requestHeaders: requestHeaders,
+          savedCookie: savedCookie,
+          cancellation: cancellation,
+        );
+        final upstreamStatus = int.tryParse(
+          upstreamResult["status_code"]?.toString() ?? "",
+        );
+        final upstreamData = upstreamResult["data"];
+        _logDebug(
+          "抖音搜索上游兼容重试：status=${upstreamStatus ?? 'missing'}，"
+          "data=${upstreamData is List ? upstreamData.length : 'invalid'}，"
+          "has_more=${upstreamResult['has_more'] ?? 'missing'}",
+        );
+        if (upstreamStatus == 0 &&
+            upstreamData is List &&
+            upstreamData.isNotEmpty) {
+          result = upstreamResult;
+          statusCode = upstreamStatus;
+          responseData = upstreamData;
+        }
+      } catch (error) {
+        if (error is CoreCancelledError) {
+          rethrow;
+        }
+        _logDebug("抖音搜索上游兼容重试失败：${error.runtimeType}");
+      }
+    }
+    final data = responseData;
     if (data is! List) {
       throw _invalidDouyinSearchResponse();
     }
@@ -1368,7 +1433,92 @@ class DouyinSite implements LiveSite {
       );
       items.add(roomItem);
     }
-    return LiveSearchRoomResult(hasMore: items.length >= 10, items: items);
+    final responseHasMore = int.tryParse(result["has_more"]?.toString() ?? "");
+    final hasMore =
+        responseHasMore == null ? items.length >= 10 : responseHasMore > 0;
+    _logDebug("抖音搜索解析完成：rooms=${items.length}，hasMore=$hasMore");
+    return LiveSearchRoomResult(hasMore: hasMore, items: items);
+  }
+
+  Future<Map<dynamic, dynamic>> _retrySearchWithUpstreamStrategy({
+    required Uri uri,
+    required String keyword,
+    required Map<String, dynamic> requestHeaders,
+    required String savedCookie,
+    CoreCancellation? cancellation,
+  }) async {
+    _throwIfCancelled(cancellation);
+    dynamic headResponse;
+    try {
+      headResponse = await HttpClient.instance.head(
+        'https://live.douyin.com',
+        header: requestHeaders,
+        cancellation: cancellation,
+      );
+    } catch (error) {
+      if (error is CoreCancelledError) {
+        rethrow;
+      }
+      _logDebug("抖音搜索上游兼容 HEAD 失败：${error.runtimeType}");
+    }
+    _throwIfCancelled(cancellation);
+
+    final headCookies = <String>[];
+    headResponse?.headers["set-cookie"]?.forEach((element) {
+      final headCookie = element.split(";").first.trim();
+      final separator = headCookie.indexOf('=');
+      if (separator <= 0) {
+        return;
+      }
+      final name = headCookie.substring(0, separator).trim().toLowerCase();
+      if (name == 'ttwid' || name == '__ac_nonce') {
+        headCookies.add(headCookie);
+      }
+    });
+    final upstreamCookie = _mergeCookieValues(
+      savedCookie,
+      headCookies.join('; '),
+    );
+
+    final query = <String, String>{...uri.queryParameters}
+      ..remove('msToken')
+      ..remove('verifyFp')
+      ..remove('fp')
+      ..remove('a_bogus')
+      ..remove('need_filter_settings')
+      ..remove('list_type')
+      ..remove('update_version_code')
+      ..['webid'] = '7382872326016435738';
+    final upstreamUri = uri.replace(queryParameters: query);
+    final responseText = await HttpClient.instance.getText(
+      upstreamUri.toString(),
+      queryParameters: {},
+      header: {
+        'Authority': 'www.douyin.com',
+        'accept': 'application/json, text/plain, */*',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'cookie': upstreamCookie,
+        'priority': 'u=1, i',
+        'referer':
+            'https://www.douyin.com/search/${Uri.encodeComponent(keyword)}?type=live',
+        'sec-ch-ua':
+            '"Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'user-agent': kDefaultUserAgent,
+      },
+      cancellation: cancellation,
+    );
+    _throwIfCancelled(cancellation);
+    final normalized = responseText.trimLeft().replaceFirst('\ufeff', '');
+    final decoded = json.decode(normalized);
+    if (decoded is! Map) {
+      throw _invalidDouyinSearchResponse();
+    }
+    return decoded;
   }
 
   String _getCookieHeaderValue(Map<String, dynamic> requestHeaders) {

@@ -84,7 +84,53 @@ void main() {
 
       expect(expiry?.toUtc(), DateTime.utc(2023, 11, 15, 0, 13, 20));
     });
+  });
 
+  group('DouyinCookieHelper input normalization', () {
+    test('extracts a cookie from a JSON export', () {
+      const input = '''{
+  "cookie": "sessionid=user-session; ttwid=user-ttwid"
+}''';
+
+      expect(
+        DouyinCookieHelper.normalizeInput(input),
+        'sessionid=user-session; ttwid=user-ttwid',
+      );
+    });
+
+    test('extracts a cookie from a double-encoded JSON export', () {
+      const input = '"{\\"cookie\\":\\"sessionid=user-session\\"}"';
+
+      expect(
+        DouyinCookieHelper.normalizeInput(input),
+        'sessionid=user-session',
+      );
+    });
+
+    test('converts an exported browser cookie list', () {
+      const input = '''[
+  {"name": "sessionid", "value": "user-session"},
+  {"name": "ttwid", "value": "user-ttwid"}
+]''';
+
+      expect(
+        DouyinCookieHelper.normalizeInput(input),
+        'sessionid=user-session; ttwid=user-ttwid',
+      );
+    });
+
+    test('removes control characters from a header value', () {
+      expect(
+        DouyinCookieHelper.normalizeInput(
+          'sessionid=user-session;\r\n ttwid=user-ttwid',
+        ),
+        'sessionid=user-session;  ttwid=user-ttwid',
+      );
+    });
+
+    test('keeps an empty input empty', () {
+      expect(DouyinCookieHelper.normalizeInput('  '), isEmpty);
+    });
   });
 
   test('cookie completeness hint uses authenticated session semantics', () {

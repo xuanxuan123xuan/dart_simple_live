@@ -1,4 +1,6 @@
-﻿class DouyinCookieHelper {
+import 'dart:convert';
+
+class DouyinCookieHelper {
   static bool hasCustomCookie(String cookie) {
     return cookie.trim().isNotEmpty;
   }
@@ -77,14 +79,70 @@
   }
 
   static String normalizeInput(String input) {
-    var cookie = extractCookieFromHeaderText(input) ?? input.trim();
+    var cookie = _extractCookieFromJson(input) ??
+        extractCookieFromHeaderText(input) ??
+        input.trim();
     if (cookie.toLowerCase().startsWith("cookie:")) {
       cookie = cookie.substring(cookie.indexOf(":") + 1).trim();
+    }
+    cookie = cookie.replaceAll(RegExp(r'[\u0000-\u001f\u007f]+'), ' ').trim();
+    if (cookie.isEmpty) {
+      return '';
     }
     if (!cookie.contains("=")) {
       cookie = 'ttwid=$cookie';
     }
     return cookie;
+  }
+
+  static String? _extractCookieFromJson(String input, [int depth = 0]) {
+    if (depth > 3) {
+      return null;
+    }
+    final source = input.trim();
+    if (source.isEmpty ||
+        !(source.startsWith('{') ||
+            source.startsWith('[') ||
+            source.startsWith('"'))) {
+      return null;
+    }
+    try {
+      return _cookieFromJsonValue(jsonDecode(source), depth + 1);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static String? _cookieFromJsonValue(dynamic value, int depth) {
+    if (value is String) {
+      return _extractCookieFromJson(value, depth) ?? value;
+    }
+    if (value is Map) {
+      for (final entry in value.entries) {
+        final key = entry.key.toString().toLowerCase();
+        if (key == 'cookie') {
+          return _cookieFromJsonValue(entry.value, depth);
+        }
+        if (key == 'cookies' && entry.value is List) {
+          return _cookieFromJsonValue(entry.value, depth);
+        }
+      }
+      final name = value['name']?.toString().trim();
+      final cookieValue = value['value']?.toString() ?? '';
+      if (name != null && name.isNotEmpty) {
+        return '$name=$cookieValue';
+      }
+      return null;
+    }
+    if (value is List) {
+      final cookies = value
+          .map((cookie) => _cookieFromJsonValue(cookie, depth))
+          .whereType<String>()
+          .where((cookie) => cookie.trim().isNotEmpty)
+          .toList(growable: false);
+      return cookies.isEmpty ? null : cookies.join('; ');
+    }
+    return null;
   }
 
   static String? extractCookieFromHeaderText(String input) {
@@ -108,7 +166,7 @@
   }
 
   static Map<String, String> _parseCookieMap(String input) {
-    final cookie = (extractCookieFromHeaderText(input) ?? input).trim();
+    final cookie = normalizeInput(input);
     final result = <String, String>{};
     for (final part in cookie.split(";")) {
       final item = part.trim();

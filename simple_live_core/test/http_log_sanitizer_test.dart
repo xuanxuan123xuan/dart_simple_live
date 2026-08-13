@@ -80,7 +80,19 @@ void main() {
       // 只需断言敏感值不再出现且已替换为脱敏标记。
       expect(result, isNot(contains('SECRET_COOKIE')));
       expect(result, isNot(contains('Bearer TOKEN')));
-      expect(result, contains('cookie=<redacted>'));
+      expect(result, contains('cookie: <redacted>'));
+    });
+
+    test('JSON Cookie header errors do not expose the cookie value', () {
+      final result = HttpLogSanitizer.redactText(
+        'Invalid HTTP header field value: "{\r\n'
+        '  "cookie": "sessionid=user-session; ttwid=user-ttwid"\r\n'
+        '}"',
+      );
+
+      expect(result, isNot(contains('user-session')));
+      expect(result, isNot(contains('user-ttwid')));
+      expect(result, contains('"cookie": <redacted>'));
     });
 
     test('token= 形式的敏感值被抹掉', () {
