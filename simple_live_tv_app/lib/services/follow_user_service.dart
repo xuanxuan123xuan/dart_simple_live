@@ -15,6 +15,7 @@ import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/models/db/follow_user.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
+import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/local_storage_service.dart';
 
 int? followStatusForLiveState(LiveStatusState state) {
@@ -27,10 +28,7 @@ int? followStatusForLiveState(LiveStatusState state) {
 
 Duration followPreviewCacheTtl(String _) => const Duration(minutes: 2);
 
-bool isFollowPreviewMetadataStale(
-  FollowUser item, {
-  DateTime? now,
-}) {
+bool isFollowPreviewMetadataStale(FollowUser item, {DateTime? now}) {
   if (item.roomTitle.trim().isEmpty ||
       item.roomCover.trim().isEmpty ||
       item.userName.trim().isEmpty ||
@@ -57,7 +55,8 @@ bool applyFollowPreviewDetail(
   final cover = detail.cover.trim();
   final userName = detail.userName.trim();
   final avatar = detail.userAvatar.trim();
-  final hasMetadata = title.isNotEmpty ||
+  final hasMetadata =
+      title.isNotEmpty ||
       cover.isNotEmpty ||
       userName.isNotEmpty ||
       avatar.isNotEmpty;
@@ -159,7 +158,8 @@ class FollowUserService extends BasePageController<FollowUser> {
     pageSize = AppSettingsController.instance.followPageSize.value;
     allList.assignAll(
       _sortFollowUsers(
-          _distinctFollowUsers(DBService.instance.getFollowList())),
+        _distinctFollowUsers(DBService.instance.getFollowList()),
+      ),
     );
     updateLivingList();
     sortList();
@@ -173,12 +173,12 @@ class FollowUserService extends BasePageController<FollowUser> {
     final now = DateTime.now();
     final shouldRefresh =
         AppSettingsController.instance.followRefreshOnEnter.value &&
-            allList.isNotEmpty &&
-            !updating.value &&
-            !_enterRefreshInFlight &&
-            (_lastEnterRefreshAt == null ||
-                now.difference(_lastEnterRefreshAt!) >=
-                    BasePageController.refreshCooldown);
+        allList.isNotEmpty &&
+        !updating.value &&
+        !_enterRefreshInFlight &&
+        (_lastEnterRefreshAt == null ||
+            now.difference(_lastEnterRefreshAt!) >=
+                BasePageController.refreshCooldown);
     if (shouldRefresh) {
       _lastEnterRefreshAt = now;
       _enterRefreshInFlight = true;
@@ -213,10 +213,7 @@ class FollowUserService extends BasePageController<FollowUser> {
       loadLocalList();
       if (needUpdate && _forceNextStatusRefresh) {
         unawaited(
-          startUpdateStatus(
-            allList.toList(),
-            force: _forceNextStatusRefresh,
-          ),
+          startUpdateStatus(allList.toList(), force: _forceNextStatusRefresh),
         );
       }
       _forceNextStatusRefresh = false;
@@ -244,8 +241,9 @@ class FollowUserService extends BasePageController<FollowUser> {
     if (start >= displayList.length) {
       return [];
     }
-    final end =
-        (start + effectivePageSize).clamp(0, displayList.length).toInt();
+    final end = (start + effectivePageSize)
+        .clamp(0, displayList.length)
+        .toInt();
     return displayList.sublist(start, end);
   }
 
@@ -394,8 +392,9 @@ class FollowUserService extends BasePageController<FollowUser> {
     return _RefreshTargetPolicyResult(
       allowedTargets: orderedTargets,
       deferredTargets: const [],
-      toastMessage:
-          hasFullDouyinCookie ? "" : "抖音未登录时将自动降速刷新；若出现 444，会暂停并保留剩余任务供后续继续。",
+      toastMessage: hasFullDouyinCookie
+          ? ""
+          : "抖音未登录时将自动降速刷新；若出现 444，会暂停并保留剩余任务供后续继续。",
     );
   }
 
@@ -405,8 +404,9 @@ class FollowUserService extends BasePageController<FollowUser> {
     for (final item in items) {
       final siteId = item.siteId.trim();
       final roomId = item.roomId.trim();
-      final uniqueId =
-          siteId.isEmpty || roomId.isEmpty ? item.id.trim() : "$siteId|$roomId";
+      final uniqueId = siteId.isEmpty || roomId.isEmpty
+          ? item.id.trim()
+          : "$siteId|$roomId";
       if (seenIds.add(uniqueId)) {
         result.add(item);
       }
@@ -507,8 +507,9 @@ class FollowUserService extends BasePageController<FollowUser> {
 
   Future<void> _clearPersistedRefreshTask() async {
     await LocalStorageService.instance.removeValue(_refreshTaskStateStorageKey);
-    await LocalStorageService.instance
-        .removeValue(_refreshTaskTargetsStorageKey);
+    await LocalStorageService.instance.removeValue(
+      _refreshTaskTargetsStorageKey,
+    );
   }
 
   void goToNextPage() {
@@ -550,9 +551,7 @@ class FollowUserService extends BasePageController<FollowUser> {
     );
   }
 
-  int _getConcurrency(
-    int total,
-  ) {
+  int _getConcurrency(int total) {
     if (total <= 0) {
       return 1;
     }
@@ -834,9 +833,7 @@ class FollowUserService extends BasePageController<FollowUser> {
         return;
       }
 
-      final concurrency = _getConcurrency(
-        followList.length,
-      );
+      final concurrency = _getConcurrency(followList.length);
       final hasFullDouyinCookie = DouyinCookieHelper.hasFullCookie(
         (Sites.allSites[Constant.kDouyin]?.liveSite as DouyinSite?)?.cookie ??
             "",
@@ -866,14 +863,15 @@ class FollowUserService extends BasePageController<FollowUser> {
         for (final item in allowedTargets) _refreshTargetKey(item): item,
       };
       final persistedTask = _loadPersistedRefreshTask(resolvedScope.scopeKey);
-      final resumeTask = resolvedScope.includeAllNormals &&
+      final resumeTask =
+          resolvedScope.includeAllNormals &&
           persistedTask != null &&
           _sameStringList(persistedTask.orderedKeys, orderedAllowedKeys) &&
           persistedTask.pendingKeys.isNotEmpty;
       final pendingKeys = resumeTask
           ? persistedTask.pendingKeys
-              .where(targetByKey.containsKey)
-              .toList(growable: true)
+                .where(targetByKey.containsKey)
+                .toList(growable: true)
           : orderedAllowedKeys.toList(growable: true);
       final taskQueue = Queue<FollowUser>.from(
         pendingKeys.map((key) => targetByKey[key]).whereType<FollowUser>(),
@@ -964,6 +962,12 @@ class FollowUserService extends BasePageController<FollowUser> {
             limitedCount++;
           }
           final targetKey = _refreshTargetKey(item);
+          if (result.restartWithFallback) {
+            taskQueue.addFirst(item);
+            item.liveCheckState.value = FollowLiveCheckState.refreshing;
+            updateProgress(active: true, done: false);
+            continue;
+          }
           if (!result.keepPending) {
             pendingKeys.remove(targetKey);
           }
@@ -1125,18 +1129,15 @@ class FollowUserService extends BasePageController<FollowUser> {
 
   void _scheduleRefreshProgressReset(int generation) {
     _cancelRefreshProgressReset();
-    _refreshProgressResetTimer = Timer(
-      refreshProgressCompletionHold,
-      () {
-        if (generation != _updateGeneration) {
-          return;
-        }
-        if (updating.value || !refreshProgress.value.completed) {
-          return;
-        }
-        _resetRefreshProgress();
-      },
-    );
+    _refreshProgressResetTimer = Timer(refreshProgressCompletionHold, () {
+      if (generation != _updateGeneration) {
+        return;
+      }
+      if (updating.value || !refreshProgress.value.completed) {
+        return;
+      }
+      _resetRefreshProgress();
+    });
   }
 
   Future<_FollowRefreshItemResult> _updateLiveStatus(
@@ -1145,6 +1146,7 @@ class FollowUserService extends BasePageController<FollowUser> {
     DouyinFollowRefreshLimiter? douyinLimiter,
     int workerIndex = 0,
   }) async {
+    String? attemptedKuaishouSession;
     item.liveCheckState.value = FollowLiveCheckState.refreshing;
     if (item.siteId == Constant.kKuaishou) {
       item.liveStatus.value = 0;
@@ -1154,6 +1156,10 @@ class FollowUserService extends BasePageController<FollowUser> {
         await douyinLimiter.beforeRequest(workerIndex);
       }
       final site = Sites.allSites[item.siteId]!;
+      if (item.siteId == Constant.kKuaishou && site.liveSite is KuaishouSite) {
+        attemptedKuaishouSession =
+            (site.liveSite as KuaishouSite).activeAccountSessionKey;
+      }
       final liveState = item.siteId == Constant.kKuaishou
           ? await KuaishouRequestTrace.run(
               KuaishouRequestSource.followStatus,
@@ -1172,7 +1178,8 @@ class FollowUserService extends BasePageController<FollowUser> {
       }
       if (generation != null && generation != _updateGeneration) {
         return const _FollowRefreshItemResult(
-            _FollowRefreshItemOutcome.deferred);
+          _FollowRefreshItemOutcome.deferred,
+        );
       }
       if (item.siteId == Constant.kDouyin && douyinLimiter != null) {
         douyinLimiter.onSuccess();
@@ -1184,7 +1191,8 @@ class FollowUserService extends BasePageController<FollowUser> {
     } catch (e) {
       if (generation != null && generation != _updateGeneration) {
         return const _FollowRefreshItemResult(
-            _FollowRefreshItemOutcome.deferred);
+          _FollowRefreshItemOutcome.deferred,
+        );
       }
       var limited = false;
       if (_isDouyinLimited(item, e)) {
@@ -1196,10 +1204,33 @@ class FollowUserService extends BasePageController<FollowUser> {
           _handleDouyinLimited();
         }
       }
-      if (item.siteId == Constant.kKuaishou &&
-          (e is KuaishouCooldownError ||
-              (e is CoreError && e.statusCode == 429))) {
+      final kuaishouFailureStatus = _kuaishouBatchFailureStatus(item, e);
+      if (kuaishouFailureStatus != null) {
         limited = true;
+        var switched = false;
+        if (Get.isRegistered<KuaishouAccountService>() &&
+            attemptedKuaishouSession != null) {
+          final accounts = KuaishouAccountService.instance;
+          if (kuaishouFailureStatus == 0) {
+            final activeKey = accounts.activeSession?.slot.name;
+            switched =
+                activeKey != null && activeKey != attemptedKuaishouSession;
+          } else {
+            switched = accounts.failoverFollowBatch(
+              attemptedSessionKey: attemptedKuaishouSession,
+              statusCode: kuaishouFailureStatus,
+            );
+          }
+        }
+        item.liveStatus.value = 0;
+        item.liveCheckState.value = FollowLiveCheckState.limited;
+        return _FollowRefreshItemResult(
+          _FollowRefreshItemOutcome.deferred,
+          limited: true,
+          keepPending: true,
+          pauseRemaining: !switched,
+          restartWithFallback: switched,
+        );
       }
       Log.logPrint(e);
       if (limited) {
@@ -1219,6 +1250,16 @@ class FollowUserService extends BasePageController<FollowUser> {
         limited: limited,
       );
     }
+  }
+
+  int? _kuaishouBatchFailureStatus(FollowUser item, Object error) {
+    if (item.siteId != Constant.kKuaishou) return null;
+    if (error is KuaishouCooldownError) return 0;
+    if (error is! CoreError) return null;
+    return switch (error.statusCode) {
+      401 || 403 || 429 => error.statusCode,
+      _ => null,
+    };
   }
 
   Future<void> _reconcileDouyinFollowIdentity(
@@ -1279,10 +1320,7 @@ class FollowUserService extends BasePageController<FollowUser> {
     final keys = targets.map(_refreshTargetKey).toList(growable: false);
     _previewRefreshingKeys.addAll(keys);
     try {
-      await _refreshMetadataTargets(
-        targets,
-        reconcileDouyinIdentity: false,
-      );
+      await _refreshMetadataTargets(targets, reconcileDouyinIdentity: false);
     } finally {
       _previewRefreshingKeys.removeAll(keys);
     }
@@ -1388,11 +1426,7 @@ class FollowUserService extends BasePageController<FollowUser> {
     }
     updateMetadataProgress(done: true);
     Log.logPrint(
-      _metadataPhaseLogDone(
-        reconcileDouyinIdentity,
-        successCount,
-        failedCount,
-      ),
+      _metadataPhaseLogDone(reconcileDouyinIdentity, successCount, failedCount),
     );
     if (changed) {
       sortList();
@@ -1441,24 +1475,21 @@ class FollowUserService extends BasePageController<FollowUser> {
   }
 }
 
-enum _FollowRefreshItemOutcome {
-  success,
-  failed,
-  deferred,
-  skipped,
-}
+enum _FollowRefreshItemOutcome { success, failed, deferred, skipped }
 
 class _FollowRefreshItemResult {
   final _FollowRefreshItemOutcome outcome;
   final bool limited;
   final bool keepPending;
   final bool pauseRemaining;
+  final bool restartWithFallback;
 
   const _FollowRefreshItemResult(
     this.outcome, {
     this.limited = false,
     this.keepPending = false,
     this.pauseRemaining = false,
+    this.restartWithFallback = false,
   });
 }
 
@@ -1574,9 +1605,7 @@ class DouyinFollowRefreshLimiter {
     _limitedCount++;
     _cooledDown = true;
     final nextMs = (_currentInterval.inMilliseconds * 1.8).round();
-    _currentInterval = Duration(
-      milliseconds: nextMs.clamp(600, 2600).toInt(),
-    );
+    _currentInterval = Duration(milliseconds: nextMs.clamp(600, 2600).toInt());
   }
 
   DouyinFollowRefreshSummary finish(int targetCount) {

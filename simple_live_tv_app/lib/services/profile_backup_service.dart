@@ -11,6 +11,7 @@ import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
+import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/local_storage_service.dart';
 
 class ProfileBackupService extends GetxService {
@@ -27,6 +28,13 @@ class ProfileBackupService extends GetxService {
     LocalStorageService.kWebDAVPassword,
     LocalStorageService.kWebDAVLastUploadTime,
     LocalStorageService.kWebDAVLastRecoverTime,
+    LocalStorageService.kKuaishouCookie,
+    LocalStorageService.kKuaishouKww,
+    LocalStorageService.kKuaishouCookieExpiresAt,
+    LocalStorageService.kKuaishouSecondaryCookie,
+    LocalStorageService.kKuaishouSecondaryKww,
+    LocalStorageService.kKuaishouSecondaryCookieExpiresAt,
+    LocalStorageService.kKuaishouAccountPoolState,
   };
 
   Map<String, dynamic> exportProfileMap() {
@@ -36,8 +44,10 @@ class ProfileBackupService extends GetxService {
         .getFollowList()
         .map((item) => item.toJson())
         .toList();
-    final histories =
-        DBService.instance.getHistores().map((item) => item.toJson()).toList();
+    final histories = DBService.instance
+        .getHistores()
+        .map((item) => item.toJson())
+        .toList();
     return {
       "schema": schema,
       "schemaVersion": schemaVersion,
@@ -129,11 +139,17 @@ class ProfileBackupService extends GetxService {
         onProgress,
       );
     }
-    await _importAccounts(payload["accounts"]);
+    await _importAccounts(
+      payload["accounts"],
+      legacySettings: payload["settings"],
+    );
     if (options.follows) {
       await _importFollowUsers(
-        _readPayloadList(
-            payload, const ["followUsers", "follows", "favorites"]),
+        _readPayloadList(payload, const [
+          "followUsers",
+          "follows",
+          "favorites",
+        ]),
         summary,
         overwrite,
         onProgress,
@@ -167,6 +183,7 @@ class ProfileBackupService extends GetxService {
       onProgress?.call(const SyncProgress(stage: "导入设置"));
       await _importSettings(payload["config"], summary, overwrite);
     }
+    await _importAccounts(null, legacySettings: payload["config"]);
     if (options.shields) {
       await _importShields(
         {"raw": _legacyShieldValues(payload["shield"])},
@@ -201,8 +218,11 @@ class ProfileBackupService extends GetxService {
     } else {
       if (options.follows) {
         await _importFollowUsers(
-          _readPayloadList(
-              payload, const ["followUsers", "follows", "favorites"]),
+          _readPayloadList(payload, const [
+            "followUsers",
+            "follows",
+            "favorites",
+          ]),
           summary,
           overwrite,
           onProgress,
@@ -272,17 +292,22 @@ class ProfileBackupService extends GetxService {
             "",
           ),
         },
+        {
+          "siteId": Constant.kKuaishou,
+          ...KuaishouAccountService.instance.exportBackupMap(),
+        },
       ],
     };
   }
 
   Map<String, dynamic> _exportShieldValues() {
     final keywords = AppSettingsController.instance.shieldList.toList()..sort();
-    final raw = LocalStorageService.instance.shieldBox.values
-        .map((e) => e.toString().trim())
-        .where((e) => e.isNotEmpty)
-        .toList()
-      ..sort();
+    final raw =
+        LocalStorageService.instance.shieldBox.values
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList()
+          ..sort();
     return {
       "raw": raw,
       "keywords": keywords,
@@ -350,14 +375,14 @@ class ProfileBackupService extends GetxService {
     summary.skipped += result.skipped;
   }
 
-  Future<void> _importAccounts(dynamic rawAccounts) async {
-    if (rawAccounts is! Map) {
-      return;
-    }
-    final items = rawAccounts["items"];
-    if (items is! List) {
-      return;
-    }
+  Future<void> _importAccounts(
+    dynamic rawAccounts, {
+    dynamic legacySettings,
+  }) async {
+    final items = rawAccounts is Map && rawAccounts["items"] is List
+        ? rawAccounts["items"] as List
+        : const [];
+    var importedKuaishou = false;
     for (final item in items) {
       if (item is! Map) {
         continue;
@@ -375,6 +400,32 @@ class ProfileBackupService extends GetxService {
             DouyinAccountService.instance.setCookie(cookie);
           }
           break;
+        case Constant.kKuaishou:
+          importedKuaishou = true;
+          KuaishouAccountService.instance.importBackupMap(
+            item,
+            legacySettings: legacySettings,
+          );
+          break;
+      }
+    }
+    if (!importedKuaishou && legacySettings is Map) {
+      final hasLegacyKuaishou = const {
+        LocalStorageService.kKuaishouCookie,
+        LocalStorageService.kKuaishouKww,
+        LocalStorageService.kKuaishouCookieExpiresAt,
+        LocalStorageService.kKuaishouSecondaryCookie,
+        LocalStorageService.kKuaishouSecondaryKww,
+        LocalStorageService.kKuaishouSecondaryCookieExpiresAt,
+        LocalStorageService.kKuaishouAccountPoolState,
+      }.any(legacySettings.containsKey);
+      if (hasLegacyKuaishou) {
+        KuaishouAccountService.instance.importBackupMap({
+          'cookie': legacySettings[LocalStorageService.kKuaishouCookie],
+          'kww': legacySettings[LocalStorageService.kKuaishouKww],
+          'cookieExpiresAt':
+              legacySettings[LocalStorageService.kKuaishouCookieExpiresAt],
+        }, legacySettings: legacySettings);
       }
     }
   }
