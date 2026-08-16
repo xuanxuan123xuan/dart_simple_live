@@ -67,7 +67,7 @@ class FollowUserItem extends StatelessWidget {
       color: Colors.grey.shade600,
     );
     return Material(
-      color: theme.cardColor,
+      color: _cardBackgroundColor(theme),
       borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -75,15 +75,7 @@ class FollowUserItem extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: playing
-                  ? theme.colorScheme.primary.withAlpha(180)
-                  : Colors.black.withAlpha(20),
-              width: playing ? 1.4 : 0.8,
-            ),
-            borderRadius: radius,
-          ),
+          foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: EdgeInsets.all(compact ? 8 : 10),
           child: Row(
             children: [
@@ -214,7 +206,7 @@ class FollowUserItem extends StatelessWidget {
       color: Colors.grey.shade600,
     );
     return Material(
-      color: theme.cardColor,
+      color: _cardBackgroundColor(theme),
       borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -222,15 +214,7 @@ class FollowUserItem extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: playing
-                  ? theme.colorScheme.primary.withAlpha(180)
-                  : Colors.black.withAlpha(16),
-              width: playing ? 1.4 : 0.6,
-            ),
-            borderRadius: radius,
-          ),
+          foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: EdgeInsets.symmetric(
             horizontal: compact ? 10 : 12,
             vertical: compact ? 8 : 10,
@@ -331,7 +315,7 @@ class FollowUserItem extends StatelessWidget {
     final theme = Theme.of(context);
     final radius = BorderRadius.circular(16);
     return Material(
-      color: theme.cardColor,
+      color: _cardBackgroundColor(theme),
       borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -339,15 +323,7 @@ class FollowUserItem extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: playing
-                  ? theme.colorScheme.primary.withAlpha(180)
-                  : Colors.black.withAlpha(24),
-              width: playing ? 1.4 : 0.8,
-            ),
-            borderRadius: radius,
-          ),
+          foregroundDecoration: _cardFrameDecoration(theme, radius),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -435,7 +411,7 @@ class FollowUserItem extends StatelessWidget {
     final theme = Theme.of(context);
     final radius = BorderRadius.circular(16);
     return Material(
-      color: theme.cardColor,
+      color: _cardBackgroundColor(theme),
       borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -443,15 +419,7 @@ class FollowUserItem extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: playing
-                  ? theme.colorScheme.primary.withAlpha(180)
-                  : Colors.black.withAlpha(24),
-              width: playing ? 1.4 : 0.8,
-            ),
-            borderRadius: radius,
-          ),
+          foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: const EdgeInsets.all(12),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -509,6 +477,31 @@ class FollowUserItem extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Color _cardBackgroundColor(ThemeData theme) {
+    if (theme.brightness == Brightness.dark) {
+      return theme.colorScheme.surfaceContainerHigh;
+    }
+    return theme.cardColor;
+  }
+
+  BoxDecoration _cardFrameDecoration(
+    ThemeData theme,
+    BorderRadius radius,
+  ) {
+    final borderColor = playing
+        ? theme.colorScheme.primary
+        : theme.colorScheme.outlineVariant.withAlpha(
+            theme.brightness == Brightness.dark ? 230 : 180,
+          );
+    return BoxDecoration(
+      border: Border.all(
+        color: borderColor,
+        width: playing ? 2 : 1,
+      ),
+      borderRadius: radius,
     );
   }
 

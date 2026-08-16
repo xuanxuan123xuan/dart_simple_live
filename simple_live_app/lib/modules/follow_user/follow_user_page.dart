@@ -221,7 +221,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                 () => _buildRefreshProgress(context),
               ),
               Obx(
-                () => _buildActiveFilterBar(context),
+                () => _buildSearchFilterBar(context),
               ),
               Padding(
                 padding: AppStyle.edgeInsetsH8,
@@ -401,34 +401,8 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  Widget _buildActiveFilterBar(BuildContext context) {
-    final settings = AppSettingsController.instance;
-    final chips = <Widget>[];
-    if (controller.searchKeyword.value.isNotEmpty) {
-      chips.add(
-        InputChip(
-          label: Text("搜索：${controller.searchKeyword.value}"),
-          onDeleted: controller.clearSearchKeyword,
-        ),
-      );
-    }
-    if (settings.followOnlyLive.value) {
-      chips.add(
-        InputChip(
-          label: const Text("仅显示开播"),
-          onDeleted: () => controller.setOnlyLive(false),
-        ),
-      );
-    }
-    if (settings.followRefreshOnEnter.value) {
-      chips.add(
-        InputChip(
-          label: const Text("进页自动刷新"),
-          onDeleted: () => controller.setRefreshOnEnter(false),
-        ),
-      );
-    }
-    if (chips.isEmpty) {
+  Widget _buildSearchFilterBar(BuildContext context) {
+    if (controller.searchKeyword.value.isEmpty) {
       return const SizedBox.shrink();
     }
     return Padding(
@@ -436,7 +410,12 @@ class FollowUserPage extends GetView<FollowUserController> {
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
-        children: chips,
+        children: [
+          InputChip(
+            label: Text("搜索：${controller.searchKeyword.value}"),
+            onDeleted: controller.clearSearchKeyword,
+          ),
+        ],
       ),
     );
   }
