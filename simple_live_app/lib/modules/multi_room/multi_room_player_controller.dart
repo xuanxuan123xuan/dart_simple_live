@@ -346,9 +346,6 @@ class MultiRoomPlayerController extends GetxController {
       _playbackDesired &&
       liveStatus.value;
 
-  bool get isActuallyPlaying =>
-      !_disposed && !_playerDisposed && player.state.playing;
-
   /// 当前线路列表。
   List<String> get playUrls => _playUrls;
 
@@ -1007,51 +1004,60 @@ class MultiRoomPlayerController extends GetxController {
     }
   }
 
-  /// iOS 上其他 Player.open() 可能抢占共享音频会话。这里依据业务意图恢复，
-  /// 不读取可能尚未刷新的 player.state.playing——被抢占的格 state 可能短暂
-  /// 滞后为 true，依赖它判断会漏恢复，导致"只有一个在播放"。
-  /// play() 在已播状态是幂等的，直接按业务意图发起。
-  Future<void> ensurePlaying() {
+  /// iOS 上其他 Player.open() 可能抢占共享音频会话。首轮仅幂等发起
+  /// play；只有播放位置仍不推进的格子才在重试时执行 pause/play，重建
+  /// 已被中断的原生输出。
+  Future<void> ensurePlaying(bool forceRestart) {
     return _enqueue(() async {
       if (_disposed || paused.value || !_playbackDesired || !liveStatus.value) {
         return;
+      }
+      if (forceRestart) {
+        await player.pause();
+        if (_disposed ||
+            paused.value ||
+            !_playbackDesired ||
+            !liveStatus.value) {
+          return;
+        }
       }
       await player.play();
     });
   }
 
-  /// Waits for the native player to report a real playing state.
+  /// Waits for media time to advance instead of trusting `state.playing`.
   ///
-  /// The business-level [paused] flag remains authoritative: a user pause
-  /// cancels this confirmation instead of being overwritten by recovery.
+  /// media_kit sets its Dart-side playing state to true before the native mpv
+  /// command has proved that decoding resumed. Position movement is the
+  /// observable signal that the live stream is really running.
   Future<bool> waitUntilActuallyPlaying(Duration timeout) async {
     if (!shouldRecoverPlayback) return true;
-    if (isActuallyPlaying) return true;
 
-    StreamSubscription<bool>? subscription;
+    final initialPosition = player.state.position;
+    StreamSubscription<Duration>? subscription;
     final completer = Completer<bool>();
     try {
-      subscription = player.stream.playing.listen(
-        (playing) {
-          if (playing && !completer.isCompleted) {
+      subscription = player.stream.position.listen(
+        (position) {
+          if (!shouldRecoverPlayback && !completer.isCompleted) {
             completer.complete(true);
-          } else if (!shouldRecoverPlayback && !completer.isCompleted) {
-            completer.complete(false);
+            return;
+          }
+          final delta = (position - initialPosition).inMilliseconds.abs();
+          if (delta >= 20 && !completer.isCompleted) {
+            completer.complete(true);
           }
         },
         onError: (Object _, StackTrace __) {
           if (!completer.isCompleted) completer.complete(false);
         },
       );
-      if (isActuallyPlaying && !completer.isCompleted) {
-        completer.complete(true);
-      }
       return await completer.future.timeout(
         timeout,
-        onTimeout: () => isActuallyPlaying,
+        onTimeout: () => !shouldRecoverPlayback,
       );
     } catch (_) {
-      return isActuallyPlaying;
+      return !shouldRecoverPlayback;
     } finally {
       await subscription?.cancel();
     }

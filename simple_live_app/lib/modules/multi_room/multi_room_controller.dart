@@ -648,7 +648,6 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         MultiRoomPlaybackRecoveryTarget(
           roomKey: room.key,
           shouldPlay: () => player.shouldRecoverPlayback,
-          isPlaying: () => player.isActuallyPlaying,
           requestPlay: player.ensurePlaying,
           waitUntilPlaying: player.waitUntilActuallyPlaying,
         ),

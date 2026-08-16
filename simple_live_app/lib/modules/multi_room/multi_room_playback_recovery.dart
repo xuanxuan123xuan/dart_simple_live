@@ -3,22 +3,22 @@ class MultiRoomPlaybackRecoveryTarget {
   const MultiRoomPlaybackRecoveryTarget({
     required this.roomKey,
     required this.shouldPlay,
-    required this.isPlaying,
     required this.requestPlay,
     required this.waitUntilPlaying,
   });
 
   final String roomKey;
   final bool Function() shouldPlay;
-  final bool Function() isPlaying;
-  final Future<void> Function() requestPlay;
+  final Future<void> Function(bool forceRestart) requestPlay;
   final Future<bool> Function(Duration timeout) waitUntilPlaying;
 }
 
 /// Restores players interrupted by another native player's `open` call.
 ///
-/// Recovery is deliberately bounded and serial. Every play request is guarded
-/// by [MultiRoomPlaybackRecoveryTarget.shouldPlay], so a pause selected while a
+/// Recovery is deliberately bounded. Mutations are requested serially, then
+/// every desired player is verified concurrently so all streams must make
+/// progress in the same observation window. Every request is guarded by
+/// [MultiRoomPlaybackRecoveryTarget.shouldPlay], so a pause selected while a
 /// recovery pass is queued always wins over the automatic recovery.
 class MultiRoomPlaybackRecoveryCoordinator {
   const MultiRoomPlaybackRecoveryCoordinator({
@@ -35,23 +35,24 @@ class MultiRoomPlaybackRecoveryCoordinator {
     required List<MultiRoomPlaybackRecoveryTarget> targets,
     required bool Function() isCancelled,
   }) async {
+    Set<String>? retryRoomKeys;
     for (var attempt = 0; attempt < maxAttempts; attempt += 1) {
       if (isCancelled()) return false;
 
       for (final target in targets) {
         if (isCancelled()) return false;
-        // 不因 isPlaying() 跳过：iOS 上被抢占的格 state 可能滞后为 true，
-        // 依赖它判断会漏掉真正需要恢复的格。requestPlay 按业务意图幂等
-        // 发起（play 已播状态为 no-op），isPlaying 仅用于确认与重试。
         if (!target.shouldPlay()) continue;
+        if (retryRoomKeys != null && !retryRoomKeys.contains(target.roomKey)) {
+          continue;
+        }
 
         try {
-          await target.requestPlay();
+          // The first pass is non-disruptive. A target which still fails the
+          // real-progress check gets a pause/play cycle on the next pass to
+          // rebuild an interrupted native output without restarting healthy
+          // players.
+          await target.requestPlay(attempt > 0);
           if (isCancelled()) return false;
-          if (!target.shouldPlay()) continue;
-          if (!target.isPlaying()) {
-            await target.waitUntilPlaying(confirmTimeout);
-          }
         } catch (_) {
           // Disposal or route changes can close a shared mutation queue while
           // a recovery pass is waiting. Treat that attempt as failed; the
@@ -61,19 +62,36 @@ class MultiRoomPlaybackRecoveryCoordinator {
       }
 
       if (isCancelled()) return false;
-      final recovered = targets.every(
-        (target) => !target.shouldPlay() || target.isPlaying(),
+      // Verify every desired player over the same observation window. Serial
+      // verification can report an early player as healthy before a later
+      // audio-session activation interrupts it.
+      final desiredTargets = targets.where((target) => target.shouldPlay());
+      final verification = await Future.wait(
+        desiredTargets.map((target) async {
+          if (isCancelled()) return MapEntry(target.roomKey, false);
+          try {
+            final advancing = await target.waitUntilPlaying(confirmTimeout);
+            return MapEntry(
+              target.roomKey,
+              !target.shouldPlay() || advancing,
+            );
+          } catch (_) {
+            return MapEntry(target.roomKey, !target.shouldPlay());
+          }
+        }),
       );
-      if (recovered) return true;
+      if (isCancelled()) return false;
+      retryRoomKeys = {
+        for (final result in verification)
+          if (!result.value) result.key,
+      };
+      if (retryRoomKeys.isEmpty) return true;
 
       if (attempt + 1 < maxAttempts && retryDelay > Duration.zero) {
         await Future<void>.delayed(retryDelay);
       }
     }
 
-    return !isCancelled() &&
-        targets.every(
-          (target) => !target.shouldPlay() || target.isPlaying(),
-        );
+    return !isCancelled() && (retryRoomKeys?.isEmpty ?? true);
   }
 }

@@ -29,8 +29,7 @@ void main() {
           MultiRoomPlaybackRecoveryTarget(
             roomKey: 'first',
             shouldPlay: () => true,
-            isPlaying: () => firstPlaying,
-            requestPlay: () => requestPlay(() {
+            requestPlay: (_) => requestPlay(() {
               firstPlaying = true;
             }),
             waitUntilPlaying: (_) async => firstPlaying,
@@ -38,8 +37,7 @@ void main() {
           MultiRoomPlaybackRecoveryTarget(
             roomKey: 'second',
             shouldPlay: () => true,
-            isPlaying: () => secondPlaying,
-            requestPlay: () => requestPlay(() {
+            requestPlay: (_) => requestPlay(() {
               secondPlaying = true;
             }),
             waitUntilPlaying: (_) async => secondPlaying,
@@ -67,8 +65,7 @@ void main() {
           MultiRoomPlaybackRecoveryTarget(
             roomKey: 'stuck',
             shouldPlay: () => true,
-            isPlaying: () => false,
-            requestPlay: () async {
+            requestPlay: (_) async {
               requests += 1;
             },
             waitUntilPlaying: (_) async => false,
@@ -81,8 +78,7 @@ void main() {
       expect(requests, 3);
     });
 
-    test('requests play even when stale native state reports playing',
-        () async {
+    test('does not accept a play request without real progress', () async {
       const coordinator = MultiRoomPlaybackRecoveryCoordinator(
         maxAttempts: 1,
         confirmTimeout: Duration.zero,
@@ -95,9 +91,7 @@ void main() {
           MultiRoomPlaybackRecoveryTarget(
             roomKey: 'stale',
             shouldPlay: () => true,
-            // 模拟 iOS 被抢占后滞后的 state：误报在播，但业务意图仍要恢复。
-            isPlaying: () => true,
-            requestPlay: () async {
+            requestPlay: (_) async {
               requests += 1;
             },
             waitUntilPlaying: (_) async => false,
@@ -106,9 +100,77 @@ void main() {
         isCancelled: () => false,
       );
 
-      // 旧逻辑会因 isPlaying()==true 跳过 requestPlay（requests==0）。
       expect(requests, 1);
+      expect(recovered, isFalse);
+    });
+
+    test('uses a forced restart only after progress verification fails',
+        () async {
+      const coordinator = MultiRoomPlaybackRecoveryCoordinator(
+        maxAttempts: 2,
+        confirmTimeout: Duration.zero,
+        retryDelay: Duration.zero,
+      );
+      final restartFlags = <bool>[];
+      var checks = 0;
+
+      final recovered = await coordinator.recover(
+        targets: [
+          MultiRoomPlaybackRecoveryTarget(
+            roomKey: 'stalled',
+            shouldPlay: () => true,
+            requestPlay: (forceRestart) async {
+              restartFlags.add(forceRestart);
+            },
+            waitUntilPlaying: (_) async {
+              checks += 1;
+              return checks > 1;
+            },
+          ),
+        ],
+        isCancelled: () => false,
+      );
+
       expect(recovered, isTrue);
+      expect(restartFlags, [false, true]);
+    });
+
+    test('verifies all players after every play request has completed',
+        () async {
+      const coordinator = MultiRoomPlaybackRecoveryCoordinator(
+        maxAttempts: 1,
+        confirmTimeout: Duration.zero,
+        retryDelay: Duration.zero,
+      );
+      var firstAdvancing = false;
+      var secondAdvancing = false;
+
+      final recovered = await coordinator.recover(
+        targets: [
+          MultiRoomPlaybackRecoveryTarget(
+            roomKey: 'first',
+            shouldPlay: () => true,
+            requestPlay: (_) async {
+              firstAdvancing = true;
+            },
+            waitUntilPlaying: (_) async => firstAdvancing,
+          ),
+          MultiRoomPlaybackRecoveryTarget(
+            roomKey: 'second',
+            shouldPlay: () => true,
+            requestPlay: (_) async {
+              // Simulate a later audio-session activation interrupting the
+              // player which was requested first.
+              firstAdvancing = false;
+              secondAdvancing = true;
+            },
+            waitUntilPlaying: (_) async => secondAdvancing,
+          ),
+        ],
+        isCancelled: () => false,
+      );
+
+      expect(recovered, isFalse);
     });
 
     test('never resumes a player after the user pauses it', () async {
@@ -125,8 +187,7 @@ void main() {
           MultiRoomPlaybackRecoveryTarget(
             roomKey: 'paused-by-user',
             shouldPlay: () => shouldPlay,
-            isPlaying: () => false,
-            requestPlay: () async {
+            requestPlay: (_) async {
               requests += 1;
               shouldPlay = false;
             },
@@ -153,8 +214,7 @@ void main() {
           MultiRoomPlaybackRecoveryTarget(
             roomKey: 'already-paused',
             shouldPlay: () => false,
-            isPlaying: () => false,
-            requestPlay: () async {
+            requestPlay: (_) async {
               requests += 1;
             },
             waitUntilPlaying: (_) async => false,
@@ -182,8 +242,7 @@ void main() {
           MultiRoomPlaybackRecoveryTarget(
             roomKey: 'first',
             shouldPlay: () => true,
-            isPlaying: () => false,
-            requestPlay: () async {
+            requestPlay: (_) async {
               firstRequests += 1;
               cancelled = true;
             },
@@ -192,8 +251,7 @@ void main() {
           MultiRoomPlaybackRecoveryTarget(
             roomKey: 'second',
             shouldPlay: () => true,
-            isPlaying: () => false,
-            requestPlay: () async {
+            requestPlay: (_) async {
               secondRequests += 1;
             },
             waitUntilPlaying: (_) async => false,
