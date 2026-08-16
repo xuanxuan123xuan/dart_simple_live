@@ -2023,6 +2023,9 @@ mixin PlayerGestureControlMixin
     Log.d(
         'PlayerGesture: onTap showControls=${showControlsState.value} lock=${lockControlsState.value} fullScreen=${fullScreenState.value}');
     if (lockControlsState.value && fullScreenState.value) {
+      // 锁定时普通控制器保持隐藏，但触屏设备仍需通过点击画面重新呼出
+      // 边缘解锁按钮。桌面端也保留同样的点击入口，作为鼠标悬停的补充。
+      showLockEdgeState.value = !showLockEdgeState.value;
       return;
     }
     if (showControlsState.value) {
