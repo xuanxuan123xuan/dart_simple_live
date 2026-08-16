@@ -118,11 +118,15 @@ class KuaishouAccountSession {
 }
 
 class KuaishouAccountService extends GetxService {
+  KuaishouAccountService({KuaishouSite? site}) : _siteOverride = site;
+
   static KuaishouAccountService get instance =>
       Get.find<KuaishouAccountService>();
 
   static const Duration followRateLimitCooldown = Duration(minutes: 5);
   static const Duration followChallengeCooldown = Duration(minutes: 2);
+
+  final KuaishouSite? _siteOverride;
 
   final primary = KuaishouAccountSession(KuaishouAccountSlot.primary);
   final secondary = KuaishouAccountSession(KuaishouAccountSlot.secondary);
@@ -192,21 +196,31 @@ class KuaishouAccountService extends GetxService {
 
   void setSite() {
     refreshAvailability();
+    _applyActiveSessionToSite();
+  }
+
+  KuaishouSite? get _site {
+    final override = _siteOverride;
+    if (override != null) return override;
     final site = Sites.allSites[Constant.kKuaishou]?.liveSite;
-    if (site is KuaishouSite) {
-      final active = activeSession;
-      site.onAccountHealthEvent = null;
-      site.onAccountSessionHealthEvent = _handleSiteHealthEvent;
-      site.accountFallbackProvider = _provideFallbackSession;
-      if (active == null) {
-        site.activateAnonymousMode();
-      } else {
-        site.activateAccountSession(
-          sessionKey: active.slot.name,
-          cookie: active.cookie,
-          kww: active.kww,
-        );
-      }
+    return site is KuaishouSite ? site : null;
+  }
+
+  void _applyActiveSessionToSite() {
+    final site = _site;
+    if (site == null) return;
+    final active = activeSession;
+    site.onAccountHealthEvent = null;
+    site.onAccountSessionHealthEvent = _handleSiteHealthEvent;
+    site.accountFallbackProvider = _provideFallbackSession;
+    if (active == null) {
+      site.activateAnonymousMode();
+    } else {
+      site.activateAccountSession(
+        sessionKey: active.slot.name,
+        cookie: active.cookie,
+        kww: active.kww,
+      );
     }
   }
 
@@ -409,9 +423,8 @@ class KuaishouAccountService extends GetxService {
       session.credentialState = KuaishouCredentialState.invalid;
       session.suspendedReason = 'credentialInvalid';
     } else {
-      final duration = statusCode == 429
-          ? followRateLimitCooldown
-          : followChallengeCooldown;
+      final duration =
+          statusCode == 429 ? followRateLimitCooldown : followChallengeCooldown;
       final nextCooldown = current.add(duration);
       if (session.cooldownUntil?.isAfter(nextCooldown) != true) {
         session.cooldownUntil = nextCooldown;
@@ -468,6 +481,12 @@ class KuaishouAccountService extends GetxService {
     }
     if (!recovered && mode.value != previousMode) {
       _persist();
+    }
+    if (mode.value != previousMode) {
+      // Recovering the pool mode alone is insufficient: KuaishouSite keeps
+      // its own active transport. Keep both layers in sync so a request made
+      // immediately after cooldown uses and reports the recovered account.
+      _applyActiveSessionToSite();
     }
   }
 

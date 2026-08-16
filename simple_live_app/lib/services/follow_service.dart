@@ -425,6 +425,12 @@ class FollowService extends GetxService {
       if (item.siteId == Constant.kKuaishou && kuaishouLimiter != null) {
         await kuaishouLimiter.beforeRequest();
         kuaishouAcquired = true;
+        if (Get.isRegistered<KuaishouAccountService>()) {
+          // A persisted anonymous mode may become eligible for recovery while
+          // the app is running. Synchronize the site transport before
+          // recording which account owns this batch attempt.
+          KuaishouAccountService.instance.refreshAvailability();
+        }
         attemptedKuaishouSession =
             (site.liveSite as KuaishouSite).activeAccountSessionKey;
       }
