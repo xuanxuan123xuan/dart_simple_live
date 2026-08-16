@@ -415,7 +415,6 @@ class FollowService extends GetxService {
     final previousStatus = item.liveStatus.value;
     final notifyReady = _liveNotifyReadyIds.contains(item.id);
     var kuaishouAcquired = false;
-    var kuaishouSucceeded = false;
     String? attemptedKuaishouSession;
     item.liveCheckState.value = FollowLiveCheckState.refreshing;
     try {
@@ -454,9 +453,6 @@ class FollowService extends GetxService {
       }
       if (item.siteId == Constant.kDouyin && douyinLimiter != null) {
         douyinLimiter.onSuccess();
-      }
-      if (item.siteId == Constant.kKuaishou) {
-        kuaishouSucceeded = true;
       }
       item.liveStatus.value = nextStatus;
       item.liveCheckState.value = FollowLiveCheckState.fresh;
@@ -548,7 +544,7 @@ class FollowService extends GetxService {
       );
     } finally {
       if (kuaishouAcquired) {
-        kuaishouLimiter?.afterRequest(success: kuaishouSucceeded);
+        kuaishouLimiter?.afterRequest();
       }
     }
   }
@@ -1152,7 +1148,7 @@ class FollowService extends GetxService {
           .where((item) => item.siteId == Constant.kKuaishou)
           .length;
       final kuaishouLimiter = kuaishouTargetCount > 0
-          ? KuaishouFollowRefreshLimiter()
+          ? KuaishouFollowRefreshLimiter(targetCount: kuaishouTargetCount)
           : null;
       final resumedSuccessCount = persistedTask?.successCount ?? 0;
       final resumedFailedCount = persistedTask?.failedCount ?? 0;
@@ -1318,7 +1314,6 @@ class FollowService extends GetxService {
         if (restartWithKuaishouFallback) {
           Log.w("快手当前账号受限，已切换备用账号继续剩余任务");
           SmartDialog.showToast("快手账号受限，已切换备用账号继续刷新");
-          kuaishouLimiter?.resetAfterAccountSwitch();
           deferredCount = filteredTargets.deferredTargets.length;
           continue;
         }
@@ -1766,26 +1761,22 @@ class _PersistedFollowRefreshTaskState {
   }
 }
 
-/// Starts Kuaishou follow refresh with two physical lanes, then opens up to
-/// four after several confirmed successes.
+/// Allows up to four Kuaishou room-detail flows to enter the core coordinator.
+/// The coordinator still serializes sensitive physical requests and applies
+/// its global interval, cooldown, and priority policy.
 class KuaishouFollowRefreshLimiter {
   KuaishouFollowRefreshLimiter({
-    this.initialConcurrency = 2,
+    required int targetCount,
     this.maxConcurrency = 4,
-    this.rampUpSuccessThreshold = 4,
-  }) : _currentConcurrency = initialConcurrency;
+  }) : _currentConcurrency = targetCount.clamp(1, maxConcurrency).toInt();
 
-  final int initialConcurrency;
   final int maxConcurrency;
-  final int rampUpSuccessThreshold;
-  int _currentConcurrency;
+  final int _currentConcurrency;
   int _inFlight = 0;
-  int _successCount = 0;
   final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
 
   int get currentConcurrency => _currentConcurrency;
   int get inFlight => _inFlight;
-  int get successCount => _successCount;
 
   Future<void> beforeRequest() async {
     while (_inFlight >= _currentConcurrency) {
@@ -1796,15 +1787,9 @@ class KuaishouFollowRefreshLimiter {
     _inFlight++;
   }
 
-  void afterRequest({required bool success}) {
+  void afterRequest() {
     if (_inFlight > 0) {
       _inFlight--;
-    }
-    if (success) {
-      _successCount++;
-      if (_successCount >= rampUpSuccessThreshold) {
-        _currentConcurrency = maxConcurrency;
-      }
     }
     while (_waiters.isNotEmpty) {
       final waiter = _waiters.removeFirst();
@@ -1812,11 +1797,6 @@ class KuaishouFollowRefreshLimiter {
         waiter.complete();
       }
     }
-  }
-
-  void resetAfterAccountSwitch() {
-    _currentConcurrency = initialConcurrency;
-    _successCount = 0;
   }
 }
 

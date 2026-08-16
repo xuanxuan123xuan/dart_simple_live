@@ -180,32 +180,48 @@ void main() {
     );
   });
 
-  test('Kuaishou follow limiter starts at two and ramps to four', () async {
-    final limiter = KuaishouFollowRefreshLimiter(
-      rampUpSuccessThreshold: 2,
+  test('Kuaishou follow limiter uses target count up to four', () {
+    expect(
+      KuaishouFollowRefreshLimiter(targetCount: 1).currentConcurrency,
+      1,
     );
+    expect(
+      KuaishouFollowRefreshLimiter(targetCount: 2).currentConcurrency,
+      2,
+    );
+    expect(
+      KuaishouFollowRefreshLimiter(targetCount: 4).currentConcurrency,
+      4,
+    );
+    expect(
+      KuaishouFollowRefreshLimiter(targetCount: 100).currentConcurrency,
+      4,
+    );
+  });
 
-    await limiter.beforeRequest();
-    await limiter.beforeRequest();
-    var thirdAcquired = false;
-    final third = limiter.beforeRequest().then((_) {
-      thirdAcquired = true;
+  test('Kuaishou follow limiter admits four tasks immediately and caps extras',
+      () async {
+    final limiter = KuaishouFollowRefreshLimiter(targetCount: 20);
+
+    await Future.wait(List.generate(4, (_) => limiter.beforeRequest()));
+    var fifthAcquired = false;
+    final fifth = limiter.beforeRequest().then((_) {
+      fifthAcquired = true;
     });
     await Future<void>.delayed(Duration.zero);
 
-    expect(limiter.currentConcurrency, 2);
-    expect(limiter.inFlight, 2);
-    expect(thirdAcquired, isFalse);
-
-    limiter.afterRequest(success: true);
-    await third;
-    limiter.afterRequest(success: true);
-
     expect(limiter.currentConcurrency, 4);
-    expect(thirdAcquired, isTrue);
-    limiter.afterRequest(success: true);
-    limiter.resetAfterAccountSwitch();
-    expect(limiter.currentConcurrency, 2);
-    expect(limiter.successCount, 0);
+    expect(limiter.inFlight, 4);
+    expect(fifthAcquired, isFalse);
+
+    limiter.afterRequest();
+    await fifth;
+
+    expect(fifthAcquired, isTrue);
+    expect(limiter.inFlight, 4);
+    for (var i = 0; i < 4; i++) {
+      limiter.afterRequest();
+    }
+    expect(limiter.inFlight, 0);
   });
 }
