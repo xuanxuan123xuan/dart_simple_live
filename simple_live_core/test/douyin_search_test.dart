@@ -55,6 +55,24 @@ void main() {
     ]);
   });
 
+  test('ranks matching anchors first and removes duplicate live rooms',
+      () async {
+    interceptor.respondToHead();
+    interceptor.respondToSearchWith(
+      _searchResponse(
+        rooms: [
+          _searchRoom('room-1', 'other', online: 100),
+          _searchRoom('room-2', 'target anchor', online: 20),
+          _searchRoom('room-2', 'target anchor', online: 20),
+        ],
+      ),
+    );
+
+    final result = await _testSite().searchAnchors('target');
+
+    expect(result.items.map((item) => item.roomId), ['room-2', 'room-1']);
+  });
+
   group('search authentication failure', () {
     final cases = <String, (String, DouyinSearchAuthFailureReason)>{
       'missing cookie': ('', DouyinSearchAuthFailureReason.missingCookie),
@@ -480,23 +498,31 @@ Map<String, String> _parseCookieHeader(String cookie) {
   };
 }
 
-Map<String, dynamic> _searchResponse() {
+Map<String, dynamic> _searchResponse({List<Map<String, dynamic>>? rooms}) {
   return {
     'status_code': 0,
-    'data': [
-      {
-        'lives': {
-          'rawdata': jsonEncode({
-            'owner': {'web_rid': 'room-1', 'nickname': 'anchor'},
-            'title': 'A test room',
-            'cover': {
-              'url_list': ['https://example.invalid/cover.jpg'],
-            },
-            'stats': {'total_user': '42'},
-          }),
-        },
-      },
-    ],
+    'data': (rooms ?? [_searchRoom('room-1', 'anchor', online: 42)])
+        .map(
+          (room) => {
+            'lives': {'rawdata': jsonEncode(room)},
+          },
+        )
+        .toList(),
+  };
+}
+
+Map<String, dynamic> _searchRoom(
+  String roomId,
+  String userName, {
+  required int online,
+}) {
+  return {
+    'owner': {'web_rid': roomId, 'nickname': userName},
+    'title': 'A test room',
+    'cover': {
+      'url_list': ['https://example.invalid/cover.jpg'],
+    },
+    'stats': {'total_user': '$online'},
   };
 }
 

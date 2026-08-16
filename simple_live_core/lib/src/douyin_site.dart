@@ -1642,8 +1642,10 @@ class DouyinSite implements LiveSite {
         }
         return b.online.compareTo(a.online);
       });
+    final seenRoomIds = <String>{};
     return LiveSearchAnchorResult(
       items: rooms
+          .where((room) => seenRoomIds.add(room.roomId))
           .take(10)
           .map(
             (room) => LiveAnchorItem(

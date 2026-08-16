@@ -31,6 +31,9 @@ class SearchListView extends StatelessWidget {
       child: Obx(
         () => Column(
           children: [
+            if (controller.site.id == "douyin" &&
+                controller.searchMode.value == 1)
+              const DouyinAnchorSearchNotice(),
             Expanded(
               child: controller.searchMode.value == 0
                   ? PageGridView(
@@ -118,7 +121,7 @@ class SearchAnchorTile extends StatelessWidget {
           Flexible(
             child: Text(
               isDerived
-                  ? (item.liveStatus ? "直播中 · 派生结果" : "未开播 · 派生结果")
+                  ? (item.liveStatus ? "直播中 · 来自直播间搜索" : "未开播 · 来自直播间搜索")
                   : (item.liveStatus ? "直播中" : "未开播"),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -134,6 +137,30 @@ class SearchAnchorTile extends StatelessWidget {
       onTap: () => AppNavigator.toLiveRoomDetail(
         site: site,
         roomId: item.roomId,
+      ),
+    );
+  }
+}
+
+class DouyinAnchorSearchNotice extends StatelessWidget {
+  const DouyinAnchorSearchNotice({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 18, color: Colors.grey),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "抖音不支持直接搜索主播。这里只能从直播间搜索中匹配正在直播的主播，未开播主播不会显示。",
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ),
+        ],
       ),
     );
   }

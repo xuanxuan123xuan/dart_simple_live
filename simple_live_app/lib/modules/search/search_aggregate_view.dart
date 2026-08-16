@@ -108,6 +108,8 @@ class _SiteSection extends StatelessWidget {
             ],
           ),
         ),
+        if (state.site.id == "douyin" && query.searchMode == 1)
+          const DouyinAnchorSearchNotice(),
         if (state.isLoading)
           const _SectionStatus(
             icon: Icons.hourglass_empty,
