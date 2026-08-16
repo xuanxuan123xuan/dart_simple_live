@@ -73,6 +73,7 @@ class MultiRoomTileControlsVisibility {
   final visible = true.obs;
 
   Timer? _hideTimer;
+  bool _autoHidePaused = false;
   bool _disposed = false;
 
   /// Shows the controls and starts a fresh auto-hide countdown.
@@ -86,6 +87,7 @@ class MultiRoomTileControlsVisibility {
   void toggle() {
     if (_disposed) return;
     if (visible.value) {
+      if (_autoHidePaused) return;
       visible.value = false;
       _hideTimer?.cancel();
       _hideTimer = null;
@@ -96,12 +98,32 @@ class MultiRoomTileControlsVisibility {
 
   void _scheduleHide() {
     _hideTimer?.cancel();
+    _hideTimer = null;
+    if (_autoHidePaused) return;
     _hideTimer = Timer(hideDelay, () {
       if (!_disposed) {
         visible.value = false;
       }
       _hideTimer = null;
     });
+  }
+
+  /// Keeps the controls visible while an overlay control is being used.
+  void pauseAutoHide() {
+    if (_disposed) return;
+    _autoHidePaused = true;
+    _hideTimer?.cancel();
+    _hideTimer = null;
+    visible.value = true;
+  }
+
+  /// Starts a fresh countdown when the overlay control is closed.
+  void resumeAutoHide() {
+    if (_disposed || !_autoHidePaused) return;
+    _autoHidePaused = false;
+    if (visible.value) {
+      _scheduleHide();
+    }
   }
 
   void dispose() {
@@ -184,6 +206,10 @@ class MultiRoomPlayerController extends GetxController {
 
   /// 点击本格画面：呼出/收起本格按钮，并重置 5 秒自动隐藏计时。
   void toggleTileControls() => _tileControls.toggle();
+
+  void pauseTileControlsAutoHide() => _tileControls.pauseAutoHide();
+
+  void resumeTileControlsAutoHide() => _tileControls.resumeAutoHide();
 
   /// 状态徽标：空=正常；"重试中…"=流错误重试；"弹幕重连…"=弹幕重连。
   final streamStatus = "".obs;

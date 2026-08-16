@@ -3632,6 +3632,7 @@ class LiveRoomController extends PlayerController
     bool keepAlive = false,
   }) {
     hidevolumeTimer?.cancel();
+    pauseControlsAutoHide();
     SmartDialog.showAttach(
       targetContext: targetContext,
       alignment: Alignment.topCenter,
@@ -3639,6 +3640,7 @@ class LiveRoomController extends PlayerController
       maskColor: const Color(0x00000000),
       tag: volumeSliderDialogTag,
       keepSingle: true,
+      onDismiss: resumeControlsAutoHide,
       builder: (context) {
         return MouseRegion(
           onEnter: (_) => hidevolumeTimer?.cancel(),
@@ -3651,14 +3653,29 @@ class LiveRoomController extends PlayerController
             padding: AppStyle.edgeInsetsA4,
             child: Obx(
               () => SizedBox(
-                width: 200,
-                child: Slider(
-                  min: 0,
-                  max: 100,
-                  value: AppSettingsController.instance.playerVolume.value,
-                  onChanged: (newValue) {
-                    setSessionPlayerVolume(newValue, persist: true);
-                  },
+                width: 180,
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: "静音",
+                      onPressed: () {
+                        unawaited(toggleMute());
+                        hideVolumeSlider();
+                      },
+                      icon: const Icon(Icons.volume_off, size: 18),
+                    ),
+                    Expanded(
+                      child: Slider(
+                        min: 0,
+                        max: 100,
+                        value:
+                            AppSettingsController.instance.playerVolume.value,
+                        onChanged: (newValue) {
+                          setSessionPlayerVolume(newValue, persist: true);
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

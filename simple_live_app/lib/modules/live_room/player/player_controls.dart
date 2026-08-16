@@ -665,36 +665,9 @@ Widget _buildFullBottomBar(
                 ),
               ),
               const Expanded(child: SizedBox()),
-              IconButton(
-                key: volumeButtonKey,
-                tooltip: "播放器音量",
-                onPressed: () {
-                  final context = volumeButtonKey.currentContext;
-                  if (context == null) {
-                    return;
-                  }
-                  controller.showVolumeSlider(
-                    context,
-                    keepAlive: true,
-                  );
-                },
-                icon: Icon(
-                  controller.mutedState.value
-                      ? Icons.volume_off
-                      : Icons.volume_down,
-                  size: 24,
-                  color: Colors.white,
-                ),
-              ),
-              IconButton(
-                onPressed: controller.toggleMute,
-                icon: Icon(
-                  controller.mutedState.value
-                      ? Icons.volume_off
-                      : Icons.volume_up,
-                  size: 24,
-                  color: Colors.white,
-                ),
+              _buildCompactVolumeButton(
+                controller,
+                volumeButtonKey: volumeButtonKey,
               ),
               TextButton(
                 onPressed: () => showQualitesInfo(controller),
@@ -794,36 +767,9 @@ Widget _buildNormalBottomBar(
               ),
             ),
             const Expanded(child: SizedBox()),
-            IconButton(
-              key: volumeButtonKey,
-              tooltip: "播放器音量",
-              onPressed: () {
-                final context = volumeButtonKey.currentContext;
-                if (context == null) {
-                  return;
-                }
-                controller.showVolumeSlider(
-                  context,
-                  keepAlive: true,
-                );
-              },
-              icon: Icon(
-                controller.mutedState.value
-                    ? Icons.volume_off
-                    : Icons.volume_down,
-                size: 24,
-                color: Colors.white,
-              ),
-            ),
-            IconButton(
-              onPressed: controller.toggleMute,
-              icon: Icon(
-                controller.mutedState.value
-                    ? Icons.volume_off
-                    : Icons.volume_up,
-                size: 24,
-                color: Colors.white,
-              ),
+            _buildCompactVolumeButton(
+              controller,
+              volumeButtonKey: volumeButtonKey,
             ),
             if (!isPortrait)
               TextButton(
@@ -862,6 +808,36 @@ Widget _buildNormalBottomBar(
       ),
     );
   });
+}
+
+Widget _buildCompactVolumeButton(
+  LiveRoomController controller, {
+  required GlobalKey volumeButtonKey,
+}) {
+  final muted = controller.mutedState.value;
+  return IconButton(
+    key: volumeButtonKey,
+    tooltip: muted ? "取消静音" : "调节音量",
+    onPressed: () {
+      if (muted) {
+        unawaited(controller.toggleMute());
+        return;
+      }
+      final context = volumeButtonKey.currentContext;
+      if (context == null) {
+        return;
+      }
+      controller.showVolumeSlider(
+        context,
+        keepAlive: true,
+      );
+    },
+    icon: Icon(
+      muted ? Remix.volume_mute_line : Remix.volume_up_line,
+      size: 24,
+      color: Colors.white,
+    ),
+  );
 }
 
 Widget _buildSideLockButton(

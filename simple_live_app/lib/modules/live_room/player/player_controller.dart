@@ -774,6 +774,7 @@ mixin PlayerStateMixin on PlayerMixin {
 
   /// 自动隐藏控制器计时器
   Timer? hideControlsTimer;
+  bool _controlsAutoHidePaused = false;
 
   /// 自动隐藏鼠标光标计时器
   Timer? hideMouseCursorTimer;
@@ -800,6 +801,9 @@ mixin PlayerStateMixin on PlayerMixin {
 
   /// 隐藏控制器
   void hideControls() {
+    if (_controlsAutoHidePaused) {
+      return;
+    }
     showControlsState.value = false;
     hideControlsTimer?.cancel();
     hideMouseCursor();
@@ -834,7 +838,7 @@ mixin PlayerStateMixin on PlayerMixin {
 
   /// 隐藏鼠标光标
   void hideMouseCursor() {
-    if (!Platform.isWindows) {
+    if (!Platform.isWindows || _controlsAutoHidePaused) {
       return;
     }
     hideMouseCursorTimer?.cancel();
@@ -845,6 +849,10 @@ mixin PlayerStateMixin on PlayerMixin {
   /// - 当点击控制器上时功能时需要重新计时
   void resetHideControlsTimer() {
     hideControlsTimer?.cancel();
+    hideControlsTimer = null;
+    if (_controlsAutoHidePaused) {
+      return;
+    }
 
     hideControlsTimer = Timer(
       const Duration(
@@ -856,7 +864,7 @@ mixin PlayerStateMixin on PlayerMixin {
 
   /// 开始隐藏鼠标光标计时
   void resetHideMouseCursorTimer() {
-    if (!Platform.isWindows) {
+    if (!Platform.isWindows || _controlsAutoHidePaused) {
       return;
     }
 
@@ -867,6 +875,30 @@ mixin PlayerStateMixin on PlayerMixin {
       ),
       hideMouseCursor,
     );
+  }
+
+  /// Keeps the player controls visible while an attached control is in use.
+  void pauseControlsAutoHide() {
+    _controlsAutoHidePaused = true;
+    hideControlsTimer?.cancel();
+    hideControlsTimer = null;
+    hideMouseCursorTimer?.cancel();
+    hideMouseCursorTimer = null;
+    showControlsState.value = true;
+    showMouseCursor();
+  }
+
+  /// Restarts a fresh countdown after the attached control is dismissed.
+  void resumeControlsAutoHide() {
+    if (!_controlsAutoHidePaused) {
+      return;
+    }
+    _controlsAutoHidePaused = false;
+    if (_playerClosing || !showControlsState.value || lockControlsState.value) {
+      return;
+    }
+    resetHideControlsTimer();
+    resetHideMouseCursorTimer();
   }
 
   void updateScaleMode() {

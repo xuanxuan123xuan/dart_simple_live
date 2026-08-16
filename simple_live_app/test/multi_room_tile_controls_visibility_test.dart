@@ -53,5 +53,29 @@ void main() {
 
       expect(controls.visible.value, isTrue);
     });
+
+    testWidgets('paused auto-hide keeps controls visible until resumed',
+        (tester) async {
+      final controls = MultiRoomTileControlsVisibility(
+        hideDelay: const Duration(seconds: 5),
+      );
+      addTearDown(controls.dispose);
+
+      controls.showTemporarily();
+      await tester.pump(const Duration(seconds: 2));
+      controls.pauseAutoHide();
+
+      await tester.pump(const Duration(seconds: 10));
+      expect(controls.visible.value, isTrue);
+
+      controls.toggle();
+      expect(controls.visible.value, isTrue);
+
+      controls.resumeAutoHide();
+      await tester.pump(const Duration(seconds: 4));
+      expect(controls.visible.value, isTrue);
+      await tester.pump(const Duration(seconds: 1));
+      expect(controls.visible.value, isFalse);
+    });
   });
 }

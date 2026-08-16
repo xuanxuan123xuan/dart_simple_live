@@ -958,6 +958,34 @@ class _MultiRoomTile extends StatefulWidget {
 class _MultiRoomTileState extends State<_MultiRoomTile> {
   bool _showVolumeSlider = false;
 
+  void _setVolumeSliderVisible(bool visible) {
+    if (_showVolumeSlider == visible) return;
+    setState(() => _showVolumeSlider = visible);
+    if (visible) {
+      widget.controller.pauseTileControlsAutoHide();
+    } else {
+      widget.controller.resumeTileControlsAutoHide();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _MultiRoomTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_showVolumeSlider || oldWidget.controller == widget.controller) {
+      return;
+    }
+    oldWidget.controller.resumeTileControlsAutoHide();
+    widget.controller.pauseTileControlsAutoHide();
+  }
+
+  @override
+  void dispose() {
+    if (_showVolumeSlider) {
+      widget.controller.resumeTileControlsAutoHide();
+    }
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
@@ -1132,8 +1160,9 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                                           controller.toggleMute)
                                       .call();
                                 } else {
-                                  setState(() =>
-                                      _showVolumeSlider = !_showVolumeSlider);
+                                  _setVolumeSliderVisible(
+                                    !_showVolumeSlider,
+                                  );
                                 }
                               },
                             ),
@@ -1174,7 +1203,7 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                             onPressed: () {
                               (widget.onToggleAudio ?? controller.toggleMute)
                                   .call();
-                              setState(() => _showVolumeSlider = false);
+                              _setVolumeSliderVisible(false);
                             },
                             icon: const Icon(
                               Remix.volume_mute_line,
