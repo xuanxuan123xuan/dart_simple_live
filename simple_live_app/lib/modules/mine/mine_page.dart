@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
@@ -9,11 +12,78 @@ import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
+import 'package:simple_live_app/services/cache_service.dart';
 import 'package:simple_live_app/services/signalr_service.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
-class MinePage extends StatelessWidget {
+class MinePage extends StatefulWidget {
   const MinePage({Key? key}) : super(key: key);
+
+  @override
+  State<MinePage> createState() => _MinePageState();
+}
+
+class _MinePageState extends State<MinePage> {
+  String _cacheSize = "计算中...";
+  bool _isClearingCache = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshCacheSize());
+  }
+
+  Future<void> _refreshCacheSize() async {
+    try {
+      final size = await CacheService.getCacheSize();
+      if (mounted) {
+        setState(() => _cacheSize = CacheService.formatBytes(size));
+      }
+    } catch (e) {
+      Log.logPrint("读取缓存大小失败: $e");
+      if (mounted) {
+        setState(() => _cacheSize = "未知");
+      }
+    }
+  }
+
+  Future<void> _clearCache() async {
+    if (_isClearingCache) {
+      return;
+    }
+
+    final confirmed = await Utils.showAlertDialog(
+      "将清理临时文件和图片缓存，不会删除账号、关注、观看记录或设置。",
+      title: "清理缓存",
+      confirm: "清理",
+    );
+    if (!confirmed || !mounted) {
+      return;
+    }
+
+    setState(() => _isClearingCache = true);
+    SmartDialog.showLoading(msg: "正在清理缓存...");
+    try {
+      final result = await CacheService.clearCache();
+      await _refreshCacheSize();
+      if (result.failedEntries == 0) {
+        SmartDialog.showToast(
+          "已清理 ${CacheService.formatBytes(result.clearedBytes)} 缓存",
+        );
+      } else {
+        SmartDialog.showToast("缓存已清理，${result.failedEntries} 个占用中的文件未能删除");
+      }
+    } catch (e) {
+      Log.logPrint("清理缓存失败: $e");
+      SmartDialog.showToast("清理缓存失败");
+      await _refreshCacheSize();
+    } finally {
+      SmartDialog.dismiss(status: SmartStatus.loading);
+      if (mounted) {
+        setState(() => _isClearingCache = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -46,15 +116,15 @@ class MinePage extends StatelessWidget {
                 Utils.showDialogSafe<dynamic>(
                   context: context,
                   builder: (_) => AboutDialog(
-                  applicationIcon: Image.asset(
-                    'assets/images/logo.png',
-                    width: 48,
-                    height: 48,
+                    applicationIcon: Image.asset(
+                      'assets/images/logo.png',
+                      width: 48,
+                      height: 48,
+                    ),
+                    applicationName: "Simple Live",
+                    applicationVersion: "简简单单看直播",
+                    applicationLegalese: "Ver ${Utils.packageInfo.version}",
                   ),
-                  applicationName: "Simple Live",
-                  applicationVersion: "简简单单看直播",
-                  applicationLegalese: "Ver ${Utils.packageInfo.version}",
-                ),
                 );
               },
             ),
@@ -110,6 +180,27 @@ class MinePage extends StatelessWidget {
               onTap: () {
                 Get.toNamed(RoutePath.kSync);
               },
+            ),
+            Divider(
+              indent: 12,
+              endIndent: 12,
+              color: Colors.grey.withAlpha(25),
+            ),
+            ListTile(
+              leading: const Icon(Remix.delete_bin_6_line),
+              title: const Text("清理缓存"),
+              subtitle: Text("当前占用 $_cacheSize"),
+              trailing: _isClearingCache
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(
+                      Icons.chevron_right,
+                      color: Colors.grey,
+                    ),
+              onTap: _isClearingCache ? null : _clearCache,
             ),
             Divider(
               indent: 12,
