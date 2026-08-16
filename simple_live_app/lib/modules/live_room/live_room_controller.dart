@@ -49,6 +49,7 @@ import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/desktop_refresh_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
+import 'package:simple_live_app/widgets/immersive_volume_slider.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
@@ -3645,39 +3646,16 @@ class LiveRoomController extends PlayerController
         return MouseRegion(
           onEnter: (_) => hidevolumeTimer?.cancel(),
           onExit: (_) => hideVolumeSlider(),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: AppStyle.radius12,
-              color: Theme.of(context).cardColor,
-            ),
-            padding: AppStyle.edgeInsetsA4,
-            child: Obx(
-              () => SizedBox(
-                width: 180,
-                child: Row(
-                  children: [
-                    IconButton(
-                      tooltip: "静音",
-                      onPressed: () {
-                        unawaited(toggleMute());
-                        hideVolumeSlider();
-                      },
-                      icon: const Icon(Icons.volume_off, size: 18),
-                    ),
-                    Expanded(
-                      child: Slider(
-                        min: 0,
-                        max: 100,
-                        value:
-                            AppSettingsController.instance.playerVolume.value,
-                        onChanged: (newValue) {
-                          setSessionPlayerVolume(newValue, persist: true);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          child: Obx(
+            () => ImmersiveVolumeSlider(
+              value: AppSettingsController.instance.playerVolume.value,
+              onChanged: (newValue) {
+                setSessionPlayerVolume(newValue, persist: true);
+              },
+              onMute: () {
+                unawaited(toggleMute());
+                hideVolumeSlider();
+              },
             ),
           ),
         );

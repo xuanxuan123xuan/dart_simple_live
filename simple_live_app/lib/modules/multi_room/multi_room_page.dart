@@ -17,6 +17,7 @@ import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
+import 'package:simple_live_app/widgets/immersive_volume_slider.dart';
 
 final Expando<Map<String, GlobalKey<_MultiRoomTileState>>>
     _tileKeysByController =
@@ -1188,41 +1189,15 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                 opacity: _showVolumeSlider ? 1 : 0,
                 child: IgnorePointer(
                   ignoring: !_showVolumeSlider,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withAlpha(160),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: SizedBox(
-                      width: 180,
-                      child: Row(
-                        children: [
-                          IconButton(
-                            tooltip: "静音此直播间",
-                            onPressed: () {
-                              (widget.onToggleAudio ?? controller.toggleMute)
-                                  .call();
-                              _setVolumeSliderVisible(false);
-                            },
-                            icon: const Icon(
-                              Remix.volume_mute_line,
-                              color: Colors.white,
-                              size: 18,
-                            ),
-                          ),
-                          Expanded(
-                            child: Obx(
-                              () => Slider(
-                                value: controller.volume.value,
-                                min: 0,
-                                max: 100,
-                                onChanged: controller.setVolume,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                  child: Obx(
+                    () => ImmersiveVolumeSlider(
+                      value: controller.volume.value,
+                      muteTooltip: "静音此直播间",
+                      onChanged: controller.setVolume,
+                      onMute: () {
+                        (widget.onToggleAudio ?? controller.toggleMute).call();
+                        _setVolumeSliderVisible(false);
+                      },
                     ),
                   ),
                 ),
