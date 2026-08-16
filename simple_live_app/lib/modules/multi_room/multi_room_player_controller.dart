@@ -48,6 +48,36 @@ bool shouldChaseMultiRoomLiveLatency({
       role == MpvLiveLatencyPlaybackRole.multiRoomPrimaryVisible;
 }
 
+List<DanmakuContentPart>? buildMultiRoomDanmakuContentParts(
+  List<LiveMessageSpan>? spans,
+) {
+  final source = spans ?? const <LiveMessageSpan>[];
+  if (source.isEmpty) {
+    return null;
+  }
+
+  final parts = <DanmakuContentPart>[];
+  for (final span in source) {
+    if (span.isText) {
+      final text = span.text ?? "";
+      if (text.isNotEmpty) {
+        parts.add(DanmakuContentPart.text(text));
+      }
+    } else if (span.isImage) {
+      final imageUrl = (span.imageUrl ?? "").trim();
+      if (imageUrl.isNotEmpty) {
+        parts.add(
+          DanmakuContentPart.image(
+            imageUrl,
+            fallbackText: span.fallbackText,
+          ),
+        );
+      }
+    }
+  }
+  return parts.isEmpty ? null : parts;
+}
+
 class MultiRoomRefreshResult {
   const MultiRoomRefreshResult({
     required this.roomKey,
@@ -1357,11 +1387,15 @@ class MultiRoomPlayerController extends GetxController {
     // 画面弹幕由开关控制。
     if (!showDanmaku.value) return;
     final settings = AppSettingsController.instance;
+    final renderEmoji = settings.danmuRenderEmoji.value;
+    final parts =
+        renderEmoji ? buildMultiRoomDanmakuContentParts(msg.spans) : null;
     danmakuController?.addDanmaku(
       DanmakuContentItem(
         msg.message,
         color: Color.fromARGB(255, msg.color.r, msg.color.g, msg.color.b),
-        imageUrls: settings.danmuRenderEmoji.value ? msg.imageUrls : null,
+        imageUrls: renderEmoji && parts == null ? msg.imageUrls : null,
+        parts: parts,
       ),
     );
   }
