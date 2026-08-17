@@ -38,7 +38,6 @@ import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
-import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart'
     show didLivePlaybackHostChange;
@@ -2206,7 +2205,6 @@ class LiveRoomController extends PlayerController
       await player.stop();
     }
     await liveDanmaku.stop();
-    LiveSubtitleService.instance.stop();
     super.onClose();
   }
 
@@ -3049,12 +3047,6 @@ class LiveRoomController extends PlayerController
         requestRevision: requestRevision,
         loadGeneration: loadGeneration,
       );
-      unawaited(
-        LiveSubtitleService.instance.syncPreviewFromSettings(
-          mediaUrl: finalUrl,
-          httpHeaders: playHeaders,
-        ),
-      );
     } finally {
       if (identical(_playerReopenCompleter, reopenCompleter)) {
         _playerReopenCompleter = null;
@@ -3578,24 +3570,18 @@ class LiveRoomController extends PlayerController
     SmartDialog.showToast("已复制直播间链接");
   }
 
-  /// 复制当前生成的播放直链
-  void copyPlayUrl() async {
-    // 未开播时不复制
+  /// 复制当前实际播放线路，保持与播放器的线路和 HTTPS 设置一致。
+  void copyPlayUrl() {
     if (!liveStatus.value) {
+      SmartDialog.showToast("当前直播间未开播");
       return;
     }
-    // 播放地址未就绪时不复制
-    if (currentQuality < 0 || currentQuality >= qualites.length) {
+    final currentUrl = currentNetworkDiagnosePlaybackUrl;
+    if (currentUrl.isEmpty) {
       SmartDialog.showToast("播放地址未就绪");
       return;
     }
-    var playUrl = await site.liveSite
-        .getPlayUrls(detail: detail.value!, quality: qualites[currentQuality]);
-    if (playUrl.urls.isEmpty) {
-      SmartDialog.showToast("无法读取播放地址");
-      return;
-    }
-    Utils.copyToClipboard(playUrl.urls.first);
+    Utils.copyToClipboard(currentUrl);
     SmartDialog.showToast("已复制播放直链");
   }
 

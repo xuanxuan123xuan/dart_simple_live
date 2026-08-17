@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/utils.dart';
@@ -17,53 +16,18 @@ import 'package:url_launcher/url_launcher_string.dart';
 class OtherSettingsPage extends GetView<OtherSettingsController> {
   const OtherSettingsPage({super.key});
 
+  bool get _isDesktop =>
+      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("其他设置"),
-      ),
+      appBar: AppBar(title: const Text("高级设置")),
       body: ListView(
         padding: AppStyle.pagePadding(),
         children: [
-          SettingsCard(
-            child: Padding(
-              padding: AppStyle.edgeInsetsA4,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextButton.icon(
-                      onPressed: controller.exportConfig,
-                      label: const Text("导出配置包"),
-                      icon: const Icon(Remix.export_line),
-                    ),
-                  ),
-                  Expanded(
-                    child: TextButton.icon(
-                      onPressed: controller.importConfig,
-                      label: const Text("导入配置包"),
-                      icon: const Icon(Remix.import_line),
-                    ),
-                  ),
-                  Expanded(
-                    child: TextButton.icon(
-                      onPressed: controller.resetDefaultConfig,
-                      label: const Text("重置配置"),
-                      icon: const Icon(Remix.restart_line),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) ...[
-            Padding(
-              padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
-              child: Text(
-                "桌面窗口",
-                style: Get.textTheme.titleSmall,
-              ),
-            ),
+          if (_isDesktop) ...[
+            _sectionTitle("桌面窗口"),
             SettingsCard(
               child: Obx(
                 () => SettingsSwitch(
@@ -77,28 +41,21 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
               ),
             ),
           ],
-          Padding(
-            padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
-            child: Text(
-              Utils.isOhos ? "同步设置" : "播放器高级设置",
-              style: Get.textTheme.titleSmall,
-            ),
-          ),
-          if (!Utils.isOhos)
+          if (!Utils.isOhos) ...[
+            _sectionTitle("播放器高级设置", top: _isDesktop ? 24 : 0),
             Padding(
               padding: AppStyle.edgeInsetsA12.copyWith(top: 0),
               child: Text.rich(
                 TextSpan(
-                  text: "请勿随意修改以下设置，除非你知道自己在做什么。\n在修改以下设置前，你应该先查阅",
+                  text: "请勿随意修改以下设置，除非你知道自己在做什么。修改前请先查阅",
                   children: [
                     WidgetSpan(
                       child: GestureDetector(
-                        onTap: () {
-                          launchUrlString(
-                              "https://mpv.io/manual/stable/#video-output-drivers");
-                        },
+                        onTap: () => launchUrlString(
+                          "https://mpv.io/manual/stable/#video-output-drivers",
+                        ),
                         child: const Text(
-                          "MPV的文档",
+                          " MPV 文档",
                           style: TextStyle(
                             color: Colors.blue,
                             fontSize: 12,
@@ -112,50 +69,28 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ),
-          SettingsCard(
-            child: Column(
-              children: [
-                GetBuilder<OtherSettingsController>(
-                  builder: (controller) => SettingsAction(
-                    title: "同步服务地址",
-                    subtitle: controller.syncServerUrlSubtitle,
-                    value: controller.syncServerUrlLabel,
-                    onTap: controller.editSyncServerUrl,
-                  ),
-                ),
-                AppStyle.divider,
-                GetBuilder<OtherSettingsController>(
-                  builder: (controller) => SettingsAction(
-                    title: "同步代理地址",
-                    subtitle: "默认自动检测本机 127.0.0.1:51888；需要直连可填写 direct",
-                    value: controller.syncProxyUrl,
-                    onTap: controller.editSyncProxyUrl,
-                  ),
-                ),
-                if (!Utils.isOhos) ...[
-                  AppStyle.divider,
+            SettingsCard(
+              child: Column(
+                children: [
                   Obx(
                     () => SettingsMenu(
                       title: "mpv 性能档位",
                       subtitle: "流畅适合核显/低功耗，均衡为默认，画质适合高性能显卡",
                       value: AppSettingsController.instance.mpvProfile.value,
                       valueMap: MpvOptionsService.profileLabels,
-                      onChanged: (e) {
-                        AppSettingsController.instance.setMpvProfile(e);
-                      },
+                      onChanged: AppSettingsController.instance.setMpvProfile,
                     ),
                   ),
                   AppStyle.divider,
                   Obx(
                     () => SettingsMenu(
                       title: "直播延迟档位",
-                      subtitle: "自动按 FLV/RTMP 与 HLS/fMP4 使用不同缓冲策略，重开直播间后生效",
+                      subtitle: "自动按协议使用不同缓冲策略，重开直播间后生效",
                       value: AppSettingsController
                           .instance.mpvLiveLatencyMode.value,
                       valueMap: MpvOptionsService.liveLatencyModeLabels,
-                      onChanged: (e) {
-                        AppSettingsController.instance.setMpvLiveLatencyMode(e);
-                      },
+                      onChanged:
+                          AppSettingsController.instance.setMpvLiveLatencyMode,
                     ),
                   ),
                   AppStyle.divider,
@@ -164,9 +99,8 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                       value: AppSettingsController
                           .instance.customPlayerOutput.value,
                       title: "自定义输出驱动与硬件加速",
-                      onChanged: (e) {
-                        AppSettingsController.instance.setCustomPlayerOutput(e);
-                      },
+                      onChanged:
+                          AppSettingsController.instance.setCustomPlayerOutput,
                     ),
                   ),
                   AppStyle.divider,
@@ -200,9 +134,8 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                       value: AppSettingsController
                           .instance.videoOutputDriver.value,
                       valueMap: controller.videoOutputDrivers,
-                      onChanged: (e) {
-                        AppSettingsController.instance.setVideoOutputDriver(e);
-                      },
+                      onChanged:
+                          AppSettingsController.instance.setVideoOutputDriver,
                     ),
                   ),
                   AppStyle.divider,
@@ -212,9 +145,8 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                       value: AppSettingsController
                           .instance.audioOutputDriver.value,
                       valueMap: controller.audioOutputDrivers,
-                      onChanged: (e) {
-                        AppSettingsController.instance.setAudioOutputDriver(e);
-                      },
+                      onChanged:
+                          AppSettingsController.instance.setAudioOutputDriver,
                     ),
                   ),
                   AppStyle.divider,
@@ -224,104 +156,30 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                       value: AppSettingsController
                           .instance.videoHardwareDecoder.value,
                       valueMap: controller.hardwareDecoder,
-                      onChanged: (e) {
-                        AppSettingsController.instance
-                            .setVideoHardwareDecoder(e);
-                      },
+                      onChanged: AppSettingsController
+                          .instance.setVideoHardwareDecoder,
                     ),
                   ),
                 ],
-              ],
-            ),
-          ),
-          Padding(
-            padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
-            child: Text(
-              "日志记录",
-              style: Get.textTheme.titleSmall,
-            ),
-          ),
-          SettingsCard(
-            child: Column(
-              children: [
-                Obx(
-                  () => SettingsSwitch(
-                    value: AppSettingsController.instance.logEnable.value,
-                    title: "开启日志记录",
-                    subtitle: "开启后将记录调试日志，可以将日志文件提供给开发者用于排查问题",
-                    onChanged: controller.setLogEnable,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          ListTile(
-            contentPadding: AppStyle.edgeInsetsL12,
-            visualDensity: VisualDensity.compact,
-            title: Text(
-              "日志列表",
-              style: Get.textTheme.titleSmall,
-            ),
-            trailing: TextButton.icon(
-              onPressed: () {
-                controller.cleanLog();
-              },
-              label: const Text("清空日志"),
-              icon: const Icon(Icons.clear_all),
-            ),
-          ),
-          SettingsCard(
-            child: SizedBox(
-              height: 300,
-              child: Obx(
-                () => ListView.separated(
-                  itemCount: controller.logFiles.length,
-                  separatorBuilder: (context, index) => AppStyle.divider,
-                  itemBuilder: (context, index) {
-                    var item = controller.logFiles[index];
-                    return ListTile(
-                      visualDensity: VisualDensity.compact,
-                      contentPadding: AppStyle.edgeInsetsL12.copyWith(right: 4),
-                      title: Text(item.name),
-                      subtitle: Text(Utils.parseFileSize(item.size)),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (!Platform.isLinux)
-                            Builder(
-                              builder: (shareBtnContext) {
-                                return IconButton(
-                                  onPressed: () {
-                                    final box = shareBtnContext
-                                        .findRenderObject() as RenderBox?;
-                                    controller.shareLogFile(
-                                      item,
-                                      sharePositionOrigin: box == null
-                                          ? null
-                                          : box.localToGlobal(Offset.zero) &
-                                              box.size,
-                                    );
-                                  },
-                                  icon: const Icon(Icons.share),
-                                );
-                              },
-                            ),
-                          IconButton(
-                            onPressed: () {
-                              controller.saveLogFile(item);
-                            },
-                            icon: const Icon(Icons.save),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
               ),
             ),
-          ),
+          ],
+          if (!_isDesktop && Utils.isOhos)
+            const SettingsCard(
+              child: ListTile(
+                title: Text("当前平台暂无可用的高级设置"),
+                leading: Icon(Icons.info_outline),
+              ),
+            ),
         ],
       ),
+    );
+  }
+
+  Widget _sectionTitle(String title, {double top = 0}) {
+    return Padding(
+      padding: AppStyle.edgeInsetsA12.copyWith(top: top),
+      child: Text(title, style: Get.textTheme.titleSmall),
     );
   }
 }

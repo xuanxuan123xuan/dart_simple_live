@@ -4,6 +4,7 @@ import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/danmu_shield_preset.dart';
 import 'package:simple_live_app/modules/settings/danmu_shield/danmu_shield_controller.dart';
+import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 
@@ -285,59 +286,16 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
               label: const Text("保存当前"),
             ),
             AppStyle.hGap8,
-            IconButton(
-              onPressed: () {
-                Utils.showRightDialog(
-                  title: "导入/导出",
-                  width: 320,
-                  useSystem: false,
-                  child: ListView(
-                    padding: AppStyle.edgeInsetsV12,
-                    children: [
-                      ListTile(
-                        leading: const Icon(Icons.file_download_outlined),
-                        title: const Text("导出到文件"),
-                        onTap: () {
-                          Utils.hideRightDialog();
-                          controller.exportPresetFile();
-                        },
-                      ),
-                      ListTile(
-                        leading: const Icon(Icons.text_snippet_outlined),
-                        title: const Text("导出为文本"),
-                        onTap: () {
-                          Utils.hideRightDialog();
-                          controller.exportPresetText();
-                        },
-                      ),
-                      const Divider(),
-                      ListTile(
-                        leading: const Icon(Icons.file_upload_outlined),
-                        title: const Text("从文件导入"),
-                        onTap: () {
-                          Utils.hideRightDialog();
-                          controller.importPresetFile();
-                        },
-                      ),
-                      ListTile(
-                        leading: const Icon(Icons.notes_outlined),
-                        title: const Text("从文本导入"),
-                        onTap: () {
-                          Utils.hideRightDialog();
-                          controller.importPresetText();
-                        },
-                      ),
-                    ],
-                  ),
-                );
-              },
-              icon: const Icon(Icons.import_export),
+            FilledButton.tonalIcon(
+              onPressed: () => Get.toNamed(RoutePath.kSync),
+              icon: const Icon(Icons.archive_outlined),
+              label: const Text("管理备份"),
             ),
           ],
         ),
         AppStyle.vGap8,
         Text(
-          "导出时会带上当前关键词、当前分平台用户名单以及已保存的全部预设，方便多设备迁移。",
+          "屏蔽规则和预设会随配置包一起备份，可在“数据与同步”统一管理。",
           style: Get.textTheme.bodySmall,
         ),
         AppStyle.vGap4,
@@ -473,8 +431,7 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
     final textController = TextEditingController(text: initialValue);
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) => 
-      AlertDialog(
+      builder: (_) => AlertDialog(
         title: Text(title),
         content: TextField(
           controller: textController,
@@ -525,8 +482,7 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
     final textController = TextEditingController();
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) => 
-      AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text("保存屏蔽预设"),
         content: TextField(
           controller: textController,
@@ -562,8 +518,7 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
     final textController = TextEditingController(text: name);
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) => 
-      AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text("编辑并覆盖预设"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -609,8 +564,7 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
   void _showDeletePresetDialog(String name) {
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
-      builder: (_) => 
-      AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text("删除屏蔽预设"),
         content: Text('确定要删除“$name”吗？'),
         actions: [

@@ -15,11 +15,10 @@ class SyncPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("数据同步"),
+        title: const Text("数据与同步"),
         actions: [
           Visibility(
-            visible:
-                GetPlatform.isAndroid || GetPlatform.isIOS || Utils.isOhos,
+            visible: GetPlatform.isAndroid || GetPlatform.isIOS || Utils.isOhos,
             child: TextButton.icon(
               onPressed: () async {
                 var result = await Get.toNamed(RoutePath.kSyncScan);
@@ -86,7 +85,8 @@ class SyncPage extends StatelessWidget {
                           SmartDialog.showToast("房间号不能为空");
                           return false;
                         }
-                        if (text.trim().length != SignalRService.kRoomIdLength) {
+                        if (text.trim().length !=
+                            SignalRService.kRoomIdLength) {
                           SmartDialog.showToast(
                               "请输入${SignalRService.kRoomIdLength}位房间号");
                           return false;
@@ -133,6 +133,22 @@ class SyncPage extends StatelessWidget {
                   },
                 ),
               ],
+            ),
+          ),
+          Padding(
+            padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
+            child: Text(
+              "高级",
+              style: Get.textTheme.titleSmall,
+            ),
+          ),
+          SettingsCard(
+            child: ListTile(
+              title: const Text("高级连接设置"),
+              subtitle: const Text("自建同步服务地址和同步代理地址"),
+              leading: const Icon(Remix.settings_4_line),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Get.toNamed(RoutePath.kSyncAdvancedConnection),
             ),
           ),
         ],

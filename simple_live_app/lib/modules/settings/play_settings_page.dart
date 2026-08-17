@@ -1,22 +1,16 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
-import 'package:path/path.dart' as p;
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
-import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
-import 'package:simple_live_app/widgets/settings/settings_action.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_menu.dart';
 import 'package:simple_live_app/widgets/settings/settings_number.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 
 class PlaySettingsPage extends GetView<AppSettingsController> {
   const PlaySettingsPage({Key? key}) : super(key: key);
@@ -154,185 +148,6 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
               ],
             ),
           ),
-          if (LiveSubtitleService.instance.uiEnabled) ...[
-            Padding(
-              padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
-              child: Text(
-                "实时字幕（实验）",
-                style: Get.textTheme.titleSmall,
-              ),
-            ),
-            SettingsCard(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Obx(
-                    () => SettingsSwitch(
-                      title: "启用实时字幕",
-                      subtitle:
-                          "需要先选择本机模型路径，${LiveSubtitleService.instance.platformStatusLabel}",
-                      value: controller.liveSubtitleEnable.value,
-                      onChanged: (e) async {
-                        if (e) {
-                          if (!LiveSubtitleService.instance.canStartRuntime) {
-                            SmartDialog.showToast("当前平台暂不支持实时字幕识别");
-                            return;
-                          }
-                          final hasModel = await LiveSubtitleService.instance
-                              .validateModelPath(
-                            controller.liveSubtitleModelPath.value,
-                          );
-                          if (!hasModel) {
-                            SmartDialog.showToast("请先选择有效的字幕模型路径");
-                            return;
-                          }
-                        }
-                        controller.setLiveSubtitleEnable(e);
-                        await LiveSubtitleService.instance
-                            .syncPreviewFromSettings();
-                      },
-                    ),
-                  ),
-                  AppStyle.divider,
-                  Obx(
-                    () {
-                      final modelPath = controller.liveSubtitleModelPath.value;
-                      final label =
-                          modelPath.isEmpty ? "未选择" : p.basename(modelPath);
-                      return SettingsAction(
-                        title: "模型关键文件",
-                        subtitle: LiveSubtitleService.instance
-                            .modelPathSubtitle(modelPath),
-                        value: label,
-                        onTap: pickSubtitleModelPath,
-                      );
-                    },
-                  ),
-                  AppStyle.divider,
-                  SettingsAction(
-                    title: "模型推荐下载",
-                    subtitle: "按设备性能选择高级 / 中级 / 甜点级模型",
-                    onTap: showSubtitleModelRecommendations,
-                  ),
-                  AppStyle.divider,
-                  Obx(
-                    () => SettingsMenu<String>(
-                      title: "字幕语言",
-                      value: controller.liveSubtitleLanguage.value,
-                      valueMap: const {
-                        "auto": "自动",
-                        "zh": "中文",
-                        "en": "英语",
-                        "ja": "日语",
-                        "ko": "韩语",
-                      },
-                      onChanged: (e) async {
-                        controller.setLiveSubtitleLanguage(e);
-                        await LiveSubtitleService.instance
-                            .syncPreviewFromSettings();
-                      },
-                    ),
-                  ),
-                  AppStyle.divider,
-                  Obx(
-                    () => SettingsNumber(
-                      title: "字幕字号",
-                      value: controller.liveSubtitleFontSize.value.toInt(),
-                      min: 12,
-                      max: 36,
-                      unit: "px",
-                      onChanged: (e) {
-                        controller.setLiveSubtitleFontSize(e.toDouble());
-                      },
-                    ),
-                  ),
-                  AppStyle.divider,
-                  Obx(
-                    () => SettingsNumber(
-                      title: "水平位置",
-                      value:
-                          (controller.liveSubtitleOffsetX.value * 100).round(),
-                      min: 5,
-                      max: 95,
-                      unit: "%",
-                      onChanged: (e) {
-                        controller.setLiveSubtitleOffset(x: e / 100);
-                      },
-                    ),
-                  ),
-                  AppStyle.divider,
-                  Obx(
-                    () => SettingsNumber(
-                      title: "垂直位置",
-                      value:
-                          (controller.liveSubtitleOffsetY.value * 100).round(),
-                      min: 8,
-                      max: 92,
-                      unit: "%",
-                      onChanged: (e) {
-                        controller.setLiveSubtitleOffset(y: e / 100);
-                      },
-                    ),
-                  ),
-                  AppStyle.divider,
-                  Obx(
-                    () => SettingsMenu<int>(
-                      title: "字幕颜色",
-                      value: controller.liveSubtitleColor.value,
-                      valueMap: const {
-                        0xffffffff: "白色",
-                        0xffffeb3b: "黄色",
-                        0xff80cbc4: "青绿色",
-                        0xffffb3c7: "粉色",
-                        0xff111111: "黑色",
-                      },
-                      onChanged: (e) {
-                        controller.setLiveSubtitleColor(e);
-                      },
-                    ),
-                  ),
-                  AppStyle.divider,
-                  Obx(
-                    () => SettingsMenu<int>(
-                      title: "字幕粗细",
-                      value: controller.liveSubtitleFontWeight.value,
-                      valueMap: const {
-                        4: "正常",
-                        5: "中等",
-                        6: "半粗",
-                        7: "加粗",
-                        8: "很粗",
-                      },
-                      onChanged: (e) {
-                        controller.setLiveSubtitleFontWeight(e);
-                      },
-                    ),
-                  ),
-                  AppStyle.divider,
-                  Obx(
-                    () => SettingsSwitch(
-                      title: "字幕背景",
-                      value: controller.liveSubtitleBackgroundEnable.value,
-                      onChanged: (e) {
-                        controller.setLiveSubtitleBackgroundEnable(e);
-                      },
-                    ),
-                  ),
-                  AppStyle.divider,
-                  Obx(
-                    () => SettingsSwitch(
-                      title: "锁定字幕位置",
-                      subtitle: "锁定后播放页只显示字幕，鼠标悬停时显示解锁按钮",
-                      value: controller.liveSubtitlePositionLocked.value,
-                      onChanged: (e) {
-                        controller.setLiveSubtitlePositionLocked(e);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
           Padding(
             padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
             child: Text(
@@ -383,6 +198,15 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     onChanged: (e) {
                       controller.setPlayerShowSuperChat(e);
                     },
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
+                  () => SettingsSwitch(
+                    title: "显示“复制播放直链”",
+                    subtitle: "开启后在直播间更多功能中显示；复制当前实际清晰度和线路",
+                    value: controller.playerShowPlayUrl.value,
+                    onChanged: controller.setPlayerShowPlayUrl,
                   ),
                 ),
               ],
@@ -481,88 +305,6 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
       ),
     );
   }
-
-  Future<void> pickSubtitleModelPath() async {
-    String? selectedPath;
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        dialogTitle: "选择字幕模型关键 onnx 文件",
-        type: FileType.custom,
-        allowedExtensions: const ["onnx"],
-      );
-      selectedPath = result?.files.single.path;
-    } catch (_) {
-      selectedPath = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: "选择字幕模型文件夹",
-      );
-    }
-    if (selectedPath == null || selectedPath.isEmpty) {
-      return;
-    }
-    final info = await LiveSubtitleService.instance.inspectModelPath(
-      selectedPath,
-    );
-    if (info == null) {
-      SmartDialog.showToast("未识别模型，请选择推荐模型的关键 onnx 文件");
-      return;
-    }
-    if (!info.isValid) {
-      SmartDialog.showToast("模型缺少：${info.missingFileNames.join("、")}");
-      return;
-    }
-    controller.setLiveSubtitleModelPath(info.keyFilePath);
-    await LiveSubtitleService.instance.syncPreviewFromSettings();
-  }
-
-  void showSubtitleModelRecommendations() {
-    Utils.showDialogSafe<dynamic>(
-      context: Get.context!,
-      builder: (_) => AlertDialog(
-        title: const Text("字幕模型推荐"),
-        content: const SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: EdgeInsets.only(bottom: 8),
-                child: Text(
-                  "选一个档位，下载该档位列出的全部文件，放到同一个文件夹；App 里选择关键 onnx 文件。其他 .weights、非 int8 onnx 和 test_wavs 不用下载。蓝奏云/百度网盘镜像链接看 README。",
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ),
-              _SubtitleModelTile(
-                title: "高级（高性能桌面）",
-                subtitle:
-                    "下载：large-v3-encoder.int8.onnx、large-v3-decoder.int8.onnx、large-v3-tokens.txt。App 里选 encoder 这个 onnx。",
-                url:
-                    "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-large-v3",
-              ),
-              _SubtitleModelTile(
-                title: "中级（中文直播优先）",
-                subtitle:
-                    "下载：model.int8.onnx、tokens.txt、config.yaml、am.mvn。App 里选 model.int8.onnx。",
-                url:
-                    "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2023-09-14",
-              ),
-              _SubtitleModelTile(
-                title: "甜点级（先试这个）",
-                subtitle:
-                    "下载：encoder-epoch-99-avg-1.int8.onnx、decoder-epoch-99-avg-1.int8.onnx、joiner-epoch-99-avg-1.int8.onnx、tokens.txt、bpe.model、bpe.vocab。App 里选 encoder 这个 onnx。",
-                url:
-                    "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Get.back(),
-            child: const Text("关闭"),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _PipSettingsSection extends StatefulWidget {
@@ -626,31 +368,6 @@ class _PipSettingsSectionState extends State<_PipSettingsSection> {
             if (showHideDanmaku || showAutoOnLeave) AppStyle.divider,
           ],
         );
-      },
-    );
-  }
-}
-
-class _SubtitleModelTile extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final String url;
-
-  const _SubtitleModelTile({
-    required this.title,
-    required this.subtitle,
-    required this.url,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(title),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Icons.open_in_new),
-      onTap: () {
-        launchUrlString(url, mode: LaunchMode.externalApplication);
       },
     );
   }

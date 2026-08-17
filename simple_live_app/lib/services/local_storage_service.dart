@@ -86,6 +86,7 @@ class LocalStorageService extends GetxService {
   static const String kAutoFullScreen = "AutoFullScreen";
   static const String kAutoPipOnExit = "AutoPipOnExit";
   static const String kPlayerShowSuperChat = "PlayerShowSuperChat";
+  static const String kPlayerShowPlayUrl = "PlayerShowPlayUrl";
   static const String kLiveEventFlowEnable = "LiveEventFlowEnable";
   static const String kLiveEventFlowLimit = "LiveEventFlowLimit";
   static const String kLiveEventFlowOverlayEnable =
@@ -146,21 +147,6 @@ class LocalStorageService extends GetxService {
   static const String kWebDAVLastRecoverTime = "kWebDAVLastRecoverTime";
   static const String kSyncServerUrl = "SyncServerUrl";
   static const String kSyncProxyUrl = "SyncProxyUrl";
-  static const String kLiveSubtitleEnable = "LiveSubtitleEnable";
-  static const String kLiveSubtitleModelPath = "LiveSubtitleModelPath";
-  static const String kLiveSubtitleLanguage = "LiveSubtitleLanguage";
-  static const String kLiveSubtitleFontSize = "LiveSubtitleFontSize";
-  static const String kLiveSubtitlePosition = "LiveSubtitlePosition";
-  static const String kLiveSubtitleOffsetX = "LiveSubtitleOffsetX";
-  static const String kLiveSubtitleOffsetY = "LiveSubtitleOffsetY";
-  static const String kLiveSubtitleColor = "LiveSubtitleColor";
-  static const String kLiveSubtitleFontWeight = "LiveSubtitleFontWeight";
-  static const String kLiveSubtitleBackgroundEnable =
-      "LiveSubtitleBackgroundEnable";
-  static const String kLiveSubtitlePositionLocked =
-      "LiveSubtitlePositionLocked";
-  static const String kLiveSubtitleStartupGuard = "LiveSubtitleStartupGuard";
-
   late Box settingsBox;
   late Box<String> shieldBox;
   late Box<String> shieldPresetBox;

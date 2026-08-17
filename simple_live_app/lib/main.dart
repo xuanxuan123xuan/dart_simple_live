@@ -39,7 +39,6 @@ import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/live_notification_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
-import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
@@ -82,7 +81,8 @@ void main(List<String> args) async {
 class _PopRouteDiagObserver extends WidgetsBindingObserver {
   @override
   Future<bool> didPopRoute() async {
-    Log.d('AppNavigation: WidgetsBinding didPopRoute（系统/容器返回消息）\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: WidgetsBinding didPopRoute（系统/容器返回消息）\n${StackTrace.current}');
     return false; // 不拦截，让默认处理继续
   }
 }
@@ -93,25 +93,29 @@ class _PopRouteDiagObserver extends WidgetsBindingObserver {
 class _RouteDiagObserver extends NavigatorObserver {
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    Log.d('AppNavigation: didPush ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: didPush ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
     super.didPush(route, previousRoute);
   }
 
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    Log.d('AppNavigation: didPop ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: didPop ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
     super.didPop(route, previousRoute);
   }
 
   @override
   void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    Log.d('AppNavigation: didRemove ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: didRemove ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
     super.didRemove(route, previousRoute);
   }
 
   @override
   void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
-    Log.d('AppNavigation: didReplace new=${newRoute?.runtimeType} old=${oldRoute?.runtimeType}\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: didReplace new=${newRoute?.runtimeType} old=${oldRoute?.runtimeType}\n${StackTrace.current}');
     super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
   }
 }
@@ -582,7 +586,6 @@ Future initServices() async {
   Get.put(KuaishouAccountService());
 
   Get.put(FollowService());
-  Get.put(LiveSubtitleService());
   Get.put(ProfileBackupService());
 
   if (Utils.isOhos) {
@@ -682,7 +685,8 @@ class MyApp extends StatelessWidget {
         initialRoute: RoutePath.kIndex,
         getPages: AppPages.routes,
         routingCallback: (r) {
-          Log.d('AppNavigation: routingCallback cur=${r?.current} prev=${r?.previous}');
+          Log.d(
+              'AppNavigation: routingCallback cur=${r?.current} prev=${r?.previous}');
           unawaited(_syncDesktopShortcutCaptureState());
         },
         //国际化

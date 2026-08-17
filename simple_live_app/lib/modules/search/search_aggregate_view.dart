@@ -28,6 +28,7 @@ class SearchAggregateView extends StatelessWidget {
       return const _AggregateMessage(
         icon: Icons.search,
         message: "输入关键词开始搜索",
+        hint: "支持粘贴直播链接并直接进入直播间",
       );
     }
 
@@ -208,10 +209,15 @@ class _SectionStatus extends StatelessWidget {
 }
 
 class _AggregateMessage extends StatelessWidget {
-  const _AggregateMessage({required this.icon, required this.message});
+  const _AggregateMessage({
+    required this.icon,
+    required this.message,
+    this.hint,
+  });
 
   final IconData icon;
   final String message;
+  final String? hint;
 
   @override
   Widget build(BuildContext context) {
@@ -224,6 +230,23 @@ class _AggregateMessage extends StatelessWidget {
             Icon(icon, size: 48, color: Colors.grey),
             AppStyle.vGap12,
             Text(message, textAlign: TextAlign.center),
+            if (hint != null) ...[
+              AppStyle.vGap12,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.link, size: 18, color: Colors.grey),
+                  AppStyle.hGap4,
+                  Flexible(
+                    child: Text(
+                      hint!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.grey, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

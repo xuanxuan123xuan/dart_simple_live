@@ -44,73 +44,67 @@ class PageGridView extends StatelessWidget {
     return Obx(
       () => Stack(
         children: [
-          EasyRefresh(
-            header: MaterialHeader(
-              completeDuration: const Duration(milliseconds: 400),
-            ),
-            footer: MaterialFooter(
-              completeDuration: const Duration(milliseconds: 400),
-            ),
-            scrollController: pageController.scrollController,
-            controller: pageController.easyRefreshController,
-            firstRefresh: firstRefresh,
-            onLoad: pageController.loadData,
-            onRefresh: pageController.refreshData,
-            child: useFixedGrid
-                ? GridView.builder(
-                    padding: padding,
-                    controller: pageController.scrollController,
-                    primary: false,
-                    itemCount: pageController.list.length,
-                    itemBuilder: itemBuilder,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification.depth == 0 &&
+                  notification.metrics.axis == Axis.vertical &&
+                  notification.metrics.extentAfter < 280 &&
+                  pageController.canLoadMore.value &&
+                  !pageController.loadding) {
+                pageController.loadData();
+              }
+              return false;
+            },
+            child: EasyRefresh(
+              header: MaterialHeader(
+                completeDuration: const Duration(milliseconds: 400),
+              ),
+              footer: MaterialFooter(
+                completeDuration: const Duration(milliseconds: 400),
+              ),
+              scrollController: pageController.scrollController,
+              controller: pageController.easyRefreshController,
+              firstRefresh: firstRefresh,
+              onLoad: pageController.canLoadMore.value
+                  ? pageController.loadData
+                  : null,
+              onRefresh: pageController.refreshData,
+              child: useFixedGrid
+                  ? GridView.builder(
+                      padding: padding,
+                      controller: pageController.scrollController,
+                      primary: false,
+                      itemCount: pageController.list.length,
+                      itemBuilder: itemBuilder,
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        crossAxisSpacing: crossAxisSpacing,
+                        mainAxisSpacing: mainAxisSpacing,
+                        childAspectRatio: childAspectRatio ?? 3.4,
+                        mainAxisExtent: mainAxisExtent,
+                      ),
+                    )
+                  : MasonryGridView.count(
+                      padding: padding,
+                      itemCount: pageController.list.length,
+                      itemBuilder: itemBuilder,
                       crossAxisCount: crossAxisCount,
                       crossAxisSpacing: crossAxisSpacing,
                       mainAxisSpacing: mainAxisSpacing,
-                      childAspectRatio: childAspectRatio ?? 3.4,
-                      mainAxisExtent: mainAxisExtent,
                     ),
-                  )
-                : MasonryGridView.count(
-                    padding: padding,
-                    itemCount: pageController.list.length,
-                    itemBuilder: itemBuilder,
-                    crossAxisCount: crossAxisCount,
-                    crossAxisSpacing: crossAxisSpacing,
-                    mainAxisSpacing: mainAxisSpacing,
-                  ),
-          ),
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: // 加载更多按钮
-                Visibility(
-              visible: (Platform.isWindows ||
-                      Platform.isLinux ||
-                      Platform.isMacOS) &&
-                  pageController.canLoadMore.value &&
-                  !pageController.pageLoadding.value &&
-                  !pageController.pageEmpty.value,
-              child: Center(
-                child: TextButton(
-                  onPressed: pageController.loadData,
-                  child: const Text("加载更多"),
-                ),
-              ),
             ),
           ),
           Positioned(
             bottom: 12,
             right: 12,
-            child: // 加载更多按钮
+            child: // 刷新按钮
                 Visibility(
               visible: (Platform.isWindows ||
                       Platform.isLinux ||
                       Platform.isMacOS) &&
-                  pageController.canLoadMore.value &&
                   !pageController.pageLoadding.value &&
                   !pageController.pageEmpty.value &&
+                  pageController.list.isNotEmpty &&
                   showPCRefreshButton,
               child: Center(
                 child: IconButton(

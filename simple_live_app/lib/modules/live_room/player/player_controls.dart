@@ -14,7 +14,6 @@ import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
-import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/widgets/superchat_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
@@ -76,7 +75,6 @@ Widget buildFullControls(
           controller,
           enableQuickAccessLongPress: true,
         ),
-        buildLiveSubtitleOverlay(videoState.context, controller),
         _buildFullTopBar(
           controller,
           padding: padding,
@@ -150,7 +148,6 @@ Widget buildControls(
         buildPlayerSuperChatOverlay(controller),
         _buildBufferingIndicator(videoState),
         buildPlayerGestureLayer(controller),
-        buildLiveSubtitleOverlay(videoState.context, controller),
         _buildNormalBottomBar(
           controller,
           isPortrait: isPortrait,
@@ -195,159 +192,6 @@ Widget buildPlayerSuperChatOverlay(LiveRoomController controller) {
       child: PlayerSuperChatOverlay(controller: controller),
     );
   });
-}
-
-Widget buildLiveSubtitleOverlay(
-  BuildContext _,
-  LiveRoomController controller,
-) =>
-    _LiveSubtitleOverlay(controller: controller);
-
-class _LiveSubtitleOverlay extends StatefulWidget {
-  final LiveRoomController controller;
-
-  const _LiveSubtitleOverlay({
-    required this.controller,
-  });
-
-  @override
-  State<_LiveSubtitleOverlay> createState() => _LiveSubtitleOverlayState();
-}
-
-class _LiveSubtitleOverlayState extends State<_LiveSubtitleOverlay> {
-  bool _hovering = false;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!LiveSubtitleService.instance.uiEnabled) {
-      return const SizedBox.shrink();
-    }
-    return Obx(() {
-      final controller = widget.controller;
-      final settings = AppSettingsController.instance;
-      if (!settings.liveSubtitleEnable.value ||
-          settings.liveSubtitleModelPath.value.trim().isEmpty ||
-          LiveSubtitleService.instance.subtitleText.value.trim().isEmpty) {
-        return const SizedBox.shrink();
-      }
-
-      final mediaQuery = MediaQuery.of(context);
-      final padding = controller.fullScreenState.value
-          ? _fullScreenControlPadding(context)
-          : mediaQuery.padding;
-      final alignment = Alignment(
-        settings.liveSubtitleOffsetX.value * 2 - 1,
-        settings.liveSubtitleOffsetY.value * 2 - 1,
-      );
-      final positionedPadding = EdgeInsets.only(
-        left: padding.left + 24,
-        right: padding.right + 24,
-        top: padding.top + 24,
-        bottom: padding.bottom + 24,
-      );
-      final subtitleColor = Color(settings.liveSubtitleColor.value);
-      final locked = settings.liveSubtitlePositionLocked.value;
-      final showUnlockButton = locked && _hovering;
-
-      return Positioned.fill(
-        child: Padding(
-          padding: positionedPadding,
-          child: Align(
-            alignment: alignment,
-            child: MouseRegion(
-              onEnter: (_) => setState(() => _hovering = true),
-              onExit: (_) => setState(() => _hovering = false),
-              child: GestureDetector(
-                behavior: HitTestBehavior.deferToChild,
-                onLongPress: locked
-                    ? () {
-                        settings.setLiveSubtitlePositionLocked(false);
-                        SmartDialog.showToast("字幕位置已解锁");
-                      }
-                    : null,
-                onPanUpdate: locked
-                    ? null
-                    : (details) {
-                        final size = mediaQuery.size;
-                        if (size.width <= 0 || size.height <= 0) {
-                          return;
-                        }
-                        settings.setLiveSubtitleOffset(
-                          x: settings.liveSubtitleOffsetX.value +
-                              details.delta.dx / size.width,
-                          y: settings.liveSubtitleOffsetY.value +
-                              details.delta.dy / size.height,
-                        );
-                      },
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 720),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: settings.liveSubtitleBackgroundEnable.value
-                              ? Colors.black.withAlpha(140)
-                              : Colors.transparent,
-                          borderRadius: AppStyle.radius8,
-                        ),
-                        child: Padding(
-                          padding: AppStyle.edgeInsetsA8,
-                          child: Text(
-                            LiveSubtitleService.instance.subtitleText.value,
-                            textAlign: TextAlign.center,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: subtitleColor,
-                              fontSize: settings.liveSubtitleFontSize.value,
-                              fontWeight:
-                                  settings.liveSubtitleResolvedFontWeight,
-                              shadows: const [
-                                Shadow(
-                                  color: Colors.black,
-                                  blurRadius: 4,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (showUnlockButton)
-                      Positioned(
-                        right: -12,
-                        top: -12,
-                        child: Material(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(18),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(18),
-                            onTap: () {
-                              settings.setLiveSubtitlePositionLocked(false);
-                              SmartDialog.showToast("字幕位置已解锁");
-                            },
-                            child: const SizedBox(
-                              width: 32,
-                              height: 32,
-                              child: Icon(
-                                Icons.lock_open_outlined,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    });
-  }
 }
 
 Widget _buildBufferingIndicator(VideoState videoState) {
@@ -1167,7 +1011,7 @@ void showPlayerSettings(LiveRoomController controller) {
               AppSettingsController.instance.setFullScreenForceLandscape(e);
             },
             title: const Text("全屏自动横屏"),
-            subtitle: const Text("默认跟随视频方向；开启后竖屏直播也会强制横屏（iPad 更易隐藏状态栏）"),
+            subtitle: const Text("默认跟随视频方向；开启后竖屏直播也会强制横屏"),
             contentPadding: AppStyle.edgeInsetsH16,
             secondary: const Icon(Icons.screen_rotation),
           ),

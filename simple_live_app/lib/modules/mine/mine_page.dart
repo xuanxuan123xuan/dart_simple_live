@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -8,13 +7,10 @@ import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/log.dart';
-import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/cache_service.dart';
-import 'package:simple_live_app/services/signalr_service.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 
 class MinePage extends StatefulWidget {
   const MinePage({Key? key}) : super(key: key);
@@ -113,19 +109,7 @@ class _MinePageState extends State<MinePage> {
               subtitle: const Text("简简单单看直播"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
-                Utils.showDialogSafe<dynamic>(
-                  context: context,
-                  builder: (_) => AboutDialog(
-                    applicationIcon: Image.asset(
-                      'assets/images/logo.png',
-                      width: 48,
-                      height: 48,
-                    ),
-                    applicationName: "Simple Live",
-                    applicationVersion: "简简单单看直播",
-                    applicationLegalese: "Ver ${Utils.packageInfo.version}",
-                  ),
-                );
+                Get.toNamed(RoutePath.kAbout);
               },
             ),
             Divider(
@@ -133,21 +117,16 @@ class _MinePageState extends State<MinePage> {
               endIndent: 12,
               color: Colors.grey.withAlpha(25),
             ),
-            _buildCard(
-              context,
-              children: [
-                ListTile(
-                  leading: const Icon(Remix.history_line),
-                  title: const Text("观看记录"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    AppNavigator.toHistory();
-                  },
-                ),
-              ],
+            ListTile(
+              leading: const Icon(Remix.history_line),
+              title: const Text("观看记录"),
+              trailing: const Icon(
+                Icons.chevron_right,
+                color: Colors.grey,
+              ),
+              onTap: () {
+                AppNavigator.toHistory();
+              },
             ),
             Divider(
               indent: 12,
@@ -172,7 +151,7 @@ class _MinePageState extends State<MinePage> {
             ),
             ListTile(
               leading: const Icon(Icons.devices),
-              title: const Text("数据同步"),
+              title: const Text("数据与同步"),
               trailing: const Icon(
                 Icons.chevron_right,
                 color: Colors.grey,
@@ -208,14 +187,14 @@ class _MinePageState extends State<MinePage> {
               color: Colors.grey.withAlpha(25),
             ),
             ListTile(
-              leading: const Icon(Remix.link),
-              title: const Text("链接解析"),
+              leading: const Icon(Remix.settings_3_line),
+              title: const Text("设置"),
               trailing: const Icon(
                 Icons.chevron_right,
                 color: Colors.grey,
               ),
               onTap: () {
-                Get.toNamed(RoutePath.kTools);
+                Get.toNamed(RoutePath.kSettings);
               },
             ),
             Divider(
@@ -223,177 +202,19 @@ class _MinePageState extends State<MinePage> {
               endIndent: 12,
               color: Colors.grey.withAlpha(25),
             ),
-            _buildCard(
-              context,
-              children: [
-                ListTile(
-                  leading: const Icon(Remix.moon_line),
-                  title: const Text("外观设置"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    Get.toNamed(RoutePath.kAppstyleSetting);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Remix.home_2_line),
-                  title: const Text("主页设置"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    Get.toNamed(RoutePath.kSettingsIndexed);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.tune),
-                  title: const Text("播放页设置"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    Get.toNamed(RoutePath.kSettingsPlaybackPage);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Remix.play_circle_line),
-                  title: const Text("直播设置"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    Get.toNamed(RoutePath.kSettingsPlay);
-                  },
-                ),
-                if (PlatformUtils.supportsInlineMultiRoomOf(context))
-                  ListTile(
-                    leading: const Icon(Remix.layout_grid_line),
-                    title: const Text("多开设置"),
-                    trailing: const Icon(
-                      Icons.chevron_right,
-                      color: Colors.grey,
-                    ),
-                    onTap: () {
-                      Get.toNamed(RoutePath.kSettingsMultiRoom);
-                    },
-                  ),
-                ListTile(
-                  leading: const Icon(Remix.text),
-                  title: const Text("弹幕设置"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    Get.toNamed(RoutePath.kSettingsDanmu);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Remix.heart_line),
-                  title: const Text("关注设置"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    Get.toNamed(RoutePath.kSettingsFollow);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Remix.timer_2_line),
-                  title: const Text("定时关闭"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    Get.toNamed(RoutePath.kSettingsAutoExit);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Remix.apps_line),
-                  title: const Text("其他设置"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    Get.toNamed(RoutePath.kSettingsOther);
-                  },
-                ),
-                if (kDebugMode)
-                  ListTile(
-                    leading: const Icon(Remix.apps_line),
-                    title: const Text("测试"),
-                    trailing: const Icon(
-                      Icons.chevron_right,
-                      color: Colors.grey,
-                    ),
-                    onTap: () async {
-                      SignalRService signalRService = SignalRService();
-                      await signalRService.connect();
-                      //Get.toNamed(RoutePath.kTest);
-                      var room = await signalRService.createRoom();
-                      Log.logPrint(room);
-                    },
-                  ),
-              ],
-            ),
-            Divider(
-              indent: 12,
-              endIndent: 12,
-              color: Colors.grey.withAlpha(25),
-            ),
-            _buildCard(
-              context,
-              children: [
-                const ListTile(
-                  leading: Icon(Remix.error_warning_line),
-                  title: Text("免责声明"),
-                  trailing: Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: Utils.showStatement,
-                ),
-                ListTile(
-                  leading: const Icon(Remix.github_line),
-                  title: const Text("开源主页"),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
-                  ),
-                  onTap: () {
-                    launchUrlString(
-                      "https://github.com/xuanxuan123xuan/dart_simple_live",
-                      mode: LaunchMode.externalApplication,
-                    );
-                  },
-                ),
-              ],
+            ListTile(
+              leading: const Icon(Remix.question_line),
+              title: const Text("帮助与排障"),
+              trailing: const Icon(
+                Icons.chevron_right,
+                color: Colors.grey,
+              ),
+              onTap: () {
+                Get.toNamed(RoutePath.kHelp);
+              },
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildCard(BuildContext context, {required List<Widget> children}) {
-    return Theme(
-      data: Theme.of(context).copyWith(
-        listTileTheme: ListTileThemeData(
-          shape: RoundedRectangleBorder(borderRadius: AppStyle.radius8),
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children,
       ),
     );
   }

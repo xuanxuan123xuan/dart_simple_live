@@ -8,6 +8,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/modules/follow_user/follow_user_controller.dart';
+import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
@@ -110,17 +111,8 @@ class FollowUserPage extends GetView<FollowUserController> {
             tooltip: "更多",
             onSelected: (value) {
               switch (value) {
-                case "exportFile":
-                  FollowService.instance.exportFile();
-                  break;
-                case "importFile":
-                  FollowService.instance.inputFile();
-                  break;
-                case "exportText":
-                  FollowService.instance.exportText();
-                  break;
-                case "importText":
-                  FollowService.instance.inputText();
+                case "backup":
+                  Get.toNamed(RoutePath.kSync);
                   break;
                 case "tags":
                   showTagsManager();
@@ -129,42 +121,12 @@ class FollowUserPage extends GetView<FollowUserController> {
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
-                value: "exportFile",
+                value: "backup",
                 child: Row(
                   children: [
-                    Icon(Remix.save_2_line),
+                    Icon(Remix.archive_line),
                     SizedBox(width: 12),
-                    Text("导出文件"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: "importFile",
-                child: Row(
-                  children: [
-                    Icon(Remix.folder_open_line),
-                    SizedBox(width: 12),
-                    Text("导入文件"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: "exportText",
-                child: Row(
-                  children: [
-                    Icon(Remix.text),
-                    SizedBox(width: 12),
-                    Text("导出文本"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: "importText",
-                child: Row(
-                  children: [
-                    Icon(Remix.file_text_line),
-                    SizedBox(width: 12),
-                    Text("导入文本"),
+                    Text("管理备份"),
                   ],
                 ),
               ),

@@ -38,7 +38,6 @@ import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:video_player/video_player.dart';
 
-const _windowsChromeChannel = MethodChannel('simple_live/windows_chrome');
 const _ohosMediaChannel = MethodChannel('simple_live/ohos_media');
 
 class _DanmakuReplayEntry {
@@ -1174,23 +1173,17 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           return;
         }
         Log.d('Desktop fullscreen: enter start');
-        fullScreenState.value = true;
         try {
           _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
-          await _applyWindowsFullScreenChrome();
           await windowManager
               .setFullScreen(true)
               .timeout(const Duration(seconds: 2));
           await _waitForWindowsFullScreenState(true);
-          await _applyWindowsFullScreenChrome();
-          unawaited(
-            Future.delayed(const Duration(milliseconds: 900), () async {
-              if (!fullScreenState.value || smallWindowState.value) {
-                return;
-              }
-              await _applyWindowsFullScreenChrome();
-            }),
-          );
+          // Let window_manager finish the native Win32 resize before moving
+          // the Video widget into the fullscreen layout. Changing both at the
+          // same time can stall the Windows texture/surface during a double
+          // click transition.
+          fullScreenState.value = true;
           await Future.delayed(const Duration(milliseconds: 32));
           Log.d('Desktop fullscreen: enter complete');
         } catch (e, stackTrace) {
@@ -1199,7 +1192,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
             await windowManager
                 .setFullScreen(false)
                 .timeout(const Duration(seconds: 2));
-            await _restoreWindowsWindowChrome();
           } catch (rollbackError) {
             Log.d('Desktop fullscreen: enter rollback failed: $rollbackError');
           }
@@ -1314,7 +1306,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
               .setFullScreen(false)
               .timeout(const Duration(seconds: 2));
           await _waitForWindowsFullScreenState(false);
-          await _restoreWindowsWindowChrome();
           await _refreshWindowsWindowBounds();
           if (_windowMaximizedBeforeFullScreen) {
             await windowManager.maximize();
@@ -1449,35 +1440,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       final nudgedSize = Size(size.width + 1, size.height + 1);
       await windowManager.setSize(nudgedSize);
       await windowManager.setSize(size);
-    } catch (e) {
-      Log.logPrint(e);
-    }
-  }
-
-  Future<void> _applyWindowsFullScreenChrome() async {
-    if (!Platform.isWindows) {
-      return;
-    }
-
-    try {
-      await _windowsChromeChannel
-          .invokeMethod<void>('apply')
-          .timeout(const Duration(seconds: 2));
-    } catch (e) {
-      Log.logPrint(e);
-    }
-  }
-
-  ///小窗模式()
-  Future<void> _restoreWindowsWindowChrome() async {
-    if (!Platform.isWindows) {
-      return;
-    }
-
-    try {
-      await _windowsChromeChannel
-          .invokeMethod<void>('restore')
-          .timeout(const Duration(seconds: 2));
     } catch (e) {
       Log.logPrint(e);
     }

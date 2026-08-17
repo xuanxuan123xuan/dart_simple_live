@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/modules/search/search_aggregate_controller.dart';
 import 'package:simple_live_app/modules/search/search_aggregate_view.dart';
+import 'package:simple_live_app/routes/app_navigation.dart';
+import 'package:simple_live_app/services/live_room_link_parser.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({Key? key}) : super(key: key);
@@ -15,6 +18,7 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   final controller = Get.find<SearchAggregateController>();
+  final linkParser = LiveRoomLinkParser();
   late final TextEditingController searchController;
   late final RxInt searchMode;
 
@@ -33,16 +37,34 @@ class _SearchPageState extends State<SearchPage> {
         if (!mounted || controller.isClosed) {
           return;
         }
-        unawaited(controller.search(initialKeyword, searchMode.value));
+        unawaited(search());
       });
     }
   }
 
-  void search() {
+  Future<void> search() async {
     if (!mounted || controller.isClosed) {
       return;
     }
-    unawaited(controller.search(searchController.text, searchMode.value));
+    final input = searchController.text.trim();
+    final extractedUrl = LiveRoomLinkParser.extractHttpUrl(input);
+    if (extractedUrl.isNotEmpty) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      final target = await linkParser.parse(extractedUrl);
+      if (!mounted || controller.isClosed) {
+        return;
+      }
+      if (target != null) {
+        AppNavigator.toLiveRoomDetail(
+          site: target.site,
+          roomId: target.roomId,
+        );
+        return;
+      }
+      SmartDialog.showToast("无法识别此直播链接");
+      return;
+    }
+    await controller.search(input, searchMode.value);
   }
 
   @override
@@ -67,7 +89,7 @@ class _SearchPageState extends State<SearchPage> {
           controller: searchController,
           autofocus: true,
           textInputAction: TextInputAction.search,
-          onSubmitted: (_) => search(),
+          onSubmitted: (_) => unawaited(search()),
           decoration: InputDecoration(
             hintText: "搜点什么吧",
             isDense: true,
@@ -85,14 +107,16 @@ class _SearchPageState extends State<SearchPage> {
                   ],
                   onChanged: (value) {
                     searchMode.value = value ?? 0;
-                    if (searchController.text.trim().isNotEmpty) search();
+                    if (searchController.text.trim().isNotEmpty) {
+                      unawaited(search());
+                    }
                   },
                 ),
               ),
             ),
             suffixIcon: IconButton(
               tooltip: "搜索",
-              onPressed: search,
+              onPressed: () => unawaited(search()),
               icon: const Icon(Icons.search),
             ),
           ),

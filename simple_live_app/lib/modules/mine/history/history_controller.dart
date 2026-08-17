@@ -19,6 +19,15 @@ class HistoryController extends BasePageController<History> {
     return Future.value(DBService.instance.getHistores());
   }
 
+  @override
+  bool hasMoreForPage({
+    required List<History> items,
+    required int page,
+    required int pageSize,
+  }) {
+    return false;
+  }
+
   void clean() async {
     var result = await Utils.showAlertDialog("确定要清空观看记录吗?", title: "清空观看记录");
     if (!result) {
