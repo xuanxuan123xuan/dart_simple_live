@@ -37,24 +37,50 @@ jobs:
           flutter-version: ${{ env.TV_FLUTTER_VERSION }}
           cache: true
 
-      - name: 准备 Android TV 签名（可选）
+      - name: 准备 Android TV 分支签名
         shell: bash
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          DEV_KEYSTORE_BASE64: ${{ secrets.DEV_KEYSTORE_BASE64 }}
+          DEV_STORE_PASSWORD: ${{ secrets.DEV_STORE_PASSWORD }}
+          DEV_KEY_PASSWORD: ${{ secrets.DEV_KEY_PASSWORD }}
+          DEV_KEY_ALIAS: ${{ secrets.DEV_KEY_ALIAS }}
+          STABLE_KEYSTORE_BASE64: ${{ secrets.STABLE_KEYSTORE_BASE64 }}
+          STABLE_STORE_PASSWORD: ${{ secrets.STABLE_STORE_PASSWORD }}
+          STABLE_KEY_PASSWORD: ${{ secrets.STABLE_KEY_PASSWORD }}
+          STABLE_KEY_ALIAS: ${{ secrets.STABLE_KEY_ALIAS }}
         run: |
-          if [[ -n "$KEYSTORE_BASE64" && -n "$STORE_PASSWORD" && \
-                -n "$KEY_PASSWORD" && -n "$KEY_ALIAS" ]]; then
-            printf '%s' "$KEYSTORE_BASE64" | openssl base64 -d -A \
-              > simple_live_tv_app/android/release-keystore.jks
-            printf 'storeFile=../release-keystore.jks\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\n' \
-              "$STORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" \
-              > simple_live_tv_app/android/key.properties
-          else
-            echo "::warning::签名 secrets 不完整，将使用 debug fallback 签名。"
+          set -euo pipefail
+          case "$BRANCH_NAME" in
+            dev)
+              KEYSTORE_BASE64="$DEV_KEYSTORE_BASE64"
+              STORE_PASSWORD="$DEV_STORE_PASSWORD"
+              KEY_PASSWORD="$DEV_KEY_PASSWORD"
+              KEY_ALIAS="$DEV_KEY_ALIAS"
+              ;;
+            stable)
+              KEYSTORE_BASE64="$STABLE_KEYSTORE_BASE64"
+              STORE_PASSWORD="$STABLE_STORE_PASSWORD"
+              KEY_PASSWORD="$STABLE_KEY_PASSWORD"
+              KEY_ALIAS="$STABLE_KEY_ALIAS"
+              ;;
+            *)
+              echo "::error::Android TV 发布构建只允许从 dev 或 stable 分支运行（当前：$BRANCH_NAME）。"
+              exit 1
+              ;;
+          esac
+          if [[ -z "$KEYSTORE_BASE64" || -z "$STORE_PASSWORD" || \
+                -z "$KEY_PASSWORD" || -z "$KEY_ALIAS" ]]; then
+            echo "::error::$BRANCH_NAME 分支的 Android 签名 secrets 不完整。"
+            exit 1
           fi
+          printf '%s' "$KEYSTORE_BASE64" | openssl base64 -d -A \
+            > simple_live_tv_app/android/release-keystore.jks
+          printf 'storeFile=../release-keystore.jks\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\n' \
+            "$STORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" \
+            > simple_live_tv_app/android/key.properties
+          keytool -list -v -keystore simple_live_tv_app/android/release-keystore.jks \
+            -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" | grep 'SHA256:'
 
       - name: 恢复 TV 依赖包
         working-directory: simple_live_tv_app

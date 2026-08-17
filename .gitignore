@@ -7,11 +7,15 @@ simple_live_tv_app/.vscode/settings.json
 
 # Local release and build artifacts
 release/
+signing-backup/
 models/
 issue_logs/
 experience/
 graphify-out/
 **/android/app/build/
+**/android/key.properties
+**/android/*.jks
+**/android/*.keystore
 tools/
 
 # Local scripts
