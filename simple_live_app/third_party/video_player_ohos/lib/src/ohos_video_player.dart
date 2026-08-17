@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -11,9 +10,24 @@ import 'package:video_player_platform_interface/video_player_platform_interface.
 
 import 'messages.g.dart';
 
+/// A native HarmonyOS AVPlayer video frame has reached its texture surface.
+class OhosFirstFrameEvent {
+  const OhosFirstFrameEvent({required this.textureId});
+
+  final int textureId;
+}
+
 /// An Android implementation of [VideoPlayerPlatform] that uses the
 /// Pigeon-generated [VideoPlayerApi].
 class OhosVideoPlayer extends VideoPlayerPlatform {
+  static final StreamController<OhosFirstFrameEvent>
+      _firstFrameEventController =
+      StreamController<OhosFirstFrameEvent>.broadcast(sync: true);
+
+  /// Native first-frame notifications for HarmonyOS texture players.
+  static Stream<OhosFirstFrameEvent> get firstFrameEvents =>
+      _firstFrameEventController.stream;
+
   final OhosVideoPlayerApi _api = OhosVideoPlayerApi();
 
   /// Registers this class as the default instance of [PathProviderPlatform].
@@ -154,6 +168,11 @@ class OhosVideoPlayer extends VideoPlayerPlatform {
             eventType: VideoEventType.isPlayingStateUpdate,
             isPlaying: map['isPlaying'] as bool,
           );
+        case 'firstFrame':
+          _firstFrameEventController.add(
+            OhosFirstFrameEvent(textureId: map['textureId'] as int),
+          );
+          return VideoEvent(eventType: VideoEventType.unknown);
         default:
           return VideoEvent(eventType: VideoEventType.unknown);
       }

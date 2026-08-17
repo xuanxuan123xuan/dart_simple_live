@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:video_player_ohos/video_player_ohos.dart' as ohos_plugin;
 
 enum OhosPlaybackHealthIssue { bufferingTimeout, playbackStall }
 
@@ -13,6 +14,7 @@ typedef OhosVideoValueChanged = void Function(
 
 const ohosBufferingTimeout = Duration(seconds: 8);
 const ohosPlaybackStallTimeout = Duration(seconds: 12);
+const ohosFirstFrameTimeout = Duration(seconds: 12);
 
 @visibleForTesting
 OhosPlaybackHealthIssue? detectOhosPlaybackHealthIssue({
@@ -87,6 +89,7 @@ class OhosVideoPlayer extends StatefulWidget {
     this.onControllerDisposed,
     this.onValueChanged,
     this.onGenerationValueChanged,
+    this.onFirstFrame,
     this.onCompleted,
     this.fit = BoxFit.contain,
     this.forcedAspectRatio,
@@ -101,6 +104,7 @@ class OhosVideoPlayer extends StatefulWidget {
   final ValueChanged<VideoPlayerController>? onControllerDisposed;
   final ValueChanged<VideoPlayerValue>? onValueChanged;
   final OhosVideoValueChanged? onGenerationValueChanged;
+  final ValueChanged<int>? onFirstFrame;
   final VoidCallback? onCompleted;
   final BoxFit fit;
   final double? forcedAspectRatio;
@@ -126,16 +130,23 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   bool _errorReported = false;
   String? _error;
   Timer? _watchdogTimer;
+  Timer? _firstFrameTimer;
+  StreamSubscription<ohos_plugin.OhosFirstFrameEvent>? _firstFrameSubscription;
   DateTime? _bufferingSince;
   DateTime _lastProgressAt = DateTime.now();
   Duration _lastPosition = Duration.zero;
   bool _hasObservedProgress = false;
   bool _completionReported = false;
+  bool _firstFrameRendered = false;
   VideoPlayerValue? _previousValue;
 
   @override
   void initState() {
     super.initState();
+    _firstFrameSubscription =
+        ohos_plugin.OhosVideoPlayer.firstFrameEvents.listen((event) {
+      _handleNativeFirstFrame(event);
+    });
     _initialize();
   }
 
@@ -191,6 +202,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
       await controller.play();
       if (_isCurrent(generation, controller)) {
         setState(() => _ready = true);
+        _startFirstFrameTimeout(generation, controller);
         _startWatchdog();
       }
       _handleValueChanged(controller);
@@ -246,12 +258,50 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   void _resetPlaybackHealth() {
     _watchdogTimer?.cancel();
     _watchdogTimer = null;
+    _firstFrameTimer?.cancel();
+    _firstFrameTimer = null;
     _bufferingSince = null;
     _lastProgressAt = DateTime.now();
     _lastPosition = Duration.zero;
     _hasObservedProgress = false;
     _completionReported = false;
+    _firstFrameRendered = false;
     _previousValue = null;
+  }
+
+  void _handleNativeFirstFrame(ohos_plugin.OhosFirstFrameEvent event) {
+    final controller = _controller;
+    if (!mounted || controller == null || _firstFrameRendered) {
+      return;
+    }
+    // This app pins a video_player fork whose texture id is the only stable
+    // key shared with the native per-texture EventChannel.
+    // ignore: invalid_use_of_visible_for_testing_member
+    final currentTextureId = controller.textureId;
+    if (event.textureId != currentTextureId) {
+      return;
+    }
+    _firstFrameRendered = true;
+    _firstFrameTimer?.cancel();
+    _firstFrameTimer = null;
+    widget.onFirstFrame?.call(widget.revision);
+  }
+
+  void _startFirstFrameTimeout(
+    int generation,
+    VideoPlayerController controller,
+  ) {
+    _firstFrameTimer?.cancel();
+    if (_firstFrameRendered) {
+      return;
+    }
+    _firstFrameTimer = Timer(ohosFirstFrameTimeout, () {
+      if (_isCurrent(generation, controller) && !_firstFrameRendered) {
+        _reportError(
+          '首帧渲染超过 ${ohosFirstFrameTimeout.inSeconds} 秒，正在重试',
+        );
+      }
+    });
   }
 
   void _startWatchdog() {
@@ -338,6 +388,8 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   void dispose() {
     _initializationGeneration++;
     _watchdogTimer?.cancel();
+    _firstFrameTimer?.cancel();
+    _firstFrameSubscription?.cancel();
     final controller = _controller;
     final listener = _controllerListener;
     if (controller != null) {

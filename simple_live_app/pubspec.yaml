@@ -96,6 +96,8 @@ dependencies:
       url: https://github.com/xuanxuan123xuan/flutter_packages.git
       ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/video_player/video_player
+  video_player_ohos:
+    path: third_party/video_player_ohos
 
   flutter:
     sdk: flutter

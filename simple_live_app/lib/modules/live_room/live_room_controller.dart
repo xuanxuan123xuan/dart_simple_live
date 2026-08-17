@@ -25,6 +25,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_signal_adapter.dart';
+import 'package:simple_live_app/modules/live_room/player/ohos_line_failover_policy.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
@@ -756,6 +757,7 @@ class LiveRoomController extends PlayerController
   final OhosPlaybackSignalAdapter _ohosPlaybackSignalAdapter =
       OhosPlaybackSignalAdapter();
   DateTime? _lastAutoQualityDownAt;
+  final Set<int> _ohosFailedLineIndices = <int>{};
   StreamSubscription<bool>? _autoQualityBufferingSubscription;
 
   void _setupAutoQualityAdjust() {
@@ -787,17 +789,40 @@ class LiveRoomController extends PlayerController
       buffering: buffering,
       now: now,
     );
-    if (!shouldDegrade ||
-        qualityLocked.value ||
-        currentQuality < 0 ||
-        currentQuality >= qualites.length - 1) {
+    if (!shouldDegrade) {
       return;
     }
     if (_lastAutoQualityDownAt != null &&
         now.difference(_lastAutoQualityDownAt!) < const Duration(seconds: 30)) {
       return;
     }
+    if (Utils.isOhos && playUrls.length > 1) {
+      _ohosFailedLineIndices.add(currentLineIndex);
+      final candidate = selectNextOhosFailoverLine(
+        currentLineIndex: currentLineIndex,
+        lineCount: playUrls.length,
+        failedLineIndices: _ohosFailedLineIndices,
+      );
+      if (candidate != null) {
+        _lastAutoQualityDownAt = now;
+        SmartDialog.showToast("线路波动，已自动切换备用线路");
+        unawaited(
+          changePlayLine(
+            candidate,
+            persist: false,
+            reconnectReason: LiveReconnectReason.automaticLineFailover,
+          ),
+        );
+        return;
+      }
+    }
+    if (qualityLocked.value ||
+        currentQuality < 0 ||
+        currentQuality >= qualites.length - 1) {
+      return;
+    }
     _lastAutoQualityDownAt = now;
+    _ohosFailedLineIndices.clear();
     currentQuality += 1;
     currentQualityInfo.value = qualites[currentQuality].quality;
     SmartDialog.showToast("网络波动，已自动降低清晰度");
@@ -860,6 +885,7 @@ class LiveRoomController extends PlayerController
     _autoQualityBufferTracker.reset();
     _autoQualityWarmupStartedForRoom = false;
     _lastAutoQualityDownAt = null;
+    _ohosFailedLineIndices.clear();
     _resetKuaishouPlaybackRecoverySession();
   }
 
@@ -1863,6 +1889,27 @@ class LiveRoomController extends PlayerController
     updateOhosVideoState(value);
   }
 
+  void updateOhosFirstFrameForGeneration(int playerGeneration) {
+    if (!Utils.isOhos ||
+        _roomDisposed ||
+        playerGeneration != ohosPlayerRevision.value) {
+      return;
+    }
+    final signal = _ohosPlaybackSignalAdapter.markFirstFrame(
+      roomGeneration: _loadGeneration,
+      playerGeneration: playerGeneration,
+    );
+    if (signal == null) {
+      return;
+    }
+    Log.d(
+      'OHOS playback signal=${signal.type.name} '
+      'roomGeneration=${signal.roomGeneration} '
+      'playerGeneration=${signal.playerGeneration} '
+      'source=${signal.sourceFingerprint}',
+    );
+  }
+
   void _refreshDanmakuOverlay(String reason) {
     if (!showDanmakuState.value) {
       return;
@@ -2782,6 +2829,7 @@ class LiveRoomController extends PlayerController
           );
     if (persist) {
       _manualLineSelectionRevision += 1;
+      _ohosFailedLineIndices.clear();
     }
     currentLineIndex = index;
     if (persist) {
@@ -2805,7 +2853,8 @@ class LiveRoomController extends PlayerController
     required int requestRevision,
     required int loadGeneration,
   }) {
-    if (!AppSettingsController.instance.autoSelectFastestLine.value ||
+    if (Utils.isOhos ||
+        !AppSettingsController.instance.autoSelectFastestLine.value ||
         !_hasActivePlaybackSession ||
         !_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
       return;

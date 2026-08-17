@@ -263,7 +263,11 @@ export class VideoPlayer {
       if (this.disposed || this.avPlayer !== boundPlayer) {
         return;
       }
+      if (this.firstFrameRendered) {
+        return;
+      }
       this.firstFrameRendered = true;
+      this.sendFirstFrame();
       Log.i(TAG, `first frame generation=${this.playerGeneration}`);
     });
 
@@ -680,6 +684,13 @@ export class VideoPlayer {
   sendCompleted(): void {
     let event: HashMap<string, Object> = new HashMap<string, Object>();
     event.set("event", "completed");
+    this.eventSink?.success(event);
+  }
+
+  sendFirstFrame(): void {
+    let event: HashMap<string, Object> = new HashMap<string, Object>();
+    event.set("event", "firstFrame");
+    event.set("textureId", this.textureEntry.getTextureId());
     this.eventSink?.success(event);
   }
 
