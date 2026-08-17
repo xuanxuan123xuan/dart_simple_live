@@ -97,6 +97,28 @@ void main() {
     expect(scheduler, contains('if (Utils.isOhos ||'));
   });
 
+  test('OHOS fullscreen top bar stays positioned in placeholder states', () {
+    final page = File(
+      'lib/modules/live_room/live_room_page.dart',
+    ).readAsStringSync();
+    final placeholderBranches = RegExp(
+      r'if \(controller\.showOfflineOverlay\)[\s\S]*?'
+      r'var url = controller\.playUrls',
+    ).firstMatch(page)!.group(0)!;
+    final overlayBuilder = RegExp(
+      r'Widget _buildOhosTopBarOverlay\([\s\S]*?'
+      r'Widget _buildOhosTopBar\(',
+    ).firstMatch(page)!.group(0)!;
+
+    expect(
+      '_buildOhosTopBarOverlay('.allMatches(placeholderBranches),
+      hasLength(2),
+    );
+    expect(placeholderBranches, isNot(contains('_buildOhosTopBar(context)')));
+    expect(overlayBuilder, contains('return AnimatedPositioned('));
+    expect(overlayBuilder, contains('top: controlsVisible ? 0 :'));
+  });
+
   test('OHOS native errors are structured and sanitized', () {
     final nativePlayer = File(
       'third_party/video_player_ohos/ohos/src/main/ets/components/'

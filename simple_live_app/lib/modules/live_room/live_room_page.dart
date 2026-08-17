@@ -633,6 +633,15 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           final revision = controller.ohosPlayerRevision.value;
           controller.ohosScaleRevision.value;
           final fullScreen = controller.fullScreenState.value;
+          final controlsVisible = controller.showControlsState.value &&
+              !controller.lockControlsState.value;
+          final mediaQuery = MediaQuery.of(context);
+          final safePadding = EdgeInsets.fromLTRB(
+            mediaQuery.viewPadding.left,
+            mediaQuery.viewPadding.top,
+            mediaQuery.viewPadding.right,
+            mediaQuery.viewPadding.bottom,
+          );
           if (controller.showOfflineOverlay) {
             return Stack(
               fit: StackFit.expand,
@@ -643,7 +652,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                     style: TextStyle(color: Colors.white),
                   ),
                 ),
-                if (fullScreen) _buildOhosTopBar(context),
+                if (fullScreen)
+                  _buildOhosTopBarOverlay(
+                    context,
+                    controlsVisible: controlsVisible,
+                    safePadding: safePadding,
+                  ),
               ],
             );
           }
@@ -659,7 +673,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                         )
                       : const CircularProgressIndicator(),
                 ),
-                if (fullScreen) _buildOhosTopBar(context),
+                if (fullScreen)
+                  _buildOhosTopBarOverlay(
+                    context,
+                    controlsVisible: controlsVisible,
+                    safePadding: safePadding,
+                  ),
               ],
             );
           }
@@ -684,15 +703,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               forcedAspectRatio = 4 / 3;
               break;
           }
-          final controlsVisible = controller.showControlsState.value &&
-              !controller.lockControlsState.value;
-          final mediaQuery = MediaQuery.of(context);
-          final safePadding = EdgeInsets.fromLTRB(
-            mediaQuery.viewPadding.left,
-            mediaQuery.viewPadding.top,
-            mediaQuery.viewPadding.right,
-            mediaQuery.viewPadding.bottom,
-          );
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -729,12 +739,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   !controller.ohosScreenshotInProgress.value)
                 const Center(child: CircularProgressIndicator()),
               if (fullScreen && !controller.ohosScreenshotInProgress.value)
-                AnimatedPositioned(
-                  left: 0,
-                  right: 0,
-                  top: controlsVisible ? 0 : -(48 + safePadding.top),
-                  duration: const Duration(milliseconds: 200),
-                  child: _buildOhosTopBar(context),
+                _buildOhosTopBarOverlay(
+                  context,
+                  controlsVisible: controlsVisible,
+                  safePadding: safePadding,
                 ),
               if (!controller.ohosScreenshotInProgress.value)
                 AnimatedPositioned(
@@ -761,6 +769,20 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           );
         }),
       ),
+    );
+  }
+
+  Widget _buildOhosTopBarOverlay(
+    BuildContext context, {
+    required bool controlsVisible,
+    required EdgeInsets safePadding,
+  }) {
+    return AnimatedPositioned(
+      left: 0,
+      right: 0,
+      top: controlsVisible ? 0 : -(48 + safePadding.top),
+      duration: const Duration(milliseconds: 200),
+      child: _buildOhosTopBar(context),
     );
   }
 
