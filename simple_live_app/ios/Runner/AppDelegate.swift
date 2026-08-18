@@ -69,8 +69,14 @@ import UserNotifications
         }
         let args = call.arguments as? [String: Any]
         let icon = args?["icon"] as? String
+        let modernIconName: String
+        if #available(iOS 26.0, *) {
+          modernIconName = "AppIconModern"
+        } else {
+          modernIconName = "AppIconSimpleLive"
+        }
         let alternateIconName = (icon == "modern" || icon == "simplelive")
-          ? "AppIconSimpleLive"
+          ? modernIconName
           : nil
         if UIApplication.shared.alternateIconName == alternateIconName {
           result(nil)

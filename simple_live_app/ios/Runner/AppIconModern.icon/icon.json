@@ -1,0 +1,128 @@
+{
+  "fill-specializations" : [
+    {
+      "value" : {
+        "solid" : "srgb:0.97255,0.96078,0.93725,1.00000"
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "solid" : "srgb:0.12941,0.11765,0.18431,1.00000"
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "blur-material" : 0.06,
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "srgb:0.47059,0.40392,0.94118,1.00000"
+              }
+            }
+          ],
+          "image-name" : "02-window.svg",
+          "name" : "02-window"
+        },
+        {
+          "image-name" : "03-window-chrome.svg",
+          "name" : "03-window-chrome"
+        },
+        {
+          "image-name" : "04-play.svg",
+          "name" : "04-play"
+        }
+      ],
+      "name" : "window",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.18
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.08
+      }
+    },
+    {
+      "blend-mode" : "normal",
+      "blur-material" : 0.18,
+      "layers" : [
+        {
+          "image-name" : "05-floating-danmaku.svg",
+          "name" : "05-floating-danmaku"
+        }
+      ],
+      "lighting" : "combined",
+      "name" : "comments",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.3
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.22
+      }
+    },
+    {
+      "blur-material" : 0.08,
+      "layers" : [
+        {
+          "image-name" : "06-live-bubble.svg",
+          "name" : "06-live-bubble"
+        },
+        {
+          "glass" : false,
+          "image-name" : "07-live-signal.svg",
+          "name" : "07-live-signal"
+        }
+      ],
+      "name" : "live status",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.2
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.1
+      }
+    },
+    {
+      "blur-material" : 0,
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "srgb:1.00000,0.60392,0.53333,1.00000"
+              }
+            }
+          ],
+          "glass" : false,
+          "image-name" : "08-simplelive-wordmark.svg",
+          "name" : "08-simplelive-wordmark"
+        }
+      ],
+      "name" : "brand",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

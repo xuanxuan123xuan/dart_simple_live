@@ -43,6 +43,7 @@ env:
   FLUTTER_VERSION: "3.41.x"
   TV_FLUTTER_VERSION: "3.41.x"
   XCODE_VERSION: "15.4"
+  IOS_XCODE_VERSION: "26.0"
   FASTFORGE_VERSION: "0.6.10"
 
 jobs:
@@ -364,7 +365,7 @@ jobs:
   ios:
     name: iOS IPA
     needs: prepare
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
@@ -373,7 +374,7 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: ${{ env.XCODE_VERSION }}
+          xcode-version: ${{ env.IOS_XCODE_VERSION }}
 
       - uses: subosito/flutter-action@v2
         with:
@@ -388,6 +389,13 @@ jobs:
       - name: 恢复依赖包
         working-directory: simple_live_app
         run: flutter pub get
+
+      - name: 校验 Liquid Glass 图标资源
+        shell: bash
+        run: |
+          test -f simple_live_app/ios/Runner/AppIconModern.icon/icon.json
+          xcode_major="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
+          test "$xcode_major" -ge 26
 
       - name: 导入签名证书与描述文件
         if: ${{ needs.prepare.outputs.signed_ios == 'true' }}
