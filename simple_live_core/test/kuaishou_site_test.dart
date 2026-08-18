@@ -466,6 +466,40 @@ void main() {
       expect(states, everyElement(LiveStatusState.offline));
       expect(maxInFlight, 2);
     });
+
+    test('follow status accepts live response without playback urls', () async {
+      var requests = 0;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              requests++;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(
+                    roomId: 'status-only-live',
+                    includePlayback: false,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(authenticatedDioFactory: () => dio)
+        ..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=secret',
+          kww: '',
+        );
+
+      final state =
+          await site.getFollowLiveStatusState(roomId: 'status-only-live');
+
+      expect(state, LiveStatusState.live);
+      expect(requests, 1);
+    });
   });
 
   group('KuaishouSite account transport isolation', () {
@@ -650,7 +684,10 @@ void main() {
             Response<String>(
               requestOptions: options,
               statusCode: 200,
-              data: _kuaishouLivePage(roomId: 'warm-room'),
+              data: _kuaishouLivePage(
+                roomId: 'warm-room',
+                includePlayback: authenticatedPageRequests > 1,
+              ),
             ),
           );
         },
@@ -672,7 +709,7 @@ void main() {
 
       expect(KuaishouSite.extractPlayableUrls(detail.data), isNotEmpty);
       expect(handshakeRequests, 1);
-      expect(authenticatedPageRequests, 1);
+      expect(authenticatedPageRequests, 2);
       expect(fallbackCookie, contains('primary-token'));
     });
 
@@ -737,7 +774,7 @@ void main() {
       );
 
       expect(handshakeRequests, 2);
-      expect(authenticatedPageRequests, 2);
+      expect(authenticatedPageRequests, 4);
     });
   });
 

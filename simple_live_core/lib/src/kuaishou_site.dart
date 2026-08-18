@@ -1426,6 +1426,11 @@ class KuaishouSite extends LiveSite {
     final stopwatch = Stopwatch()..start();
     activeDetailRequests += 1;
     final source = KuaishouRequestTrace.current;
+    final requirePlayback = source != KuaishouRequestSource.followStatus;
+    final allowPlaybackRetry = source == KuaishouRequestSource.userEnter ||
+        source == KuaishouRequestSource.manual ||
+        source == KuaishouRequestSource.multiRoom ||
+        source == KuaishouRequestSource.unknown;
     final maskedRoom = _maskRoomId(roomId);
     // 本次请求开始前重置错误分类，避免沿用上一次请求的 403/429 分类
     // 造成误报（页面解析失败时应按本次实际响应分类）。
@@ -1454,7 +1459,10 @@ class KuaishouSite extends LiveSite {
         );
         _ensureCurrentSession(transport, sessionEpoch);
       }
-      if (_needsAuthenticatedRoomPage(detail) &&
+      if (_needsAuthenticatedRoomPage(
+            detail,
+            requirePlayback: requirePlayback,
+          ) &&
           _currentCookieHeaderFor(transport).isNotEmpty) {
         CoreLog.i(
           '[ks-request] fallback=with_cookie room=$maskedRoom '
@@ -1470,7 +1478,35 @@ class KuaishouSite extends LiveSite {
         _ensureCurrentSession(transport, sessionEpoch);
       }
 
-      if (!_isCompleteRoomDetail(detail, requireLive: requireLive)) {
+      // 快手冷启动时，第一次带 Cookie 的页面可能已经确认开播，
+      // 但播放地址还没下发。再补一次同账号页面请求，避免把这个短暂窗口
+      // 直接报成“直播间详情异常”；关注状态请求不走这条分支。
+      if (allowPlaybackRetry &&
+          detail?.resolvedLiveStatus == LiveStatusState.live &&
+          extractPlayableUrls(detail?.data).isEmpty &&
+          _currentCookieHeaderFor(transport).isNotEmpty) {
+        CoreLog.i(
+          '[ks-request] fallback=playback_retry room=$maskedRoom '
+          'source=${source.name}',
+        );
+        final retriedDetail = await _loadRoomDetail(
+          url: url,
+          roomId: roomId,
+          headers: _headersWithCookieFor(transport),
+          transport: transport,
+          sessionEpoch: sessionEpoch,
+        );
+        _ensureCurrentSession(transport, sessionEpoch);
+        if (retriedDetail != null) {
+          detail = retriedDetail;
+        }
+      }
+
+      if (!_isCompleteRoomDetail(
+        detail,
+        requireLive: requireLive,
+        requirePlayback: requirePlayback,
+      )) {
         final isLiveWithoutPlayback =
             detail?.resolvedLiveStatus == LiveStatusState.live &&
                 extractPlayableUrls(detail?.data).isEmpty;
@@ -1531,11 +1567,14 @@ class KuaishouSite extends LiveSite {
     }
   }
 
-  static bool _needsAuthenticatedRoomPage(LiveRoomDetail? detail) {
+  static bool _needsAuthenticatedRoomPage(
+    LiveRoomDetail? detail, {
+    required bool requirePlayback,
+  }) {
     if (detail == null) return true;
     switch (detail.resolvedLiveStatus) {
       case LiveStatusState.live:
-        return extractPlayableUrls(detail.data).isEmpty;
+        return requirePlayback && extractPlayableUrls(detail.data).isEmpty;
       case LiveStatusState.unknown:
         return true;
       case LiveStatusState.offline:
@@ -1546,11 +1585,12 @@ class KuaishouSite extends LiveSite {
   static bool _isCompleteRoomDetail(
     LiveRoomDetail? detail, {
     bool requireLive = false,
+    bool requirePlayback = true,
   }) {
     if (detail == null) return false;
     switch (detail.resolvedLiveStatus) {
       case LiveStatusState.live:
-        return extractPlayableUrls(detail.data).isNotEmpty;
+        return !requirePlayback || extractPlayableUrls(detail.data).isNotEmpty;
       case LiveStatusState.offline:
         return !requireLive;
       case LiveStatusState.unknown:
