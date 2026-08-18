@@ -227,6 +227,7 @@ class KuaishouRequestCoordinator {
     Duration? timeout,
     bool bypassCache = false,
     bool bypassInterval = false,
+    bool allowDuringCooldown = false,
     String? logLabel,
     required Future<T> Function() task,
   }) {
@@ -257,14 +258,14 @@ class KuaishouRequestCoordinator {
 
     // 3. 冷却检查：冷却期停发；到期后只允许用户操作单探针。
     var cooldownProbe = false;
-    if (inCooldown) {
+    if (inCooldown && !allowDuringCooldown) {
       CoreLog.i(
         '[ks-coordinator] rejected by cooldown '
         'key=${logLabel ?? '<key>'}',
       );
       return Future.error(KuaishouCooldownError('快手请求处于冷却期'));
     }
-    if (_awaitingCooldownProbe) {
+    if (_awaitingCooldownProbe && !allowDuringCooldown) {
       if (priority != KuaishouRequestPriority.userEnter ||
           _cooldownProbeClaimed) {
         CoreLog.i(
@@ -290,6 +291,7 @@ class KuaishouRequestCoordinator {
       scopeId: scopeId,
       timeout: timeout,
       bypassCache: bypassCache,
+      allowDuringCooldown: allowDuringCooldown,
     );
     _queue.add(queued);
     _pending[key] = queued;
@@ -377,6 +379,9 @@ class KuaishouRequestCoordinator {
   }
 
   bool _rejectForCooldown(_QueuedRequest request) {
+    if (request.allowDuringCooldown) {
+      return false;
+    }
     if (!inCooldown) {
       if (!_awaitingCooldownProbe) {
         return false;
@@ -577,6 +582,7 @@ class _QueuedRequest {
     required this.scopeId,
     required this.timeout,
     required this.bypassCache,
+    required this.allowDuringCooldown,
     this.cacheTtl,
   });
 
@@ -590,6 +596,7 @@ class _QueuedRequest {
   final String? scopeId;
   final Duration? timeout;
   final bool bypassCache;
+  final bool allowDuringCooldown;
   final Duration? cacheTtl;
 }
 

@@ -350,11 +350,11 @@ void main() {
     });
   });
 
-  group('KuaishouSite Cookie-backed follow status', () {
-    test('legacy status entry point uses authenticated Dio and Cookie',
+  group('KuaishouSite follow status', () {
+    test('uses anonymous public-page parsing instead of the account Cookie',
         () async {
       final seenHeaders = <Map<String, dynamic>>[];
-      final dio = Dio()
+      final anonymousDio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
             onRequest: (options, handler) {
@@ -369,27 +369,39 @@ void main() {
             },
           ),
         );
-      final site = KuaishouSite(authenticatedDioFactory: () => dio)
-        ..activateAccountSession(
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouRateLimitedPage(roomId: 'room-1'),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: anonymousDio,
+        authenticatedDioFactory: () => authenticatedDio,
+      )..activateAccountSession(
           sessionKey: 'primary',
           cookie: 'kuaishou.live.web_st=secret',
           kww: '',
         );
 
-      final state = await site.getAnonymousLiveStatusState(roomId: 'room-1');
+      final state = await site.getFollowLiveStatusState(roomId: 'room-1');
 
       expect(state, LiveStatusState.offline);
       expect(seenHeaders, hasLength(1));
-      expect(
-        seenHeaders.single['cookie'],
-        contains('kuaishou.live.web_st=secret'),
-      );
+      expect(seenHeaders.single['cookie'], isNull);
     });
 
-    test('follow status does not retry the secondary account per room',
+    test('follow status returns unknown when anonymous parsing fails',
         () async {
       var requests = 0;
-      var fallbackLookups = 0;
       final dio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
@@ -405,41 +417,21 @@ void main() {
             },
           ),
         );
-      final site = KuaishouSite(authenticatedDioFactory: () => dio)
-        ..activateAccountSession(
-          sessionKey: 'primary',
-          cookie: 'kuaishou.live.web_st=primary-token',
-          kww: '',
-        )
-        ..accountFallbackProvider = (_) {
-          fallbackLookups++;
-          return const KuaishouAccountFallbackSession(
-            sessionKey: 'secondary',
-            cookie: 'kuaishou.live.web_st=secondary-token',
-            kww: '',
-          );
-        };
+      final site = KuaishouSite(anonymousDio: dio);
 
-      await expectLater(
-        site.getFollowLiveStatusState(roomId: 'limited-room'),
-        throwsA(isA<CoreError>()),
-      );
+      final state = await site.getFollowLiveStatusState(roomId: 'limited-room');
 
       expect(requests, 1);
-      expect(fallbackLookups, 0);
+      expect(state, LiveStatusState.unknown);
     });
 
     test('follow status physical requests can run concurrently', () async {
-      var inFlight = 0;
-      var maxInFlight = 0;
-      final dio = Dio()
+      var requests = 0;
+      final anonymousDio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
             onRequest: (options, handler) async {
-              inFlight++;
-              if (inFlight > maxInFlight) maxInFlight = inFlight;
-              await Future<void>.delayed(const Duration(milliseconds: 20));
-              inFlight--;
+              requests++;
               final roomId = options.uri.pathSegments.last;
               handler.resolve(
                 Response<String>(
@@ -451,12 +443,7 @@ void main() {
             },
           ),
         );
-      final site = KuaishouSite(authenticatedDioFactory: () => dio)
-        ..activateAccountSession(
-          sessionKey: 'primary',
-          cookie: 'kuaishou.live.web_st=primary-token',
-          kww: '',
-        );
+      final site = KuaishouSite(anonymousDio: anonymousDio);
 
       final states = await Future.wait([
         site.getFollowLiveStatusState(roomId: 'room-a'),
@@ -464,12 +451,12 @@ void main() {
       ]);
 
       expect(states, everyElement(LiveStatusState.offline));
-      expect(maxInFlight, 2);
+      expect(requests, 2);
     });
 
     test('follow status accepts live response without playback urls', () async {
       var requests = 0;
-      final dio = Dio()
+      final anonymousDio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
             onRequest: (options, handler) {
@@ -487,12 +474,7 @@ void main() {
             },
           ),
         );
-      final site = KuaishouSite(authenticatedDioFactory: () => dio)
-        ..activateAccountSession(
-          sessionKey: 'primary',
-          cookie: 'kuaishou.live.web_st=secret',
-          kww: '',
-        );
+      final site = KuaishouSite(anonymousDio: anonymousDio);
 
       final state =
           await site.getFollowLiveStatusState(roomId: 'status-only-live');

@@ -138,12 +138,14 @@ class KuaishouSite extends LiveSite {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   KuaishouSite({
+    Dio? anonymousDio,
     Dio Function()? authenticatedDioFactory,
     CookieJar Function()? cookieJarFactory,
     KuaishouRequestCoordinator? coordinator,
     KuaishouRequestCoordinator? searchCoordinator,
     KuaishouCategorySnapshotStore? categorySnapshotStore,
-  })  : _authenticatedDioFactory = authenticatedDioFactory ?? Dio.new,
+  })  : _anonymousDio = anonymousDio ?? Dio(),
+        _authenticatedDioFactory = authenticatedDioFactory ?? Dio.new,
         _cookieJarFactory = cookieJarFactory ?? CookieJar.new,
         _categorySnapshotStore = categorySnapshotStore,
         coordinator = coordinator ?? KuaishouRequestCoordinator(),
@@ -195,6 +197,9 @@ class KuaishouSite extends LiveSite {
 
   /// 快手敏感请求的进程级协调器：全局最小间隔、优先级、同房合并与短缓存。
   final KuaishouRequestCoordinator coordinator;
+
+  /// 匿名通道使用独立 Dio，永不安装 CookieManager，也不读取登录 CookieJar。
+  final Dio _anonymousDio;
 
   /// 用户主动搜索使用独立的公开 API 单通道。
   ///
@@ -2070,39 +2075,103 @@ class KuaishouSite extends LiveSite {
 
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
-    try {
-      final detail = await KuaishouRequestTrace.run(
-        KuaishouRequestSource.followStatus,
-        () => _getRoomDetailWithinBudget(roomId),
-        scopeId: KuaishouRequestTrace.scopeId,
-        forceNetwork: KuaishouRequestTrace.forceNetwork,
-      );
-      return detail.resolvedLiveStatus;
-    } catch (_) {
-      return LiveStatusState.unknown;
-    }
+    return getAnonymousLiveStatusState(roomId: roomId);
   }
 
   /// Follow-list entry point. Account failover belongs to the whole batch, so
-  /// this method deliberately propagates risk/auth errors to its caller.
+  /// this method deliberately stays on the anonymous status path so follow
+  /// refresh does not depend on the account detail chain.
   Future<LiveStatusState> getFollowLiveStatusState({
     required String roomId,
   }) async {
-    final detail = await KuaishouRequestTrace.run(
-      KuaishouRequestSource.followStatus,
-      () => _getRoomDetailWithinBudget(roomId),
-      scopeId: KuaishouRequestTrace.scopeId,
-      forceNetwork: KuaishouRequestTrace.forceNetwork,
-    );
-    return detail.resolvedLiveStatus;
+    return getAnonymousLiveStatusState(roomId: roomId);
   }
 
-  /// 兼容旧调用名。关注状态现已恢复为 Cookie 请求，并在主账号失败时
-  /// 使用备用账号；不再建立匿名房间请求。
+  /// 兼容旧调用名。关注状态恢复为匿名公开页请求，避免依赖登录房间
+  /// 详情链路造成冷启动时的状态丢失。
   Future<LiveStatusState> getAnonymousLiveStatusState({
     required String roomId,
-  }) =>
-      getLiveStatusState(roomId: roomId);
+  }) {
+    return coordinator.coalesce(
+      key: 'anonymous_live_status:$roomId',
+      cacheTtlForValue: anonymousStatusCacheTtl,
+      task: () => KuaishouRequestTrace.run(
+        KuaishouRequestSource.followStatus,
+        () async {
+          try {
+            final detail = await _getAnonymousRoomDetail(
+              roomId,
+              source: KuaishouRequestSource.followStatus,
+            );
+            return detail.resolvedLiveStatus;
+          } catch (_) {
+            return LiveStatusState.unknown;
+          }
+        },
+        scopeId: KuaishouRequestTrace.scopeId,
+        forceNetwork: KuaishouRequestTrace.forceNetwork,
+      ),
+    );
+  }
+
+  Future<LiveRoomDetail> _getAnonymousRoomDetail(
+    String roomId, {
+    required KuaishouRequestSource source,
+  }) {
+    return coordinator.coalesce(
+      key: 'anonymous_public_detail:$roomId',
+      cacheTtlForValue: (detail) =>
+          anonymousStatusCacheTtl(detail.resolvedLiveStatus),
+      task: () async {
+        final url = KuaishouLiveLink.publicRoomUrl(roomId);
+        final response = await coordinator.schedule<Response<String>>(
+          priority: _priorityForSource(source),
+          key: 'http:anonymous_public_detail:$roomId',
+          logLabel: _maskRoomId(roomId),
+          allowDuringCooldown: true,
+          task: () => _anonymousDio.get<String>(
+            url,
+            options: Options(
+              headers: _headers,
+              responseType: ResponseType.plain,
+            ),
+          ),
+        );
+        final html = response.data ?? '';
+        if (looksLikeChallengePage(html)) {
+          throw CoreError(
+            '快手匿名访问受限',
+            statusCode: response.statusCode ?? 0,
+            kind: CoreErrorKind.http,
+          );
+        }
+        final detail = await _parseRoomDetail(
+          html,
+          roomId,
+          allowDanmaku: false,
+        );
+        if (detail == null) {
+          throw CoreError(
+            '快手匿名直播间详情解析失败',
+            statusCode: response.statusCode ?? 0,
+            kind: CoreErrorKind.response,
+          );
+        }
+        return detail;
+      },
+    );
+  }
+
+  static Duration anonymousStatusCacheTtl(LiveStatusState state) {
+    switch (state) {
+      case LiveStatusState.live:
+        return const Duration(seconds: 60);
+      case LiveStatusState.offline:
+        return const Duration(minutes: 3);
+      case LiveStatusState.unknown:
+        return const Duration(seconds: 30);
+    }
+  }
 
   @override
   Future<bool> getLiveStatus({required String roomId}) async {
