@@ -209,6 +209,10 @@ class FollowUserController extends BasePageController<FollowUser> {
       includeAllNormals: true,
       force: true,
       scope: const FollowRefreshScope.all(),
+      // The all-refresh action is latency-sensitive: wait only for live
+      // status.  The current page's visible cards will refresh their metadata
+      // through filterData() -> refreshVisiblePreviews() in the background.
+      allowDetailRefresh: false,
     );
     filterData();
   }
