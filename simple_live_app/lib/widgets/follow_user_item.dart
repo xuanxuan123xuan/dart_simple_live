@@ -333,20 +333,24 @@ class FollowUserItem extends StatelessWidget {
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       NetImage(
                         item.face,
-                        width: 42,
-                        height: 42,
-                        borderRadius: 21,
+                        width: 36,
+                        height: 36,
+                        borderRadius: 18,
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Text(
                               item.userName,
@@ -356,18 +360,11 @@ class FollowUserItem extends StatelessWidget {
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _displayRoomTitle(),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium,
-                            ),
-                            const Spacer(),
+                            const SizedBox(height: 3),
                             Wrap(
                               crossAxisAlignment: WrapCrossAlignment.center,
                               spacing: 6,
-                              runSpacing: 4,
+                              runSpacing: 2,
                               children: [
                                 Image.asset(
                                   _site.logo,
@@ -380,10 +377,14 @@ class FollowUserItem extends StatelessWidget {
                                     color: Colors.grey.shade600,
                                   ),
                                 ),
-                                _buildInfoChip(
-                                  context,
-                                  label: getStatus(item.liveStatus.value),
-                                  active: item.liveStatus.value == 2,
+                                Text(
+                                  getStatus(item.liveStatus.value),
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: item.liveStatus.value == 2
+                                        ? theme.colorScheme.primary
+                                        : Colors.grey.shade600,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ],
                             ),

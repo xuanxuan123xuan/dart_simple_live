@@ -238,6 +238,9 @@ class FollowUserPage extends GetView<FollowUserController> {
                     // 建立对多选集合的响应依赖。
                     final _ = controller.selectedMultiRoomCount.value;
                     final layout = _resolveLayoutSpec(context);
+                    final gridPadding = layout.itemStyle == FollowUserItemStyle.card
+                        ? const EdgeInsets.only(left: 8, right: 8, bottom: 96)
+                        : const EdgeInsets.only(bottom: 96);
                     return GestureDetector(
                       behavior: HitTestBehavior.translucent,
                       onHorizontalDragEnd: (details) {
@@ -252,7 +255,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                         }
                       },
                       child: PageGridView(
-                        padding: const EdgeInsets.only(bottom: 96.0),
+                        padding: gridPadding,
                         crossAxisSpacing: layout.crossAxisSpacing,
                         mainAxisSpacing: layout.mainAxisSpacing,
                         mainAxisExtent: layout.mainAxisExtent,
@@ -342,7 +345,7 @@ class FollowUserPage extends GetView<FollowUserController> {
       // previous 108px body clipped the entire platform/status row below the
       // card border when the room title occupied two lines.
       final cardExtent = showLiveCover
-          ? coverHeight + (mobile ? 144 : 148)
+          ? coverHeight + (mobile ? 84 : 88)
           : (mobile ? 220.0 : 228.0);
       return _FollowLayoutSpec(
         itemStyle: FollowUserItemStyle.card,
