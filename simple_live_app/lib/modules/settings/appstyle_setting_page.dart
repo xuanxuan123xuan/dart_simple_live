@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/services/app_icon_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 
@@ -54,6 +55,60 @@ class AppstyleSettingPage extends GetView<AppSettingsController> {
                       ),
                       visualDensity: VisualDensity.compact,
                       value: 2,
+                      contentPadding: AppStyle.edgeInsetsH12,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          AppStyle.vGap12,
+          Padding(
+            padding: AppStyle.edgeInsetsA12,
+            child: Text("应用图标", style: Get.textTheme.titleSmall),
+          ),
+          SettingsCard(
+            child: Obx(
+              () => RadioGroup<String>(
+                groupValue: controller.appIconVariant.value,
+                onChanged: controller.appIconChanging.value
+                    ? (_) {}
+                    : (value) async {
+                        if (value == null) return;
+                        final error = await controller.setAppIconVariant(value);
+                        if (error == null || !context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(error)),
+                        );
+                      },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RadioListTile<String>(
+                      value: AppIconVariant.classic.storageValue,
+                      title: const Text("Classic"),
+                      subtitle: Text(
+                        AppIconService.isSupported
+                            ? "蓝色播放图标"
+                            : "蓝色播放图标（当前平台不支持运行时切换）",
+                      ),
+                      secondary: const _AppIconPreview(
+                        asset: "assets/images/logo.png",
+                      ),
+                      contentPadding: AppStyle.edgeInsetsH12,
+                    ),
+                    AppStyle.divider,
+                    RadioListTile<String>(
+                      value: AppIconVariant.modern.storageValue,
+                      title: const Text("Modern"),
+                      subtitle: Text(
+                        AppIconService.isSupported
+                            ? "弹幕、直播信号与花体字标"
+                            : "弹幕、直播信号与花体字标（当前平台不支持运行时切换）",
+                      ),
+                      secondary: const _AppIconPreview(
+                        asset: "assets/images/app_icon_simplelive.png",
+                      ),
                       contentPadding: AppStyle.edgeInsetsH12,
                     ),
                   ],
@@ -138,6 +193,25 @@ class AppstyleSettingPage extends GetView<AppSettingsController> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AppIconPreview extends StatelessWidget {
+  const _AppIconPreview({required this.asset});
+
+  final String asset;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Image.asset(
+        asset,
+        width: 52,
+        height: 52,
+        fit: BoxFit.cover,
       ),
     );
   }

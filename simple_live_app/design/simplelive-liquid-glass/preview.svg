@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>SimpleLive Liquid Glass layered icon preview</title>
+  <defs>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#31265B" flood-opacity="0.18"/>
+    </filter>
+    <filter id="floatShadow" x="-30%" y="-30%" width="170%" height="190%">
+      <feDropShadow dx="0" dy="16" stdDeviation="13" flood-color="#31265B" flood-opacity="0.24"/>
+    </filter>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#D9D3F7" stop-opacity="0.68"/>
+    </linearGradient>
+    <linearGradient id="window" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#725EF1"/>
+      <stop offset="1" stop-color="#5D4BDD"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="#F8F5EF"/>
+  <g transform="rotate(6 512 512)">
+    <rect x="157" y="278" width="710" height="520" rx="86" fill="url(#window)" filter="url(#softShadow)"/>
+    <path d="M243 278H781A86 86 0 0 1 867 364V378H157V364A86 86 0 0 1 243 278Z" fill="#E5E1FA"/>
+    <circle cx="222" cy="328" r="17" fill="#FF6B60"/>
+    <circle cx="269" cy="328" r="17" fill="#FFC536"/>
+    <circle cx="316" cy="328" r="17" fill="#56D7A8"/>
+    <path d="M437 474C437 457 450 449 465 458L600 539C617 549 617 564 600 574L465 655C450 664 437 656 437 639Z" fill="#FFF5DF" filter="url(#floatShadow)"/>
+    <g filter="url(#floatShadow)">
+      <rect x="99" y="432" width="302" height="108" rx="54" fill="url(#glass)" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="3"/>
+      <circle cx="150" cy="486" r="21" fill="#55D7AA"/>
+      <rect x="188" y="474" width="126" height="24" rx="12" fill="#FFFDF8"/>
+      <rect x="615" y="582" width="320" height="108" rx="54" fill="url(#glass)" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="3"/>
+      <circle cx="670" cy="636" r="21" fill="#7152E8"/>
+      <rect x="710" y="624" width="137" height="24" rx="12" fill="#FFFDF8"/>
+    </g>
+    <g filter="url(#floatShadow)">
+      <rect x="650" y="224" width="284" height="146" rx="73" fill="#55D8A6"/>
+      <rect x="710" y="270" width="153" height="27" rx="13.5" fill="#EFFFF8"/>
+      <rect x="710" y="311" width="92" height="27" rx="13.5" fill="#EFFFF8"/>
+    </g>
+  </g>
+  <image href="layers/08-simplelive-wordmark.svg" x="0" y="0" width="1024" height="1024"/>
+  <g fill="none" stroke="#FFC230" stroke-width="25" stroke-linecap="round">
+    <path d="M758 190L742 132"/><path d="M820 184L826 123"/><path d="M875 208L918 165"/>
+  </g>
+  <circle cx="675" cy="448" r="33" fill="#FFC230" filter="url(#floatShadow)"/>
+</svg>

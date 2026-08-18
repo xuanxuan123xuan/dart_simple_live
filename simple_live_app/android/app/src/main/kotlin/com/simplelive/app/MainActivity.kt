@@ -4,7 +4,9 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -48,6 +50,24 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "simple_live/app_icon",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "setIcon" -> {
+                    val icon = call.argument<String>("icon") ?: "classic"
+                    try {
+                        setLauncherIcon(icon)
+                        result.success(null)
+                    } catch (error: Exception) {
+                        result.error("APP_ICON_SWITCH_FAILED", error.message, null)
+                    }
+                }
+
+                else -> result.notImplemented()
+            }
+        }
     }
 
     private fun startService() {
@@ -57,6 +77,25 @@ class MainActivity : FlutterActivity() {
         } else {
             startService(intent)
         }
+    }
+
+    private fun setLauncherIcon(icon: String) {
+        val classic = ComponentName(this, "$packageName.ClassicIcon")
+        val simpleLive = ComponentName(this, "$packageName.SimpleLiveIcon")
+        val useModern = icon == "modern" || icon == "simplelive"
+        val selected = if (useModern) simpleLive else classic
+        val unselected = if (useModern) classic else simpleLive
+
+        packageManager.setComponentEnabledSetting(
+            selected,
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP,
+        )
+        packageManager.setComponentEnabledSetting(
+            unselected,
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.DONT_KILL_APP,
+        )
     }
 
     private fun showLiveStartNotification(notificationId: Int, title: String, body: String) {

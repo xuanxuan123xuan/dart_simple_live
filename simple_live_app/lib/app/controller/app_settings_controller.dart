@@ -8,6 +8,7 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/danmu_shield_preset.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
+import 'package:simple_live_app/services/app_icon_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
 
@@ -81,6 +82,12 @@ class AppSettingsController extends GetxController {
   void _loadFromStorage() {
     themeMode.value = LocalStorageService.instance
         .getValue(LocalStorageService.kThemeMode, 0);
+    appIconVariant.value = AppIconVariant.fromStorage(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kAppIconVariant,
+        AppIconVariant.classic.storageValue,
+      ),
+    ).storageValue;
     firstRun = LocalStorageService.instance
         .getValue(LocalStorageService.kFirstRun, true);
     danmuSize.value = LocalStorageService.instance
@@ -584,6 +591,35 @@ class AppSettingsController extends GetxController {
 
     LocalStorageService.instance.setValue(LocalStorageService.kThemeMode, i);
     Get.changeThemeMode(mode);
+  }
+
+  var appIconVariant = AppIconVariant.classic.storageValue.obs;
+  var appIconChanging = false.obs;
+
+  Future<String?> setAppIconVariant(String value) async {
+    final variant = AppIconVariant.fromStorage(value);
+    if (variant.storageValue == appIconVariant.value) {
+      return null;
+    }
+    if (!AppIconService.isSupported) {
+      return "当前系统不支持运行时切换应用图标";
+    }
+
+    appIconChanging.value = true;
+    try {
+      await AppIconService.setIcon(variant);
+      appIconVariant.value = variant.storageValue;
+      await LocalStorageService.instance.setValue(
+        LocalStorageService.kAppIconVariant,
+        variant.storageValue,
+      );
+      return null;
+    } catch (error, stackTrace) {
+      Log.logPrint("切换应用图标失败: $error\n$stackTrace");
+      return "切换失败，请稍后重试";
+    } finally {
+      appIconChanging.value = false;
+    }
   }
 
   var hardwareDecode = true.obs;

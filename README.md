@@ -1,5 +1,5 @@
 <p align="center">
-    <img width="128" src="/assets/logo.png" alt="Simple Live logo">
+    <img width="128" src="/simple_live_app/assets/images/app_icon_simplelive.png" alt="Simple Live Modern logo">
 </p>
 <h2 align="center">Simple Live — dev 开发版</h2>
 

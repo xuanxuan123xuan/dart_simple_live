@@ -49,6 +49,47 @@ import UserNotifications
           result(FlutterMethodNotImplemented)
         }
       }
+
+      let appIconChannel = FlutterMethodChannel(
+        name: "simple_live/app_icon",
+        binaryMessenger: controller.binaryMessenger
+      )
+      appIconChannel.setMethodCallHandler { call, result in
+        guard call.method == "setIcon" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        guard UIApplication.shared.supportsAlternateIcons else {
+          result(FlutterError(
+            code: "APP_ICON_UNSUPPORTED",
+            message: "This device does not support alternate app icons.",
+            details: nil
+          ))
+          return
+        }
+        let args = call.arguments as? [String: Any]
+        let icon = args?["icon"] as? String
+        let alternateIconName = (icon == "modern" || icon == "simplelive")
+          ? "AppIconSimpleLive"
+          : nil
+        if UIApplication.shared.alternateIconName == alternateIconName {
+          result(nil)
+          return
+        }
+        DispatchQueue.main.async {
+          UIApplication.shared.setAlternateIconName(alternateIconName) { error in
+            if let error = error {
+              result(FlutterError(
+                code: "APP_ICON_SWITCH_FAILED",
+                message: error.localizedDescription,
+                details: nil
+              ))
+            } else {
+              result(nil)
+            }
+          }
+        }
+      }
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
