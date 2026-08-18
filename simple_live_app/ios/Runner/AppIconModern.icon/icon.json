@@ -14,37 +14,54 @@
   ],
   "groups" : [
     {
-      "blur-material" : 0.06,
+      "blur-material" : 0,
       "layers" : [
         {
           "fill-specializations" : [
             {
               "appearance" : "dark",
               "value" : {
-                "solid" : "srgb:0.47059,0.40392,0.94118,1.00000"
+                "solid" : "srgb:1.00000,0.60392,0.53333,1.00000"
               }
             }
           ],
-          "image-name" : "02-window.svg",
-          "name" : "02-window"
-        },
-        {
-          "image-name" : "03-window-chrome.svg",
-          "name" : "03-window-chrome"
-        },
-        {
-          "image-name" : "04-play.svg",
-          "name" : "04-play"
+          "is-glass" : false,
+          "image-name" : "08-simplelive-wordmark.svg",
+          "name" : "08-simplelive-wordmark"
         }
       ],
-      "name" : "window",
+      "name" : "brand",
       "shadow" : {
         "kind" : "neutral",
-        "opacity" : 0.18
+        "opacity" : 0
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
+      }
+    },
+    {
+      "blur-material" : 0.08,
+      "layers" : [
+        {
+          "is-glass" : false,
+          "image-name" : "07-live-signal.svg",
+          "name" : "07-live-signal"
+        },
+        {
+          "image-name" : "06-live-bubble.svg",
+          "name" : "06-live-bubble"
+        }
+      ],
+      "name" : "live status",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.2
       },
       "translucency" : {
         "enabled" : true,
-        "value" : 0.08
+        "value" : 0.1
       }
     },
     {
@@ -68,54 +85,40 @@
       }
     },
     {
-      "blur-material" : 0.08,
+      "blur-material" : 0.06,
       "layers" : [
         {
-          "image-name" : "06-live-bubble.svg",
-          "name" : "06-live-bubble"
+          "is-glass" : false,
+          "image-name" : "04-play.svg",
+          "name" : "04-play"
         },
         {
-          "glass" : false,
-          "image-name" : "07-live-signal.svg",
-          "name" : "07-live-signal"
-        }
-      ],
-      "name" : "live status",
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.2
-      },
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.1
-      }
-    },
-    {
-      "blur-material" : 0,
-      "layers" : [
+          "is-glass" : false,
+          "image-name" : "03-window-chrome.svg",
+          "name" : "03-window-chrome"
+        },
         {
           "fill-specializations" : [
             {
               "appearance" : "dark",
               "value" : {
-                "solid" : "srgb:1.00000,0.60392,0.53333,1.00000"
+                "solid" : "srgb:0.47059,0.40392,0.94118,1.00000"
               }
             }
           ],
-          "glass" : false,
-          "image-name" : "08-simplelive-wordmark.svg",
-          "name" : "08-simplelive-wordmark"
+          "is-glass" : false,
+          "image-name" : "02-window.svg",
+          "name" : "02-window"
         }
       ],
-      "name" : "brand",
+      "name" : "window",
       "shadow" : {
         "kind" : "neutral",
-        "opacity" : 0
+        "opacity" : 0.18
       },
-      "specular" : false,
       "translucency" : {
         "enabled" : true,
-        "value" : 0
+        "value" : 0.08
       }
     }
   ],
