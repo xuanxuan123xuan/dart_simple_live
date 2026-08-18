@@ -9,6 +9,8 @@ import 'package:simple_live_core/src/danmaku/kuaishou_emoji_assets.dart';
 import 'package:simple_live_core/src/danmaku/kuaishou_mobile_emoji_assets.dart';
 import 'package:test/test.dart';
 
+import '../tool/generate_kuaishou_mobile_emoji.dart';
+
 void main() {
   test('mobile emoji catalog matches the official Android snapshot', () {
     expect(kuaishouMobileEmojiClientVersion, '14.7.10.49551');
@@ -30,6 +32,57 @@ void main() {
       expect(kuaishouMobileEmojiAssets[token], isNotNull);
       expect(resolveKuaishouEmoji(token), kuaishouMobileEmojiAssets[token]);
     }
+  });
+
+  test('mobile emoji extractor keeps aliases from every language group', () {
+    final assets = collectKuaishouMobileEmojiAssets(
+      {
+        'emotionPackageList': [
+          {
+            'emotions': [
+              {
+                'bizType': 1,
+                'emotionImageSmallUrl': [
+                  {'url': '//cdn.test/emoji/base.png'},
+                ],
+                'emotionCodes': [
+                  {
+                    'language': 'zh_CN',
+                    'codes': ['[点赞]'],
+                  },
+                  {
+                    'language': 'zh_TW',
+                    'codes': ['[點讚]'],
+                  },
+                  {
+                    'language': 'en_US',
+                    'codes': ['[like]'],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    expect(assets, hasLength(3));
+    expect(assets['[点赞]'], 'https://cdn.test/emoji/base.png');
+    expect(assets['[點讚]'], 'https://cdn.test/emoji/base.png');
+    expect(assets['[like]'], 'https://cdn.test/emoji/base.png');
+  });
+
+  test('kuaishou emoji resolves known traditional and english aliases', () {
+    expect(resolveKuaishouEmoji('[点点关注]'), isNotNull);
+    expect(resolveKuaishouEmoji('[點點關注]'), resolveKuaishouEmoji('[点点关注]'));
+    expect(resolveKuaishouEmoji('[ok]'), isNotNull);
+    expect(resolveKuaishouEmoji('[OK]'), resolveKuaishouEmoji('[ok]'));
+    expect(resolveKuaishouEmoji('[yes]'), isNotNull);
+    expect(resolveKuaishouEmoji('[YES]'), resolveKuaishouEmoji('[yes]'));
+    expect(resolveKuaishouEmoji('[no]'), isNotNull);
+    expect(resolveKuaishouEmoji('[NO]'), resolveKuaishouEmoji('[no]'));
+    expect(resolveKuaishouEmoji('[ILoveU]'), isNotNull);
+    expect(resolveKuaishouEmoji('[iloveu]'), resolveKuaishouEmoji('[ILoveU]'));
   });
 
   test('builds server Kww from the kwfv1 cookie', () {

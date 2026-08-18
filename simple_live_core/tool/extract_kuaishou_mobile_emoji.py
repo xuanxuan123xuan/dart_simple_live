@@ -13,6 +13,20 @@ def _decode_emotions(raw: str | None) -> list[dict]:
     return [json.loads(value) for value in raw.split(",,,") if value]
 
 
+def _has_codes(group: object) -> bool:
+    if not isinstance(group, dict):
+        return False
+    for field in ('codes', 'code'):
+        value = group.get(field)
+        if isinstance(value, list) and any(
+            isinstance(code, str) and code.strip() for code in value
+        ):
+            return True
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
@@ -37,9 +51,9 @@ def main() -> None:
                 codes = [
                     group
                     for group in emotion.get("emotionCodes", [])
-                    if group.get("language") == "zh_CN"
+                    if _has_codes(group)
                 ]
-                if not any(group.get("codes") for group in codes):
+                if not codes:
                     continue
                 item = dict(emotion)
                 item["emotionCodes"] = codes
@@ -48,7 +62,7 @@ def main() -> None:
         connection.close()
 
     if not emotions:
-        raise ValueError("No zh_CN bizType=1 emotions found")
+        raise ValueError("No bizType=1 emotions with usable codes found")
 
     output = {
         "result": 1,

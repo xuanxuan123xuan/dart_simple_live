@@ -40,8 +40,7 @@ void main(List<String> arguments) {
       'error=${decoded['error_msg'] ?? decoded['error'] ?? 'unknown'}',
     );
   }
-  final assets = <String, String>{};
-  _visit(decoded, assets);
+  final assets = collectKuaishouMobileEmojiAssets(decoded);
   if (assets.isEmpty) {
     throw const FormatException('No mobile emotion entries found');
   }
@@ -93,6 +92,12 @@ Map<String, String> _parseOptions(List<String> arguments) {
   return result;
 }
 
+Map<String, String> collectKuaishouMobileEmojiAssets(Object? value) {
+  final assets = <String, String>{};
+  _visit(value, assets);
+  return assets;
+}
+
 void _visit(Object? value, Map<String, String> assets) {
   if (value is List) {
     for (final item in value) {
@@ -112,11 +117,12 @@ void _visit(Object? value, Map<String, String> assets) {
       if (!RegExp(r'^\[[^\[\]\r\n]{1,64}\]$').hasMatch(token)) continue;
       final existing = assets[token];
       if (existing != null) {
-        throw FormatException(
-          existing == url
-              ? 'Duplicate mobile emotion token: $token'
-              : 'Conflicting URLs for $token: $existing != $url',
-        );
+        if (existing == url) {
+          continue;
+        }
+        // 同一 token 多处出现时采用先到先得，保持生成结果稳定；
+        // 后续冲突项仅忽略，不覆盖已有映射。
+        continue;
       }
       assets[token] = url;
     }

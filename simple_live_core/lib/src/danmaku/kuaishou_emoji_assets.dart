@@ -432,11 +432,50 @@ const Map<String, String> kuaishouEmojiAssets = {
 /// 运行时从快手接口拉取的最新映射（优先于内置静态表）。
 Map<String, String> _dynamicKuaishouEmoji = const {};
 
+const Map<String, String> _kuaishouEmojiAliasMap = {
+  '[點讚]': '[点赞]',
+  '[讚]': '[赞]',
+  '[點點關注]': '[点点关注]',
+  '[早安]': '[早上好]',
+  '[哈囉]': '[打招呼]',
+  '[愛你]': '[爱你]',
+  '[我愛你]': '[我爱你]',
+  '[發]': '[发]',
+  '[發財]': '[发财]',
+  '[打電話]': '[打电话]',
+  '[聽音樂]': '[听音乐]',
+  '[學習]': '[学习]',
+  '[放輕鬆]': '[放轻松]',
+  '[睡覺]': '[睡觉]',
+  '[iloveu]': '[ILoveU]',
+};
+
 /// 解析单个表情 token：运行时映射、移动端词库、网页词库依次兜底。
-String? resolveKuaishouEmoji(String token) =>
-    _dynamicKuaishouEmoji[token] ??
-    kuaishouMobileEmojiAssets[token] ??
-    kuaishouEmojiAssets[token];
+String? resolveKuaishouEmoji(String token) => _resolveKuaishouEmojiToken(token);
+
+String? _resolveKuaishouEmojiToken(String token) {
+  final candidates = <String>[token];
+  final lower = token.toLowerCase();
+  if (lower != token) {
+    candidates.add(lower);
+  }
+  for (var index = 0; index < candidates.length; index += 1) {
+    final alias = _kuaishouEmojiAliasMap[candidates[index]];
+    if (alias != null && !candidates.contains(alias)) {
+      candidates.add(alias);
+    }
+  }
+  for (final candidate in candidates) {
+    if (candidate.isEmpty) continue;
+    final resolved = _dynamicKuaishouEmoji[candidate] ??
+        kuaishouMobileEmojiAssets[candidate] ??
+        kuaishouEmojiAssets[candidate];
+    if (resolved != null) {
+      return resolved;
+    }
+  }
+  return null;
+}
 
 const String kuaishouEmojiPanelUrl =
     'https://live.kuaishou.com/live_api/emoji/panel';
