@@ -57,14 +57,15 @@ class FollowUserItem extends StatelessWidget {
       return _buildAvatarListCard(context, compact: compact);
     }
     final theme = Theme.of(context);
-    final coverWidth = compact ? 118.0 : 148.0;
-    final avatarSize = compact ? 38.0 : 46.0;
+    final coverWidth = compact ? 122.0 : 152.0;
+    final avatarSize = compact ? 34.0 : 38.0;
     final radius = BorderRadius.circular(compact ? 14 : 16);
     final titleStyle = compact
         ? theme.textTheme.titleSmall
         : theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600);
     final subtitleStyle = theme.textTheme.bodySmall?.copyWith(
       color: Colors.grey.shade600,
+      height: 1.15,
     );
     return Material(
       color: _cardBackgroundColor(theme),
@@ -78,114 +79,112 @@ class FollowUserItem extends StatelessWidget {
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: EdgeInsets.all(compact ? 8 : 10),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SizedBox(
                 width: coverWidth,
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: _buildCover(context, radius: compact ? 12 : 14),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(compact ? 12 : 14),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: _buildCover(context, radius: compact ? 12 : 14),
+                  ),
                 ),
               ),
-              SizedBox(width: compact ? 10 : 12),
+              SizedBox(width: compact ? 8 : 10),
               Expanded(
-                child: SizedBox.expand(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          NetImage(
-                            item.face,
-                            width: avatarSize,
-                            height: avatarSize,
-                            borderRadius: avatarSize / 2,
-                          ),
-                          SizedBox(width: compact ? 8 : 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text.rich(
-                                  TextSpan(
-                                    text: item.userName,
-                                    children: [
-                                      WidgetSpan(
-                                        alignment:
-                                            ui.PlaceholderAlignment.middle,
-                                        child: Padding(
-                                          padding:
-                                              const EdgeInsets.only(left: 8),
-                                          child: _buildStatusDot(),
-                                        ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        NetImage(
+                          item.face,
+                          width: avatarSize,
+                          height: avatarSize,
+                          borderRadius: avatarSize / 2,
+                        ),
+                        SizedBox(width: compact ? 8 : 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text.rich(
+                                TextSpan(
+                                  text: item.userName,
+                                  children: [
+                                    WidgetSpan(
+                                      alignment: ui.PlaceholderAlignment.middle,
+                                      child: Padding(
+                                        padding:
+                                            const EdgeInsets.only(left: 6),
+                                        child: _buildStatusDot(size: 7),
                                       ),
-                                    ],
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: titleStyle,
+                                    ),
+                                  ],
                                 ),
-                                SizedBox(height: compact ? 4 : 6),
-                                Text(
-                                  _displayRoomTitle(),
-                                  maxLines: compact ? 1 : 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.bodyMedium,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: titleStyle,
+                              ),
+                              SizedBox(height: compact ? 3 : 4),
+                              Text(
+                                _displayRoomTitle(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                          SizedBox(width: compact ? 6 : 8),
-                          _buildActionArea(
-                            context,
-                            compact: compact,
-                            vertical: true,
-                          ),
-                        ],
-                      ),
-                      Wrap(
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          Image.asset(
-                            _site.logo,
-                            width: compact ? 16 : 18,
-                            height: compact ? 16 : 18,
-                          ),
+                        ),
+                        SizedBox(width: compact ? 4 : 6),
+                        _buildActionArea(
+                          context,
+                          compact: compact,
+                          vertical: true,
+                        ),
+                      ],
+                    ),
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        Image.asset(
+                          _site.logo,
+                          width: compact ? 16 : 18,
+                          height: compact ? 16 : 18,
+                        ),
+                        Text(
+                          _site.name,
+                          style: subtitleStyle,
+                        ),
+                        if (_liveDurationText().isNotEmpty)
                           Text(
-                            _site.name,
+                            _liveDurationText(),
                             style: subtitleStyle,
                           ),
-                          _buildInfoChip(
-                            context,
-                            label: getStatus(item.liveStatus.value),
-                            active: item.liveStatus.value == 2,
+                        if (playing)
+                          Text(
+                            "正在观看",
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                          if (_liveDurationText().isNotEmpty)
-                            Text(
-                              _liveDurationText(),
-                              style: subtitleStyle,
-                            ),
-                          if (playing)
-                            Text(
-                              "正在观看",
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          if (showSpecialMark && item.isSpecialFollow)
-                            const Icon(
-                              Icons.star,
-                              color: Colors.amber,
-                              size: 16,
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
+                        if (showSpecialMark && item.isSpecialFollow)
+                          const Icon(
+                            Icons.star,
+                            color: Colors.amber,
+                            size: 16,
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -588,11 +587,11 @@ class FollowUserItem extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusDot() {
+  Widget _buildStatusDot({double size = 8}) {
     final active = item.liveStatus.value == 2;
     return Container(
-      width: 8,
-      height: 8,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: active ? Colors.green : Colors.grey,
         borderRadius: BorderRadius.circular(99),
