@@ -425,6 +425,82 @@ void main() {
       expect(state, LiveStatusState.unknown);
     });
 
+    test('follow status forceNetwork bypasses anonymous logical cache',
+        () async {
+      var requests = 0;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              requests++;
+              final roomId = options.uri.pathSegments.last;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouOfflinePage(roomId: roomId),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(anonymousDio: dio);
+
+      final first = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.followStatus,
+        () => site.getFollowLiveStatusState(roomId: 'cache-room'),
+        scopeId: 'kuaishou:follow-refresh',
+        forceNetwork: true,
+      );
+      final second = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.followStatus,
+        () => site.getFollowLiveStatusState(roomId: 'cache-room'),
+        scopeId: 'kuaishou:follow-refresh',
+        forceNetwork: true,
+      );
+
+      expect(first, LiveStatusState.offline);
+      expect(second, LiveStatusState.offline);
+      expect(requests, 2);
+    });
+
+    test('follow status propagates challenge pages instead of swallowing them',
+        () async {
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: '<html><body>安全验证 captcha</body></html>',
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(anonymousDio: dio);
+
+      await expectLater(
+        () => KuaishouRequestTrace.run(
+          KuaishouRequestSource.followStatus,
+          () => site.getFollowLiveStatusState(roomId: 'challenge-room'),
+          scopeId: 'kuaishou:follow-refresh',
+          forceNetwork: true,
+        ),
+        throwsA(
+          isA<CoreError>()
+              .having((error) => error.statusCode, 'statusCode', 403)
+              .having(
+                (error) => error.message,
+                'message',
+                contains('安全验证'),
+              ),
+        ),
+      );
+    });
+
     test('follow status physical requests can run concurrently', () async {
       var requests = 0;
       final anonymousDio = Dio()

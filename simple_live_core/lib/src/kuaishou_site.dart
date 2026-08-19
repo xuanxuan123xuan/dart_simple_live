@@ -2095,6 +2095,7 @@ class KuaishouSite extends LiveSite {
     return coordinator.coalesce(
       key: 'anonymous_live_status:$roomId',
       cacheTtlForValue: anonymousStatusCacheTtl,
+      bypassCache: KuaishouRequestTrace.forceNetwork,
       task: () => KuaishouRequestTrace.run(
         KuaishouRequestSource.followStatus,
         () async {
@@ -2104,6 +2105,13 @@ class KuaishouSite extends LiveSite {
               source: KuaishouRequestSource.followStatus,
             );
             return detail.resolvedLiveStatus;
+          } on _KuaishouChallengePageException catch (e) {
+            throw CoreError(
+              '快手返回安全验证页面，请稍后重试',
+              statusCode: 403,
+              kind: CoreErrorKind.http,
+              cause: e,
+            );
           } catch (_) {
             return LiveStatusState.unknown;
           }
@@ -2122,6 +2130,7 @@ class KuaishouSite extends LiveSite {
       key: 'anonymous_public_detail:$roomId',
       cacheTtlForValue: (detail) =>
           anonymousStatusCacheTtl(detail.resolvedLiveStatus),
+      bypassCache: KuaishouRequestTrace.forceNetwork,
       task: () async {
         final url = KuaishouLiveLink.publicRoomUrl(roomId);
         final response = await coordinator.schedule<Response<String>>(
@@ -2139,11 +2148,7 @@ class KuaishouSite extends LiveSite {
         );
         final html = response.data ?? '';
         if (looksLikeChallengePage(html)) {
-          throw CoreError(
-            '快手匿名访问受限',
-            statusCode: response.statusCode ?? 0,
-            kind: CoreErrorKind.http,
-          );
+          throw const _KuaishouChallengePageException();
         }
         final detail = await _parseRoomDetail(
           html,

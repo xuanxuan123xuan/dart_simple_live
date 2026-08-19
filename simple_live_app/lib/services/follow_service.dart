@@ -513,6 +513,9 @@ class FollowService extends GetxService {
           }
         }
         item.liveCheckState.value = FollowLiveCheckState.limited;
+        if (kuaishouFailureStatus == 403) {
+          SmartDialog.showToast("快手返回安全验证页面，请稍后重试");
+        }
         return _FollowRefreshItemResult(
           _FollowRefreshItemOutcome.deferred,
           limited: true,
