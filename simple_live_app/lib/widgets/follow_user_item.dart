@@ -317,7 +317,7 @@ class FollowUserItem extends StatelessWidget {
     const avatarSize = 44.0;
     const avatarOverlap = 16.0;
     const contentInset = 12.0;
-    final avatarNameOffset = avatarSize + 8;
+    const avatarNameOffset = avatarSize + 8;
     final showHeaderUserName = item.liveStatus.value == 2;
     final subtitleStyle = theme.textTheme.bodySmall?.copyWith(
       color: Colors.grey.shade600,

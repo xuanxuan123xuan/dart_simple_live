@@ -590,8 +590,11 @@ class FollowService extends GetxService {
     await DBService.instance.addFollow(item);
   }
 
-  Future<void> syncFollowStatusFromRoomDetail(LiveRoomDetail detail) async {
-    final followId = '${detail.siteId}_${detail.roomId}';
+  Future<void> syncFollowStatusFromRoomDetail(
+    LiveRoomDetail detail, {
+    required String siteId,
+  }) async {
+    final followId = '${siteId}_${detail.roomId}';
     if (!DBService.instance.getFollowExist(followId)) {
       return;
     }
