@@ -35,6 +35,7 @@ import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/guide_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/live_notification_service.dart';
@@ -43,6 +44,7 @@ import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
+import 'package:simple_live_app/widgets/guide_overlay.dart';
 import 'package:simple_live_app/widgets/status/app_loadding_widget.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
@@ -585,6 +587,8 @@ Future initServices() async {
 
   Get.put(KuaishouAccountService());
 
+  Get.put(GuideService(), permanent: true);
+
   Get.put(FollowService());
   Get.put(ProfileBackupService());
 
@@ -687,6 +691,14 @@ class MyApp extends StatelessWidget {
         routingCallback: (r) {
           Log.d(
               'AppNavigation: routingCallback cur=${r?.current} prev=${r?.previous}');
+          final guide = Get.isRegistered<GuideService>()
+              ? Get.find<GuideService>()
+              : null;
+          if (guide != null &&
+              guide.isActive &&
+              r?.current != RoutePath.kSearch) {
+            guide.dismiss();
+          }
           unawaited(_syncDesktopShortcutCaptureState());
         },
         //国际化
@@ -789,6 +801,8 @@ class MyApp extends StatelessWidget {
                       ),
                     ),
                   ),
+
+                  const GuideOverlay(),
                 ],
               ),
             );

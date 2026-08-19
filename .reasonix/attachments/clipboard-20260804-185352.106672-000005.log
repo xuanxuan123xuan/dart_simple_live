@@ -1,0 +1,167 @@
+2026-08-04 18:53:43.194453
+AppNavigation: global pointer up at Offset(282.8, 391.3)
+
+2026-08-04 18:53:42.134200
+AppNavigation: global pointer up at Offset(289.8, 667.3)
+
+2026-08-04 18:53:42.133484
+AppNavigation: didPush GetModalBottomSheetRoute<dynamic> prev=GetPageRoute<dynamic>
+#0      _RouteDiagObserver.didPush (package:simple_live_app/main.dart:96:105)
+#1      _NavigatorPushObservation.notify (package:flutter/src/widgets/navigator.dart:3610:14)
+#2      List.forEach (dart:core-patch/growable_array.dart:428:8)
+#3      NavigatorState._flushObserverNotifications (package:flutter/src/widgets/navigator.dart:4694:27)
+#4      NavigatorState._flushHistoryUpdates (package:flutter/src/widgets/navigator.dart:4640:5)
+#5      NavigatorState._pushEntry (package:flutter/src/widgets/navigator.dart:5202:5)
+#6      NavigatorState.push (package:flutter/src/widgets/navigator.dart:5125:5)
+#7      ExtensionBottomSheet.bottomSheet (package:get/get_navigation/src/extension_navigation.dart:37:10)
+#8      MyApp.build.<anonymous closure>.<anonymous closure>.<anonymous closure> (package:simple_live_app/main.dart:782:33)
+#9      _InkResponseState.handleTap (package:flutter/src/material/ink_well.dart:1224:21)
+#10     GestureRecognizer.invokeCallback (package:flutter/src/gestures/recognizer.dart:345:24)
+#11     TapGestureRecognizer.handleTapUp (package:flutter/src/gestures/tap.dart:758:11)
+#12     BaseTapGestureRecognizer._checkUp (package:flutter/src/gestures/tap.dart:383:5)
+#13     BaseTapGestureRecognizer.handlePrimaryPointer (package:flutter/src/gestures/tap.dart:314:7)
+#14     PrimaryPointerGestureRecognizer.handleEvent (package:flutter/src/gestures/recognizer.dart:721:9)
+#15     PointerRouter._dispatch (package:flutter/src/gestures/pointer_router.dart:97:12)
+#16     PointerRouter._dispatchEventToRoutes.<anonymous closure> (package:flutter/src/gestures/pointer_router.dart:140:9)
+#17     _LinkedHashMapMixin.forEach (dart:_compact_hash:765:13)
+#18     PointerRouter._dispatchEventToRoutes (package:flutter/src/gestures/pointer_router.dart:138:18)
+#19     PointerRouter.route (package:flutter/src/gestures/pointer_router.dart:128:7)
+#20     GestureBinding.handleEvent (package:flutter/src/gestures/binding.dart:528:19)
+#21     GestureBinding.dispatchEvent (package:flutter/src/gestures/binding.dart:498:22)
+#22     RendererBinding.dispatchEvent (package:flutter/src/rendering/binding.dart:473:11)
+#23     GestureBinding._handlePointerEventImmediately (package:flutter/src/gestures/binding.dart:437:7)
+#24     GestureBinding.handlePointerEvent (package:flutter/src/gestures/binding.dart:394:5)
+#25     GestureBinding._flushPointerEventQueue (package:flutter/src/gestures/binding.dart:341:7)
+#26     GestureBinding._handlePointerDataPacket (package:flutter/src/gestures/binding.dart:308:9)
+#27     _invoke1 (dart:ui/hooks.dart:372:13)
+#28     PlatformDispatcher._dispatchPointerDataPacket (dart:ui/platform_dispatcher.dart:467:7)
+#29     _dispatchPointerDataPacket (dart:ui/hooks.dart:307:31)
+
+
+2026-08-04 18:53:42.132729
+AppNavigation: routingCallback cur=/index prev=/index
+
+2026-08-04 18:53:42.132668
+OPEN BOTTOMSHEET 303350924
+
+2026-08-04 18:53:41.398092
+AppNavigation: global pointer up at Offset(180.4, 552.0)
+
+2026-08-04 18:53:40.861741
+Invalid argument(s): Failed to lookup symbol 'jsSetMemoryLimit': do_dlsym failed: Symbol not found: jsSetMemoryLimit, version: null so=/data/storage/el1/bundle/libs/arm64/libfastdev_quickjs_runtime.so
+
+#0      BaseController.handleError (package:simple_live_app/app/controller/base_controller.dart:35:44)
+#1      BasePageController.loadData (package:simple_live_app/app/controller/base_controller.dart:109:7)
+<asynchronous suspension>
+#2      BasePageController.refreshData (package:simple_live_app/app/controller/base_controller.dart:77:5)
+<asynchronous suspension>
+
+
+2026-08-04 18:53:40.859965
+AppNavigation: global pointer up at Offset(188.3, 558.9)
+
+2026-08-04 18:53:40.384718
+AppNavigation: global pointer up at Offset(174.4, 562.2)
+
+2026-08-04 18:53:39.835124
+AppNavigation: global pointer up at Offset(315.5, 520.3)
+
+2026-08-04 18:53:39.374742
+AppNavigation: global pointer up at Offset(58.4, 661.8)
+
+2026-08-04 18:53:38.813559
+AppNavigation: global pointer up at Offset(39.5, 431.1)
+
+2026-08-04 18:53:38.164113
+AppNavigation: global pointer up at Offset(167.1, 377.6)
+
+2026-08-04 18:53:37.692539
+AppNavigation: didPop GetModalBottomSheetRoute<dynamic> prev=GetPageRoute<dynamic>
+#0      _RouteDiagObserver.didPop (package:simple_live_app/main.dart:102:104)
+#1      _NavigatorPopObservation.notify (package:flutter/src/widgets/navigator.dart:3619:14)
+#2      List.forEach (dart:core-patch/growable_array.dart:428:8)
+#3      NavigatorState._flushObserverNotifications (package:flutter/src/widgets/navigator.dart:4699:27)
+#4      NavigatorState._flushHistoryUpdates (package:flutter/src/widgets/navigator.dart:4640:5)
+#5      NavigatorState.pop (package:flutter/src/widgets/navigator.dart:5804:7)
+#6      NavigatorState.maybePop (package:flutter/src/widgets/navigator.dart:5739:9)
+<asynchronous suspension>
+
+
+2026-08-04 18:53:37.692165
+AppNavigation: routingCallback cur=/index prev=/index
+
+2026-08-04 18:53:37.692123
+CLOSE BOTTOMSHEET 62607238
+
+2026-08-04 18:53:37.690039
+AppNavigation: global pointer up at Offset(46.8, 304.8)
+
+2026-08-04 18:53:36.136967
+AppNavigation: global pointer up at Offset(48.1, 456.4)
+
+2026-08-04 18:53:35.650857
+AppNavigation: global pointer up at Offset(12.0, 417.3)
+
+2026-08-04 18:53:34.682160
+AppNavigation: global pointer up at Offset(314.9, 663.7)
+
+2026-08-04 18:53:34.681285
+AppNavigation: didPush GetModalBottomSheetRoute<dynamic> prev=GetPageRoute<dynamic>
+#0      _RouteDiagObserver.didPush (package:simple_live_app/main.dart:96:105)
+#1      _NavigatorPushObservation.notify (package:flutter/src/widgets/navigator.dart:3610:14)
+#2      List.forEach (dart:core-patch/growable_array.dart:428:8)
+#3      NavigatorState._flushObserverNotifications (package:flutter/src/widgets/navigator.dart:4694:27)
+#4      NavigatorState._flushHistoryUpdates (package:flutter/src/widgets/navigator.dart:4640:5)
+#5      NavigatorState._pushEntry (package:flutter/src/widgets/navigator.dart:5202:5)
+#6      NavigatorState.push (package:flutter/src/widgets/navigator.dart:5125:5)
+#7      ExtensionBottomSheet.bottomSheet (package:get/get_navigation/src/extension_navigation.dart:37:10)
+#8      MyApp.build.<anonymous closure>.<anonymous closure>.<anonymous closure> (package:simple_live_app/main.dart:782:33)
+#9      _InkResponseState.handleTap (package:flutter/src/material/ink_well.dart:1224:21)
+#10     GestureRecognizer.invokeCallback (package:flutter/src/gestures/recognizer.dart:345:24)
+#11     TapGestureRecognizer.handleTapUp (package:flutter/src/gestures/tap.dart:758:11)
+#12     BaseTapGestureRecognizer._checkUp (package:flutter/src/gestures/tap.dart:383:5)
+#13     BaseTapGestureRecognizer.handlePrimaryPointer (package:flutter/src/gestures/tap.dart:314:7)
+#14     PrimaryPointerGestureRecognizer.handleEvent (package:flutter/src/gestures/recognizer.dart:721:9)
+#15     PointerRouter._dispatch (package:flutter/src/gestures/pointer_router.dart:97:12)
+#16     PointerRouter._dispatchEventToRoutes.<anonymous closure> (package:flutter/src/gestures/pointer_router.dart:140:9)
+#17     _LinkedHashMapMixin.forEach (dart:_compact_hash:765:13)
+#18     PointerRouter._dispatchEventToRoutes (package:flutter/src/gestures/pointer_router.dart:138:18)
+#19     PointerRouter.route (package:flutter/src/gestures/pointer_router.dart:128:7)
+#20     GestureBinding.handleEvent (package:flutter/src/gestures/binding.dart:528:19)
+#21     GestureBinding.dispatchEvent (package:flutter/src/gestures/binding.dart:498:22)
+#22     RendererBinding.dispatchEvent (package:flutter/src/rendering/binding.dart:473:11)
+#23     GestureBinding._handlePointerEventImmediately (package:flutter/src/gestures/binding.dart:437:7)
+#24     GestureBinding.handlePointerEvent (package:flutter/src/gestures/binding.dart:394:5)
+#25     GestureBinding._flushPointerEventQueue (package:flutter/src/gestures/binding.dart:341:7)
+#26     GestureBinding._handlePointerDataPacket (package:flutter/src/gestures/binding.dart:308:9)
+#27     _invoke1 (dart:ui/hooks.dart:372:13)
+#28     PlatformDispatcher._dispatchPointerDataPacket (dart:ui/platform_dispatcher.dart:467:7)
+#29     _dispatchPointerDataPacket (dart:ui/hooks.dart:307:31)
+
+
+2026-08-04 18:53:34.680818
+AppNavigation: routingCallback cur=/index prev=/index
+
+2026-08-04 18:53:34.680787
+OPEN BOTTOMSHEET 62607238
+
+2026-08-04 18:53:33.418893
+AppNavigation: didPop GetModalBottomSheetRoute<dynamic> prev=GetPageRoute<dynamic>
+#0      _RouteDiagObserver.didPop (package:simple_live_app/main.dart:102:104)
+#1      _NavigatorPopObservation.notify (package:flutter/src/widgets/navigator.dart:3619:14)
+#2      List.forEach (dart:core-patch/growable_array.dart:428:8)
+#3      NavigatorState._flushObserverNotifications (package:flutter/src/widgets/navigator.dart:4699:27)
+#4      NavigatorState._flushHistoryUpdates (package:flutter/src/widgets/navigator.dart:4640:5)
+#5      NavigatorState.pop (package:flutter/src/widgets/navigator.dart:5804:7)
+#6      NavigatorState.maybePop (package:flutter/src/widgets/navigator.dart:5739:9)
+<asynchronous suspension>
+
+
+2026-08-04 18:53:33.418559
+AppNavigation: routingCallback cur=/index prev=/index
+
+2026-08-04 18:53:33.418523
+CLOSE BOTTOMSHEET 540890546
+
+2026-08-04 18:53:33.416559
+AppNavigation: global pointer up at Offset(36.3, 314.0)

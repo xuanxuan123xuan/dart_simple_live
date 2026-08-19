@@ -1,0 +1,10 @@
+include: package:lints/recommended.yaml
+
+# Additional information about this file can be found at
+# https://dart.dev/guides/language/analysis-options
+
+linter:
+  rules:
+    - prefer_const_constructors
+    - prefer_relative_imports
+    - unawaited_futures

@@ -2088,6 +2088,8 @@ class LiveRoomController extends PlayerController
     try {
       Log.i(
           "定时关闭到点：platform=${Platform.operatingSystem} room=${site.id}/$roomId");
+      autoExitEnable.value = false;
+      await AppSettingsController.instance.setAutoExitEnable(false);
       await cancelAutoPipOnLeave();
       await stopBackgroundPlaybackService();
       await liveDanmaku.stop();
@@ -4589,7 +4591,7 @@ class LiveRoomController extends PlayerController
               value: autoExitEnable.value,
               onChanged: (e) {
                 autoExitEnable.value = e;
-                AppSettingsController.instance.setAutoExitEnable(e);
+                unawaited(AppSettingsController.instance.setAutoExitEnable(e));
                 if (e) {
                   setAutoExit();
                 } else {

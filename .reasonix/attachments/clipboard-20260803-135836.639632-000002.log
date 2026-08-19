@@ -1,0 +1,110 @@
+System Info:
+Current Time: 2026-08-03 13:57:55.594446
+Platform: ios
+Version: Version 26.6 (Build 23G71)
+Local: zh_Hans_CN
+App Version: 1.13.0+11300
+{systemName: iPadOS, isPhysicalDevice: true, utsname: {release: 25.6.0, sysname: Darwin, nodename: localhost, machine: iPad17,1, version: Darwin Kernel Version 25.6.0: Sat Jul 11 15:47:44 PDT 2026; root:xnu-12377.162.13~2/RELEASE_ARM64_T8142}, model: iPad, localizedModel: iPad, systemVersion: 26.6, name: iPad, identifierForVendor: 04E7F1B5-985E-4B47-A7B9-FB0985B1815D}
+End System Info
+[INFO] 13:57:56：CLOSE TO ROUTE /settings/other
+[INFO] 13:57:56："OtherSettingsController" onDelete() called
+[INFO] 13:57:56："OtherSettingsController" deleted from memory
+[INFO] 13:57:57：Instance "FollowUserController" has been created
+[INFO] 13:57:57：Instance "FollowUserController" has been initialized
+[INFO] 13:57:57：关注状态阶段开始，并发数: 4，模式: 自动，目标数: 14，策略: normal，scope=all fullDouyinCookie=true
+[DEBUG] 13:57:57：Get LocalStorage: FollowRefreshTaskState
+
+[DEBUG] 13:57:57：Get LocalStorage: FollowRefreshTaskTargets
+
+[DEBUG] 13:57:57：Set LocalStorage: FollowRefreshTaskState
+{"scopeKey":"all","total":14,"successCount":0,"failedCount":0,"deferredCount":0,"updatedAt":"2026-08-03T13:57:57.168991"}
+[DEBUG] 13:57:57：Set LocalStorage: FollowRefreshTaskTargets
+{"orderedKeys":["huya|149721|huya_149721","douyu|178432|douyu_178432","douyin|555822117681|douyin_555822117681","kuaishou|hrj20011221|kuaishou_hrj20011221","huya|152754|huya_152754","douyu|6979222|douyu_6979222","douyin|94900815675|douyin_94900815675","kuaishou|xzx11234|kuaishou_xzx11234","huya|321123|huya_321123","kuaishou|tingan666|kuaishou_tingan666","huya|123321|huya_123321","huya|116864|huya_116864","huya|273493|huya_273493","huya|10188|huya_10188"],"pendingKeys":["huya|149721|huya_149721","douyu|178432|douyu_178432","douyin|555822117681|douyin_555822117681","kuaishou|hrj20011221|kuaishou_hrj20011221","huya|152754|huya_152754","douyu|6979222|douyu_6979222","douyin|94900815675|douyin_94900815675","kuaishou|xzx11234|kuaishou_xzx11234","huya|321123|huya_321123","kuaishou|tingan666|kuaishou_tingan666","huya|123321|huya_123321","huya|116864|huya_116864","huya|273493|huya_273493","huya|10188|huya_10188"]}
+[INFO] 13:57:58：GOING TO ROUTE /room/detail?roomId=998
+[INFO] 13:57:58：Instance "LiveRoomController" has been created
+[INFO] 13:57:58：Instance "LiveRoomController" has been initialized
+[DEBUG] 13:57:58：播放器日志：PlayerLog(prefix: media_kit, level: error, text: error: property not found _setProperty(osc, 1))
+[INFO] 13:57:58：读取直播间信息完成：huya/998 102ms
+[INFO] 13:57:58：读取直播间信息完成：huya/998 102ms
+[DEBUG] 13:57:58：Set LocalStorage: LastLiveRoom
+{"siteId":"huya","roomId":"998","savedAt":"2026-08-03T13:57:58.453865"}
+[INFO] 13:57:58：直播间加载流程结束：huya/998 118ms
+[INFO] 13:57:58：直播间加载流程结束：huya/998 118ms
+[DEBUG] 13:57:58：Get LocalStorage: RoomQualityMemory
+{"kuaishou":{"qualityLocked":true,"line":0,"quality":0}}
+[DEBUG] 13:57:58：Set LocalStorage: LastLiveRoomResumePending
+false
+[DEBUG] 13:57:58：Get LocalStorage: RoomQualityMemory
+{"kuaishou":{"qualityLocked":true,"line":0,"quality":0}}
+[INFO] 13:57:58：准备打开播放器：target=huya/998 quality=蓝光30M line=3/3 previousPlaying=false previousSize=nullxnull profile=balanced, hardwareDecode=true, vo=gpu(profile:balanced), hwdec=auto-safe(profile:balanced), mpvOptions=7
+[INFO] 13:57:58：准备打开播放器：target=huya/998 quality=蓝光30M line=3/3 previousPlaying=false previousSize=nullxnull profile=balanced, hardwareDecode=true, vo=gpu(profile:balanced), hwdec=auto-safe(profile:balanced), mpvOptions=7
+[DEBUG] 13:57:58：width:null  W:null  H:null
+[DEBUG] 13:57:58：height:null  W:null  H:null
+[DEBUG] 13:57:58：播放器日志：PlayerLog(prefix: playlist, level: warn, text: Reading plaintext playlist.)
+[DEBUG] 13:57:58：Playing
+[INFO] 13:57:58：播放器打开完成：huya/998 11ms line=3/3 size=nullxnull
+[INFO] 13:57:58：播放器打开完成：huya/998 11ms line=3/3 size=nullxnull
+[DEBUG] 13:57:58：播放链接
+http://hs.flv.huya.com/src/294636272-294636272-1265453152455360512-589396000-10057-A-0-1-imgplus.flv?wsSecret=d3d53daa893a5b8c511da245a8448ca0&wsTime=6a702f13&seqid=1786031314986&ctype=huya_pc_exe&ver=1&fs=gctex&fm=RFdxOEJjSjNoNkRKdDZUWV8kMF8kMV8kMl8kMw%3D%3D&t=0&u=2412441617&codec=264
+[DEBUG] 13:57:58：播放器日志：PlayerLog(prefix: lavf, level: error, text: Failed to create file cache.)
+[DEBUG] 13:57:58：播放器日志：PlayerLog(prefix: cplayer, level: info, text: (+) Video --vid=1 (h264 2560x1440 60.000fps))
+[DEBUG] 13:57:58：播放器日志：PlayerLog(prefix: cplayer, level: info, text: (+) Audio --aid=1 (aac 2ch 44100Hz))
+[DEBUG] 13:57:58：播放器日志：PlayerLog(prefix: cplayer, level: info, text: (+) Subs  --sid=1 (text))
+[DEBUG] 13:57:58：Set LocalStorage: FollowRefreshTaskState
+{"scopeKey":"all","total":14,"successCount":10,"failedCount":0,"deferredCount":0,"updatedAt":"2026-08-03T13:57:58.980356"}
+[DEBUG] 13:57:58：Set LocalStorage: FollowRefreshTaskTargets
+{"orderedKeys":["huya|149721|huya_149721","douyu|178432|douyu_178432","douyin|555822117681|douyin_555822117681","kuaishou|hrj20011221|kuaishou_hrj20011221","huya|152754|huya_152754","douyu|6979222|douyu_6979222","douyin|94900815675|douyin_94900815675","kuaishou|xzx11234|kuaishou_xzx11234","huya|321123|huya_321123","kuaishou|tingan666|kuaishou_tingan666","huya|123321|huya_123321","huya|116864|huya_116864","huya|273493|huya_273493","huya|10188|huya_10188"],"pendingKeys":["kuaishou|tingan666|kuaishou_tingan666","huya|116864|huya_116864","huya|273493|huya_273493","huya|10188|huya_10188"]}
+[DEBUG] 13:57:58：播放器日志：PlayerLog(prefix: vd, level: info, text: Using hardware decoding (videotoolbox).)
+[DEBUG] 13:57:59：播放器日志：PlayerLog(prefix: cplayer, level: info, text: AO: [audiounit] 44100Hz stereo 2ch floatp)
+[DEBUG] 13:57:59：播放器日志：PlayerLog(prefix: cplayer, level: info, text: VO: [libmpv] 2560x1440 videotoolbox[nv12])
+[DEBUG] 13:57:59：width:2560  W:2560  H:1440
+[DEBUG] 13:57:59：height:1440  W:2560  H:1440
+[DEBUG] 13:57:59：Set LocalStorage: FollowRefreshTaskState
+{"scopeKey":"all","total":14,"successCount":14,"failedCount":0,"deferredCount":0,"updatedAt":"2026-08-03T13:57:59.302155"}
+[INFO] 13:57:59：抖音关注刷新总结 scope=all target=2 startConcurrency=2 startInterval=220ms finalInterval=220ms success=2 limited=0 cooldown=false elapsed=2133ms failed=0 deferred=0 limitedObserved=0
+[DEBUG] 13:57:59：Remove LocalStorage: FollowRefreshTaskState
+[DEBUG] 13:57:59：Set LocalStorage: FollowRefreshTaskTargets
+{"orderedKeys":["huya|149721|huya_149721","douyu|178432|douyu_178432","douyin|555822117681|douyin_555822117681","kuaishou|hrj20011221|kuaishou_hrj20011221","huya|152754|huya_152754","douyu|6979222|douyu_6979222","douyin|94900815675|douyin_94900815675","kuaishou|xzx11234|kuaishou_xzx11234","huya|321123|huya_321123","kuaishou|tingan666|kuaishou_tingan666","huya|123321|huya_123321","huya|116864|huya_116864","huya|273493|huya_273493","huya|10188|huya_10188"],"pendingKeys":[]}
+[DEBUG] 13:57:59：Remove LocalStorage: FollowRefreshTaskTargets
+[INFO] 13:57:59：关注状态阶段完成
+[DEBUG] 13:58:01：RightSideDialogRoute: opened title=设置 request=1
+[DEBUG] 13:58:01：RightSideDialogRoute: didComplete title=设置 (pop 完成)
+[DEBUG] 13:58:01：RightSideDialogRoute disposed (title=设置, isCurrent=false, isActive=false)
+[DEBUG] 13:58:02：RightSideDialogRoute: opened title=添加直播间 request=2
+[DEBUG] 13:58:02：RightSideDialogRoute: didComplete title=添加直播间 (pop 完成)
+[DEBUG] 13:58:02：RightSideDialogRoute disposed (title=添加直播间, isCurrent=false, isActive=false)
+[DEBUG] 13:58:03：RightSideDialogRoute: opened title=快捷入口 request=3
+[DEBUG] 13:58:03：RightSideDialogRoute: didComplete title=快捷入口 (pop 完成)
+[DEBUG] 13:58:03：RightSideDialogRoute disposed (title=快捷入口, isCurrent=false, isActive=false)
+[INFO] 13:58:04：CLOSE TO ROUTE /room/detail?roomId=998
+[DEBUG] 13:58:04：Set LocalStorage: LastLiveRoomResumePending
+false
+[INFO] 13:58:04："LiveRoomController" onDelete() called
+[INFO] 13:58:04："LiveRoomController" deleted from memory
+[DEBUG] 13:58:04：播放器日志：PlayerLog(prefix: cplayer, level: info, text: )
+[DEBUG] 13:58:04：width:null  W:null  H:null
+[DEBUG] 13:58:04：height:null  W:null  H:null
+[WARNING] 13:58:04：播放器关闭
+[INFO] 13:58:05：Instance "CategoryController" has been created
+[INFO] 13:58:05：Instance "CategoryListController" has been created with tag "huya"
+[INFO] 13:58:05：Instance "CategoryListController" with tag "huya" has been initialized
+[INFO] 13:58:05：Instance "CategoryListController" has been created with tag "douyin"
+[INFO] 13:58:05：Instance "CategoryListController" with tag "douyin" has been initialized
+[INFO] 13:58:05：Instance "CategoryListController" has been created with tag "kuaishou"
+[INFO] 13:58:05：Instance "CategoryListController" with tag "kuaishou" has been initialized
+[INFO] 13:58:05：Instance "CategoryListController" has been created with tag "bilibili"
+[INFO] 13:58:05：Instance "CategoryListController" with tag "bilibili" has been initialized
+[INFO] 13:58:05：Instance "CategoryListController" has been created with tag "douyu"
+[INFO] 13:58:05：Instance "CategoryListController" with tag "douyu" has been initialized
+[INFO] 13:58:05：Instance "CategoryController" has been initialized
+[INFO] 13:58:12：GOING TO ROUTE /settings/other
+[INFO] 13:58:12：Instance "OtherSettingsController" has been created
+[INFO] 13:58:12：Instance "OtherSettingsController" has been initialized
+[DEBUG] 13:58:12：Get LocalStorage: SyncServerUrl
+
+[DEBUG] 13:58:12：Get LocalStorage: SyncServerUrl
+
+[DEBUG] 13:58:12：Get LocalStorage: SyncProxyUrl
+
+[DEBUG] 13:58:14：Set LocalStorage: LogEnable
+false

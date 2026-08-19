@@ -2768,6 +2768,7 @@ class PlayerController extends BaseController
     }
     Utils.showBottomSheet(
       title: "播放信息",
+      maxHeightFactor: 0.5,
       child: ListView(
         children: [
           ListTile(
@@ -2906,6 +2907,7 @@ class PlayerController extends BaseController
 
     Utils.showBottomSheet(
       title: "播放信息",
+      maxHeightFactor: 0.5,
       child: ListView(
         children: rows
             .map(

@@ -1,0 +1,169 @@
+System Info:
+Current Time: 2026-08-03 19:03:59.470113
+Platform: ios
+Version: Version 26.6 (Build 23G71)
+Local: zh_Hans_CN
+App Version: 1.13.0+11300
+{systemName: iPadOS, isPhysicalDevice: true, utsname: {release: 25.6.0, sysname: Darwin, nodename: localhost, machine: iPad17,1, version: Darwin Kernel Version 25.6.0: Sat Jul 11 15:47:44 PDT 2026; root:xnu-12377.162.13~2/RELEASE_ARM64_T8142}, model: iPad, localizedModel: iPad, systemVersion: 26.6, name: iPad, identifierForVendor: 04E7F1B5-985E-4B47-A7B9-FB0985B1815D}
+End System Info
+[DEBUG] 19:04:00：AppNavigation: global pointer up at Instance of 'Offset'
+[INFO] 19:04:00：CLOSE TO ROUTE /settings/other
+[DEBUG] 19:04:00：AppNavigation: routingCallback cur=/index prev=/index
+[DEBUG] 19:04:00：AppNavigation: didPop GetPageRoute<dynamic> prev=GetPageRoute<dynamic>
+#0      _RouteDiagObserver.didPop (package:simple_live_app/main.dart:102)
+#1      _NavigatorPopObservation.notify (package:flutter/src/widgets/navigator.dart:3599)
+#2      List.forEach (dart:core-patch/growable_array.dart:428)
+#3      NavigatorState._flushObserverNotifications (package:flutter/src/widgets/navigator.dart:4590)
+#4      NavigatorState._flushHistoryUpdates (package:flutter/src/widgets/navigator.dart:4541)
+#5      NavigatorState.pop (package:flutter/src/widgets/navigator.dart:5611)
+#6      NavigatorState.maybePop (package:flutter/src/widgets/navigator.dart:5557)
+<asynchronous suspension>
+
+[INFO] 19:04:01："OtherSettingsController" onDelete() called
+[INFO] 19:04:01："OtherSettingsController" deleted from memory
+[DEBUG] 19:04:01：AppNavigation: global pointer up at Instance of 'Offset'
+[DEBUG] 19:04:02：AppNavigation: global pointer up at Instance of 'Offset'
+[INFO] 19:04:02：GOING TO ROUTE /room/detail?roomId=552108912095
+[DEBUG] 19:04:02：AppNavigation: routingCallback cur=/room/detail?roomId=552108912095 prev=/index
+[DEBUG] 19:04:02：AppNavigation: didPush GetPageRoute<dynamic> prev=GetPageRoute<dynamic>
+#0      _RouteDiagObserver.didPush (package:simple_live_app/main.dart:96)
+#1      _NavigatorPushObservation.notify (package:flutter/src/widgets/navigator.dart:3590)
+#2      List.forEach (dart:core-patch/growable_array.dart:428)
+#3      NavigatorState._flushObserverNotifications (package:flutter/src/widgets/navigator.dart:4585)
+#4      NavigatorState._flushHistoryUpdates (package:flutter/src/widgets/navigator.dart:4541)
+#5      NavigatorState._pushEntry (package:flutter/src/widgets/navigator.dart:5072)
+#6      NavigatorState.push (package:flutter/src/widgets/navigator.dart:5012)
+#7      NavigatorState.pushNamed (package:flutter/src/widgets/navigator.dart:4731)
+#8      GetNavigation.toNamed (package:get/get_navigation/src/extension_navigation.dart:596)
+#9      AppNavigator.toLiveRoomDetail (package:simple_live_app/routes/app_navigation.dart:110)
+#10     FollowUserController.openFollowRoom (package:simple_live_app/modules/follow_user/follow_user_controller.dart:535)
+<asynchronous suspension>
+
+[INFO] 19:04:02：Instance "LiveRoomController" has been created
+[DEBUG] 19:04:02：SystemUi: coordinator drain revision=11 keepAwake=false immersive=false appliedRev=10 appliedImm=false
+[INFO] 19:04:02：Instance "LiveRoomController" has been initialized
+[DEBUG] 19:04:02：播放器日志：PlayerLog(prefix: media_kit, level: error, text: error: property not found _setProperty(osc, 1))
+[INFO] 19:04:03：读取直播间信息完成：douyin/552108912095 392ms
+[INFO] 19:04:03：读取直播间信息完成：douyin/552108912095 392ms
+[DEBUG] 19:04:03：Set LocalStorage: LastLiveRoom
+{"siteId":"douyin","roomId":"552108912095","savedAt":"2026-08-03T19:04:03.111168"}
+[INFO] 19:04:03：直播间加载流程结束：douyin/552108912095 426ms
+[INFO] 19:04:03：直播间加载流程结束：douyin/552108912095 426ms
+[DEBUG] 19:04:03：Get LocalStorage: RoomQualityMemory
+{"kuaishou":{"qualityLocked":true,"line":0,"quality":0}}
+[DEBUG] 19:04:03：Set LocalStorage: LastLiveRoomResumePending
+false
+[DEBUG] 19:04:03：Get LocalStorage: RoomQualityMemory
+{"kuaishou":{"qualityLocked":true,"line":0,"quality":0}}
+[INFO] 19:04:03：准备打开播放器：target=douyin/552108912095 quality=原画 line=1/2 previousPlaying=false previousSize=nullxnull profile=balanced, hardwareDecode=true, vo=gpu(profile:balanced), hwdec=auto-safe(profile:balanced), mpvOptions=7
+[INFO] 19:04:03：准备打开播放器：target=douyin/552108912095 quality=原画 line=1/2 previousPlaying=false previousSize=nullxnull profile=balanced, hardwareDecode=true, vo=gpu(profile:balanced), hwdec=auto-safe(profile:balanced), mpvOptions=7
+[DEBUG] 19:04:03：width:null  W:null  H:null
+[DEBUG] 19:04:03：height:null  W:null  H:null
+[DEBUG] 19:04:03：播放器日志：PlayerLog(prefix: playlist, level: warn, text: Reading plaintext playlist.)
+[DEBUG] 19:04:03：SystemUi: coordinator drain revision=12 keepAwake=true immersive=false appliedRev=11 appliedImm=false
+[DEBUG] 19:04:03：Playing
+[INFO] 19:04:03：播放器打开完成：douyin/552108912095 8ms line=1/2 size=nullxnull
+[INFO] 19:04:03：播放器打开完成：douyin/552108912095 8ms line=1/2 size=nullxnull
+[DEBUG] 19:04:03：播放链接
+http://pull-hs-f5.flive.douyincdn.com/thirdgame/stream-119839734901244682_or4.flv?expire=1786359843&sign=fa394babb6559938b2e1e87df2aa211c&volcSecret=fa394babb6559938b2e1e87df2aa211c&volcTime=1786359843&arch_hrchy=w1&exp_hrchy=w1&major_anchor_level=common&unique_id=stream-119839734901244682_778_flv_or4&t_id=037-20260803190402448F424C116488E69399-vdU4UG
+[DEBUG] 19:04:03：播放器日志：PlayerLog(prefix: lavf, level: error, text: Failed to create file cache.)
+[DEBUG] 19:04:03：播放器日志：PlayerLog(prefix: cplayer, level: info, text: (+) Video --vid=1 (h264 1920x1080 60.000fps))
+[DEBUG] 19:04:03：播放器日志：PlayerLog(prefix: cplayer, level: info, text: (+) Audio --aid=1 (aac 2ch 48000Hz))
+[DEBUG] 19:04:03：播放器日志：PlayerLog(prefix: vd, level: info, text: Using hardware decoding (videotoolbox).)
+[DEBUG] 19:04:03：播放器日志：PlayerLog(prefix: cplayer, level: info, text: AO: [audiounit] 48000Hz stereo 2ch floatp)
+[DEBUG] 19:04:03：播放器日志：PlayerLog(prefix: cplayer, level: info, text: VO: [libmpv] 1920x1080 videotoolbox[nv12])
+[DEBUG] 19:04:03：width:1920  W:1920  H:1080
+[DEBUG] 19:04:03：height:1080  W:1920  H:1080
+[DEBUG] 19:04:03：AppNavigation: global pointer up at Instance of 'Offset'
+[DEBUG] 19:04:03：SystemUi: setLandscapeOrientation enter
+[DEBUG] 19:04:03：SystemUi: restoreFullScreenSystemUi enter fullScreen=true smallWindow=false
+[DEBUG] 19:04:03：SystemUi: coordinator drain revision=13 keepAwake=true immersive=true appliedRev=12 appliedImm=false
+[DEBUG] 19:04:03：SystemUi: coordinator apply immersive=true
+[DEBUG] 19:04:03：SystemUi: native setHidden=true ok
+[DEBUG] 19:04:03：SystemUi: coordinator iOS recheck scheduled
+[DEBUG] 19:04:03：AppNavigation: global pointer up at Instance of 'Offset'
+[DEBUG] 19:04:04：SystemUi: coordinator apply immersive=true
+[DEBUG] 19:04:04：SystemUi: native setHidden=true ok
+[DEBUG] 19:04:04：SystemUi: coordinator drain revision=14 keepAwake=true immersive=true appliedRev=13 appliedImm=null
+[DEBUG] 19:04:04：SystemUi: coordinator apply immersive=true
+[DEBUG] 19:04:04：SystemUi: native setHidden=true ok
+[DEBUG] 19:04:04：SystemUi: coordinator iOS recheck scheduled
+[DEBUG] 19:04:04：SystemUi: reapply hidden at 250ms
+[DEBUG] 19:04:04：SystemUi: coordinator apply immersive=true
+[DEBUG] 19:04:04：SystemUi: native setHidden=true ok
+[DEBUG] 19:04:04：SystemUi: reapply hidden at 500ms
+[DEBUG] 19:04:05：SystemUi: reapply hidden at 900ms
+[DEBUG] 19:04:07：SystemUi: reapply hidden at 2000ms
+[DEBUG] 19:04:10：SystemUi: reapply hidden at 3000ms
+[DEBUG] 19:04:11：AppNavigation: global pointer up at Instance of 'Offset'
+[DEBUG] 19:04:11：SystemUi: coordinator drain revision=15 keepAwake=true immersive=false appliedRev=14 appliedImm=true
+[DEBUG] 19:04:11：SystemUi: coordinator apply immersive=false
+[DEBUG] 19:04:11：AppNavigation: global pointer up at Instance of 'Offset'
+[DEBUG] 19:04:11：AppNavigation: global pointer up at Instance of 'Offset'
+[INFO] 19:04:11：CLOSE TO ROUTE /room/detail?roomId=552108912095
+[DEBUG] 19:04:11：AppNavigation: routingCallback cur=/index prev=/index
+[DEBUG] 19:04:11：AppNavigation: didPop GetPageRoute<dynamic> prev=GetPageRoute<dynamic>
+#0      _RouteDiagObserver.didPop (package:simple_live_app/main.dart:102)
+#1      _NavigatorPopObservation.notify (package:flutter/src/widgets/navigator.dart:3599)
+#2      List.forEach (dart:core-patch/growable_array.dart:428)
+#3      NavigatorState._flushObserverNotifications (package:flutter/src/widgets/navigator.dart:4590)
+#4      NavigatorState._flushHistoryUpdates (package:flutter/src/widgets/navigator.dart:4541)
+#5      NavigatorState.pop (package:flutter/src/widgets/navigator.dart:5611)
+#6      LiveRoomPage._handleBack (package:simple_live_app/modules/live_room/live_room_page.dart:411)
+<asynchronous suspension>
+
+[DEBUG] 19:04:12：Set LocalStorage: LastLiveRoomResumePending
+false
+[INFO] 19:04:12："LiveRoomController" onDelete() called
+[INFO] 19:04:12："LiveRoomController" deleted from memory
+[DEBUG] 19:04:12：播放器日志：PlayerLog(prefix: cplayer, level: info, text: )
+[DEBUG] 19:04:12：SystemUi: coordinator drain revision=16 keepAwake=false immersive=false appliedRev=15 appliedImm=false
+[DEBUG] 19:04:12：width:null  W:null  H:null
+[DEBUG] 19:04:12：height:null  W:null  H:null
+[WARNING] 19:04:12：播放器关闭
+[DEBUG] 19:04:12：SystemUi: coordinator drain revision=17 keepAwake=false immersive=false appliedRev=15 appliedImm=false
+[DEBUG] 19:04:12：AppNavigation: global pointer up at Instance of 'Offset'
+[DEBUG] 19:04:13：AppNavigation: global pointer up at Instance of 'Offset'
+[DEBUG] 19:04:15：AppNavigation: global pointer up at Instance of 'Offset'
+[INFO] 19:04:15：GOING TO ROUTE /settings/other
+[DEBUG] 19:04:15：AppNavigation: routingCallback cur=/settings/other prev=/index
+[DEBUG] 19:04:15：AppNavigation: didPush GetPageRoute<dynamic> prev=GetPageRoute<dynamic>
+#0      _RouteDiagObserver.didPush (package:simple_live_app/main.dart:96)
+#1      _NavigatorPushObservation.notify (package:flutter/src/widgets/navigator.dart:3590)
+#2      List.forEach (dart:core-patch/growable_array.dart:428)
+#3      NavigatorState._flushObserverNotifications (package:flutter/src/widgets/navigator.dart:4585)
+#4      NavigatorState._flushHistoryUpdates (package:flutter/src/widgets/navigator.dart:4541)
+#5      NavigatorState._pushEntry (package:flutter/src/widgets/navigator.dart:5072)
+#6      NavigatorState.push (package:flutter/src/widgets/navigator.dart:5012)
+#7      NavigatorState.pushNamed (package:flutter/src/widgets/navigator.dart:4731)
+#8      GetNavigation.toNamed (package:get/get_navigation/src/extension_navigation.dart:596)
+#9      MinePage.build.<anonymous closure> (package:simple_live_app/modules/mine/mine_page.dart:235)
+#10     _InkResponseState.handleTap (package:flutter/src/material/ink_well.dart:1224)
+#11     GestureRecognizer.invokeCallback (package:flutter/src/gestures/recognizer.dart:345)
+#12     TapGestureRecognizer.handleTapUp (package:flutter/src/gestures/tap.dart:758)
+#13     BaseTapGestureRecognizer._checkUp (package:flutter/src/gestures/tap.dart:383)
+#14     BaseTapGestureRecognizer.acceptGesture (package:flutter/src/gestures/tap.dart:353)
+#15     GestureArenaManager.sweep (package:flutter/src/gestures/arena.dart:173)
+#16     GestureBinding.handleEvent (package:flutter/src/gestures/binding.dart:532)
+#17     GestureBinding.dispatchEvent (package:flutter/src/gestures/binding.dart:498)
+#18     RendererBinding.dispatchEvent (package:flutter/src/rendering/binding.dart:473)
+#19     GestureBinding._handlePointerEventImmediately (package:flutter/src/gestures/binding.dart:437)
+#20     GestureBinding.handlePointerEvent (package:flutter/src/gestures/binding.dart:394)
+#21     GestureBinding._flushPointerEventQueue (package:flutter/src/gestures/binding.dart:341)
+#22     GestureBinding._handlePointerDataPacket (package:flutter/src/gestures/binding.dart:308)
+#23     _invoke1 (dart:ui/hooks.dart:372)
+#24     PlatformDispatcher._dispatchPointerDataPacket (dart:ui/platform_dispatcher.dart:467)
+#25     _dispatchPointerDataPacket (dart:ui/hooks.dart:307)
+
+[INFO] 19:04:15：Instance "OtherSettingsController" has been created
+[INFO] 19:04:15：Instance "OtherSettingsController" has been initialized
+[DEBUG] 19:04:15：Get LocalStorage: SyncServerUrl
+
+[DEBUG] 19:04:15：Get LocalStorage: SyncServerUrl
+
+[DEBUG] 19:04:15：Get LocalStorage: SyncProxyUrl
+
+[DEBUG] 19:04:15：AppNavigation: global pointer up at Instance of 'Offset'
+[DEBUG] 19:04:17：AppNavigation: global pointer up at Instance of 'Offset'
+[DEBUG] 19:04:17：Set LocalStorage: LogEnable
+false

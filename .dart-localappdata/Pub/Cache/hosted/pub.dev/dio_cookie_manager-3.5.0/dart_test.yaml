@@ -1,0 +1,10 @@
+file_reporters:
+  json: build/reports/test-results.json
+
+presets:
+  # empty placeholders required in CI scripts
+  all:
+  default:
+  min:
+  stable:
+  beta:

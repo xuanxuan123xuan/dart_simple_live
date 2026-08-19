@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/generated/app_update_channel.g.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 
@@ -36,6 +37,19 @@ class HelpPage extends StatelessWidget {
                     "如果问题仍然存在，请打开直播间“设置 → 网络诊断与播放信息”。",
                     title: "常见播放问题",
                   ),
+                ),
+                AppStyle.divider,
+                ListTile(
+                  leading: const Icon(Remix.route_line),
+                  title: const Text("搜索与链接引导"),
+                  subtitle: const Text("直接进入搜索页，高亮搜索框并演示链接解析"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    await Get.toNamed(
+                      RoutePath.kSearch,
+                      arguments: const {"guide": "search"},
+                    );
+                  },
                 ),
               ],
             ),
@@ -83,7 +97,9 @@ class HelpPage extends StatelessWidget {
                 ListTile(
                   leading: const Icon(Remix.information_line),
                   title: const Text("应用版本"),
-                  trailing: Text(Utils.packageInfo.version),
+                  trailing: Text(
+                    "${Utils.packageInfo.version} / ${GeneratedAppUpdateChannel.channel}",
+                  ),
                 ),
                 AppStyle.divider,
                 ListTile(

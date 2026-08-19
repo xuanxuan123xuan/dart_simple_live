@@ -39,7 +39,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   void showNetworkDiagnose(LiveRoomController controller) {
     Utils.showModalBottomSheetSafe(
       context: Get.context!,
-      isScrollControlled: true,
+      constraints: const BoxConstraints(
+        maxWidth: 600,
+      ),
       builder: (context) => SingleChildScrollView(
         child: _NetworkDiagnosePanel(controller: controller),
       ),
@@ -1785,6 +1787,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   void _showDiagnosticsMenu() {
     Utils.showBottomSheet(
       title: "网络诊断与播放信息",
+      maxHeightFactor: 0.5,
       child: ListView(
         children: [
           ListTile(

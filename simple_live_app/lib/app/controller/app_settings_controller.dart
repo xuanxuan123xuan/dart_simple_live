@@ -948,10 +948,12 @@ class AppSettingsController extends GetxController {
   }
 
   var autoExitEnable = false.obs;
-  void setAutoExitEnable(bool e) {
+  Future<void> setAutoExitEnable(bool e) async {
     autoExitEnable.value = e;
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kAutoExitEnable, e);
+    await LocalStorageService.instance.setValue(
+      LocalStorageService.kAutoExitEnable,
+      e,
+    );
   }
 
   var autoExitDuration = 60.obs;

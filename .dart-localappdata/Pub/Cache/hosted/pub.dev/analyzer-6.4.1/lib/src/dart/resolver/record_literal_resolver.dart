@@ -1,0 +1,174 @@
+// Copyright (c) 2022, the Dart project authors. Please see the AUTHORS file
+// for details. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.
+
+import 'package:analyzer/dart/element/nullability_suffix.dart';
+import 'package:analyzer/dart/element/type.dart';
+import 'package:analyzer/error/listener.dart';
+import 'package:analyzer/src/dart/ast/ast.dart';
+import 'package:analyzer/src/dart/ast/extensions.dart';
+import 'package:analyzer/src/dart/element/extensions.dart';
+import 'package:analyzer/src/dart/element/type.dart';
+import 'package:analyzer/src/diagnostic/diagnostic_factory.dart';
+import 'package:analyzer/src/error/codes.g.dart';
+import 'package:analyzer/src/generated/resolver.dart';
+
+/// Helper for resolving [RecordLiteral]s.
+class RecordLiteralResolver {
+  final ResolverVisitor _resolver;
+
+  RecordLiteralResolver({
+    required ResolverVisitor resolver,
+  }) : _resolver = resolver;
+
+  ErrorReporter get errorReporter => _resolver.errorReporter;
+
+  void resolve(
+    RecordLiteralImpl node, {
+    required DartType? contextType,
+  }) {
+    _resolveFields(node, contextType);
+    _buildType(node, contextType);
+
+    _reportDuplicateFieldDefinitions(node);
+    _reportInvalidFieldNames(node);
+  }
+
+  void _buildType(RecordLiteralImpl node, DartType? contextType) {
+    final positionalFields = <RecordTypePositionalFieldImpl>[];
+    final namedFields = <RecordTypeNamedFieldImpl>[];
+    for (final field in node.fields) {
+      final fieldType = field.typeOrThrow;
+      if (field is NamedExpressionImpl) {
+        namedFields.add(
+          RecordTypeNamedFieldImpl(
+            name: field.name.label.name,
+            type: fieldType,
+          ),
+        );
+      } else {
+        positionalFields.add(
+          RecordTypePositionalFieldImpl(
+            type: fieldType,
+          ),
+        );
+      }
+    }
+
+    _resolver.inferenceHelper.recordStaticType(
+      node,
+      RecordTypeImpl(
+        positionalFields: positionalFields,
+        namedFields: namedFields,
+        nullabilitySuffix: NullabilitySuffix.none,
+      ),
+      contextType: contextType,
+    );
+  }
+
+  /// Report any named fields in the record literal [node] that use a previously
+  /// defined name.
+  void _reportDuplicateFieldDefinitions(RecordLiteralImpl node) {
+    var usedNames = <String, NamedExpression>{};
+    for (var field in node.fields) {
+      if (field is NamedExpressionImpl) {
+        var name = field.name.label.name;
+        var previousField = usedNames[name];
+        if (previousField != null) {
+          errorReporter.reportError(DiagnosticFactory()
+              .duplicateFieldDefinitionInLiteral(
+                  errorReporter.source, field, previousField));
+        } else {
+          usedNames[name] = field;
+        }
+      }
+    }
+  }
+
+  /// Report any fields in the record literal [node] that use an invalid name.
+  void _reportInvalidFieldNames(RecordLiteralImpl node) {
+    var fields = node.fields;
+    var positionalCount = 0;
+    for (var field in fields) {
+      if (field is! NamedExpression) {
+        positionalCount++;
+      }
+    }
+    for (var field in fields) {
+      if (field is NamedExpressionImpl) {
+        var nameNode = field.name.label;
+        var name = nameNode.name;
+        if (name.startsWith('_')) {
+          errorReporter.reportErrorForNode(
+              CompileTimeErrorCode.INVALID_FIELD_NAME_PRIVATE, nameNode);
+        } else {
+          final index = RecordTypeExtension.positionalFieldIndex(name);
+          if (index != null) {
+            if (index < positionalCount) {
+              errorReporter.reportErrorForNode(
+                  CompileTimeErrorCode.INVALID_FIELD_NAME_POSITIONAL, nameNode);
+            }
+          } else if (isForbiddenNameForRecordField(name)) {
+            errorReporter.reportErrorForNode(
+                CompileTimeErrorCode.INVALID_FIELD_NAME_FROM_OBJECT, nameNode);
+          }
+        }
+      }
+    }
+  }
+
+  void _resolveField(ExpressionImpl field, DartType? contextType) {
+    _resolver.analyzeExpression(field, contextType);
+    field = _resolver.popRewrite()!;
+
+    // Implicit cast from `dynamic`.
+    if (contextType != null && field.typeOrThrow is DynamicType) {
+      field.staticType = contextType;
+      if (field is NamedExpressionImpl) {
+        field.expression.staticType = contextType;
+      }
+    }
+
+    if (field.typeOrThrow is VoidType) {
+      errorReporter.reportErrorForNode(
+          CompileTimeErrorCode.USE_OF_VOID_RESULT, field);
+    }
+  }
+
+  void _resolveFields(RecordLiteralImpl node, DartType? contextType) {
+    if (contextType is RecordType) {
+      var index = 0;
+      for (final field in node.fields) {
+        DartType? fieldContextType;
+        if (field is NamedExpressionImpl) {
+          final name = field.name.label.name;
+          fieldContextType = contextType.namedField(name)?.type;
+        } else {
+          final positionalFields = contextType.positionalFields;
+          if (index < positionalFields.length) {
+            fieldContextType = positionalFields[index++].type;
+          }
+        }
+        _resolveField(field, fieldContextType);
+      }
+    } else {
+      for (final field in node.fields) {
+        _resolveField(field, null);
+      }
+    }
+  }
+
+  /// Returns whether [name] is a name forbidden for record fields because it
+  /// clashes with members from [Object] as specified by
+  /// https://github.com/dart-lang/language/blob/main/accepted/3.0/records/feature-specification.md#record-type-annotations
+  static bool isForbiddenNameForRecordField(String name) {
+    const forbidden = {
+      'hashCode',
+      'runtimeType',
+      'noSuchMethod',
+      'toString',
+    };
+
+    return forbidden.contains(name);
+  }
+}

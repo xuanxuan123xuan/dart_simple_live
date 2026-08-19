@@ -55,4 +55,22 @@ void main() {
       isFalse,
     );
   });
+
+  test('auto exit disable is persisted in storage', () async {
+    final settings = AppSettingsController();
+
+    await settings.setAutoExitEnable(true);
+    expect(
+      storage.getValue(LocalStorageService.kAutoExitEnable, false),
+      isTrue,
+    );
+
+    await settings.setAutoExitEnable(false);
+
+    expect(settings.autoExitEnable.value, isFalse);
+    expect(
+      storage.getValue(LocalStorageService.kAutoExitEnable, true),
+      isFalse,
+    );
+  });
 }
