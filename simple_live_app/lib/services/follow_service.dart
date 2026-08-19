@@ -590,6 +590,27 @@ class FollowService extends GetxService {
     await DBService.instance.addFollow(item);
   }
 
+  Future<void> syncFollowStatusFromRoomDetail(LiveRoomDetail detail) async {
+    final followId = '${detail.siteId}_${detail.roomId}';
+    if (!DBService.instance.getFollowExist(followId)) {
+      return;
+    }
+    final item = DBService.instance.followBox.get(followId);
+    if (item == null) {
+      return;
+    }
+
+    item.liveStatus.value = detail.status ? 2 : 1;
+    item.liveCheckState.value = FollowLiveCheckState.fresh;
+    if (!detail.status) {
+      item.liveStartTime = null;
+      _liveNotifySentIds.remove(item.id);
+    } else if (item.liveStartTime != detail.showTime) {
+      item.liveStartTime = detail.showTime;
+    }
+    await DBService.instance.addFollow(item);
+  }
+
   Future<void> _migrateFollowTagReferences(String oldId, String newId) async {
     if (oldId == newId) {
       return;

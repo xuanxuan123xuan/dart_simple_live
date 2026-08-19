@@ -67,6 +67,27 @@ void main() {
       );
     });
 
+    test('uses playable urls even when stream id and live flag are stale', () {
+      expect(
+        KuaishouSite.resolveLiveState({
+          'isLiving': false,
+          'liveStream': {
+            'id': '',
+            'playUrls': {
+              'h264': {
+                'adaptationSet': {
+                  'representation': [
+                    {'url': 'https://example.com/live.flv'},
+                  ],
+                },
+              },
+            },
+          },
+        }),
+        LiveStatusState.live,
+      );
+    });
+
     test('accepts the flat room-list stream shape used by the live API', () {
       expect(
         KuaishouSite.resolveLiveStatus({

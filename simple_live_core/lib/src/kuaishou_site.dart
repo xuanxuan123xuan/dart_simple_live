@@ -442,7 +442,11 @@ class KuaishouSite extends LiveSite {
   static LiveStatusState resolveLiveState(Map room) {
     final liveStream = _resolveLiveStream(room);
     final liveStreamId = liveStream["id"]?.toString().trim() ?? '';
+    final playableUrls = extractPlayableUrls(
+      liveStream["playUrls"] ?? room["playUrls"],
+    );
     if (liveStreamId.isNotEmpty ||
+        playableUrls.isNotEmpty ||
         _isLiveFlag(room["isLiving"]) ||
         _isLiveFlag(room["living"]) ||
         _isLiveFlag(liveStream["isLiving"]) ||

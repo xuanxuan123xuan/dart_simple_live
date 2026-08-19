@@ -2409,6 +2409,9 @@ class LiveRoomController extends PlayerController
       }
 
       addHistory();
+      unawaited(
+        FollowService.instance.syncFollowStatusFromRoomDetail(detail.value!),
+      );
       // 刷新关注状态
       followed.value = DBService.instance.getFollowExist("${site.id}_$roomId");
       final initialLiveState = detail.value!.resolvedLiveStatus;
