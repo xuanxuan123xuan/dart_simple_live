@@ -116,6 +116,8 @@ jobs:
       - name: 读取应用版本
         id: appver
         shell: bash
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: |
           dart run simple_live_app/tool/app_version.dart check
           echo "version=$(dart run simple_live_app/tool/app_version.dart print name)" >> "$GITHUB_OUTPUT"

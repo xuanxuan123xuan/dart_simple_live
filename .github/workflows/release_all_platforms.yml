@@ -110,6 +110,8 @@ jobs:
           dart run simple_live_app/tool/app_version.dart set "$REQUESTED_VERSION"
 
       - name: 同步派生版本文件
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: dart run simple_live_app/tool/app_version.dart sync
 
       - name: 恢复依赖包
@@ -230,6 +232,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: >-
           dart run simple_live_app/tool/app_version.dart set
           "${{ needs.prepare.outputs.version }}"
@@ -382,6 +386,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: >-
           dart run simple_live_app/tool/app_version.dart set
           "${{ needs.prepare.outputs.version }}"
@@ -525,6 +531,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: >-
           dart run simple_live_app/tool/app_version.dart set
           "${{ needs.prepare.outputs.version }}"
@@ -584,6 +592,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         shell: pwsh
         run: >-
           dart run simple_live_app/tool/app_version.dart set
@@ -655,6 +665,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: >-
           dart run simple_live_app/tool/app_version.dart set
           "${{ needs.prepare.outputs.version }}"
@@ -782,6 +794,8 @@ jobs:
       - name: 恢复依赖包 and check version
         working-directory: simple_live_app
         shell: pwsh
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: |
           $flutter = Join-Path $env:FLUTTER_OHOS_ROOT "bin\flutter.bat"
           $dart = Join-Path $env:FLUTTER_OHOS_ROOT "bin\dart.bat"

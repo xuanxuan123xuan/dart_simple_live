@@ -10,6 +10,8 @@ import 'package:simple_live_app/modules/mine/about/about_page.dart';
 import 'package:simple_live_app/modules/mine/help/help_page.dart';
 import 'package:simple_live_app/modules/mine/help/support_tools_controller.dart';
 import 'package:simple_live_app/modules/mine/help/support_tools_page.dart';
+import 'package:simple_live_app/modules/mine/update/app_update_controller.dart';
+import 'package:simple_live_app/modules/mine/update/app_update_page.dart';
 import 'package:simple_live_app/modules/other/debug_log_page.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/live_room_page.dart';
@@ -86,6 +88,11 @@ class AppPages {
     GetPage(
       name: RoutePath.kAbout,
       page: () => const AboutPage(),
+    ),
+    GetPage(
+      name: RoutePath.kAppUpdate,
+      page: () => const AppUpdatePage(),
+      binding: BindingsBuilder.put(() => AppUpdateController()),
     ),
     // 设置总览
     GetPage(

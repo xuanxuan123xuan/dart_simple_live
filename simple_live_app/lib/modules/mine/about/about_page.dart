@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
@@ -58,6 +60,16 @@ class AboutPage extends StatelessWidget {
                   title: const Text("免责声明"),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _showStatement,
+                ),
+                AppStyle.divider,
+                ListTile(
+                  leading: const Icon(Remix.refresh_line),
+                  title: const Text("检查更新"),
+                  subtitle: const Text("切换 stable / dev，查看当前平台可用安装包"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Get.toNamed(RoutePath.kAppUpdate);
+                  },
                 ),
                 AppStyle.divider,
                 ListTile(

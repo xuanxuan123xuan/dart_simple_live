@@ -6,6 +6,9 @@ class RoutePath {
   /// 关于 Simple Live
   static const kAbout = "/about";
 
+  /// 检查更新
+  static const kAppUpdate = "/about/update";
+
   /// 设置总览
   static const kSettings = "/settings";
 

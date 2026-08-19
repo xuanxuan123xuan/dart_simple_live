@@ -93,6 +93,8 @@ jobs:
         id: appver
         working-directory: simple_live_app
         shell: pwsh
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: |
           $dart = Join-Path $env:FLUTTER_OHOS_ROOT "bin\dart.bat"
           & $dart run tool/app_version.dart check
