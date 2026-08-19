@@ -15,18 +15,25 @@ import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
 import 'package:simple_live_app/widgets/page_grid_view.dart';
 
-class FollowUserPage extends GetView<FollowUserController> {
+class FollowUserPage extends StatefulWidget {
   const FollowUserPage({Key? key}) : super(key: key);
 
   @override
+  State<FollowUserPage> createState() => _FollowUserPageState();
+}
+
+class _FollowUserPageState extends State<FollowUserPage> {
+
+  @override
   Widget build(BuildContext context) {
+    final controller = Get.find<FollowUserController>();
     return Scaffold(
       appBar: AppBar(
         title: const Text("关注用户"),
         actions: [
           IconButton(
             tooltip: "搜索主播",
-            onPressed: () => _showSearchDialog(context),
+            onPressed: () => _showSearchDialog(context, controller),
             icon: Obx(
               () => Icon(
                 controller.searchKeyword.value.isEmpty
@@ -37,7 +44,7 @@ class FollowUserPage extends GetView<FollowUserController> {
           ),
           IconButton(
             tooltip: "显示与筛选",
-            onPressed: () => _showDisplaySheet(context),
+            onPressed: () => _showDisplaySheet(context, controller),
             icon: const Icon(Icons.tune),
           ),
           Obx(
@@ -115,7 +122,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                   Get.toNamed(RoutePath.kSync);
                   break;
                 case "tags":
-                  showTagsManager();
+                  showTagsManager(controller);
                   break;
               }
             },
@@ -183,7 +190,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                 () => _buildRefreshProgress(context),
               ),
               Obx(
-                () => _buildSearchFilterBar(context),
+                () => _buildSearchFilterBar(controller),
               ),
               Padding(
                 padding: AppStyle.edgeInsetsH8,
@@ -237,10 +244,11 @@ class FollowUserPage extends GetView<FollowUserController> {
                   () {
                     // 建立对多选集合的响应依赖。
                     final _ = controller.selectedMultiRoomCount.value;
-                    final layout = _resolveLayoutSpec(context);
-                    final gridPadding = layout.itemStyle == FollowUserItemStyle.card
-                        ? const EdgeInsets.only(left: 8, right: 8, bottom: 96)
-                        : const EdgeInsets.only(bottom: 96);
+                    final layout = _resolveLayoutSpec(context, controller);
+                    final gridPadding =
+                        layout.itemStyle == FollowUserItemStyle.card
+                            ? const EdgeInsets.only(left: 8, right: 8, bottom: 96)
+                            : const EdgeInsets.only(bottom: 96);
                     return GestureDetector(
                       behavior: HitTestBehavior.translucent,
                       onHorizontalDragEnd: (details) {
@@ -267,8 +275,9 @@ class FollowUserPage extends GetView<FollowUserController> {
                         showPCRefreshButton: false,
                         itemBuilder: (_, i) {
                           final item = controller.list[i];
-                          final isCurrent = "${item.siteId}_${item.roomId}" ==
-                              CurrentRoomService.instance.currentKey;
+                          final isCurrent =
+                              "${item.siteId}_${item.roomId}" ==
+                                  CurrentRoomService.instance.currentKey;
                           return FollowUserItem(
                             item: item,
                             style: layout.itemStyle,
@@ -289,7 +298,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                               controller.openFollowRoom(item);
                             },
                             onLongPress: () {
-                              setFollowTagDialog(item);
+                              setFollowTagDialog(controller, item);
                             },
                             playing: controller.isSelectedForMultiRoom(item) ||
                                 isCurrent,
@@ -308,7 +317,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                     left: 16,
                     right: 16,
                     bottom: PlatformUtils.isMobileApp ? 12 : 18,
-                    child: _buildFloatingPaginationBar(context),
+                    child: _buildFloatingPaginationBar(controller, context),
                   )
                 : const SizedBox.shrink(),
           ),
@@ -317,7 +326,10 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  _FollowLayoutSpec _resolveLayoutSpec(BuildContext context) {
+  _FollowLayoutSpec _resolveLayoutSpec(
+    BuildContext context,
+    FollowUserController controller,
+  ) {
     final width = MediaQuery.of(context).size.width;
     final style = AppSettingsController.instance.followDisplayStyle.value;
     final showLiveCover =
@@ -345,7 +357,7 @@ class FollowUserPage extends GetView<FollowUserController> {
       // previous 108px body clipped the entire platform/status row below the
       // card border when the room title occupied two lines.
       final cardExtent = showLiveCover
-          ? coverHeight + (mobile ? 84 : 88)
+          ? coverHeight + (mobile ? 80 : 84)
           : (mobile ? 220.0 : 228.0);
       return _FollowLayoutSpec(
         itemStyle: FollowUserItemStyle.card,
@@ -366,7 +378,7 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  Widget _buildSearchFilterBar(BuildContext context) {
+  Widget _buildSearchFilterBar(FollowUserController controller) {
     if (controller.searchKeyword.value.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -385,7 +397,10 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  Future<void> _showSearchDialog(BuildContext context) async {
+  Future<void> _showSearchDialog(
+    BuildContext context,
+    FollowUserController controller,
+  ) async {
     final textController = TextEditingController(
       text: controller.searchKeyword.value,
     );
@@ -438,7 +453,10 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  void _showDisplaySheet(BuildContext context) {
+  void _showDisplaySheet(
+    BuildContext context,
+    FollowUserController controller,
+  ) {
     Utils.showBottomSheet(
       title: "显示与筛选",
       child: Obx(
@@ -453,25 +471,39 @@ class FollowUserPage extends GetView<FollowUserController> {
                   const ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text("显示样式"),
-                    subtitle: Text("默认关闭封面时使用头像信息布局，开启后显示直播间封面图"),
+                    subtitle:
+                        Text("默认关闭封面时使用头像信息布局，开启后显示直播间封面图"),
                   ),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: [
                       _buildStyleChip(
-                          "default", "默认", settings.followDisplayStyle.value),
+                        controller,
+                        "default",
+                        "默认",
+                        settings.followDisplayStyle.value,
+                      ),
                       _buildStyleChip(
-                          "compact", "紧凑", settings.followDisplayStyle.value),
+                        controller,
+                        "compact",
+                        "紧凑",
+                        settings.followDisplayStyle.value,
+                      ),
                       _buildStyleChip(
-                          "card", "卡片", settings.followDisplayStyle.value),
+                        controller,
+                        "card",
+                        "卡片",
+                        settings.followDisplayStyle.value,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text("展示直播封面"),
-                    subtitle: const Text("开启后显示直播间封面图；关闭时只显示主播头像和信息"),
+                    subtitle:
+                        const Text("开启后显示直播间封面图；关闭时只显示主播头像和信息"),
                     value: settings.followShowLiveCover.value,
                     onChanged: controller.setShowLiveCover,
                   ),
@@ -486,7 +518,8 @@ class FollowUserPage extends GetView<FollowUserController> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text("进入关注页后自动刷新"),
-                    subtitle: const Text("先显示本地列表，再异步全量刷新；关注过多时极易触发抖音限制"),
+                    subtitle:
+                        const Text("先显示本地列表，再异步全量刷新；关注过多时极易触发抖音限制"),
                     value: settings.followRefreshOnEnter.value,
                     onChanged: (value) async {
                       if (value) {
@@ -511,7 +544,12 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  Widget _buildStyleChip(String value, String label, String currentValue) {
+  Widget _buildStyleChip(
+    FollowUserController controller,
+    String value,
+    String label,
+    String currentValue,
+  ) {
     return ChoiceChip(
       label: Text(label),
       selected: currentValue == value,
@@ -521,7 +559,10 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  Widget _buildFloatingPaginationBar(BuildContext context) {
+  Widget _buildFloatingPaginationBar(
+    FollowUserController controller,
+    BuildContext context,
+  ) {
     return SafeArea(
       top: false,
       child: Center(
@@ -620,7 +661,10 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  void setFollowTagDialog(FollowUser item) {
+  void setFollowTagDialog(
+    FollowUserController controller,
+    FollowUser item,
+  ) {
     List<FollowUserTag> copiedList = [
       controller.tagList.first,
       ...controller.tagList.skip(3),
@@ -710,7 +754,7 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  void showTagsManager() {
+  void showTagsManager(FollowUserController controller) {
     Utils.showBottomSheet(
       title: '标签管理',
       child: Column(
@@ -722,7 +766,7 @@ class FollowUserPage extends GetView<FollowUserController> {
             title: const Text("添加标签"),
             leading: const Icon(Icons.add),
             onTap: () {
-              editTagDialog("添加标签");
+              editTagDialog(controller, "添加标签");
             },
           ),
           AppStyle.divider,
@@ -737,7 +781,11 @@ class FollowUserPage extends GetView<FollowUserController> {
                     title: GestureDetector(
                       child: Text(item.tag),
                       onLongPress: () {
-                        editTagDialog("修改标签", followUserTag: item);
+                        editTagDialog(
+                          controller,
+                          "修改标签",
+                          followUserTag: item,
+                        );
                       },
                     ),
                     leading: IconButton(
@@ -759,7 +807,11 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  void editTagDialog(String title, {FollowUserTag? followUserTag}) {
+  void editTagDialog(
+    FollowUserController controller,
+    String title, {
+    FollowUserTag? followUserTag,
+  }) {
     final TextEditingController tagEditController =
         TextEditingController(text: followUserTag?.tag);
     bool upMode = title == "添加标签";
