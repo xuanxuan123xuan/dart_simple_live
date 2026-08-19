@@ -372,14 +372,15 @@ void main() {
   });
 
   group('KuaishouSite follow status', () {
-    test('uses anonymous public-page parsing instead of the account Cookie',
+    test('uses authenticated detail before anonymous public-page parsing',
         () async {
-      final seenHeaders = <Map<String, dynamic>>[];
+      final anonymousHeaders = <Map<String, dynamic>>[];
+      final authenticatedHeaders = <Map<String, dynamic>>[];
       final anonymousDio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
             onRequest: (options, handler) {
-              seenHeaders.add(Map<String, dynamic>.from(options.headers));
+              anonymousHeaders.add(Map<String, dynamic>.from(options.headers));
               handler.resolve(
                 Response<String>(
                   requestOptions: options,
@@ -394,11 +395,17 @@ void main() {
         ..interceptors.add(
           InterceptorsWrapper(
             onRequest: (options, handler) {
+              authenticatedHeaders.add(Map<String, dynamic>.from(
+                options.headers,
+              ));
               handler.resolve(
                 Response<String>(
                   requestOptions: options,
                   statusCode: 200,
-                  data: _kuaishouRateLimitedPage(roomId: 'room-1'),
+                  data: _kuaishouLivePage(
+                    roomId: 'room-1',
+                    includePlayback: false,
+                  ),
                 ),
               );
             },
@@ -415,9 +422,88 @@ void main() {
 
       final state = await site.getFollowLiveStatusState(roomId: 'room-1');
 
-      expect(state, LiveStatusState.offline);
-      expect(seenHeaders, hasLength(1));
-      expect(seenHeaders.single['cookie'], isNull);
+      expect(state, LiveStatusState.live);
+      expect(anonymousHeaders, isEmpty);
+      expect(authenticatedHeaders, hasLength(1));
+      expect(authenticatedHeaders.single['cookie'], contains('secret'));
+    });
+
+    test('follow status falls back to anonymous on ordinary auth parse failure',
+        () async {
+      var anonymousRequests = 0;
+      var authenticatedRequests = 0;
+      var authenticatedPageRequests = 0;
+      final anonymousDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              anonymousRequests++;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouOfflinePage(roomId: 'fallback-room'),
+                ),
+              );
+            },
+          ),
+        );
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              authenticatedRequests++;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: '<html><body>empty shell</body></html>',
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: anonymousDio,
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=secret',
+          kww: '',
+        );
+      final authenticatedPageInterceptor = InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (options.uri.path != '/u/fallback-room') {
+            handler.next(options);
+            return;
+          }
+          authenticatedPageRequests++;
+          handler.resolve(
+            Response<String>(
+              requestOptions: options,
+              statusCode: 200,
+              data: '<html><body>empty shell</body></html>',
+            ),
+          );
+        },
+      );
+      HttpClient.instance.dio.interceptors.add(authenticatedPageInterceptor);
+      try {
+        final state =
+            await site.getFollowLiveStatusState(roomId: 'fallback-room');
+
+        expect(state, LiveStatusState.offline);
+        expect(authenticatedRequests, 1);
+        expect(authenticatedPageRequests, 1);
+        expect(anonymousRequests, 1);
+      } finally {
+        HttpClient.instance.dio.interceptors
+            .remove(authenticatedPageInterceptor);
+      }
     });
 
     test('follow status returns unknown when anonymous parsing fails',

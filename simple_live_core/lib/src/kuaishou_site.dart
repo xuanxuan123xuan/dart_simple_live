@@ -2082,17 +2082,53 @@ class KuaishouSite extends LiveSite {
     return getAnonymousLiveStatusState(roomId: roomId);
   }
 
-  /// Follow-list entry point. Account failover belongs to the whole batch, so
-  /// this method deliberately stays on the anonymous status path so follow
-  /// refresh does not depend on the account detail chain.
+  /// Follow-list entry point. Prefer the authenticated detail chain when an
+  /// account is available; Kuaishou's anonymous room page can be a rate-limit
+  /// shell whose `isLiving=false` is not real offline evidence.
   Future<LiveStatusState> getFollowLiveStatusState({
     required String roomId,
-  }) async {
-    return getAnonymousLiveStatusState(roomId: roomId);
+  }) {
+    final transport = _anonymousMode ? null : _preferredCookieTransport();
+    if (transport == null) {
+      return getAnonymousLiveStatusState(roomId: roomId);
+    }
+
+    return coordinator.coalesce(
+      key: '${transport.cacheNamespace}:follow_live_status:$roomId',
+      cacheTtlForValue: anonymousStatusCacheTtl,
+      bypassCache: KuaishouRequestTrace.forceNetwork,
+      task: () => KuaishouRequestTrace.run(
+        KuaishouRequestSource.followStatus,
+        () async {
+          try {
+            final detail = await _getRoomDetailForTransport(
+              roomId,
+              source: KuaishouRequestSource.followStatus,
+              transport: transport,
+            );
+            return detail.resolvedLiveStatus;
+          } on KuaishouCooldownError {
+            rethrow;
+          } on CoreError catch (error) {
+            if (error.statusCode == 401 ||
+                error.statusCode == 403 ||
+                error.statusCode == 429) {
+              rethrow;
+            }
+            return getAnonymousLiveStatusState(roomId: roomId);
+          } catch (_) {
+            return getAnonymousLiveStatusState(roomId: roomId);
+          }
+        },
+        scopeId: KuaishouRequestTrace.scopeId,
+        forceNetwork: KuaishouRequestTrace.forceNetwork,
+      ),
+    );
   }
 
-  /// 兼容旧调用名。关注状态恢复为匿名公开页请求，避免依赖登录房间
-  /// 详情链路造成冷启动时的状态丢失。
+  /// Anonymous public-page status path. Follow refresh only uses this when no
+  /// authenticated account is available or authenticated parsing has a normal
+  /// non-rate-limit failure.
   Future<LiveStatusState> getAnonymousLiveStatusState({
     required String roomId,
   }) {
