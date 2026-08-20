@@ -1,5 +1,0 @@
-name: coverage_test_files
-
-dev_dependencies:
-  coverage:
-    path: ../../

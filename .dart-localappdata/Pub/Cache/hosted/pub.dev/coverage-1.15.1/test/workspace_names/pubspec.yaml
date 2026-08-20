@@ -1,4 +1,0 @@
-name: workspace_names
-workspace:
-- pkgs/bar
-- pkgs/foo

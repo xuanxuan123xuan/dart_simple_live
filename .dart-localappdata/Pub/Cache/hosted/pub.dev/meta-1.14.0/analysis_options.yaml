@@ -1,5 +1,0 @@
-include: package:lints/recommended.yaml
-
-linter:
-  rules:
-    - flutter_style_todos

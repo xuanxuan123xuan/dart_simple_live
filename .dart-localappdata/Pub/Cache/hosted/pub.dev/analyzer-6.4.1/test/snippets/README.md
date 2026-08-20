@@ -1,1 +1,0 @@
-The 'snippets' directory exists to enable the test in 'verify_docs_test.dart'.

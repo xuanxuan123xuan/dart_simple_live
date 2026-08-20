@@ -4,15 +4,26 @@ simple_live_tv_app/.vscode/settings.json
 
 # Local workspace metadata
 .codex/
+.codex-worktrees/
+.reasonix/
+reasonix.toml
+
+# Dart / Flutter local state
+.dart-appdata/
+.dart-localappdata/
+.tmp/
+**/.dart_tool/
+**/.dart-tool-home/
+**/build/
 
 # Local release and build artifacts
+artifacts/
 release/
 signing-backup/
 models/
 issue_logs/
 experience/
 graphify-out/
-**/android/app/build/
 **/android/key.properties
 **/android/*.jks
 **/android/*.keystore

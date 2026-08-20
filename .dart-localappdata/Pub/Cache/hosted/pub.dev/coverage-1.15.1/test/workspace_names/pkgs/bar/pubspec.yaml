@@ -1,4 +1,0 @@
-name: bar
-resolution: workspace
-workspace:
-- bar_example

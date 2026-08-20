@@ -1,5 +1,0 @@
-tags:
-  # Tests that start subprocesses, so are slower and can be a bit flaky.
-  integration:
-    timeout: 2x
-    retry: 3

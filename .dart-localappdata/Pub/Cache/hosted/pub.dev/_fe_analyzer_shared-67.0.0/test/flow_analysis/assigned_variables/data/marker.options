@@ -1,2 +1,0 @@
-cfe=pkg/front_end/test/id_tests/assigned_variables_test.dart
-analyzer=pkg/analyzer/test/id_tests/assigned_variables_test.dart
