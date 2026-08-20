@@ -187,6 +187,34 @@ void main() {
     }
   });
 
+  testWidgets('unconfirmed covered list layout shows status on cover', (
+    tester,
+  ) async {
+    final item = _followUser()
+      ..face = 'asset://assets/images/bilibili.png'
+      ..liveStatus.value = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 420,
+            height: 94,
+            child: FollowUserItem(
+              item: item,
+              showLiveCover: true,
+              onRemove: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('未确认'), findsOneWidget);
+  });
+
   testWidgets('hidden special action leaves remove action vertically centered',
       (
     tester,

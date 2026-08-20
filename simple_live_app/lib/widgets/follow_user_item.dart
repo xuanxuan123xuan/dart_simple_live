@@ -634,12 +634,13 @@ class FollowUserItem extends StatelessWidget {
   }) {
     final theme = Theme.of(context);
     if (item.liveStatus.value != 2) {
+      final isUnconfirmed = item.liveStatus.value == 0;
       return Container(
         color: theme.colorScheme.surfaceContainerHighest,
         alignment: Alignment.center,
-        child: showStatusPlaceholder
+        child: showStatusPlaceholder || isUnconfirmed
             ? Text(
-                "未直播",
+                isUnconfirmed ? "未确认" : "未直播",
                 style: theme.textTheme.titleMedium?.copyWith(
                   color: Colors.grey.shade600,
                   fontWeight: FontWeight.w600,
