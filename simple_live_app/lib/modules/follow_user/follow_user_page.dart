@@ -117,6 +117,12 @@ class _FollowUserPageState extends State<FollowUserPage> {
             tooltip: "更多",
             onSelected: (value) {
               switch (value) {
+                case "export_text":
+                  FollowService.instance.exportText();
+                  break;
+                case "input_text":
+                  FollowService.instance.inputText();
+                  break;
                 case "backup":
                   Get.toNamed(RoutePath.kSync);
                   break;
@@ -126,6 +132,26 @@ class _FollowUserPageState extends State<FollowUserPage> {
               }
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: "export_text",
+                child: Row(
+                  children: [
+                    Icon(Remix.text),
+                    SizedBox(width: 12),
+                    Text("导出文本"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: "input_text",
+                child: Row(
+                  children: [
+                    Icon(Remix.file_text_line),
+                    SizedBox(width: 12),
+                    Text("导入文本"),
+                  ],
+                ),
+              ),
               const PopupMenuItem(
                 value: "backup",
                 child: Row(
