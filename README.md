@@ -186,10 +186,10 @@ $FLUTTER_OHOS_ROOT/bin/flutter.bat build hap --release \
 
 ### 版本号维护
 
-应用版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。当前版本为 `1.13.3+11303`，构建号规则为：
+应用版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。命名方式为年份+季度+版本。当前版本为 `26.3.1+26301`，构建号规则为：
 
 ```text
-major × 10000 + minor × 100 + patch
+major × 1000 + minor × 100 + patch
 ```
 
 修改版本后在 `simple_live_app` 目录执行：
