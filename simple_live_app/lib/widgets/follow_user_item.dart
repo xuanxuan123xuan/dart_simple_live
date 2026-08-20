@@ -744,7 +744,7 @@ class FollowUserItem extends StatelessWidget {
     }
 
     final children = <Widget>[
-      if (onSpecialTap != null)
+      if (showSpecialMark && onSpecialTap != null)
         constrainVerticalAction(
           IconButton(
             tooltip: item.isSpecialFollow ? "取消特别关注" : "特别关注",

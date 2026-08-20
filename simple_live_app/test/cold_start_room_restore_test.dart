@@ -73,4 +73,19 @@ void main() {
       isFalse,
     );
   });
+
+  test('special follow visibility defaults off and is persisted', () async {
+    final settings = AppSettingsController();
+
+    expect(settings.followShowSpecialFollow.value, isFalse);
+
+    settings.setFollowShowSpecialFollow(true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(settings.followShowSpecialFollow.value, isTrue);
+    expect(
+      storage.getValue(LocalStorageService.kFollowShowSpecialFollow, false),
+      isTrue,
+    );
+  });
 }

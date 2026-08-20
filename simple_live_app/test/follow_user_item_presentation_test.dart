@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
@@ -184,6 +185,42 @@ void main() {
         closeTo(cardCenterY, 1),
       );
     }
+  });
+
+  testWidgets('hidden special action leaves remove action vertically centered',
+      (
+    tester,
+  ) async {
+    final item = _followUser()
+      ..face = 'asset://assets/images/bilibili.png'
+      ..isSpecialFollow = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 420,
+            height: 94,
+            child: FollowUserItem(
+              item: item,
+              showLiveCover: true,
+              showSpecialMark: false,
+              onSpecialTap: () {},
+              onRemove: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byIcon(Icons.star), findsNothing);
+    expect(find.byIcon(Icons.star_border), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    final itemCenter = tester.getCenter(find.byType(FollowUserItem));
+    final removeCenter = tester.getCenter(find.byIcon(Remix.dislike_line));
+    expect(removeCenter.dy, closeTo(itemCenter.dy, 0.01));
   });
 }
 

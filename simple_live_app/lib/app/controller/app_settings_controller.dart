@@ -364,6 +364,10 @@ class AppSettingsController extends GetxController {
       LocalStorageService.kFollowShowLiveCover,
       false,
     );
+    followShowSpecialFollow.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kFollowShowSpecialFollow,
+      false,
+    );
 
     rememberWindowPlacement.value = LocalStorageService.instance.getValue(
       LocalStorageService.kRememberWindowPlacement,
@@ -2035,6 +2039,7 @@ class AppSettingsController extends GetxController {
   var followOnlyLive = false.obs;
   var followRefreshOnEnter = false.obs;
   var followShowLiveCover = false.obs;
+  var followShowSpecialFollow = false.obs;
 
   String _normalizeFollowDisplayStyle(String value) {
     if (followDisplayStyleOptions.contains(value)) {
@@ -2088,6 +2093,14 @@ class AppSettingsController extends GetxController {
     followShowLiveCover.value = value;
     LocalStorageService.instance.setValue(
       LocalStorageService.kFollowShowLiveCover,
+      value,
+    );
+  }
+
+  void setFollowShowSpecialFollow(bool value) {
+    followShowSpecialFollow.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kFollowShowSpecialFollow,
       value,
     );
   }

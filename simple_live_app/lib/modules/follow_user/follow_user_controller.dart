@@ -277,6 +277,11 @@ class FollowUserController extends BasePageController<FollowUser> {
     return result;
   }
 
+  bool _shouldDisplayFollowUser(FollowUser item) {
+    return AppSettingsController.instance.followShowSpecialFollow.value ||
+        !item.isSpecialFollow;
+  }
+
   List<FollowGroupOption> get groupOptions {
     final options = <FollowGroupOption>[
       const FollowGroupOption(id: "all", title: "全部"),
@@ -289,6 +294,7 @@ class FollowUserController extends BasePageController<FollowUser> {
       ]);
     } else {
       final siteIds = FollowService.instance.followList
+          .where(_shouldDisplayFollowUser)
           .map((item) => item.siteId)
           .toSet()
           .toList();
@@ -329,7 +335,9 @@ class FollowUserController extends BasePageController<FollowUser> {
         break;
       }
     }
-    final source = FollowService.instance.followList;
+    final source = FollowService.instance.followList.where(
+      _shouldDisplayFollowUser,
+    );
     if (selected == null || selected.id == "all") {
       selectedGroupId.value = "all";
       return FollowService.instance.sortFollowUsers(
@@ -408,6 +416,12 @@ class FollowUserController extends BasePageController<FollowUser> {
 
   void setShowLiveCover(bool value) {
     AppSettingsController.instance.setFollowShowLiveCover(value);
+    filterData();
+  }
+
+  void setShowSpecialFollow(bool value) {
+    AppSettingsController.instance.setFollowShowSpecialFollow(value);
+    currentDisplayPage.value = 1;
     filterData();
   }
 

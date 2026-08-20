@@ -308,6 +308,8 @@ class _FollowUserPageState extends State<FollowUserPage> {
                             style: layout.itemStyle,
                             showLiveCover: AppSettingsController
                                 .instance.followShowLiveCover.value,
+                            showSpecialMark: AppSettingsController
+                                .instance.followShowSpecialFollow.value,
                             onSpecialTap: () {
                               controller.toggleSpecialFollow(item);
                             },
@@ -528,6 +530,13 @@ class _FollowUserPageState extends State<FollowUserPage> {
                     subtitle: const Text("开启后显示直播间封面图；关闭时只显示主播头像和信息"),
                     value: settings.followShowLiveCover.value,
                     onChanged: controller.setShowLiveCover,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text("显示特别关注"),
+                    subtitle: const Text("开启后在关注页列表中显示已标记为特别关注的主播"),
+                    value: settings.followShowSpecialFollow.value,
+                    onChanged: controller.setShowSpecialFollow,
                   ),
                   const SizedBox(height: 8),
                   SwitchListTile(
