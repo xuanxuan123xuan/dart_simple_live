@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
@@ -58,17 +56,81 @@ class FollowUserItem extends StatelessWidget {
     }
     final theme = Theme.of(context);
     final coverWidth = compact ? 122.0 : 152.0;
-    final avatarSize = compact ? 34.0 : 38.0;
+    final coverHeight = coverWidth * 9 / 16;
+    final avatarSize = compact ? 34.0 : 40.0;
+    final avatarOverlap = avatarSize / 2;
     final radius = BorderRadius.circular(compact ? 14 : 16);
+    final cardColor = _cardBackgroundColor(theme);
     final titleStyle = compact
-        ? theme.textTheme.titleSmall
-        : theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600);
+        ? theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            height: 1.05,
+          )
+        : theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            height: 1.05,
+          );
+    final roomTitleStyle =
+        (compact ? theme.textTheme.bodySmall : theme.textTheme.bodyMedium)
+            ?.copyWith(
+      fontWeight: FontWeight.w600,
+      height: 1.05,
+    );
     final subtitleStyle = theme.textTheme.bodySmall?.copyWith(
       color: Colors.grey.shade600,
-      height: 1.15,
+      height: 1.05,
     );
+    final liveDuration = _liveDurationText();
+    final platformText =
+        liveDuration.isEmpty ? _site.name : "${_site.name} · $liveDuration";
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final metadataTextScaler = TextScaler.linear(
+      textScale > 1.1 ? 1.1 : textScale,
+    );
+    Widget buildPlatformRow() {
+      return Row(
+        children: [
+          Image.asset(
+            _site.logo,
+            width: compact ? 14 : 16,
+            height: compact ? 14 : 16,
+          ),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(
+              platformText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: subtitleStyle,
+            ),
+          ),
+          if (playing) ...[
+            const SizedBox(width: 6),
+            Text(
+              "正在观看",
+              maxLines: 1,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w600,
+                height: 1.05,
+              ),
+            ),
+          ],
+          if (showSpecialMark && item.isSpecialFollow)
+            const Padding(
+              padding: EdgeInsets.only(left: 5),
+              child: Icon(
+                Icons.star,
+                color: Colors.amber,
+                size: 15,
+              ),
+            ),
+        ],
+      );
+    }
+
     return Material(
-      color: _cardBackgroundColor(theme),
+      color: cardColor,
       borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -77,113 +139,99 @@ class FollowUserItem extends StatelessWidget {
         onLongPress: onLongPress,
         child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
-          padding: EdgeInsets.all(compact ? 8 : 10),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               SizedBox(
-                width: coverWidth,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(compact ? 12 : 14),
-                  child: AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: _buildCover(context, radius: compact ? 12 : 14),
-                  ),
+                width: coverWidth + avatarOverlap,
+                height: coverHeight,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    SizedBox(
+                      width: coverWidth,
+                      height: coverHeight,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(compact ? 10 : 12),
+                        child: _buildCover(
+                          context,
+                          radius: compact ? 10 : 12,
+                          showTitleOverlay: false,
+                          showStatusPlaceholder: false,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: coverWidth - avatarOverlap,
+                      top: (coverHeight - avatarSize) / 2,
+                      child: _buildFramedAvatar(
+                        size: avatarSize,
+                        borderColor: cardColor,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              SizedBox(width: compact ? 8 : 10),
+              SizedBox(width: compact ? 6 : 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                child: SizedBox(
+                  height: coverHeight,
+                  child: MediaQuery(
+                    data: MediaQuery.of(context).copyWith(
+                      textScaler: metadataTextScaler,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        NetImage(
-                          item.face,
-                          width: avatarSize,
-                          height: avatarSize,
-                          borderRadius: avatarSize / 2,
-                        ),
-                        SizedBox(width: compact ? 8 : 10),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text.rich(
-                                TextSpan(
-                                  text: item.userName,
+                          child: item.liveStatus.value == 2
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    WidgetSpan(
-                                      alignment: ui.PlaceholderAlignment.middle,
-                                      child: Padding(
-                                        padding: const EdgeInsets.only(left: 6),
-                                        child: _buildStatusDot(size: 7),
-                                      ),
+                                    Text(
+                                      item.userName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: titleStyle,
                                     ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _displayRoomTitle(),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: roomTitleStyle,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    buildPlatformRow(),
+                                  ],
+                                )
+                              : Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      item.userName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.left,
+                                      style: titleStyle,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    buildPlatformRow(),
                                   ],
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: titleStyle,
-                              ),
-                              SizedBox(height: compact ? 3 : 4),
-                              Text(
-                                _displayRoomTitle(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
                         ),
-                        SizedBox(width: compact ? 4 : 6),
+                        SizedBox(width: compact ? 2 : 4),
                         _buildActionArea(
                           context,
-                          compact: compact,
+                          compact: true,
                           vertical: true,
                         ),
                       ],
                     ),
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        Image.asset(
-                          _site.logo,
-                          width: compact ? 16 : 18,
-                          height: compact ? 16 : 18,
-                        ),
-                        Text(
-                          _site.name,
-                          style: subtitleStyle,
-                        ),
-                        if (_liveDurationText().isNotEmpty)
-                          Text(
-                            _liveDurationText(),
-                            style: subtitleStyle,
-                          ),
-                        if (playing)
-                          Text(
-                            "正在观看",
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        if (showSpecialMark && item.isSpecialFollow)
-                          const Icon(
-                            Icons.star,
-                            color: Colors.amber,
-                            size: 16,
-                          ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -370,7 +418,7 @@ class FollowUserItem extends StatelessWidget {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          SizedBox(width: avatarNameOffset),
+                          const SizedBox(width: avatarNameOffset),
                           if (showHeaderUserName)
                             Expanded(
                               child: Padding(
@@ -582,19 +630,22 @@ class FollowUserItem extends StatelessWidget {
     BuildContext context, {
     required double radius,
     bool showTitleOverlay = true,
+    bool showStatusPlaceholder = true,
   }) {
     final theme = Theme.of(context);
     if (item.liveStatus.value != 2) {
       return Container(
         color: theme.colorScheme.surfaceContainerHighest,
         alignment: Alignment.center,
-        child: Text(
-          "未直播",
-          style: theme.textTheme.titleMedium?.copyWith(
-            color: Colors.grey.shade600,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        child: showStatusPlaceholder
+            ? Text(
+                "未直播",
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            : null,
       );
     }
     final coverImage = _coverImage;
@@ -688,18 +739,31 @@ class FollowUserItem extends StatelessWidget {
     required bool vertical,
   }) {
     final iconSize = compact ? 18.0 : 20.0;
+    Widget constrainVerticalAction(Widget child) {
+      return vertical ? SizedBox.square(dimension: 28, child: child) : child;
+    }
+
     final children = <Widget>[
       if (onSpecialTap != null)
-        IconButton(
-          tooltip: item.isSpecialFollow ? "取消特别关注" : "特别关注",
-          iconSize: iconSize,
-          visualDensity: VisualDensity.compact,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: onSpecialTap,
-          icon: Icon(
-            item.isSpecialFollow ? Icons.star : Icons.star_border,
-            color: item.isSpecialFollow ? Colors.amber : null,
+        constrainVerticalAction(
+          IconButton(
+            tooltip: item.isSpecialFollow ? "取消特别关注" : "特别关注",
+            iconSize: iconSize,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: vertical
+                ? const BoxConstraints()
+                : const BoxConstraints(minWidth: 28, minHeight: 28),
+            style: vertical
+                ? IconButton.styleFrom(
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  )
+                : null,
+            onPressed: onSpecialTap,
+            icon: Icon(
+              item.isSpecialFollow ? Icons.star : Icons.star_border,
+              color: item.isSpecialFollow ? Colors.amber : null,
+            ),
           ),
         )
       else if (showSpecialMark && item.isSpecialFollow)
@@ -709,13 +773,22 @@ class FollowUserItem extends StatelessWidget {
           size: iconSize,
         ),
       if (onRemove != null)
-        IconButton(
-          iconSize: iconSize,
-          visualDensity: VisualDensity.compact,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: onRemove,
-          icon: const Icon(Remix.dislike_line),
+        constrainVerticalAction(
+          IconButton(
+            iconSize: iconSize,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: vertical
+                ? const BoxConstraints()
+                : const BoxConstraints(minWidth: 28, minHeight: 28),
+            style: vertical
+                ? IconButton.styleFrom(
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  )
+                : null,
+            onPressed: onRemove,
+            icon: const Icon(Remix.dislike_line),
+          ),
         ),
     ];
     if (children.isEmpty) {

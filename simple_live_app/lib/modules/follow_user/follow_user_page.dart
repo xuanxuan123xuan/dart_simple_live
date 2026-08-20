@@ -244,14 +244,11 @@ class _FollowUserPageState extends State<FollowUserPage> {
                     // 建立对多选集合的响应依赖。
                     final _ = controller.selectedMultiRoomCount.value;
                     final layout = _resolveLayoutSpec(context, controller);
-                    final gridPadding =
-                        layout.itemStyle == FollowUserItemStyle.card
-                            ? const EdgeInsets.only(
-                                left: 8,
-                                right: 8,
-                                bottom: 96,
-                              )
-                            : const EdgeInsets.only(bottom: 96);
+                    const gridPadding = EdgeInsets.only(
+                      left: 8,
+                      right: 8,
+                      bottom: 96,
+                    );
                     return GestureDetector(
                       behavior: HitTestBehavior.translucent,
                       onHorizontalDragEnd: (details) {
@@ -341,8 +338,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
       return _FollowLayoutSpec(
         itemStyle: FollowUserItemStyle.compactList,
         crossAxisCount: mobile ? 1 : (width >= 1440 ? 2 : 1),
-        mainAxisExtent:
-            showLiveCover ? (mobile ? 112 : 118) : (mobile ? 70 : 78),
+        mainAxisExtent: showLiveCover ? 77 : (mobile ? 70 : 78),
         childAspectRatio: 3.8,
         crossAxisSpacing: 12,
         mainAxisSpacing: showLiveCover ? 10 : 8,
@@ -373,7 +369,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
     return _FollowLayoutSpec(
       itemStyle: FollowUserItemStyle.defaultList,
       crossAxisCount: mobile ? 1 : (width >= 1520 ? 2 : 1),
-      mainAxisExtent: showLiveCover ? (mobile ? 132 : 138) : (mobile ? 82 : 92),
+      mainAxisExtent: showLiveCover ? 94 : (mobile ? 82 : 92),
       childAspectRatio: 3.2,
       crossAxisSpacing: 12,
       mainAxisSpacing: showLiveCover ? 10 : 8,
