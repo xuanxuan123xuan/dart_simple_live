@@ -2,7 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:get/get.dart';
+import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/generated/app_update_channel.g.dart';
+import 'package:simple_live_app/generated/app_version.g.dart';
 import 'package:simple_live_app/models/app_update_model.dart';
 import 'package:simple_live_app/requests/http_error.dart';
 import 'package:simple_live_app/requests/http_client.dart' as requests;
@@ -21,14 +25,38 @@ class AppUpdateService {
   static const releasesPageUrl = 'https://github.com/$repository/releases';
   static const _preferredChannelKey = 'AppUpdatePreferredChannel';
   static const _preferredPackageKeyPrefix = 'AppUpdatePreferredPackage:';
+  static const _autoCheckEnabledKey = 'AppUpdateAutoCheckEnabled';
   static final instance = AppUpdateService();
 
   final requests.HttpClient _httpClient;
   final DeviceInfoPlugin _deviceInfo;
 
+  final RxBool autoCheckEnabled = true.obs;
+  final RxBool backgroundChecking = false.obs;
+  final RxBool updateAvailable = false.obs;
+  final RxnString updateVersion = RxnString();
+  final Rxn<DateTime> lastCheckedAt = Rxn<DateTime>();
+  final Rxn<AppUpdateCatalog> latestCatalog = Rxn<AppUpdateCatalog>();
+  final Rxn<AppUpdateRelease> latestRelease = Rxn<AppUpdateRelease>();
+  final RxnString lastErrorMessage = RxnString();
+
+  Future<void> init() async {
+    autoCheckEnabled.value = LocalStorageService.instance.getValue(
+      _autoCheckEnabledKey,
+      true,
+    );
+  }
+
   AppUpdateChannel get defaultChannel => AppUpdateChannel.fromValue(
         GeneratedAppUpdateChannel.channel,
       );
+
+  int get currentBuildNumber =>
+      int.tryParse(GeneratedAppVersion.buildNumber) ??
+      int.tryParse(Utils.packageInfo.buildNumber) ??
+      0;
+
+  String get currentVersion => GeneratedAppVersion.fullVersion;
 
   AppUpdateChannel get preferredChannel {
     final value = LocalStorageService.instance.getValue<String>(
@@ -58,6 +86,69 @@ class AppUpdateService {
       '',
     );
     return value.isEmpty ? null : value;
+  }
+
+  Future<void> setAutoCheckEnabled(bool enabled) async {
+    autoCheckEnabled.value = enabled;
+    await LocalStorageService.instance.setValue(
+      _autoCheckEnabledKey,
+      enabled,
+    );
+  }
+
+  bool isNewerThanCurrent(AppUpdateRelease release) {
+    return release.buildNumber > currentBuildNumber;
+  }
+
+  Future<AppUpdateCheckResult> checkForUpdates({
+    AppUpdateChannel? channel,
+  }) async {
+    final selectedChannel = channel ?? preferredChannel;
+    final catalog = await fetchCatalog();
+    final release = catalog.releaseForChannel(selectedChannel);
+    recordCheckResult(
+      catalog: catalog,
+      release: release,
+      checkedAt: DateTime.now(),
+    );
+    return AppUpdateCheckResult(
+      catalog: catalog,
+      selectedChannel: selectedChannel,
+      release: release,
+      hasUpdate: release != null && isNewerThanCurrent(release),
+    );
+  }
+
+  Future<void> checkUpdatesInBackground() async {
+    if (!autoCheckEnabled.value || backgroundChecking.value) {
+      return;
+    }
+    backgroundChecking.value = true;
+    lastErrorMessage.value = null;
+    try {
+      final result = await checkForUpdates();
+      if (result.hasUpdate) {
+        Log.i('发现新版本 ${result.release!.version}');
+      }
+    } catch (e, stackTrace) {
+      Log.logPrint('自动检查更新失败: $e\n$stackTrace');
+      lastErrorMessage.value = e.toString();
+    } finally {
+      backgroundChecking.value = false;
+    }
+  }
+
+  void recordCheckResult({
+    required AppUpdateCatalog catalog,
+    required AppUpdateRelease? release,
+    required DateTime checkedAt,
+  }) {
+    latestCatalog.value = catalog;
+    latestRelease.value = release;
+    lastCheckedAt.value = checkedAt;
+    final hasNewVersion = release != null && isNewerThanCurrent(release);
+    updateAvailable.value = hasNewVersion;
+    updateVersion.value = hasNewVersion ? release.version : null;
   }
 
   Future<AppUpdateCatalog> fetchCatalog() async {
@@ -391,4 +482,18 @@ class AppUpdateException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class AppUpdateCheckResult {
+  const AppUpdateCheckResult({
+    required this.catalog,
+    required this.selectedChannel,
+    required this.release,
+    required this.hasUpdate,
+  });
+
+  final AppUpdateCatalog catalog;
+  final AppUpdateChannel selectedChannel;
+  final AppUpdateRelease? release;
+  final bool hasUpdate;
 }

@@ -1,8 +1,6 @@
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/log.dart';
-import 'package:simple_live_app/app/utils.dart';
-import 'package:simple_live_app/generated/app_version.g.dart';
 import 'package:simple_live_app/models/app_update_model.dart';
 import 'package:simple_live_app/services/app_update_service.dart';
 import 'package:url_launcher/url_launcher_string.dart';
@@ -22,18 +20,18 @@ class AppUpdateController extends GetxController {
   final RxnString errorMessage = RxnString();
   final Rxn<DateTime> checkedAt = Rxn<DateTime>();
 
-  int get currentBuildNumber =>
-      int.tryParse(GeneratedAppVersion.buildNumber) ??
-      int.tryParse(Utils.packageInfo.buildNumber) ??
-      0;
+  RxBool get autoCheckEnabled => _service.autoCheckEnabled;
 
-  String get currentVersion => GeneratedAppVersion.fullVersion;
+  int get currentBuildNumber => _service.currentBuildNumber;
 
-  bool get isDifferentChannel => selectedChannel.value != _service.defaultChannel;
+  String get currentVersion => _service.currentVersion;
+
+  bool get isDifferentChannel =>
+      selectedChannel.value != _service.defaultChannel;
 
   bool get hasUpdate {
     final release = selectedRelease.value;
-    return release != null && release.buildNumber > currentBuildNumber;
+    return release != null && _service.isNewerThanCurrent(release);
   }
 
   String get statusText {
@@ -41,7 +39,7 @@ class AppUpdateController extends GetxController {
     if (release == null) {
       return '尚未检查';
     }
-    if (release.buildNumber > currentBuildNumber) {
+    if (_service.isNewerThanCurrent(release)) {
       return '发现新版本';
     }
     if (release.buildNumber == currentBuildNumber) {
@@ -57,7 +55,7 @@ class AppUpdateController extends GetxController {
   void onInit() {
     selectedChannel = _service.preferredChannel.obs;
     super.onInit();
-    _loadCurrentPlatform();
+    _loadInitialState();
   }
 
   Future<void> changeChannel(AppUpdateChannel channel) async {
@@ -69,6 +67,10 @@ class AppUpdateController extends GetxController {
     await _refreshSelectedRelease();
   }
 
+  Future<void> setAutoCheckEnabled(bool enabled) async {
+    await _service.setAutoCheckEnabled(enabled);
+  }
+
   Future<void> checkUpdates() async {
     if (loading.value) {
       return;
@@ -76,9 +78,11 @@ class AppUpdateController extends GetxController {
     loading.value = true;
     errorMessage.value = null;
     try {
-      final nextCatalog = await _service.fetchCatalog();
-      catalog.value = nextCatalog;
-      checkedAt.value = DateTime.now();
+      final result = await _service.checkForUpdates(
+        channel: selectedChannel.value,
+      );
+      catalog.value = result.catalog;
+      checkedAt.value = _service.lastCheckedAt.value;
       await _refreshSelectedRelease();
       if (selectedRelease.value == null) {
         SmartDialog.showToast('没有找到 ${selectedChannel.value.displayName} 发布');
@@ -122,13 +126,25 @@ class AppUpdateController extends GetxController {
     await launchUrlString(url, mode: LaunchMode.externalApplication);
   }
 
-  Future<void> _loadCurrentPlatform() async {
+  Future<void> _loadInitialState() async {
     currentPlatform.value = await _service.detectCurrentPlatform();
+    catalog.value = _service.latestCatalog.value;
+    checkedAt.value = _service.lastCheckedAt.value;
+    await _refreshSelectedRelease();
   }
 
   Future<void> _refreshSelectedRelease() async {
-    final release = catalog.value?.releaseForChannel(selectedChannel.value);
+    final currentCatalog = catalog.value;
+    final release = currentCatalog?.releaseForChannel(selectedChannel.value);
     selectedRelease.value = release;
+    final lastChecked = checkedAt.value;
+    if (currentCatalog != null && lastChecked != null) {
+      _service.recordCheckResult(
+        catalog: currentCatalog,
+        release: release,
+        checkedAt: lastChecked,
+      );
+    }
     if (release == null) {
       recommendedAsset.value = null;
       return;

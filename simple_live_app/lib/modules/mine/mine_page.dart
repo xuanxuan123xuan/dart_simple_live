@@ -10,6 +10,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
+import 'package:simple_live_app/services/app_update_service.dart';
 import 'package:simple_live_app/services/cache_service.dart';
 
 class MinePage extends StatefulWidget {
@@ -48,8 +49,9 @@ class _MinePageState extends State<MinePage> {
       return;
     }
 
+    await _refreshCacheSize();
     final confirmed = await Utils.showAlertDialog(
-      "将清理临时文件和图片缓存，不会删除账号、关注、观看记录或设置。",
+      "当前缓存占用 $_cacheSize。\n\n将清理临时文件和图片缓存，不会删除账号、关注、观看记录或设置。",
       title: "清理缓存",
       confirm: "清理",
     );
@@ -79,6 +81,41 @@ class _MinePageState extends State<MinePage> {
         setState(() => _isClearingCache = false);
       }
     }
+  }
+
+  Widget _buildUpdateTile() {
+    final updateService = AppUpdateService.instance;
+    return Obx(() {
+      final hasUpdate = updateService.updateAvailable.value;
+      return ListTile(
+        leading: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            const Icon(Remix.refresh_line),
+            if (hasUpdate)
+              Positioned(
+                right: -2,
+                top: -2,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const SizedBox(width: 8, height: 8),
+                ),
+              ),
+          ],
+        ),
+        title: const Text("检查更新"),
+        trailing: const Icon(
+          Icons.chevron_right,
+          color: Colors.grey,
+        ),
+        onTap: () {
+          Get.toNamed(RoutePath.kAppUpdate);
+        },
+      );
+    });
   }
 
   @override
@@ -166,9 +203,24 @@ class _MinePageState extends State<MinePage> {
               color: Colors.grey.withAlpha(25),
             ),
             ListTile(
+              leading: const Icon(Remix.settings_3_line),
+              title: const Text("设置"),
+              trailing: const Icon(
+                Icons.chevron_right,
+                color: Colors.grey,
+              ),
+              onTap: () {
+                Get.toNamed(RoutePath.kSettings);
+              },
+            ),
+            Divider(
+              indent: 12,
+              endIndent: 12,
+              color: Colors.grey.withAlpha(25),
+            ),
+            ListTile(
               leading: const Icon(Remix.delete_bin_6_line),
               title: const Text("清理缓存"),
-              subtitle: Text("当前占用 $_cacheSize"),
               trailing: _isClearingCache
                   ? const SizedBox(
                       width: 20,
@@ -187,22 +239,6 @@ class _MinePageState extends State<MinePage> {
               color: Colors.grey.withAlpha(25),
             ),
             ListTile(
-              leading: const Icon(Remix.settings_3_line),
-              title: const Text("设置"),
-              trailing: const Icon(
-                Icons.chevron_right,
-                color: Colors.grey,
-              ),
-              onTap: () {
-                Get.toNamed(RoutePath.kSettings);
-              },
-            ),
-            Divider(
-              indent: 12,
-              endIndent: 12,
-              color: Colors.grey.withAlpha(25),
-            ),
-            ListTile(
               leading: const Icon(Remix.question_line),
               title: const Text("帮助与排障"),
               trailing: const Icon(
@@ -213,6 +249,12 @@ class _MinePageState extends State<MinePage> {
                 Get.toNamed(RoutePath.kHelp);
               },
             ),
+            Divider(
+              indent: 12,
+              endIndent: 12,
+              color: Colors.grey.withAlpha(25),
+            ),
+            _buildUpdateTile(),
           ],
         ),
       ),

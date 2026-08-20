@@ -23,6 +23,22 @@ void main() {
       expect(AppUpdateService.buildNumberFromVersion('bad.version'), 0);
     });
 
+    test('detects newer releases against current build', () {
+      final service = AppUpdateService();
+      final currentBuild = service.currentBuildNumber;
+      final nextRelease = _release(
+        'v9.99.99',
+        buildNumber: currentBuild + 1,
+      );
+      final currentRelease = _release(
+        'v1.13.9',
+        buildNumber: currentBuild,
+      );
+
+      expect(service.isNewerThanCurrent(nextRelease), isTrue);
+      expect(service.isNewerThanCurrent(currentRelease), isFalse);
+    });
+
     test('parses SHA-256 lines from release body', () {
       const hash =
           '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -92,3 +108,16 @@ Map<String, dynamic> _assetJson(String name) => {
       'browser_download_url': 'https://example.com/$name',
       'size': 1024,
     };
+
+AppUpdateRelease _release(String tag, {required int buildNumber}) {
+  return AppUpdateRelease(
+    channel: AppUpdateChannel.stable,
+    tag: tag,
+    version: tag.substring(1),
+    buildNumber: buildNumber,
+    publishedAt: null,
+    assets: const [],
+    body: '',
+    releaseUrl: 'https://example.com/$tag',
+  );
+}

@@ -32,6 +32,7 @@ import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/app_pages.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
+import 'package:simple_live_app/services/app_update_service.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
@@ -575,6 +576,7 @@ Future initServices() async {
   //本地存储
   Log.d("Init LocalStorage Service");
   await Get.put(LocalStorageService()).init();
+  await AppUpdateService.instance.init();
   await Get.put(DBService()).init();
   Get.put(CurrentRoomService());
   await Get.put(PlaybackDisplayCoordinator(), permanent: true).initialize();
@@ -643,6 +645,7 @@ class MyApp extends StatelessWidget {
   static bool _desktopShortcutHandlerBound = false;
   static bool? _desktopShortcutCaptureEnabled;
   static bool _ohosNotificationNavigationBound = false;
+  static bool _appUpdateAutoCheckStarted = false;
 
   const MyApp({super.key});
 
@@ -663,6 +666,12 @@ class MyApp extends StatelessWidget {
       );
       FocusManager.instance.addListener(_syncDesktopShortcutCaptureState);
       _desktopShortcutHandlerBound = true;
+    }
+    if (!_appUpdateAutoCheckStarted) {
+      _appUpdateAutoCheckStarted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(AppUpdateService.instance.checkUpdatesInBackground());
+      });
     }
     unawaited(_syncDesktopShortcutCaptureState());
     bool isDynamicColor = AppSettingsController.instance.isDynamic.value;

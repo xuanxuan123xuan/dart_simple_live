@@ -21,7 +21,17 @@ class AppUpdatePage extends GetView<AppUpdateController> {
         () => ListView(
           padding: AppStyle.pagePadding(),
           children: [
-            _sectionTitle('更新通道'),
+            _sectionTitle('自动检测'),
+            SettingsCard(
+              child: SwitchListTile(
+                secondary: const Icon(Remix.notification_badge_line),
+                title: const Text('自动检测更新'),
+                subtitle: const Text('启动后静默检查，发现新版时显示提示'),
+                value: controller.autoCheckEnabled.value,
+                onChanged: controller.setAutoCheckEnabled,
+              ),
+            ),
+            _sectionTitle('更新通道', top: 24),
             SettingsCard(
               child: Padding(
                 padding: AppStyle.edgeInsetsA16,
