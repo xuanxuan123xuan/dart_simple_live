@@ -23,7 +23,6 @@ class FollowUserPage extends StatefulWidget {
 }
 
 class _FollowUserPageState extends State<FollowUserPage> {
-
   @override
   Widget build(BuildContext context) {
     final controller = Get.find<FollowUserController>();
@@ -247,7 +246,11 @@ class _FollowUserPageState extends State<FollowUserPage> {
                     final layout = _resolveLayoutSpec(context, controller);
                     final gridPadding =
                         layout.itemStyle == FollowUserItemStyle.card
-                            ? const EdgeInsets.only(left: 8, right: 8, bottom: 96)
+                            ? const EdgeInsets.only(
+                                left: 8,
+                                right: 8,
+                                bottom: 96,
+                              )
                             : const EdgeInsets.only(bottom: 96);
                     return GestureDetector(
                       behavior: HitTestBehavior.translucent,
@@ -275,9 +278,8 @@ class _FollowUserPageState extends State<FollowUserPage> {
                         showPCRefreshButton: false,
                         itemBuilder: (_, i) {
                           final item = controller.list[i];
-                          final isCurrent =
-                              "${item.siteId}_${item.roomId}" ==
-                                  CurrentRoomService.instance.currentKey;
+                          final isCurrent = "${item.siteId}_${item.roomId}" ==
+                              CurrentRoomService.instance.currentKey;
                           return FollowUserItem(
                             item: item,
                             style: layout.itemStyle,
@@ -353,12 +355,12 @@ class _FollowUserPageState extends State<FollowUserPage> {
       final availableWidth = width - 16 - (crossAxisCount - 1) * 12;
       final cardWidth = availableWidth / crossAxisCount;
       final coverHeight = cardWidth * 9 / 16;
-      // HarmonyOS uses a larger effective text scale on the tested phone. The
-      // previous 108px body clipped the entire platform/status row below the
-      // card border when the room title occupied two lines.
-      final cardExtent = showLiveCover
-          ? coverHeight + (mobile ? 80 : 84)
-          : (mobile ? 220.0 : 228.0);
+      final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+      final bodyExtent = mobile
+          ? (96.0 + (textScale - 1.0) * 28.0).clamp(96.0, 116.0)
+          : (98.0 + (textScale - 1.0) * 28.0).clamp(98.0, 120.0);
+      final cardExtent =
+          showLiveCover ? coverHeight + bodyExtent : (mobile ? 220.0 : 228.0);
       return _FollowLayoutSpec(
         itemStyle: FollowUserItemStyle.card,
         crossAxisCount: crossAxisCount,
@@ -471,8 +473,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   const ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text("显示样式"),
-                    subtitle:
-                        Text("默认关闭封面时使用头像信息布局，开启后显示直播间封面图"),
+                    subtitle: Text("默认关闭封面时使用头像信息布局，开启后显示直播间封面图"),
                   ),
                   Wrap(
                     spacing: 8,
@@ -502,8 +503,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text("展示直播封面"),
-                    subtitle:
-                        const Text("开启后显示直播间封面图；关闭时只显示主播头像和信息"),
+                    subtitle: const Text("开启后显示直播间封面图；关闭时只显示主播头像和信息"),
                     value: settings.followShowLiveCover.value,
                     onChanged: controller.setShowLiveCover,
                   ),
@@ -518,8 +518,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text("进入关注页后自动刷新"),
-                    subtitle:
-                        const Text("先显示本地列表，再异步全量刷新；关注过多时极易触发抖音限制"),
+                    subtitle: const Text("先显示本地列表，再异步全量刷新；关注过多时极易触发抖音限制"),
                     value: settings.followRefreshOnEnter.value,
                     onChanged: (value) async {
                       if (value) {

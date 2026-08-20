@@ -118,8 +118,7 @@ class FollowUserItem extends StatelessWidget {
                                     WidgetSpan(
                                       alignment: ui.PlaceholderAlignment.middle,
                                       child: Padding(
-                                        padding:
-                                            const EdgeInsets.only(left: 6),
+                                        padding: const EdgeInsets.only(left: 6),
                                         child: _buildStatusDot(size: 7),
                                       ),
                                     ),
@@ -398,17 +397,23 @@ class FollowUserItem extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      Text(
-                        _cardRoomText(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          height: 1.1,
+                      const SizedBox(height: 4),
+                      Flexible(
+                        fit: FlexFit.tight,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _cardRoomText(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              height: 1.1,
+                            ),
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       Row(
                         children: [
                           Image.asset(_site.logo, width: 14, height: 14),
