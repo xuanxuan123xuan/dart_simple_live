@@ -16,6 +16,13 @@ if (keystorePropertiesFile.exists()) {
 }
 val hasReleaseKeystore = listOf("keyAlias", "keyPassword", "storeFile", "storePassword")
     .all { !keystoreProperties.getProperty(it).isNullOrBlank() }
+val isReleaseBuildRequested = gradle.startParameter.taskNames
+    .any { it.contains("release", ignoreCase = true) }
+if (isReleaseBuildRequested && !hasReleaseKeystore) {
+    throw GradleException(
+        "Release signing is required. Restore android/key.properties and its fixed keystore before building."
+    )
+}
 
 val syncDartQuickJsJniLibs = tasks.register("syncDartQuickJsJniLibs") {
     val projectRoot = rootProject.projectDir.parentFile

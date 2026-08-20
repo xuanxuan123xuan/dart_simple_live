@@ -198,6 +198,26 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
                     controller.syncBiliAccount();
                   },
                 ),
+                AppStyle.divider,
+                ListTile(
+                  leading: const Icon(Icons.music_note),
+                  title: const Text("发送抖音账号"),
+                  subtitle: const Text("同步当前保存的抖音 Cookie"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    controller.syncDouyinAccount();
+                  },
+                ),
+                AppStyle.divider,
+                ListTile(
+                  leading: const Icon(Icons.shopping_bag_outlined),
+                  title: const Text("发送快手账号"),
+                  subtitle: const Text("同步快手主副账号备份"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    controller.syncKuaishouAccount();
+                  },
+                ),
               ],
             ),
           ),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
@@ -26,7 +28,7 @@ void main() {
       },
     });
 
-    final result = await KuaishouSite().searchRooms('risk-test');
+    final result = await _testSite().searchRooms('risk-test');
 
     expect(result.items, isEmpty);
     expect(result.metadata.origin, SearchOrigin.fallback);
@@ -42,7 +44,7 @@ void main() {
       'data': {'result': 1, 'list': []},
     });
 
-    final result = await KuaishouSite().searchRooms('risk-test');
+    final result = await _testSite().searchRooms('risk-test');
 
     expect(result.items, isEmpty);
     expect(result.metadata.origin, SearchOrigin.native);
@@ -64,7 +66,7 @@ void main() {
     });
 
     await expectLater(
-      KuaishouSite().searchRooms('risk-test'),
+      _testSite().searchRooms('risk-test'),
       throwsA(
         isA<CoreError>().having(
           (error) => error.kind,
@@ -84,11 +86,11 @@ void main() {
     interceptor.respondToPrimaryWithCancellation();
 
     await expectLater(
-      KuaishouSite().searchRooms('risk-test'),
+      _testSite().searchRooms('risk-test'),
       throwsA(isA<CoreCancelledError>()),
     );
-    expect(interceptor.requestPaths,
-        [_KuaishouSearchInterceptor.liveStreamsPath]);
+    expect(
+        interceptor.requestPaths, [_KuaishouSearchInterceptor.liveStreamsPath]);
   });
 
   test('uses count 20 and reports more when total exceeds the first page',
@@ -106,15 +108,48 @@ void main() {
       },
     });
 
-    final result = await KuaishouSite().searchRooms('risk-test');
+    final result = await _testSite().searchRooms('risk-test');
 
     expect(result.metadata.origin, SearchOrigin.native);
     expect(result.metadata.continuation, SearchContinuation.more);
     expect(result.hasMore, isTrue);
     expect(interceptor.primaryRequestCount, 20);
-    expect(interceptor.requestPaths,
-        [_KuaishouSearchInterceptor.liveStreamsPath]);
+    expect(
+        interceptor.requestPaths, [_KuaishouSearchInterceptor.liveStreamsPath]);
   });
+
+  test('search is not blocked by work running on the main request lane',
+      () async {
+    interceptor.respondToPrimaryWith({
+      'data': {'result': 1, 'list': []},
+    });
+    final mainCoordinator = KuaishouRequestCoordinator(
+      minInterval: Duration.zero,
+      maxJitter: Duration.zero,
+    );
+    final gate = Completer<void>();
+    final running = mainCoordinator.schedule<void>(
+      priority: KuaishouRequestPriority.userEnter,
+      key: 'busy-room-request',
+      task: () => gate.future,
+    );
+    final site = _testSite(coordinator: mainCoordinator);
+
+    final result = await site
+        .searchRooms('foreground-search')
+        .timeout(const Duration(seconds: 1));
+
+    expect(result.items, isEmpty);
+    expect(
+        interceptor.requestPaths, [_KuaishouSearchInterceptor.liveStreamsPath]);
+    gate.complete();
+    await running;
+  });
+}
+
+KuaishouSite _testSite({KuaishouRequestCoordinator? coordinator}) {
+  return KuaishouSite(coordinator: coordinator)
+    ..customCookie = 'did=test-device; userId=test-user';
 }
 
 class _KuaishouSearchInterceptor extends Interceptor {

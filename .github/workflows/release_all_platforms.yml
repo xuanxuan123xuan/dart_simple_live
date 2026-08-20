@@ -43,6 +43,7 @@ env:
   FLUTTER_VERSION: "3.41.x"
   TV_FLUTTER_VERSION: "3.41.x"
   XCODE_VERSION: "15.4"
+  IOS_XCODE_VERSION: "26.0"
   FASTFORGE_VERSION: "0.6.10"
 
 jobs:
@@ -109,6 +110,8 @@ jobs:
           dart run simple_live_app/tool/app_version.dart set "$REQUESTED_VERSION"
 
       - name: 同步派生版本文件
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: dart run simple_live_app/tool/app_version.dart sync
 
       - name: 恢复依赖包
@@ -229,6 +232,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: >-
           dart run simple_live_app/tool/app_version.dart set
           "${{ needs.prepare.outputs.version }}"
@@ -268,7 +273,7 @@ jobs:
           retention-days: 14
 
   android_tv:
-    name: Android TV APK 与 AAB
+    name: Android TV APK
     needs: prepare
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -344,43 +349,14 @@ jobs:
           --build-name=${{ needs.prepare.outputs.version }}
           --build-number=${{ needs.prepare.outputs.build_number }}
 
-      - name: 暂存 TV 通用 APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/release-android-tv"
-          cp simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk \
-            "$RUNNER_TEMP/release-android-tv/simple-live-tv-${{ needs.prepare.outputs.version }}-android-universal.apk"
-
-      - name: 构建 TV 分架构 APK
-        working-directory: simple_live_tv_app
-        run: >-
-          flutter build apk --release --split-per-abi --no-pub
-          --build-name=${{ needs.prepare.outputs.version }}
-          --build-number=${{ needs.prepare.outputs.build_number }}
-
-      - name: 构建 TV AAB
-        working-directory: simple_live_tv_app
-        run: >-
-          flutter build appbundle --release --no-pub
-          --build-name=${{ needs.prepare.outputs.version }}
-          --build-number=${{ needs.prepare.outputs.build_number }}
-
       - name: 暂存 Android TV 产物
         shell: bash
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/release-android-tv"
           mkdir -p "$out"
-          src="simple_live_tv_app/build/app/outputs/flutter-apk"
-          cp "$src/app-armeabi-v7a-release.apk" \
-            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-armeabi-v7a.apk"
-          cp "$src/app-arm64-v8a-release.apk" \
-            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-arm64-v8a.apk"
-          cp "$src/app-x86_64-release.apk" \
-            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-x86_64.apk"
-          cp simple_live_tv_app/build/app/outputs/bundle/release/app-release.aab \
-            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android.aab"
+          cp simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk \
+            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-universal.apk"
           (cd "$out" && sha256sum -- * > SHA256SUMS-android-tv.txt)
 
       - uses: actions/upload-artifact@v4
@@ -393,7 +369,7 @@ jobs:
   ios:
     name: iOS IPA
     needs: prepare
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
@@ -402,7 +378,7 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: ${{ env.XCODE_VERSION }}
+          xcode-version: ${{ env.IOS_XCODE_VERSION }}
 
       - uses: subosito/flutter-action@v2
         with:
@@ -410,6 +386,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: >-
           dart run simple_live_app/tool/app_version.dart set
           "${{ needs.prepare.outputs.version }}"
@@ -417,6 +395,13 @@ jobs:
       - name: 恢复依赖包
         working-directory: simple_live_app
         run: flutter pub get
+
+      - name: 校验 Liquid Glass 图标资源
+        shell: bash
+        run: |
+          test -f simple_live_app/ios/Runner/AppIconModern.icon/icon.json
+          xcode_major="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
+          test "$xcode_major" -ge 26
 
       - name: 导入签名证书与描述文件
         if: ${{ needs.prepare.outputs.signed_ios == 'true' }}
@@ -527,7 +512,7 @@ jobs:
           rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision" || true
 
   macos:
-    name: macOS DMG、PKG 与 ZIP
+    name: macOS DMG
     needs: prepare
     runs-on: macos-14
     timeout-minutes: 75
@@ -546,6 +531,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: >-
           dart run simple_live_app/tool/app_version.dart set
           "${{ needs.prepare.outputs.version }}"
@@ -564,7 +551,7 @@ jobs:
 
       - name: 构建 macOS 安装包
         working-directory: simple_live_app
-        run: fastforge package --platform macos --targets dmg,pkg,zip --skip-clean
+        run: fastforge package --platform macos --targets dmg --skip-clean
 
       - name: 暂存 macOS 产物
         shell: bash
@@ -576,10 +563,9 @@ jobs:
             extension="${file##*.}"
             cp "$file" \
               "$out/simple-live-${{ needs.prepare.outputs.version }}-macos.$extension"
-          done < <(find simple_live_app/build/dist -type f \
-            \( -name '*.dmg' -o -name '*.pkg' -o -name '*.zip' \) -print0)
+          done < <(find simple_live_app/build/dist -type f -name '*.dmg' -print0)
           count="$(find "$out" -type f | wc -l | tr -d ' ')"
-          [[ "$count" -ge 3 ]]
+          [[ "$count" -ge 1 ]]
           (cd "$out" && shasum -a 256 -- * > SHA256SUMS-macos.txt)
 
       - uses: actions/upload-artifact@v4
@@ -590,7 +576,7 @@ jobs:
           retention-days: 14
 
   windows:
-    name: Windows EXE、MSIX 与 ZIP
+    name: Windows EXE 与 ZIP
     needs: prepare
     # Flutter 3.41 支持 VS 2022/2026；保留 windows-2022 镜像稳定构建。
     runs-on: windows-2022
@@ -606,6 +592,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         shell: pwsh
         run: >-
           dart run simple_live_app/tool/app_version.dart set
@@ -629,7 +617,7 @@ jobs:
       - name: 构建 Windows 安装包
         working-directory: simple_live_app
         shell: pwsh
-        run: fastforge package --platform windows --targets exe,msix,zip --skip-clean
+        run: fastforge package --platform windows --targets exe,zip --skip-clean
 
       - name: 暂存 Windows 产物
         shell: pwsh
@@ -637,8 +625,8 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP "release-windows"
           New-Item -ItemType Directory -Force $out | Out-Null
           $files = Get-ChildItem -LiteralPath "simple_live_app\build\dist" -Recurse -File |
-            Where-Object { $_.Extension -in ".exe", ".msix", ".zip" }
-          if ($files.Count -lt 3) { throw "Expected EXE, MSIX and ZIP outputs." }
+            Where-Object { $_.Extension -in ".exe", ".zip" }
+          if ($files.Count -lt 2) { throw "Expected EXE and ZIP outputs." }
           foreach ($file in $files) {
             $extension = $file.Extension.ToLowerInvariant()
             $target = Join-Path $out "simple-live-${{ needs.prepare.outputs.version }}-windows$extension"
@@ -662,7 +650,7 @@ jobs:
           retention-days: 14
 
   linux:
-    name: Linux AppImage、DEB、RPM 与 ZIP
+    name: Linux AppImage 与 DEB
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -677,6 +665,8 @@ jobs:
           cache: true
 
       - name: 应用临时发布版本
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: >-
           dart run simple_live_app/tool/app_version.dart set
           "${{ needs.prepare.outputs.version }}"
@@ -686,7 +676,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libasound2-dev libmpv-dev mpv libepoxy-dev rpm patchelf \
+            libasound2-dev libmpv-dev mpv libepoxy-dev patchelf \
             plocate libfuse2t64
           wget -q -O "$RUNNER_TEMP/appimagetool" \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
@@ -708,7 +698,7 @@ jobs:
         working-directory: simple_live_app
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: fastforge package --platform linux --targets appimage,deb,rpm,zip --skip-clean
+        run: fastforge package --platform linux --targets appimage,deb --skip-clean
 
       - name: 暂存 Linux 产物
         shell: bash
@@ -724,9 +714,9 @@ jobs:
             cp "$file" \
               "$out/simple-live-${{ needs.prepare.outputs.version }}-linux.$extension"
           done < <(find simple_live_app/build/dist -type f \
-            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.zip' \) -print0)
+            \( -name '*.AppImage' -o -name '*.deb' \) -print0)
           count="$(find "$out" -type f | wc -l | tr -d ' ')"
-          [[ "$count" -ge 4 ]]
+          [[ "$count" -ge 2 ]]
           (cd "$out" && sha256sum -- * > SHA256SUMS-linux.txt)
 
       - uses: actions/upload-artifact@v4
@@ -804,6 +794,8 @@ jobs:
       - name: 恢复依赖包 and check version
         working-directory: simple_live_app
         shell: pwsh
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: |
           $flutter = Join-Path $env:FLUTTER_OHOS_ROOT "bin\flutter.bat"
           $dart = Join-Path $env:FLUTTER_OHOS_ROOT "bin\dart.bat"
@@ -950,21 +942,56 @@ jobs:
           fi
 
           # AI 总结 What's Changed（配置 DEEPSEEK_API_KEY secret 时生效；
-          # 失败/无 key 自动回退到 WHATS_CHANGED.md 或 git log 原文）
+          # 失败/无 key 自动回退到过滤后的用户侧 git log）
           ai_summary=""
-          if [[ -n "$DEEPSEEK_API_KEY" && -n "$commits" ]]; then
-            ai_summary="$(
-              jq -n --arg commits "$commits" \
-                '{model:"deepseek-v4-flash",temperature:0.3,
+          # Release 简介只关注用户可感知的 App 变化，先排除纯仓库维护提交。
+          ai_commits="$(
+            printf '%s\n' "$commits" \
+              | grep -Eiv '^[0-9a-f]+ (ci|docs|test|chore|build)(\([^)]*\))?!?:|workflow|readme|version number|release v?[0-9]|发布流程|发布产物|版本号' \
+              || true
+          )"
+          if [[ -n "$DEEPSEEK_API_KEY" && -n "$ai_commits" ]]; then
+            ai_response="$(
+              jq -n --arg commits "$ai_commits" \
+                '{model:"deepseek-v4-flash",temperature:0.1,
+                  response_format:{type:"json_object"},
                   messages:[
-                    {role:"system",content:"你是发布说明撰写者。根据 commit 列表生成简洁的中文 What'\''s Changed：按功能归纳分组（如 弹窗稳定性/状态栏/Flutter 升级/构建发布），每组一行列表项；不要逐条翻译 commit，要提炼用户可见的变化；结尾可加一句总体说明。"},
-                    {role:"user",content:$commits}
+                    {role:"system",content:"你是 Simple Live 的发布说明编辑。请把 git commit 列表归纳成只面向 App 用户的简体中文更新说明。只写用户能在 App 中直接看到、使用或感受到的功能、界面、播放体验、平台兼容性和问题修复。彻底忽略 GitHub Actions/workflow、CI、README、文档、源码文件、测试、重构、格式化、纯依赖升级、版本号、签名配置、内部打包步骤和发布流程，即使提交列表包含这些内容也不得提及。平台支持、系统兼容性、新增可下载平台或架构属于用户可见变化，应归入 engineering。你必须只输出一个合法 JSON 对象，不得输出 Markdown、代码围栏、前言或结语。JSON 必须且只能包含 highlights、improvements、fixes、engineering 四个数组字段。分类规则：highlights=值得优先关注的新功能或明显变化；improvements=用户体验、界面或性能优化；fixes=用户遇到的问题修复与稳定性提升；engineering=用户相关的平台支持、系统适配、架构支持或安装包变化。每项是一句不超过 36 个汉字的字符串，每个数组最多 4 项，无内容时使用空数组。合并同类提交，不逐条翻译，不写 commit hash，不编造提交信息无法确认的效果。每条必须点明具体功能、页面、平台或问题；禁止“优化分发效率”“提升用户体验”“提升整体体验”等缺少具体对象的套话。文案统一使用简体中文和中文标点，iOS、Android、Windows、Linux、macOS、HarmonyOS、TV 等正式名称保留原文。条目只用纯文本，禁止加粗、斜体、删除线、行内代码、链接、emoji 或其他装饰符号。"},
+                    {role:"user",content:("请严格按约定 JSON 格式总结以下提交：\n\n" + $commits)}
                   ]}' \
               | curl -sS https://api.deepseek.com/chat/completions \
                   -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
                   -H "Content-Type: application/json" -d @- \
               | jq -r '.choices[0].message.content // empty' 2>/dev/null || true
             )"
+
+            # AI 只负责结构化归纳，标题、顺序和 Markdown 均由脚本固定生成。
+            # 返回值不符合约定时保留 ai_summary 为空，走下方原有兜底。
+            if jq -e '
+              type == "object" and
+              ([keys[]] | sort == ["engineering", "fixes", "highlights", "improvements"]) and
+              ([.highlights, .improvements, .fixes, .engineering] |
+                all(type == "array" and length <= 4 and
+                  all(type == "string" and length > 0 and length <= 36 and
+                    (test("[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?") | not) and
+                    (test("workflow|readme|github|文档|源码|仓库|测试|依赖|版本号|更新版本|版本更新|签名配置|构建流程|构建脚本|构建配置|内部打包|发布流程|发布产物|分发"; "i") | not) and
+                    (test("优化分发效率|提升用户体验|优化使用体验|提升使用体验|提升整体体验") | not) and
+                    (test("[*_`#~]|https?://|\\[[^]]*\\]\\(") | not))))
+            ' <<< "$ai_response" >/dev/null 2>&1; then
+              ai_summary="$(
+                jq -r '
+                  def section($title; $items):
+                    if ($items | length) > 0 then
+                      "### " + $title + "\n" +
+                      ($items | map("- " + .) | join("\n")) + "\n"
+                    else "" end;
+                  section("更新亮点"; .highlights) +
+                  section("体验优化"; .improvements) +
+                  section("问题修复"; .fixes) +
+                  section("构建与适配"; .engineering)
+                ' <<< "$ai_response"
+              )"
+            fi
           fi
 
           {
@@ -980,10 +1007,11 @@ jobs:
             echo ""
             if [[ -n "$ai_summary" ]]; then
               echo "$ai_summary"
-            elif [[ -f "$GITHUB_WORKSPACE/WHATS_CHANGED.md" ]]; then
-              cat "$GITHUB_WORKSPACE/WHATS_CHANGED.md"
+            elif [[ -n "$ai_commits" ]]; then
+              printf '%s\n' "$ai_commits" \
+                | sed -E 's/^[0-9a-f]+[[:space:]]+//; s/^(feat|fix|style|perf)(\([^)]*\))?!?:[[:space:]]*//; s/^/- /'
             else
-              echo "$commits"
+              echo "- 本次没有可归纳的用户可见变更"
             fi
           } > "$body"
           echo "body_path=$body" >> "$GITHUB_ENV"

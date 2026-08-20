@@ -9,10 +9,10 @@ class DanmakuItem {
   final int creationTime;
 
   /// 弹幕宽度
-  final double width;
+  double width;
 
   /// 弹幕高度
-  final double height;
+  double height;
 
   /// 弹幕水平方向位置
   double xPosition;

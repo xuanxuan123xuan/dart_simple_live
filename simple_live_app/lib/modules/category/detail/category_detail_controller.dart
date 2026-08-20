@@ -8,6 +8,7 @@ class CategoryDetailController extends BasePageController<LiveRoomItem> {
   final LiveSubCategory subCategory;
   final RoomSelectionCallback? onRoomSelected;
   final String? excludedRoomId;
+  bool _hasMore = false;
   CategoryDetailController({
     required this.site,
     required this.subCategory,
@@ -18,8 +19,18 @@ class CategoryDetailController extends BasePageController<LiveRoomItem> {
   @override
   Future<List<LiveRoomItem>> getData(int page, int pageSize) async {
     var result = await site.liveSite.getCategoryRooms(subCategory, page: page);
+    _hasMore = result.hasMore;
     return result.items
         .where((item) => item.roomId != excludedRoomId)
         .toList();
+  }
+
+  @override
+  bool hasMoreForPage({
+    required List<LiveRoomItem> items,
+    required int page,
+    required int pageSize,
+  }) {
+    return _hasMore;
   }
 }

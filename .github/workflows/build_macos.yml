@@ -18,7 +18,7 @@ env:
 
 jobs:
   build:
-    name: 构建 macOS DMG、PKG 与 ZIP
+    name: 构建 macOS DMG
     runs-on: macos-14
     timeout-minutes: 75
     steps:
@@ -52,7 +52,7 @@ jobs:
 
       - name: 构建 macOS 安装包
         working-directory: simple_live_app
-        run: fastforge package --platform macos --targets dmg,pkg,zip --skip-clean
+        run: fastforge package --platform macos --targets dmg --skip-clean
 
       - name: 上传 macOS 产物
         uses: actions/upload-artifact@v4

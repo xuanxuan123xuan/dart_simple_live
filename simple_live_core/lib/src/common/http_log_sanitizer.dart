@@ -11,7 +11,7 @@ class HttpLogSanitizer {
   );
 
   static final RegExp _credentialLinePattern = RegExp(
-    r'(cookie|authorization)\s*[:=]\s*[^\r\n]+',
+    r'''(["']?(?:cookie|authorization)["']?\s*[:=]\s*)[^\r\n]+''',
     caseSensitive: false,
   );
 
@@ -66,7 +66,7 @@ class HttpLogSanitizer {
     }
     result = result.replaceAllMapped(
       _credentialLinePattern,
-      (match) => '${match.group(1)}=<redacted>',
+      (match) => '${match.group(1)}<redacted>',
     );
     return result.replaceAllMapped(
       _sensitiveTextPattern,

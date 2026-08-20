@@ -246,6 +246,7 @@ class Utils {
     required String title,
     required Widget child,
     double maxWidth = 600,
+    double? maxHeightFactor,
   }) async {
     final context = Get.context;
     if (context == null) return null;
@@ -254,6 +255,7 @@ class Utils {
       title: title,
       child: child,
       maxWidth: maxWidth,
+      maxHeightFactor: maxHeightFactor,
     );
     // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透），
     // 与右侧弹窗同一套防护。
@@ -839,11 +841,13 @@ class _RightSideSheetRoute extends PopupRoute<void> {
     required this.title,
     required this.child,
     required this.maxWidth,
+    required this.maxHeightFactor,
   });
 
   final String title;
   final Widget child;
   final double maxWidth;
+  final double? maxHeightFactor;
 
   bool _barrierEnabled = false;
   bool _disposed = false;
@@ -878,10 +882,18 @@ class _RightSideSheetRoute extends PopupRoute<void> {
     Animation<double> animation,
     Animation<double> secondaryAnimation,
   ) {
+    final mediaQuery = MediaQuery.of(context);
+    final heightFactor = maxHeightFactor;
+    final maxHeight = heightFactor == null
+        ? double.infinity
+        : mediaQuery.size.height * heightFactor;
     return Align(
       alignment: Alignment.bottomCenter,
       child: Container(
-        constraints: BoxConstraints(maxWidth: maxWidth),
+        constraints: BoxConstraints(
+          maxWidth: maxWidth,
+          maxHeight: maxHeight,
+        ),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
           borderRadius: const BorderRadius.only(

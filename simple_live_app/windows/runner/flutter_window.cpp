@@ -56,7 +56,6 @@ bool FlutterWindow::OnCreate() {
         }
         result->NotImplemented();
       });
-  ConfigureWindowChromeChannel();
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -71,62 +70,8 @@ bool FlutterWindow::OnCreate() {
   return true;
 }
 
-void FlutterWindow::ConfigureWindowChromeChannel() {
-  window_chrome_channel_ =
-      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-          flutter_controller_->engine()->messenger(),
-          "simple_live/windows_chrome",
-          &flutter::StandardMethodCodec::GetInstance());
-  window_chrome_channel_->SetMethodCallHandler(
-      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
-             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
-                 result) {
-        if (call.method_name() == "apply") {
-          ApplyFullscreenChrome();
-          result->Success();
-          return;
-        }
-        if (call.method_name() == "restore") {
-          RestoreWindowChrome();
-          result->Success();
-          return;
-        }
-        result->NotImplemented();
-      });
-}
-
-void FlutterWindow::ApplyFullscreenChrome() {
-  HWND hwnd = GetHandle();
-  if (!hwnd) return;
-  if (!fullscreen_chrome_applied_) {
-    windowed_style_ = GetWindowLongPtr(hwnd, GWL_STYLE);
-    windowed_ex_style_ = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-  }
-  const auto style = windowed_style_ &
-      ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZE | WS_MAXIMIZE | WS_SYSMENU);
-  SetWindowLongPtr(hwnd, GWL_STYLE, style);
-  SetWindowLongPtr(hwnd, GWL_EXSTYLE,
-                   windowed_ex_style_ & ~WS_EX_DLGMODALFRAME);
-  SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
-                   SWP_FRAMECHANGED);
-  fullscreen_chrome_applied_ = true;
-}
-
-void FlutterWindow::RestoreWindowChrome() {
-  HWND hwnd = GetHandle();
-  if (!hwnd || !fullscreen_chrome_applied_) return;
-  SetWindowLongPtr(hwnd, GWL_STYLE, windowed_style_);
-  SetWindowLongPtr(hwnd, GWL_EXSTYLE, windowed_ex_style_);
-  SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
-                   SWP_FRAMECHANGED);
-  fullscreen_chrome_applied_ = false;
-}
-
 void FlutterWindow::OnDestroy() {
   shortcut_channel_.reset();
-  window_chrome_channel_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -204,6 +149,10 @@ std::string FlutterWindow::ShortcutKeyForWindowsKey(WPARAM wparam,
       return "keyB";
     case 0x31:
       return "keyN";
+    case 0x48:
+      return "arrowUp";
+    case 0x50:
+      return "arrowDown";
     default:
       break;
   }
@@ -231,6 +180,10 @@ std::string FlutterWindow::ShortcutKeyForWindowsKey(WPARAM wparam,
       return "keyB";
     case 'N':
       return "keyN";
+    case VK_UP:
+      return "arrowUp";
+    case VK_DOWN:
+      return "arrowDown";
     default:
       return "";
   }

@@ -46,7 +46,7 @@ void main() {
     );
   });
 
-  test('emits buffering edges and first frame once', () {
+  test('emits buffering edges and accepts native first frame once', () {
     final adapter = OhosPlaybackSignalAdapter();
     adapter.beginSource(
       roomGeneration: 1,
@@ -81,8 +81,20 @@ void main() {
         OhosPlaybackSignalType.bufferingEnded,
         OhosPlaybackSignalType.playing,
         OhosPlaybackSignalType.positionAdvanced,
-        OhosPlaybackSignalType.firstFrame,
       ]),
+    );
+
+    final firstFrame = adapter.markFirstFrame(
+      roomGeneration: 1,
+      playerGeneration: 1,
+    );
+    expect(firstFrame?.type, OhosPlaybackSignalType.firstFrame);
+    expect(
+      adapter.markFirstFrame(
+        roomGeneration: 1,
+        playerGeneration: 1,
+      ),
+      isNull,
     );
 
     final next = adapter.update(
@@ -93,10 +105,7 @@ void main() {
         position: const Duration(milliseconds: 80),
       ),
     );
-    expect(
-      next.where((signal) => signal.type == OhosPlaybackSignalType.firstFrame),
-      isEmpty,
-    );
+    expect(next, hasLength(1));
   });
 
   test('fingerprint excludes query credentials and errors are sanitized', () {

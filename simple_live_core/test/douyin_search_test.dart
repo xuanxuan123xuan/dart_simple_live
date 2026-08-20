@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/scripts/douyin_sign.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -52,6 +53,24 @@ void main() {
       _DouyinSearchInterceptor.headRequest,
       _DouyinSearchInterceptor.searchRequest,
     ]);
+  });
+
+  test('ranks matching anchors first and removes duplicate live rooms',
+      () async {
+    interceptor.respondToHead();
+    interceptor.respondToSearchWith(
+      _searchResponse(
+        rooms: [
+          _searchRoom('room-1', 'other', online: 100),
+          _searchRoom('room-2', 'target anchor', online: 20),
+          _searchRoom('room-2', 'target anchor', online: 20),
+        ],
+      ),
+    );
+
+    final result = await _testSite().searchAnchors('target');
+
+    expect(result.items.map((item) => item.roomId), ['room-2', 'room-1']);
   });
 
   group('search authentication failure', () {
@@ -114,6 +133,39 @@ void main() {
     );
   });
 
+  test('decodes a text response with a UTF-8 BOM', () async {
+    interceptor.respondToSearchWithText(
+      '\ufeff${jsonEncode(_searchResponse())}',
+    );
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('bom');
+
+    expect(result.items, hasLength(1));
+    expect(result.items.single.roomId, 'room-1');
+  });
+
+  test('classifies an HTML challenge instead of a network failure', () async {
+    interceptor.respondToSearchWithText(
+      '<!doctype html><html><script>window.__ac_nonce="nonce"</script></html>',
+    );
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    await expectLater(
+      site.searchRooms('challenge'),
+      throwsA(
+        isA<CoreError>()
+            .having((error) => error.kind, 'kind', CoreErrorKind.search)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('验证页面'),
+            ),
+      ),
+    );
+    expect(interceptor.requests, [_DouyinSearchInterceptor.searchRequest]);
+  });
+
   test('signs the search URL after HEAD with the same user agent', () async {
     interceptor.respondToHead();
     interceptor.respondToSearchWith(_searchResponse());
@@ -125,7 +177,7 @@ void main() {
 
     await site.searchRooms('signed');
 
-    expect(signerUserAgent, DouyinSite.kDefaultUserAgent);
+    expect(signerUserAgent, DouyinSite.kSearchUserAgent);
     expect(interceptor.searchOptions?.uri.queryParameters['msToken'], 'token');
     expect(
       interceptor.searchOptions?.uri.queryParameters['a_bogus'],
@@ -135,15 +187,105 @@ void main() {
       interceptor.searchOptions?.headers['user-agent'],
       signerUserAgent,
     );
+    expect(
+      interceptor.searchOptions?.uri.queryParameters['browser_name'],
+      'Edge',
+    );
+    expect(
+      interceptor.searchOptions?.uri.queryParameters['browser_version'],
+      '125.0.0.0',
+    );
   });
 
-  test('keeps configured cookie values when HEAD returns duplicate names',
+  test('uses a standalone live-search context', () async {
+    interceptor.respondToSearchWith(_searchResponse());
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    await site.searchRooms('standalone');
+
+    final query = interceptor.searchOptions!.uri.queryParameters;
+    expect(query['search_channel'], 'aweme_live');
+    expect(query['search_source'], 'switch_tab');
+    expect(query.containsKey('search_id'), isFalse);
+    expect(query['from_group_id'], isEmpty);
+    expect(query['need_filter_settings'], '1');
+    expect(query['list_type'], 'single');
+    expect(query['version_code'], '170400');
+    expect(query['version_name'], '17.4.0');
+  });
+
+  test('a_bogus URL preparation preserves one browser msToken', () {
+    final prepared = DouyinSign.prepareAbogusUri(
+      'https://www.douyin.com/aweme/v1/web/live/search/'
+      '?aid=6383&msToken=browser-session-token',
+      generatedMsToken: 'unrelated-generated-token',
+    );
+
+    expect(prepared.queryParametersAll['msToken'], ['browser-session-token']);
+  });
+
+  test('a_bogus URL preparation adds a generated token when absent', () {
+    final prepared = DouyinSign.prepareAbogusUri(
+      'https://www.douyin.com/aweme/v1/web/live/search/?aid=6383',
+      generatedMsToken: 'generated-token',
+    );
+
+    expect(prepared.queryParametersAll['msToken'], ['generated-token']);
+  });
+
+  test('reuses browser session tokens when signing configured Cookie search',
       () async {
-    interceptor.respondToHeadWithCookies([
-      'ttwid=head-ttwid; Path=/',
-      '__ac_nonce=head-nonce; Path=/',
-      'foo_ttwid=must-not-be-copied; Path=/',
-    ]);
+    interceptor.respondToSearchWith(_searchResponse());
+    String? unsignedUrl;
+    final site = DouyinSite(abogusSigner: (url, userAgent) {
+      unsignedUrl = url;
+      return _signedSearchUrl(url, userAgent);
+    })
+      ..cookie = 'sessionid=user-session; ttwid=user-ttwid; '
+          'msToken=browser-ms-token; tt_webid=7399999999999999999; '
+          's_v_web_id=verify_browser_session';
+
+    await site.searchRooms('session');
+
+    final unsignedQuery = Uri.parse(unsignedUrl!).queryParameters;
+    expect(unsignedQuery['msToken'], 'browser-ms-token');
+    expect(unsignedQuery['webid'], '7399999999999999999');
+    expect(unsignedQuery['verifyFp'], 'verify_browser_session');
+    expect(unsignedQuery['fp'], 'verify_browser_session');
+    expect(
+      interceptor.searchOptions?.uri.queryParameters['msToken'],
+      'browser-ms-token',
+    );
+    expect(
+      interceptor.searchOptions?.headers['user-agent'],
+      DouyinSite.kSearchUserAgent,
+    );
+    expect(
+        interceptor.searchOptions?.headers['origin'], 'https://www.douyin.com');
+  });
+
+  test('uses a stable per-site fallback webid instead of the shared constant',
+      () async {
+    interceptor.respondToSearchWith(_searchResponse());
+    final unsignedUrls = <String>[];
+    final site = DouyinSite(abogusSigner: (url, userAgent) {
+      unsignedUrls.add(url);
+      return _signedSearchUrl(url, userAgent);
+    })
+      ..cookie = 'sessionid=user-session';
+
+    await site.searchRooms('first');
+    await site.searchRooms('second');
+
+    final firstWebId = Uri.parse(unsignedUrls[0]).queryParameters['webid'];
+    final secondWebId = Uri.parse(unsignedUrls[1]).queryParameters['webid'];
+    expect(firstWebId, matches(RegExp(r'^7\d{18}$')));
+    expect(secondWebId, firstWebId);
+    expect(firstWebId, isNot('7382872326016435738'));
+  });
+
+  test('uses a configured Cookie without an anonymous HEAD preflight',
+      () async {
     interceptor.respondToSearchWith(_searchResponse());
     final site = _testSite()
       ..cookie = 'ttwid=user-ttwid; sessionid=user-session; '
@@ -159,6 +301,185 @@ void main() {
       'token': 'value=with=equals',
     });
     expect(RegExp(r'(^|;\s*)ttwid=').allMatches(cookie), hasLength(1));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
+  });
+
+  test('normalizes a previously saved JSON Cookie before sending', () async {
+    interceptor.respondToSearchWith(_searchResponse());
+    final site = _testSite()
+      ..cookie = '''{
+  "cookie": "ttwid=user-ttwid; sessionid=user-session"
+}''';
+
+    await site.searchRooms('json-cookie');
+
+    final cookie = _searchCookie(interceptor);
+    expect(_parseCookieHeader(cookie), {
+      'ttwid': 'user-ttwid',
+      'sessionid': 'user-session',
+    });
+    expect(cookie, isNot(contains('{')));
+    expect(cookie, isNot(contains('\n')));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
+  });
+
+  test('uses the response has_more flag instead of the first-page size',
+      () async {
+    interceptor.respondToSearchWith({
+      ..._searchResponse(),
+      'has_more': 1,
+    });
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('more');
+
+    expect(result.items, hasLength(1));
+    expect(result.hasMore, isTrue);
+  });
+
+  test('uses upstream compatibility only after a successful empty response',
+      () async {
+    interceptor.respondToHeadWithCookies([
+      'ttwid=head-ttwid; Path=/',
+      '__ac_nonce=head-nonce; Path=/',
+    ]);
+    interceptor.respondToSearchSequence([
+      {'status_code': 0, 'data': [], 'has_more': 0},
+      _searchResponse(),
+    ]);
+    final site = _testSite()
+      ..cookie = 'sessionid=user-session; ttwid=user-ttwid';
+
+    final result = await site.searchRooms('compatibility');
+
+    expect(result.items, hasLength(1));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+      _DouyinSearchInterceptor.headRequest,
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
+    final primary = interceptor.searchOptionsHistory[0];
+    final fallback = interceptor.searchOptionsHistory[1];
+    expect(primary.uri.queryParameters['a_bogus'], 'signature');
+    expect(fallback.uri.queryParameters.containsKey('a_bogus'), isFalse);
+    expect(fallback.uri.queryParameters.containsKey('msToken'), isFalse);
+    expect(fallback.uri.queryParameters['webid'], '7382872326016435738');
+    expect(fallback.uri.queryParameters.containsKey('list_type'), isFalse);
+    expect(fallback.headers['user-agent'], DouyinSite.kDefaultUserAgent);
+    expect(_parseCookieHeader(fallback.headers['cookie'] as String), {
+      'sessionid': 'user-session',
+      'ttwid': 'head-ttwid',
+      '__ac_nonce': 'head-nonce',
+    });
+  });
+
+  test('uses upstream compatibility after a blocked primary response',
+      () async {
+    interceptor.respondToHeadWithCookies([
+      'ttwid=head-ttwid; Path=/',
+      '__ac_nonce=head-nonce; Path=/',
+    ]);
+    interceptor.respondToSearchTextSequence([
+      'blocked',
+      jsonEncode(_searchResponse()),
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('blocked');
+
+    expect(result.items, hasLength(1));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+      _DouyinSearchInterceptor.headRequest,
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
+    expect(
+      interceptor.searchOptionsHistory.last.uri.queryParameters
+          .containsKey('a_bogus'),
+      isFalse,
+    );
+  });
+
+  test('uses upstream compatibility after a generic restricted status',
+      () async {
+    interceptor.respondToHeadWithCookies([
+      'ttwid=head-ttwid; Path=/',
+    ]);
+    interceptor.respondToSearchSequence([
+      {'status_code': 1, 'data': []},
+      _searchResponse(),
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('restricted');
+
+    expect(result.items, hasLength(1));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+      _DouyinSearchInterceptor.headRequest,
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
+  });
+
+  test('keeps the primary error when upstream compatibility is not useful',
+      () async {
+    interceptor.respondToHead();
+    interceptor.respondToSearchSequence([
+      {'status_code': 1, 'data': []},
+      {'status_code': 2483},
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    await expectLater(
+      site.searchRooms('restricted'),
+      throwsA(
+        isA<CoreError>()
+            .having((error) => error.kind, 'kind', CoreErrorKind.search)
+            .having(
+              (error) => error.message,
+              'message',
+              '抖音直播搜索被限制，请稍后再试',
+            )
+            .having(
+              (error) => error is DouyinSearchAuthError,
+              'is auth error',
+              isFalse,
+            ),
+      ),
+    );
+  });
+
+  test('does not hide a primary auth failure behind upstream compatibility',
+      () async {
+    interceptor.respondToSearchSequence([
+      {'status_code': 2483},
+      _searchResponse(),
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final error = await _captureAuthError(site);
+
+    expect(error.reason, DouyinSearchAuthFailureReason.rejected);
+    expect(interceptor.requests, [_DouyinSearchInterceptor.searchRequest]);
+  });
+
+  test('keeps a genuinely empty result when both strategies are empty',
+      () async {
+    interceptor.respondToHead();
+    interceptor.respondToSearchSequence([
+      {'status_code': 0, 'data': [], 'has_more': 0},
+      {'status_code': 0, 'data': [], 'has_more': 0},
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('empty');
+
+    expect(result.items, isEmpty);
+    expect(interceptor.searchOptionsHistory, hasLength(2));
   });
 
   test('lets a HEAD ttwid replace the built-in default cookie', () async {
@@ -241,7 +562,7 @@ String _signedSearchUrl(String url, String userAgent) {
   final uri = Uri.parse(url);
   return uri.replace(queryParameters: {
     ...uri.queryParameters,
-    'msToken': 'token',
+    'msToken': uri.queryParameters['msToken'] ?? 'token',
     'a_bogus': 'signature',
   }).toString();
 }
@@ -268,23 +589,31 @@ Map<String, String> _parseCookieHeader(String cookie) {
   };
 }
 
-Map<String, dynamic> _searchResponse() {
+Map<String, dynamic> _searchResponse({List<Map<String, dynamic>>? rooms}) {
   return {
     'status_code': 0,
-    'data': [
-      {
-        'lives': {
-          'rawdata': jsonEncode({
-            'owner': {'web_rid': 'room-1', 'nickname': 'anchor'},
-            'title': 'A test room',
-            'cover': {
-              'url_list': ['https://example.invalid/cover.jpg'],
-            },
-            'stats': {'total_user': '42'},
-          }),
-        },
-      },
-    ],
+    'data': (rooms ?? [_searchRoom('room-1', 'anchor', online: 42)])
+        .map(
+          (room) => {
+            'lives': {'rawdata': jsonEncode(room)},
+          },
+        )
+        .toList(),
+  };
+}
+
+Map<String, dynamic> _searchRoom(
+  String roomId,
+  String userName, {
+  required int online,
+}) {
+  return {
+    'owner': {'web_rid': roomId, 'nickname': userName},
+    'title': 'A test room',
+    'cover': {
+      'url_list': ['https://example.invalid/cover.jpg'],
+    },
+    'stats': {'total_user': '$online'},
   };
 }
 
@@ -297,8 +626,10 @@ class _DouyinSearchInterceptor extends Interceptor {
   bool _cancelHead = false;
   bool _failHead = false;
   List<String> _headCookies = const [];
-  Object? _searchResponse;
+  String? _searchResponse;
+  final List<String> _searchResponseSequence = [];
   RequestOptions? searchOptions;
+  final List<RequestOptions> searchOptionsHistory = [];
 
   void cancelHead() {
     _cancelHead = true;
@@ -321,7 +652,27 @@ class _DouyinSearchInterceptor extends Interceptor {
   }
 
   void respondToSearchWith(Object response) {
+    _searchResponse = jsonEncode(response);
+    _searchResponseSequence.clear();
+  }
+
+  void respondToSearchWithText(String response) {
     _searchResponse = response;
+    _searchResponseSequence.clear();
+  }
+
+  void respondToSearchTextSequence(List<String> responses) {
+    _searchResponse = null;
+    _searchResponseSequence
+      ..clear()
+      ..addAll(responses);
+  }
+
+  void respondToSearchSequence(List<Object> responses) {
+    _searchResponse = null;
+    _searchResponseSequence
+      ..clear()
+      ..addAll(responses.map(jsonEncode));
   }
 
   @override
@@ -356,12 +707,16 @@ class _DouyinSearchInterceptor extends Interceptor {
       return;
     }
 
-    if (request == searchRequest && _searchResponse != null) {
+    if (request == searchRequest &&
+        (_searchResponseSequence.isNotEmpty || _searchResponse != null)) {
       searchOptions = options;
-      handler.resolve(Response<Object>(
+      searchOptionsHistory.add(options);
+      handler.resolve(Response<String>(
         requestOptions: options,
         statusCode: 200,
-        data: _searchResponse,
+        data: _searchResponseSequence.isNotEmpty
+            ? _searchResponseSequence.removeAt(0)
+            : _searchResponse,
       ));
       return;
     }

@@ -65,6 +65,58 @@ void main() {
     );
     expect(nativePlayer, isNot(contains('preferredBufferDuration')));
     expect(nativePlayer, contains('Events.START_RENDER_FRAME'));
+    expect(nativePlayer, contains('this.sendFirstFrame();'));
+    expect(nativePlayer, contains('event.set("event", "firstFrame")'));
+  });
+
+  test('OHOS waits for a real native first frame and times it out', () {
+    final player = File(
+      'lib/modules/live_room/player/ohos_video_player.dart',
+    ).readAsStringSync();
+    final plugin = File(
+      'third_party/video_player_ohos/lib/src/ohos_video_player.dart',
+    ).readAsStringSync();
+
+    expect(player, contains('OhosVideoPlayer.firstFrameEvents.listen'));
+    expect(player, contains('event.textureId != currentTextureId'));
+    expect(player, contains('_startFirstFrameTimeout(generation, controller)'));
+    expect(player, contains('const ohosFirstFrameTimeout'));
+    expect(plugin, contains("case 'firstFrame':"));
+  });
+
+  test('OHOS does not replace a starting player from background TCP timing',
+      () {
+    final controller = File(
+      'lib/modules/live_room/live_room_controller.dart',
+    ).readAsStringSync();
+    final scheduler = RegExp(
+      r'void _scheduleAutoSelectFastestLine\([\s\S]*?'
+      r'Future<void> _selectFastestLineAfterPlaybackStart',
+    ).firstMatch(controller)!.group(0)!;
+
+    expect(scheduler, contains('if (Utils.isOhos ||'));
+  });
+
+  test('OHOS fullscreen top bar stays positioned in placeholder states', () {
+    final page = File(
+      'lib/modules/live_room/live_room_page.dart',
+    ).readAsStringSync();
+    final placeholderBranches = RegExp(
+      r'if \(controller\.showOfflineOverlay\)[\s\S]*?'
+      r'var url = controller\.playUrls',
+    ).firstMatch(page)!.group(0)!;
+    final overlayBuilder = RegExp(
+      r'Widget _buildOhosTopBarOverlay\([\s\S]*?'
+      r'Widget _buildOhosTopBar\(',
+    ).firstMatch(page)!.group(0)!;
+
+    expect(
+      '_buildOhosTopBarOverlay('.allMatches(placeholderBranches),
+      hasLength(2),
+    );
+    expect(placeholderBranches, isNot(contains('_buildOhosTopBar(context)')));
+    expect(overlayBuilder, contains('return AnimatedPositioned('));
+    expect(overlayBuilder, contains('top: controlsVisible ? 0 :'));
   });
 
   test('OHOS native errors are structured and sanitized', () {

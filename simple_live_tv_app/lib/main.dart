@@ -30,6 +30,7 @@ import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
+import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/services/local_storage_service.dart';
 import 'package:simple_live_tv_app/services/profile_backup_service.dart';
@@ -104,10 +105,7 @@ Future<Directory> prepareSecondaryHiveDirectory(Directory sourceDir) async {
   final instancesRoot = Directory(p.join(sourceDir.path, "tv_instances"));
   await instancesRoot.create(recursive: true);
   final instanceDir = Directory(
-    p.join(
-      instancesRoot.path,
-      "${DateTime.now().millisecondsSinceEpoch}_$pid",
-    ),
+    p.join(instancesRoot.path, "${DateTime.now().millisecondsSinceEpoch}_$pid"),
   );
   await instanceDir.create(recursive: true);
   await writeDesktopStartupLog(
@@ -121,7 +119,8 @@ Future<Directory> prepareSecondaryHiveDirectory(Directory sourceDir) async {
 Future<void> copyHiveSnapshot(Directory sourceDir, Directory targetDir) async {
   if (!await sourceDir.exists()) {
     await writeDesktopStartupLog(
-        "hive snapshot source missing=${sourceDir.path}");
+      "hive snapshot source missing=${sourceDir.path}",
+    );
     return;
   }
   var copied = 0;
@@ -139,7 +138,8 @@ Future<void> copyHiveSnapshot(Directory sourceDir, Directory targetDir) async {
       copied += 1;
     } catch (e) {
       await writeDesktopStartupLog(
-          "hive snapshot copy failed file=$fileName error=$e");
+        "hive snapshot copy failed file=$fileName error=$e",
+      );
       Log.logPrint(e);
     }
   }
@@ -163,7 +163,8 @@ Future<void> cleanupOldSecondaryHiveDirectories(
       if (now.difference(stat.modified) > const Duration(days: 2)) {
         await entity.delete(recursive: true);
         await writeDesktopStartupLog(
-            "deleted old secondary hive=${entity.path}");
+          "deleted old secondary hive=${entity.path}",
+        );
       }
     } catch (e) {
       Log.logPrint(e);
@@ -247,6 +248,7 @@ Future initServices() async {
 
   Get.put(BiliBiliAccountService());
   Get.put(DouyinAccountService());
+  Get.put(KuaishouAccountService());
   Get.put(ProfileBackupService());
 
   if (DesktopStartupArgs.isSecondaryDesktopInstance) {
@@ -259,8 +261,9 @@ Future initServices() async {
 }
 
 class MyApp extends StatelessWidget {
-  static const MethodChannel _desktopShortcutChannel =
-      MethodChannel("simple_live_tv/desktop_shortcuts");
+  static const MethodChannel _desktopShortcutChannel = MethodChannel(
+    "simple_live_tv/desktop_shortcuts",
+  );
   static bool _desktopShortcutHandlerBound = false;
 
   const MyApp({super.key});
@@ -300,9 +303,9 @@ class MyApp extends StatelessWidget {
             ),
             //字体大小不跟随系统变化
             builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context).copyWith(
-                textScaler: const TextScaler.linear(1.0),
-              ),
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(1.0)),
               child: child!,
             ),
           ),

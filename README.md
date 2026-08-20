@@ -1,10 +1,10 @@
 <p align="center">
-    <img width="128" src="/assets/logo.png" alt="Simple Live logo">
+    <img width="128" src="/simple_live_app/assets/images/app_icon_simplelive.png" alt="Simple Live Modern logo">
 </p>
 <h2 align="center">Simple Live — 稳定版</h2>
 
 <p align="center">
-简简单单的看直播 · <code>v1.13.2</code> · 分支 <code>stable</code>
+简简单单的看直播 · <code>v1.13.3</code> · 分支 <code>stable</code>
 </p>
 
 ![浅色模式](/assets/screenshot_light.jpg)
@@ -65,7 +65,14 @@ Simple Live 会一直坚持**免费、开源、不向用户收费**。目前项�
 5. **跨平台聚合搜索**：一个入口并发搜索虎牙、斗鱼、哔哩哔哩、抖音和快手，按平台分区展示，并保留单站完整分页。
 6. **移动播放体验**：统一管理常亮锁和全屏系统栏，改善 iOS 状态栏隐藏、前后台恢复、播放器刷新、音量保持及视频方向跟随。
 
-> 开发中的新功能在 [dev 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/dev)，稳定后合入本分支（两分支同处 Flutter 3.41 线）。dev 当前的 `1.13.10` 属于开发测试迭代号，不代表正式发布版本；stable 本次正式版本为 `1.13.2`。
+> 开发中的新功能在 [dev 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/dev)，稳定后合入本分支（两分支同处 Flutter 3.41 线）。stable 本次准备版本为 `1.13.3`。
+
+**本次合入 dev 后的重点变化**：
+- **应用内更新检查**：关于页可检查 GitHub Release，并区分 dev / stable 发布通道。
+- **关注页体验优化**：关注卡片布局、内容裁切、文本导入导出入口、特别关注显示开关和刷新性能已调整。
+- **抖音搜索兼容**：补充兼容兜底与提示，降低接口变化导致的空结果误判。
+- **快手关注状态修复**：修复关注状态路径、账号详情回填、播放页状态同步和安全验证提示。
+- **上游稳定性修复合并**：同步上游 v1.12.8 稳定性改动，并继续回归验证。
 
 ---
 
@@ -115,7 +122,6 @@ Simple Live 会一直坚持**免费、开源、不向用户收费**。目前项�
 - 远程同步（Cloudflare Workers 临时房间 + 自建地址）
 - 配置导入导出（设置、关注、标签、历史、弹幕屏蔽词）
 - 桌面端小窗 / 画中画
-- 实时字幕（桌面端，需本地 Whisper 模型）
 
 ---
 
@@ -166,7 +172,7 @@ Simple Live 会一直坚持**免费、开源、不向用户收费**。目前项�
 
 ### 版本号维护
 
-应用构建版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。dev 分支的版本号用于区分开发测试构建，不作为正式版本号；本次 stable 正式版本为 `1.13.2`，对应构建号 `11302`，规则为：
+应用构建版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。dev 分支的版本号用于区分开发测试构建，不作为正式版本号；本次 stable 准备版本为 `1.13.3`，对应构建号 `11303`，规则为：
 
 ```text
 major × 10000 + minor × 100 + patch
@@ -176,7 +182,7 @@ major × 10000 + minor × 100 + patch
 
 ```bash
 # 直接设置版本并同步所有派生文件
-dart run tool/app_version.dart set 1.13.2
+dart run tool/app_version.dart set 1.13.3
 ```
 
 ---

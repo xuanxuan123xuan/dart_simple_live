@@ -2,16 +2,34 @@ import 'package:extended_image/extended_image.dart';
 import 'package:flutter/material.dart';
 
 class NetImage extends StatelessWidget {
+  static const liveCoverCacheName = 'simple_live_live_covers';
+
   final String picUrl;
   final double? width;
   final double? height;
   final BoxFit? fit;
   final double borderRadius;
+  final Widget? loadingWidget;
+  final Widget? errorWidget;
+  final int? cacheWidth;
+  final int? cacheHeight;
+  final bool clearMemoryCacheWhenDispose;
+  final String? imageCacheName;
+  final Duration? cacheMaxAge;
+  final bool cache;
   const NetImage(this.picUrl,
       {this.width,
       this.height,
       this.fit = BoxFit.cover,
       this.borderRadius = 0,
+      this.loadingWidget,
+      this.errorWidget,
+      this.cacheWidth,
+      this.cacheHeight,
+      this.clearMemoryCacheWhenDispose = false,
+      this.imageCacheName,
+      this.cacheMaxAge,
+      this.cache = true,
       Key? key})
       : super(key: key);
 
@@ -36,6 +54,9 @@ class NetImage extends StatelessWidget {
           fit: fit,
           height: height,
           width: width,
+          errorBuilder: errorWidget == null
+              ? null
+              : (context, error, stackTrace) => errorWidget!,
         ),
       );
     }
@@ -48,20 +69,28 @@ class NetImage extends StatelessWidget {
         width: width,
         shape: BoxShape.rectangle,
         borderRadius: BorderRadius.circular(borderRadius),
+        cache: cache,
+        cacheWidth: cacheWidth,
+        cacheHeight: cacheHeight,
+        clearMemoryCacheWhenDispose: clearMemoryCacheWhenDispose,
+        imageCacheName: imageCacheName,
+        cacheMaxAge: cacheMaxAge,
         loadStateChanged: (e) {
           if (e.extendedImageLoadState == LoadState.loading) {
-            return const Icon(
-              Icons.image,
-              color: Colors.grey,
-              size: 24,
-            );
+            return loadingWidget ??
+                const Icon(
+                  Icons.image,
+                  color: Colors.grey,
+                  size: 24,
+                );
           }
           if (e.extendedImageLoadState == LoadState.failed) {
-            return const Icon(
-              Icons.broken_image,
-              color: Colors.grey,
-              size: 24,
-            );
+            return errorWidget ??
+                const Icon(
+                  Icons.broken_image,
+                  color: Colors.grey,
+                  size: 24,
+                );
           }
           return null;
         },

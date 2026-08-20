@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
@@ -26,7 +28,7 @@ class AutoExitSettingsPage extends GetView<AppSettingsController> {
                     value: controller.autoExitEnable.value,
                     title: "启用定时关闭",
                     onChanged: (e) {
-                      controller.setAutoExitEnable(e);
+                      unawaited(controller.setAutoExitEnable(e));
                     },
                   ),
                 ),

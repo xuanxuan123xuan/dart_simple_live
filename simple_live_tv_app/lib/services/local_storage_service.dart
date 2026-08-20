@@ -138,6 +138,16 @@ class LocalStorageService extends GetxService {
   /// 抖音cookie
   static const String kDouyinCookie = "DouyinCookie";
 
+  /// 快手双账号池
+  static const String kKuaishouCookie = "KuaishouCookie";
+  static const String kKuaishouKww = "KuaishouKww";
+  static const String kKuaishouCookieExpiresAt = "KuaishouCookieExpiresAt";
+  static const String kKuaishouSecondaryCookie = "KuaishouSecondaryCookie";
+  static const String kKuaishouSecondaryKww = "KuaishouSecondaryKww";
+  static const String kKuaishouSecondaryCookieExpiresAt =
+      "KuaishouSecondaryCookieExpiresAt";
+  static const String kKuaishouAccountPoolState = "KuaishouAccountPoolState";
+
   ///主题色
   static const String kStyleColor = "kStyleColor";
 
@@ -180,12 +190,8 @@ class LocalStorageService extends GetxService {
   late Box<String> shieldBox;
 
   Future init() async {
-    settingsBox = await Hive.openBox(
-      "TVLocalStorage",
-    );
-    shieldBox = await Hive.openBox(
-      "TVDanmuShield",
-    );
+    settingsBox = await Hive.openBox("TVLocalStorage");
+    shieldBox = await Hive.openBox("TVDanmuShield");
   }
 
   T getValue<T>(dynamic key, T defaultValue) {

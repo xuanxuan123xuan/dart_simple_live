@@ -3,6 +3,32 @@ import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 void main() {
+  group('inline multi-room playback resume', () {
+    test('resumes when the single room was playing or buffering', () {
+      expect(
+        shouldResumeLiveRoomAfterInlineMultiRoom(
+          playing: true,
+          buffering: false,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldResumeLiveRoomAfterInlineMultiRoom(
+          playing: false,
+          buffering: true,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldResumeLiveRoomAfterInlineMultiRoom(
+          playing: false,
+          buffering: false,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('offline room refresh guard', () {
     test('never accepts an offline snapshot while playback is active', () {
       expect(

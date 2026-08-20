@@ -124,13 +124,6 @@ class OhosPlaybackSignalAdapter {
     if (previous != null && value.position > previous.position) {
       signals.add(_signal(OhosPlaybackSignalType.positionAdvanced, at: at));
     }
-    if (!_firstFrameEmitted &&
-        value.isInitialized &&
-        !value.isBuffering &&
-        (value.position > Duration.zero || value.isPlaying)) {
-      _firstFrameEmitted = true;
-      signals.add(_signal(OhosPlaybackSignalType.firstFrame, at: at));
-    }
     if (value.hasError && previous?.hasError != true) {
       signals.add(
         _signal(
@@ -142,6 +135,18 @@ class OhosPlaybackSignalAdapter {
     }
     _previousValue = value;
     return signals;
+  }
+
+  OhosPlaybackSignal? markFirstFrame({
+    required int roomGeneration,
+    required int playerGeneration,
+    DateTime? at,
+  }) {
+    if (!_matches(roomGeneration, playerGeneration) || _firstFrameEmitted) {
+      return null;
+    }
+    _firstFrameEmitted = true;
+    return _signal(OhosPlaybackSignalType.firstFrame, at: at);
   }
 
   OhosPlaybackSignal? markSourceReopened({

@@ -47,6 +47,16 @@ class SignalRService {
   Stream<RoomSyncPayload> get onBiliAccountStream =>
       _onBiliAccountStreamController.stream;
 
+  final _onDouyinAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onDouyinAccountStream =>
+      _onDouyinAccountStreamController.stream;
+
+  final _onKuaishouAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onKuaishouAccountStream =>
+      _onKuaishouAccountStreamController.stream;
+
   final _onRoomDestroyedStreamController = StreamController<String>.broadcast();
   Stream<String> get onRoomDestroyedStream =>
       _onRoomDestroyedStreamController.stream;
@@ -214,6 +224,8 @@ class SignalRService {
     _onHistoryStreamController.close();
     _onShieldWordStreamController.close();
     _onBiliAccountStreamController.close();
+    _onDouyinAccountStreamController.close();
+    _onKuaishouAccountStreamController.close();
     _onRoomDestroyedStreamController.close();
     _onRoomUserUpdatedStreamController.close();
     _stopHeartbeat();
@@ -304,6 +316,12 @@ class SignalRService {
           break;
         case "biliAccountReceived":
           _emitBoolString(data, _onBiliAccountStreamController);
+          break;
+        case "douyinAccountReceived":
+          _emitBoolString(data, _onDouyinAccountStreamController);
+          break;
+        case "kuaishouAccountReceived":
+          _emitBoolString(data, _onKuaishouAccountStreamController);
           break;
         case "roomDestroyed":
           _onRoomDestroyedStreamController
@@ -465,6 +483,10 @@ class SignalRService {
         return "sendShieldWord";
       case "SendBiliAccount":
         return "sendBiliAccount";
+      case "SendDouyinAccount":
+        return "sendDouyinAccount";
+      case "SendKuaishouAccount":
+        return "sendKuaishouAccount";
       default:
         return action;
     }

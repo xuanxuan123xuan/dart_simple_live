@@ -28,6 +28,30 @@ void main() {
       );
     });
 
+    test('focus temporarily suspends every non-focused tile', () {
+      expect(
+        shouldSuspendMultiRoomPlaybackForFocus(
+          roomKey: 'focused',
+          focusedRoomKey: 'focused',
+        ),
+        isFalse,
+      );
+      expect(
+        shouldSuspendMultiRoomPlaybackForFocus(
+          roomKey: 'secondary',
+          focusedRoomKey: 'focused',
+        ),
+        isTrue,
+      );
+      expect(
+        shouldSuspendMultiRoomPlaybackForFocus(
+          roomKey: 'secondary',
+          focusedRoomKey: null,
+        ),
+        isFalse,
+      );
+    });
+
     test('main-sub enables only index zero when no room is focused', () {
       expect(
         resolveMultiRoomLiveLatencyRole(

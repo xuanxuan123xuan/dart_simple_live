@@ -48,6 +48,36 @@ bool shouldChaseMultiRoomLiveLatency({
       role == MpvLiveLatencyPlaybackRole.multiRoomPrimaryVisible;
 }
 
+List<DanmakuContentPart>? buildMultiRoomDanmakuContentParts(
+  List<LiveMessageSpan>? spans,
+) {
+  final source = spans ?? const <LiveMessageSpan>[];
+  if (source.isEmpty) {
+    return null;
+  }
+
+  final parts = <DanmakuContentPart>[];
+  for (final span in source) {
+    if (span.isText) {
+      final text = span.text ?? "";
+      if (text.isNotEmpty) {
+        parts.add(DanmakuContentPart.text(text));
+      }
+    } else if (span.isImage) {
+      final imageUrl = (span.imageUrl ?? "").trim();
+      if (imageUrl.isNotEmpty) {
+        parts.add(
+          DanmakuContentPart.image(
+            imageUrl,
+            fallbackText: span.fallbackText,
+          ),
+        );
+      }
+    }
+  }
+  return parts.isEmpty ? null : parts;
+}
+
 class MultiRoomRefreshResult {
   const MultiRoomRefreshResult({
     required this.roomKey,
@@ -73,6 +103,7 @@ class MultiRoomTileControlsVisibility {
   final visible = true.obs;
 
   Timer? _hideTimer;
+  bool _autoHidePaused = false;
   bool _disposed = false;
 
   /// Shows the controls and starts a fresh auto-hide countdown.
@@ -86,6 +117,7 @@ class MultiRoomTileControlsVisibility {
   void toggle() {
     if (_disposed) return;
     if (visible.value) {
+      if (_autoHidePaused) return;
       visible.value = false;
       _hideTimer?.cancel();
       _hideTimer = null;
@@ -96,12 +128,32 @@ class MultiRoomTileControlsVisibility {
 
   void _scheduleHide() {
     _hideTimer?.cancel();
+    _hideTimer = null;
+    if (_autoHidePaused) return;
     _hideTimer = Timer(hideDelay, () {
       if (!_disposed) {
         visible.value = false;
       }
       _hideTimer = null;
     });
+  }
+
+  /// Keeps the controls visible while an overlay control is being used.
+  void pauseAutoHide() {
+    if (_disposed) return;
+    _autoHidePaused = true;
+    _hideTimer?.cancel();
+    _hideTimer = null;
+    visible.value = true;
+  }
+
+  /// Starts a fresh countdown when the overlay control is closed.
+  void resumeAutoHide() {
+    if (_disposed || !_autoHidePaused) return;
+    _autoHidePaused = false;
+    if (visible.value) {
+      _scheduleHide();
+    }
   }
 
   void dispose() {
@@ -124,6 +176,7 @@ class MultiRoomPlayerController extends GetxController {
     int? initialQualityIndex,
     int? initialLineIndex,
     bool initialPaused = false,
+    bool initialPlaybackSuspendedForFocus = false,
     bool initialAppActive = true,
     MpvLiveLatencyPlaybackRole initialLiveLatencyRole =
         MpvLiveLatencyPlaybackRole.multiRoomSecondaryOrInactive,
@@ -141,6 +194,7 @@ class MultiRoomPlayerController extends GetxController {
     _restoreQualityIndex = initialQualityIndex;
     _restoreLineIndex = initialLineIndex;
     paused.value = initialPaused;
+    _playbackSuspendedForFocus = initialPlaybackSuspendedForFocus;
   }
 
   late final Player player = Player(
@@ -185,6 +239,10 @@ class MultiRoomPlayerController extends GetxController {
   /// 点击本格画面：呼出/收起本格按钮，并重置 5 秒自动隐藏计时。
   void toggleTileControls() => _tileControls.toggle();
 
+  void pauseTileControlsAutoHide() => _tileControls.pauseAutoHide();
+
+  void resumeTileControlsAutoHide() => _tileControls.resumeAutoHide();
+
   /// 状态徽标：空=正常；"重试中…"=流错误重试；"弹幕重连…"=弹幕重连。
   final streamStatus = "".obs;
 
@@ -223,6 +281,7 @@ class MultiRoomPlayerController extends GetxController {
   bool _routeTransitionClosed = false;
   Future<void>? _routeTransitionFuture;
   bool _playbackDesired = false;
+  bool _playbackSuspendedForFocus = false;
   int _playbackIntentRevision = 0;
   bool _danmakuActive = false;
   Future<void>? _danmakuStopFuture;
@@ -310,18 +369,15 @@ class MultiRoomPlayerController extends GetxController {
 
   bool get isMemoryQualityDegraded => _memoryPressureQualityIndex != null;
 
-  bool get playbackDesired => _playbackDesired && !paused.value;
+  bool get playbackDesired =>
+      _playbackDesired && !paused.value && !_playbackSuspendedForFocus;
 
   bool get shouldRecoverPlayback =>
       !_disposed &&
       !_playerDisposed &&
       !_routeTransitionClosed &&
-      !paused.value &&
-      _playbackDesired &&
+      playbackDesired &&
       liveStatus.value;
-
-  bool get isActuallyPlaying =>
-      !_disposed && !_playerDisposed && player.state.playing;
 
   /// 当前线路列表。
   List<String> get playUrls => _playUrls;
@@ -514,7 +570,7 @@ class MultiRoomPlayerController extends GetxController {
       shouldSampleMultiRoomLiveHealth(
         appActive: _liveLatencyAppActive,
         paused: paused.value,
-        playbackDesired: _playbackDesired,
+        playbackDesired: playbackDesired,
         liveStatus: liveStatus.value,
         hasActiveSource:
             _activeLiveProtocol != null && _liveLinkHealth.current != null,
@@ -939,7 +995,7 @@ class MultiRoomPlayerController extends GetxController {
     _playbackDesired = true;
     await player.open(
       Media(url, httpHeaders: _playHeaders),
-      play: !paused.value,
+      play: playbackDesired,
     );
     if (_disposed || _routeTransitionClosed) return;
     final completedAt = DateTime.now();
@@ -981,51 +1037,89 @@ class MultiRoomPlayerController extends GetxController {
     }
   }
 
-  /// iOS 上其他 Player.open() 可能抢占共享音频会话。这里依据业务意图恢复，
-  /// 不读取可能尚未刷新的 player.state.playing——被抢占的格 state 可能短暂
-  /// 滞后为 true，依赖它判断会漏恢复，导致"只有一个在播放"。
-  /// play() 在已播状态是幂等的，直接按业务意图发起。
-  Future<void> ensurePlaying() {
+  /// iOS 上其他 Player.open() 可能抢占共享音频会话。首轮仅幂等发起
+  /// play；只有播放位置仍不推进的格子才在重试时执行 pause/play，重建
+  /// 已被中断的原生输出。
+  Future<void> ensurePlaying(bool forceRestart) {
     return _enqueue(() async {
-      if (_disposed || paused.value || !_playbackDesired || !liveStatus.value) {
+      if (_disposed || !playbackDesired || !liveStatus.value) {
         return;
+      }
+      if (forceRestart) {
+        await player.pause();
+        if (_disposed || !playbackDesired || !liveStatus.value) {
+          return;
+        }
       }
       await player.play();
     });
   }
 
-  /// Waits for the native player to report a real playing state.
+  /// Temporarily pauses a tile that is hidden by focus mode without changing
+  /// the user's explicit paused state.
+  Future<void> setFocusSuspended(bool value) {
+    if (_playbackSuspendedForFocus == value) {
+      return Future<void>.value();
+    }
+    _playbackSuspendedForFocus = value;
+    if (value && _isBuffering) {
+      _finishBuffering(DateTime.now());
+    }
+    return _enqueue(() async {
+      if (_disposed || _playbackSuspendedForFocus != value) {
+        return;
+      }
+      if (value) {
+        await _stopLiveLatencySampling(
+          reason: MpvLiveLatencyProtectionReason.lifecycleInterrupted,
+        );
+        if (_disposed || _playbackSuspendedForFocus != value) {
+          return;
+        }
+        await player.pause();
+      } else if (playbackDesired && liveStatus.value) {
+        await player.play();
+        if (_disposed || _playbackSuspendedForFocus != value) {
+          return;
+        }
+        await _startLiveLatencySampling();
+      }
+    });
+  }
+
+  /// Waits for media time to advance instead of trusting `state.playing`.
   ///
-  /// The business-level [paused] flag remains authoritative: a user pause
-  /// cancels this confirmation instead of being overwritten by recovery.
+  /// media_kit sets its Dart-side playing state to true before the native mpv
+  /// command has proved that decoding resumed. Position movement is the
+  /// observable signal that the live stream is really running.
   Future<bool> waitUntilActuallyPlaying(Duration timeout) async {
     if (!shouldRecoverPlayback) return true;
-    if (isActuallyPlaying) return true;
 
-    StreamSubscription<bool>? subscription;
+    final initialPosition = player.state.position;
+    StreamSubscription<Duration>? subscription;
     final completer = Completer<bool>();
     try {
-      subscription = player.stream.playing.listen(
-        (playing) {
-          if (playing && !completer.isCompleted) {
+      subscription = player.stream.position.listen(
+        (position) {
+          if (!shouldRecoverPlayback && !completer.isCompleted) {
             completer.complete(true);
-          } else if (!shouldRecoverPlayback && !completer.isCompleted) {
-            completer.complete(false);
+            return;
+          }
+          final delta = (position - initialPosition).inMilliseconds.abs();
+          if (delta >= 20 && !completer.isCompleted) {
+            completer.complete(true);
           }
         },
         onError: (Object _, StackTrace __) {
           if (!completer.isCompleted) completer.complete(false);
         },
       );
-      if (isActuallyPlaying && !completer.isCompleted) {
-        completer.complete(true);
-      }
       return await completer.future.timeout(
         timeout,
-        onTimeout: () => isActuallyPlaying,
+        onTimeout: () => !shouldRecoverPlayback,
       );
     } catch (_) {
-      return isActuallyPlaying;
+      return !shouldRecoverPlayback;
     } finally {
       await subscription?.cancel();
     }
@@ -1061,7 +1155,7 @@ class MultiRoomPlayerController extends GetxController {
           return;
         }
         await player.pause();
-      } else if (_playbackDesired && liveStatus.value) {
+      } else if (playbackDesired && liveStatus.value) {
         await player.play();
         if (intentRevision != _playbackIntentRevision ||
             paused.value != value) {
@@ -1325,11 +1419,15 @@ class MultiRoomPlayerController extends GetxController {
     // 画面弹幕由开关控制。
     if (!showDanmaku.value) return;
     final settings = AppSettingsController.instance;
+    final renderEmoji = settings.danmuRenderEmoji.value;
+    final parts =
+        renderEmoji ? buildMultiRoomDanmakuContentParts(msg.spans) : null;
     danmakuController?.addDanmaku(
       DanmakuContentItem(
         msg.message,
         color: Color.fromARGB(255, msg.color.r, msg.color.g, msg.color.b),
-        imageUrls: settings.danmuRenderEmoji.value ? msg.imageUrls : null,
+        imageUrls: renderEmoji && parts == null ? msg.imageUrls : null,
+        parts: parts,
       ),
     );
   }

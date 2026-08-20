@@ -32,18 +32,20 @@ import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/app_pages.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
+import 'package:simple_live_app/services/app_update_service.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/guide_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/live_notification_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
-import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
+import 'package:simple_live_app/widgets/guide_overlay.dart';
 import 'package:simple_live_app/widgets/status/app_loadding_widget.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
@@ -82,7 +84,8 @@ void main(List<String> args) async {
 class _PopRouteDiagObserver extends WidgetsBindingObserver {
   @override
   Future<bool> didPopRoute() async {
-    Log.d('AppNavigation: WidgetsBinding didPopRoute（系统/容器返回消息）\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: WidgetsBinding didPopRoute（系统/容器返回消息）\n${StackTrace.current}');
     return false; // 不拦截，让默认处理继续
   }
 }
@@ -93,25 +96,29 @@ class _PopRouteDiagObserver extends WidgetsBindingObserver {
 class _RouteDiagObserver extends NavigatorObserver {
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    Log.d('AppNavigation: didPush ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: didPush ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
     super.didPush(route, previousRoute);
   }
 
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    Log.d('AppNavigation: didPop ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: didPop ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
     super.didPop(route, previousRoute);
   }
 
   @override
   void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    Log.d('AppNavigation: didRemove ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: didRemove ${route.runtimeType} prev=${previousRoute?.runtimeType}\n${StackTrace.current}');
     super.didRemove(route, previousRoute);
   }
 
   @override
   void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
-    Log.d('AppNavigation: didReplace new=${newRoute?.runtimeType} old=${oldRoute?.runtimeType}\n${StackTrace.current}');
+    Log.d(
+        'AppNavigation: didReplace new=${newRoute?.runtimeType} old=${oldRoute?.runtimeType}\n${StackTrace.current}');
     super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
   }
 }
@@ -396,12 +403,24 @@ class _DesktopWindowLifecycle with WindowListener {
       }
       final width = bounds.width.clamp(280.0, displayRect.width).toDouble();
       final height = bounds.height.clamp(280.0, displayRect.height).toDouble();
-      final left = bounds.left
-          .clamp(displayRect.left, displayRect.right - width)
-          .toDouble();
-      final top = bounds.top
-          .clamp(displayRect.top, displayRect.bottom - height)
-          .toDouble();
+
+      // Windows DWM may report edge-snapped frames a few pixels outside the
+      // visible work area. Keep that relative overhang so restoring a snapped
+      // window does not leave a small gap at the screen edge.
+      const maxDwmOverhang = 16.0;
+      final minLeft =
+          displayRect.left - (Platform.isWindows ? maxDwmOverhang : 0.0);
+      final maxLeft = displayRect.right -
+          width +
+          (Platform.isWindows ? maxDwmOverhang : 0.0);
+      final minTop =
+          displayRect.top - (Platform.isWindows ? maxDwmOverhang : 0.0);
+      final maxTop = displayRect.bottom -
+          height +
+          (Platform.isWindows ? maxDwmOverhang : 0.0);
+
+      final left = bounds.left.clamp(minLeft, maxLeft).toDouble();
+      final top = bounds.top.clamp(minTop, maxTop).toDouble();
       return Rect.fromLTWH(left, top, width, height);
     }
     return null;
@@ -569,6 +588,7 @@ Future initServices() async {
   //本地存储
   Log.d("Init LocalStorage Service");
   await Get.put(LocalStorageService()).init();
+  await AppUpdateService.instance.init();
   await Get.put(DBService()).init();
   Get.put(CurrentRoomService());
   await Get.put(PlaybackDisplayCoordinator(), permanent: true).initialize();
@@ -581,8 +601,9 @@ Future initServices() async {
 
   Get.put(KuaishouAccountService());
 
+  Get.put(GuideService(), permanent: true);
+
   Get.put(FollowService());
-  Get.put(LiveSubtitleService());
   Get.put(ProfileBackupService());
 
   if (Utils.isOhos) {
@@ -636,6 +657,7 @@ class MyApp extends StatelessWidget {
   static bool _desktopShortcutHandlerBound = false;
   static bool? _desktopShortcutCaptureEnabled;
   static bool _ohosNotificationNavigationBound = false;
+  static bool _appUpdateAutoCheckStarted = false;
 
   const MyApp({super.key});
 
@@ -656,6 +678,12 @@ class MyApp extends StatelessWidget {
       );
       FocusManager.instance.addListener(_syncDesktopShortcutCaptureState);
       _desktopShortcutHandlerBound = true;
+    }
+    if (!_appUpdateAutoCheckStarted) {
+      _appUpdateAutoCheckStarted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(AppUpdateService.instance.checkUpdatesInBackground());
+      });
     }
     unawaited(_syncDesktopShortcutCaptureState());
     bool isDynamicColor = AppSettingsController.instance.isDynamic.value;
@@ -682,7 +710,16 @@ class MyApp extends StatelessWidget {
         initialRoute: RoutePath.kIndex,
         getPages: AppPages.routes,
         routingCallback: (r) {
-          Log.d('AppNavigation: routingCallback cur=${r?.current} prev=${r?.previous}');
+          Log.d(
+              'AppNavigation: routingCallback cur=${r?.current} prev=${r?.previous}');
+          final guide = Get.isRegistered<GuideService>()
+              ? Get.find<GuideService>()
+              : null;
+          if (guide != null &&
+              guide.isActive &&
+              r?.current != RoutePath.kSearch) {
+            guide.dismiss();
+          }
           unawaited(_syncDesktopShortcutCaptureState());
         },
         //国际化
@@ -785,6 +822,8 @@ class MyApp extends StatelessWidget {
                       ),
                     ),
                   ),
+
+                  const GuideOverlay(),
                 ],
               ),
             );
@@ -912,6 +951,12 @@ class MyApp extends StatelessWidget {
       if (shortcut == LogicalKeyboardKey.keyN.keyId) {
         return physicalKey == PhysicalKeyboardKey.keyN;
       }
+      if (shortcut == LogicalKeyboardKey.arrowUp.keyId) {
+        return physicalKey == PhysicalKeyboardKey.arrowUp;
+      }
+      if (shortcut == LogicalKeyboardKey.arrowDown.keyId) {
+        return physicalKey == PhysicalKeyboardKey.arrowDown;
+      }
       return false;
     }
 
@@ -925,6 +970,16 @@ class MyApp extends StatelessWidget {
     }
     if (matches(settings.liveRoomShortcutMute.value)) {
       await liveRoomController.toggleMute();
+      return;
+    }
+    if (_isDesktopPlatform &&
+        matches(settings.liveRoomShortcutVolumeUp.value)) {
+      await liveRoomController.adjustDesktopPlayerVolumeByShortcut(5);
+      return;
+    }
+    if (_isDesktopPlatform &&
+        matches(settings.liveRoomShortcutVolumeDown.value)) {
+      await liveRoomController.adjustDesktopPlayerVolumeByShortcut(-5);
       return;
     }
     if (matches(settings.liveRoomShortcutRefresh.value)) {
@@ -999,6 +1054,10 @@ class MyApp extends StatelessWidget {
           return shortcut == LogicalKeyboardKey.keyB.keyId;
         case "keyN":
           return shortcut == LogicalKeyboardKey.keyN.keyId;
+        case "arrowUp":
+          return shortcut == LogicalKeyboardKey.arrowUp.keyId;
+        case "arrowDown":
+          return shortcut == LogicalKeyboardKey.arrowDown.keyId;
         default:
           return false;
       }
@@ -1014,6 +1073,14 @@ class MyApp extends StatelessWidget {
     }
     if (matchesDesktopShortcut(settings.liveRoomShortcutMute.value)) {
       await liveRoomController.toggleMute();
+      return;
+    }
+    if (matchesDesktopShortcut(settings.liveRoomShortcutVolumeUp.value)) {
+      await liveRoomController.adjustDesktopPlayerVolumeByShortcut(5);
+      return;
+    }
+    if (matchesDesktopShortcut(settings.liveRoomShortcutVolumeDown.value)) {
+      await liveRoomController.adjustDesktopPlayerVolumeByShortcut(-5);
       return;
     }
     if (matchesDesktopShortcut(settings.liveRoomShortcutRefresh.value)) {

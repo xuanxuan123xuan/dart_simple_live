@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:web_socket_channel/io.dart';
 
@@ -75,6 +76,17 @@ class WebScoketUtils {
 
   final WebSocketConnector _connector;
   final WebSocketRetryTimerFactory _retryTimerFactory;
+
+  /// 单个候选地址的连接超时时间。
+  final Duration connectTimeout;
+
+  /// 是否随机化候选地址顺序。
+  final bool shuffleUrls;
+
+  /// 每轮最多尝试的候选地址数量，null 表示全部尝试。
+  final int? maxConnectAttempts;
+
+  /// 连接断开后的重连间隔。
   final Duration reconnectDelay;
 
   WebScoketUtils({
@@ -90,9 +102,19 @@ class WebScoketUtils {
     this.backupUrls = const [],
     WebSocketConnector? connector,
     WebSocketRetryTimerFactory? retryTimerFactory,
+    this.connectTimeout = const Duration(seconds: 10),
+    this.shuffleUrls = false,
+    this.maxConnectAttempts,
     this.reconnectDelay = const Duration(seconds: 5),
     this.maxReconnectTime = 5,
-  })  : _connector = connector ?? _defaultConnector,
+  })  : _connector = connector ??
+            ((url, headers) => _IoWebSocketConnection(
+                  IOWebSocketChannel.connect(
+                    url,
+                    connectTimeout: connectTimeout,
+                    headers: headers,
+                  ),
+                )),
         _retryTimerFactory = retryTimerFactory ?? _defaultRetryTimer;
 
   WebSocketConnection? webSocket;
@@ -110,19 +132,7 @@ class WebScoketUtils {
   bool _disconnectHandled = false;
   int _nextUrlIndex = 0;
   int _connectionGeneration = 0;
-
-  static WebSocketConnection _defaultConnector(
-    String url,
-    Map<String, dynamic>? headers,
-  ) {
-    return _IoWebSocketConnection(
-      IOWebSocketChannel.connect(
-        url,
-        connectTimeout: const Duration(seconds: 10),
-        headers: headers,
-      ),
-    );
-  }
+  List<String> _activeConnectUrls = const [];
 
   static Timer _defaultRetryTimer(
     Duration delay,
@@ -140,11 +150,15 @@ class WebScoketUtils {
     return urls.toSet().toList();
   }
 
+  /// Exposes the de-duplicated candidate order for diagnostics and tests.
+  List<String> get connectUrls => List.unmodifiable(_connectUrls);
+
   Future<void> connect({bool retry = false}) async {
     if (!retry) {
       _manuallyClosed = false;
       reconnectTime = 0;
       _nextUrlIndex = 0;
+      _activeConnectUrls = _buildConnectAttemptUrls();
       reconnectTimer?.cancel();
       reconnectTimer = null;
     }
@@ -156,7 +170,9 @@ class WebScoketUtils {
   }
 
   Future<void> _connectNextUrl() async {
-    final urls = _connectUrls;
+    final urls = _activeConnectUrls.isEmpty
+        ? _buildConnectAttemptUrls()
+        : _activeConnectUrls;
     if (urls.isEmpty || _manuallyClosed) {
       return;
     }
@@ -186,6 +202,16 @@ class WebScoketUtils {
         generation: generation,
       );
     }
+  }
+
+  List<String> _buildConnectAttemptUrls() {
+    final urls = _connectUrls.toList();
+    if (shuffleUrls) {
+      urls.shuffle(Random());
+    }
+    return maxConnectAttempts == null
+        ? urls
+        : urls.take(maxConnectAttempts!).toList();
   }
 
   void _ready(int generation) {

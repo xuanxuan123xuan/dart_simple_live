@@ -8,24 +8,31 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/modules/follow_user/follow_user_controller.dart';
+import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
 import 'package:simple_live_app/widgets/page_grid_view.dart';
 
-class FollowUserPage extends GetView<FollowUserController> {
+class FollowUserPage extends StatefulWidget {
   const FollowUserPage({Key? key}) : super(key: key);
 
   @override
+  State<FollowUserPage> createState() => _FollowUserPageState();
+}
+
+class _FollowUserPageState extends State<FollowUserPage> {
+  @override
   Widget build(BuildContext context) {
+    final controller = Get.find<FollowUserController>();
     return Scaffold(
       appBar: AppBar(
         title: const Text("关注用户"),
         actions: [
           IconButton(
             tooltip: "搜索主播",
-            onPressed: () => _showSearchDialog(context),
+            onPressed: () => _showSearchDialog(context, controller),
             icon: Obx(
               () => Icon(
                 controller.searchKeyword.value.isEmpty
@@ -36,7 +43,7 @@ class FollowUserPage extends GetView<FollowUserController> {
           ),
           IconButton(
             tooltip: "显示与筛选",
-            onPressed: () => _showDisplaySheet(context),
+            onPressed: () => _showDisplaySheet(context, controller),
             icon: const Icon(Icons.tune),
           ),
           Obx(
@@ -110,46 +117,23 @@ class FollowUserPage extends GetView<FollowUserController> {
             tooltip: "更多",
             onSelected: (value) {
               switch (value) {
-                case "exportFile":
-                  FollowService.instance.exportFile();
-                  break;
-                case "importFile":
-                  FollowService.instance.inputFile();
-                  break;
-                case "exportText":
+                case "export_text":
                   FollowService.instance.exportText();
                   break;
-                case "importText":
+                case "input_text":
                   FollowService.instance.inputText();
                   break;
+                case "backup":
+                  Get.toNamed(RoutePath.kSync);
+                  break;
                 case "tags":
-                  showTagsManager();
+                  showTagsManager(controller);
                   break;
               }
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
-                value: "exportFile",
-                child: Row(
-                  children: [
-                    Icon(Remix.save_2_line),
-                    SizedBox(width: 12),
-                    Text("导出文件"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: "importFile",
-                child: Row(
-                  children: [
-                    Icon(Remix.folder_open_line),
-                    SizedBox(width: 12),
-                    Text("导入文件"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: "exportText",
+                value: "export_text",
                 child: Row(
                   children: [
                     Icon(Remix.text),
@@ -159,12 +143,22 @@ class FollowUserPage extends GetView<FollowUserController> {
                 ),
               ),
               const PopupMenuItem(
-                value: "importText",
+                value: "input_text",
                 child: Row(
                   children: [
                     Icon(Remix.file_text_line),
                     SizedBox(width: 12),
                     Text("导入文本"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: "backup",
+                child: Row(
+                  children: [
+                    Icon(Remix.archive_line),
+                    SizedBox(width: 12),
+                    Text("管理备份"),
                   ],
                 ),
               ),
@@ -221,7 +215,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                 () => _buildRefreshProgress(context),
               ),
               Obx(
-                () => _buildActiveFilterBar(context),
+                () => _buildSearchFilterBar(controller),
               ),
               Padding(
                 padding: AppStyle.edgeInsetsH8,
@@ -275,7 +269,12 @@ class FollowUserPage extends GetView<FollowUserController> {
                   () {
                     // 建立对多选集合的响应依赖。
                     final _ = controller.selectedMultiRoomCount.value;
-                    final layout = _resolveLayoutSpec(context);
+                    final layout = _resolveLayoutSpec(context, controller);
+                    const gridPadding = EdgeInsets.only(
+                      left: 8,
+                      right: 8,
+                      bottom: 96,
+                    );
                     return GestureDetector(
                       behavior: HitTestBehavior.translucent,
                       onHorizontalDragEnd: (details) {
@@ -290,7 +289,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                         }
                       },
                       child: PageGridView(
-                        padding: const EdgeInsets.only(bottom: 96.0),
+                        padding: gridPadding,
                         crossAxisSpacing: layout.crossAxisSpacing,
                         mainAxisSpacing: layout.mainAxisSpacing,
                         mainAxisExtent: layout.mainAxisExtent,
@@ -309,6 +308,8 @@ class FollowUserPage extends GetView<FollowUserController> {
                             style: layout.itemStyle,
                             showLiveCover: AppSettingsController
                                 .instance.followShowLiveCover.value,
+                            showSpecialMark: AppSettingsController
+                                .instance.followShowSpecialFollow.value,
                             onSpecialTap: () {
                               controller.toggleSpecialFollow(item);
                             },
@@ -324,7 +325,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                               controller.openFollowRoom(item);
                             },
                             onLongPress: () {
-                              setFollowTagDialog(item);
+                              setFollowTagDialog(controller, item);
                             },
                             playing: controller.isSelectedForMultiRoom(item) ||
                                 isCurrent,
@@ -343,7 +344,7 @@ class FollowUserPage extends GetView<FollowUserController> {
                     left: 16,
                     right: 16,
                     bottom: PlatformUtils.isMobileApp ? 12 : 18,
-                    child: _buildFloatingPaginationBar(context),
+                    child: _buildFloatingPaginationBar(controller, context),
                   )
                 : const SizedBox.shrink(),
           ),
@@ -352,7 +353,10 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  _FollowLayoutSpec _resolveLayoutSpec(BuildContext context) {
+  _FollowLayoutSpec _resolveLayoutSpec(
+    BuildContext context,
+    FollowUserController controller,
+  ) {
     final width = MediaQuery.of(context).size.width;
     final style = AppSettingsController.instance.followDisplayStyle.value;
     final showLiveCover =
@@ -362,8 +366,7 @@ class FollowUserPage extends GetView<FollowUserController> {
       return _FollowLayoutSpec(
         itemStyle: FollowUserItemStyle.compactList,
         crossAxisCount: mobile ? 1 : (width >= 1440 ? 2 : 1),
-        mainAxisExtent:
-            showLiveCover ? (mobile ? 112 : 118) : (mobile ? 70 : 78),
+        mainAxisExtent: showLiveCover ? 77 : (mobile ? 70 : 78),
         childAspectRatio: 3.8,
         crossAxisSpacing: 12,
         mainAxisSpacing: showLiveCover ? 10 : 8,
@@ -376,12 +379,12 @@ class FollowUserPage extends GetView<FollowUserController> {
       final availableWidth = width - 16 - (crossAxisCount - 1) * 12;
       final cardWidth = availableWidth / crossAxisCount;
       final coverHeight = cardWidth * 9 / 16;
-      // HarmonyOS uses a larger effective text scale on the tested phone. The
-      // previous 108px body clipped the entire platform/status row below the
-      // card border when the room title occupied two lines.
-      final cardExtent = showLiveCover
-          ? coverHeight + (mobile ? 144 : 148)
-          : (mobile ? 220.0 : 228.0);
+      final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+      final bodyExtent = mobile
+          ? (96.0 + (textScale - 1.0) * 28.0).clamp(96.0, 116.0)
+          : (98.0 + (textScale - 1.0) * 28.0).clamp(98.0, 120.0);
+      final cardExtent =
+          showLiveCover ? coverHeight + bodyExtent : (mobile ? 220.0 : 228.0);
       return _FollowLayoutSpec(
         itemStyle: FollowUserItemStyle.card,
         crossAxisCount: crossAxisCount,
@@ -394,41 +397,15 @@ class FollowUserPage extends GetView<FollowUserController> {
     return _FollowLayoutSpec(
       itemStyle: FollowUserItemStyle.defaultList,
       crossAxisCount: mobile ? 1 : (width >= 1520 ? 2 : 1),
-      mainAxisExtent: showLiveCover ? (mobile ? 132 : 138) : (mobile ? 82 : 92),
+      mainAxisExtent: showLiveCover ? 94 : (mobile ? 82 : 92),
       childAspectRatio: 3.2,
       crossAxisSpacing: 12,
       mainAxisSpacing: showLiveCover ? 10 : 8,
     );
   }
 
-  Widget _buildActiveFilterBar(BuildContext context) {
-    final settings = AppSettingsController.instance;
-    final chips = <Widget>[];
-    if (controller.searchKeyword.value.isNotEmpty) {
-      chips.add(
-        InputChip(
-          label: Text("搜索：${controller.searchKeyword.value}"),
-          onDeleted: controller.clearSearchKeyword,
-        ),
-      );
-    }
-    if (settings.followOnlyLive.value) {
-      chips.add(
-        InputChip(
-          label: const Text("仅显示开播"),
-          onDeleted: () => controller.setOnlyLive(false),
-        ),
-      );
-    }
-    if (settings.followRefreshOnEnter.value) {
-      chips.add(
-        InputChip(
-          label: const Text("进页自动刷新"),
-          onDeleted: () => controller.setRefreshOnEnter(false),
-        ),
-      );
-    }
-    if (chips.isEmpty) {
+  Widget _buildSearchFilterBar(FollowUserController controller) {
+    if (controller.searchKeyword.value.isEmpty) {
       return const SizedBox.shrink();
     }
     return Padding(
@@ -436,12 +413,20 @@ class FollowUserPage extends GetView<FollowUserController> {
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
-        children: chips,
+        children: [
+          InputChip(
+            label: Text("搜索：${controller.searchKeyword.value}"),
+            onDeleted: controller.clearSearchKeyword,
+          ),
+        ],
       ),
     );
   }
 
-  Future<void> _showSearchDialog(BuildContext context) async {
+  Future<void> _showSearchDialog(
+    BuildContext context,
+    FollowUserController controller,
+  ) async {
     final textController = TextEditingController(
       text: controller.searchKeyword.value,
     );
@@ -494,7 +479,10 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  void _showDisplaySheet(BuildContext context) {
+  void _showDisplaySheet(
+    BuildContext context,
+    FollowUserController controller,
+  ) {
     Utils.showBottomSheet(
       title: "显示与筛选",
       child: Obx(
@@ -516,11 +504,23 @@ class FollowUserPage extends GetView<FollowUserController> {
                     runSpacing: 8,
                     children: [
                       _buildStyleChip(
-                          "default", "默认", settings.followDisplayStyle.value),
+                        controller,
+                        "default",
+                        "默认",
+                        settings.followDisplayStyle.value,
+                      ),
                       _buildStyleChip(
-                          "compact", "紧凑", settings.followDisplayStyle.value),
+                        controller,
+                        "compact",
+                        "紧凑",
+                        settings.followDisplayStyle.value,
+                      ),
                       _buildStyleChip(
-                          "card", "卡片", settings.followDisplayStyle.value),
+                        controller,
+                        "card",
+                        "卡片",
+                        settings.followDisplayStyle.value,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -530,6 +530,13 @@ class FollowUserPage extends GetView<FollowUserController> {
                     subtitle: const Text("开启后显示直播间封面图；关闭时只显示主播头像和信息"),
                     value: settings.followShowLiveCover.value,
                     onChanged: controller.setShowLiveCover,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text("显示特别关注"),
+                    subtitle: const Text("开启后在关注页列表中显示已标记为特别关注的主播"),
+                    value: settings.followShowSpecialFollow.value,
+                    onChanged: controller.setShowSpecialFollow,
                   ),
                   const SizedBox(height: 8),
                   SwitchListTile(
@@ -567,7 +574,12 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  Widget _buildStyleChip(String value, String label, String currentValue) {
+  Widget _buildStyleChip(
+    FollowUserController controller,
+    String value,
+    String label,
+    String currentValue,
+  ) {
     return ChoiceChip(
       label: Text(label),
       selected: currentValue == value,
@@ -577,7 +589,10 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  Widget _buildFloatingPaginationBar(BuildContext context) {
+  Widget _buildFloatingPaginationBar(
+    FollowUserController controller,
+    BuildContext context,
+  ) {
     return SafeArea(
       top: false,
       child: Center(
@@ -676,7 +691,10 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  void setFollowTagDialog(FollowUser item) {
+  void setFollowTagDialog(
+    FollowUserController controller,
+    FollowUser item,
+  ) {
     List<FollowUserTag> copiedList = [
       controller.tagList.first,
       ...controller.tagList.skip(3),
@@ -766,7 +784,7 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  void showTagsManager() {
+  void showTagsManager(FollowUserController controller) {
     Utils.showBottomSheet(
       title: '标签管理',
       child: Column(
@@ -778,7 +796,7 @@ class FollowUserPage extends GetView<FollowUserController> {
             title: const Text("添加标签"),
             leading: const Icon(Icons.add),
             onTap: () {
-              editTagDialog("添加标签");
+              editTagDialog(controller, "添加标签");
             },
           ),
           AppStyle.divider,
@@ -793,7 +811,11 @@ class FollowUserPage extends GetView<FollowUserController> {
                     title: GestureDetector(
                       child: Text(item.tag),
                       onLongPress: () {
-                        editTagDialog("修改标签", followUserTag: item);
+                        editTagDialog(
+                          controller,
+                          "修改标签",
+                          followUserTag: item,
+                        );
                       },
                     ),
                     leading: IconButton(
@@ -815,7 +837,11 @@ class FollowUserPage extends GetView<FollowUserController> {
     );
   }
 
-  void editTagDialog(String title, {FollowUserTag? followUserTag}) {
+  void editTagDialog(
+    FollowUserController controller,
+    String title, {
+    FollowUserTag? followUserTag,
+  }) {
     final TextEditingController tagEditController =
         TextEditingController(text: followUserTag?.tag);
     bool upMode = title == "添加标签";

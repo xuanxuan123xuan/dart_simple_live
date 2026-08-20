@@ -87,6 +87,31 @@ if(PLUGIN_BUNDLED_LIBRARIES)
     COMPONENT Runtime)
 endif()
 
+# Copy the native assets provided by build.dart, including dart_quickjs fallbacks.
+set(NATIVE_ASSETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../build/native_assets/windows")
+set(DART_QUICKJS_DLL "${NATIVE_ASSETS_DIR}/dart_quickjs.dll")
+if(NOT EXISTS "${DART_QUICKJS_DLL}")
+  set(DART_QUICKJS_HOOKS_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../.dart_tool/hooks_runner")
+  set(DART_QUICKJS_CANDIDATES
+    "${DART_QUICKJS_HOOKS_DIR}/native_assets/windows/dart_quickjs.dll")
+  file(GLOB_RECURSE DART_QUICKJS_HOOK_CANDIDATES
+    "${DART_QUICKJS_HOOKS_DIR}/native_assets/windows/*/dart_quickjs.dll"
+    "${DART_QUICKJS_HOOKS_DIR}/shared/dart_quickjs/build/*/dart_quickjs.dll")
+  list(APPEND DART_QUICKJS_CANDIDATES ${DART_QUICKJS_HOOK_CANDIDATES})
+  foreach(DART_QUICKJS_CANDIDATE IN LISTS DART_QUICKJS_CANDIDATES)
+    if(EXISTS "${DART_QUICKJS_CANDIDATE}")
+      set(DART_QUICKJS_DLL "${DART_QUICKJS_CANDIDATE}")
+      break()
+    endif()
+  endforeach()
+endif()
+if(EXISTS "${DART_QUICKJS_DLL}")
+  install(FILES "${DART_QUICKJS_DLL}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endif()
+
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.
 set(FLUTTER_ASSET_DIR_NAME "flutter_assets")

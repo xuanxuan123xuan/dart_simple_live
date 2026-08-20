@@ -41,6 +41,13 @@ MpvLiveLatencyPlaybackRole resolveMultiRoomLiveLatencyRole({
   return MpvLiveLatencyPlaybackRole.multiRoomSecondaryOrInactive;
 }
 
+bool shouldSuspendMultiRoomPlaybackForFocus({
+  required String roomKey,
+  required String? focusedRoomKey,
+}) {
+  return focusedRoomKey != null && roomKey != focusedRoomKey;
+}
+
 class MultiRoomController extends GetxController with WidgetsBindingObserver {
   final List<MultiRoomItem> initialRooms;
   final bool returnToLiveRoom;
@@ -86,6 +93,8 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     // 布局切换必须先退出单格聚焦，否则底层布局虽已改变，
     // 画面仍会被聚焦分支覆盖，看起来像“按钮没反应”。
     focusedRoomKey.value = null;
+    _mainSubLayoutBeforeFocus = null;
+    _syncFocusedPlaybackState();
     mainSubLayout.value = !mainSubLayout.value;
     _syncLiveLatencyParticipation();
     showOverlay.value = true;
@@ -107,6 +116,8 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     _normalizeChatTarget(chatTargetKey, 0);
     mainSubLayout.value = true;
     focusedRoomKey.value = null;
+    _mainSubLayoutBeforeFocus = null;
+    _syncFocusedPlaybackState();
     _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
@@ -121,6 +132,8 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     final focusKey = focusedRoomKey.value;
     if (focusKey != null && !rooms.any((room) => room.key == focusKey)) {
       focusedRoomKey.value = null;
+      _mainSubLayoutBeforeFocus = null;
+      _syncFocusedPlaybackState();
     }
   }
 
@@ -178,6 +191,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     _mainSubLayoutBeforeFocus = mainSubLayout.value;
     focusedRoomKey.value = key;
+    _syncFocusedPlaybackState();
     _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
@@ -192,6 +206,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     if (restoreMainSub != null) {
       mainSubLayout.value = restoreMainSub;
     }
+    _syncFocusedPlaybackState();
     _syncLiveLatencyParticipation();
     showOverlay.value = true;
     _resetAutoHideTimer();
@@ -305,6 +320,11 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         initialQualityIndex: _pendingQualities.remove(item.key),
         initialLineIndex: _pendingLines.remove(item.key),
         initialPaused: allPaused.value,
+        initialPlaybackSuspendedForFocus:
+            shouldSuspendMultiRoomPlaybackForFocus(
+          roomKey: item.key,
+          focusedRoomKey: focusedRoomKey.value,
+        ),
         initialAppActive: _appActive,
         initialLiveLatencyRole: _liveLatencyRoleFor(item),
         mutationQueue: _playerMutationQueue,
@@ -340,6 +360,22 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         controller.updateLiveLatencyParticipation(
           role: _liveLatencyRoleFor(room),
           appActive: _appActive,
+        ),
+      );
+    }
+  }
+
+  void _syncFocusedPlaybackState() {
+    final focusKey = focusedRoomKey.value;
+    for (final room in rooms) {
+      final controller = _existingPlayerFor(room);
+      if (controller == null) continue;
+      unawaited(
+        controller.setFocusSuspended(
+          shouldSuspendMultiRoomPlaybackForFocus(
+            roomKey: room.key,
+            focusedRoomKey: focusKey,
+          ),
         ),
       );
     }
@@ -648,7 +684,6 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
         MultiRoomPlaybackRecoveryTarget(
           roomKey: room.key,
           shouldPlay: () => player.shouldRecoverPlayback,
-          isPlaying: () => player.isActuallyPlaying,
           requestPlay: player.ensurePlaying,
           waitUntilPlaying: player.waitUntilActuallyPlaying,
         ),

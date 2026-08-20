@@ -1,13 +1,10 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:lottie/lottie.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:path/path.dart' as p;
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
@@ -18,20 +15,18 @@ import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
+import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/live_link_health_presentation.dart';
-import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/settings/settings_action.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
-import 'package:simple_live_app/widgets/settings/settings_menu.dart';
 import 'package:simple_live_app/widgets/settings/settings_number.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 import 'package:simple_live_app/widgets/status/app_empty_widget.dart';
 import 'package:simple_live_app/widgets/superchat_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 
 class LiveRoomPage extends GetView<LiveRoomController> {
   static const double _desktopSidePanelWidth = 300.0;
@@ -44,7 +39,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   void showNetworkDiagnose(LiveRoomController controller) {
     Utils.showModalBottomSheetSafe(
       context: Get.context!,
-      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 600),
       builder: (context) => SingleChildScrollView(
         child: _NetworkDiagnosePanel(controller: controller),
       ),
@@ -103,9 +98,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           Positioned.fill(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: kToolbarHeight),
-              child: Center(
-                child: _buildRoomTitleText(),
-              ),
+              child: Center(child: _buildRoomTitleText()),
             ),
           ),
           Align(
@@ -153,9 +146,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                           left: kToolbarHeight,
                           right: 16,
                         ),
-                        child: Center(
-                          child: _buildRoomTitleText(),
-                        ),
+                        child: Center(child: _buildRoomTitleText()),
                       ),
                     ),
                     Align(
@@ -271,9 +262,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     final page = Obx(() {
       if (controller.loadError.value) {
         return Scaffold(
-          appBar: AppBar(
-            title: const Text("直播间加载失败"),
-          ),
+          appBar: AppBar(title: const Text("直播间加载失败")),
           body: Padding(
             padding: AppStyle.edgeInsetsA12,
             child: Column(
@@ -285,10 +274,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   height: 140,
                   repeat: false,
                 ),
-                const Text(
-                  "直播间加载失败",
-                  textAlign: TextAlign.center,
-                ),
+                const Text("直播间加载失败", textAlign: TextAlign.center),
                 AppStyle.vGap4,
                 Text(
                   controller.error?.toString() ?? "未知错误",
@@ -329,9 +315,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           onPopInvokedWithResult: (didPop, result) {
             controller.exitPlayerWindowMode();
           },
-          child: Scaffold(
-            body: buildMediaPlayer(),
-          ),
+          child: Scaffold(body: buildMediaPlayer()),
         );
       }
       return buildPageUI();
@@ -344,12 +328,14 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       builder: (context, orientation) {
         final shortestSide = MediaQuery.sizeOf(context).shortestSide;
         final isCompactMobile = shortestSide < 600;
-        final usePortraitLayout = PlatformUtils.isMobileApp &&
+        final usePortraitLayout =
+            PlatformUtils.isMobileApp &&
             isCompactMobile &&
             !controller.fullScreenState.value &&
             !controller.smallWindowState.value;
-        final effectiveOrientation =
-            usePortraitLayout ? Orientation.portrait : orientation;
+        final effectiveOrientation = usePortraitLayout
+            ? Orientation.portrait
+            : orientation;
         final hasLandscapeActionPanel =
             effectiveOrientation == Orientation.landscape;
         if (_isDesktop) {
@@ -370,10 +356,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 onEnter: (_) => controller.showControls(),
                 onHover: (_) => controller.showControls(),
                 child: Stack(
-                  children: [
-                    body,
-                    ..._buildDesktopOverlayButtons(context),
-                  ],
+                  children: [body, ..._buildDesktopOverlayButtons(context)],
                 ),
               ),
             ),
@@ -417,19 +400,14 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     if (_isDesktop && controller.desktopSidePanelCollapsed.value) {
       return Column(
         children: [
-          Expanded(
-            child: buildMediaPlayer(),
-          ),
+          Expanded(child: buildMediaPlayer()),
           _buildCollapsedDesktopBottomPanel(context),
         ],
       );
     }
     return Column(
       children: [
-        AspectRatio(
-          aspectRatio: 16 / 9,
-          child: buildMediaPlayer(),
-        ),
+        AspectRatio(aspectRatio: 16 / 9, child: buildMediaPlayer()),
         buildUserProfile(context),
         buildMessageArea(),
         buildBottomActions(context),
@@ -446,9 +424,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           Expanded(
             child: Row(
               children: [
-                Expanded(
-                  child: buildMediaPlayer(),
-                ),
+                Expanded(child: buildMediaPlayer()),
                 if (!collapsed) _buildExpandedSidePanel(context),
               ],
             ),
@@ -458,9 +434,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               decoration: BoxDecoration(
                 color: Theme.of(context).cardColor,
                 border: Border(
-                  top: BorderSide(
-                    color: Colors.grey.withAlpha(25),
-                  ),
+                  top: BorderSide(color: Colors.grey.withAlpha(25)),
                 ),
               ),
               padding: AppStyle.edgeInsetsV4.copyWith(
@@ -513,13 +487,17 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                     icon: const Icon(Remix.file_copy_line),
                     label: const Text("复制链接"),
                   ),
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      textStyle: const TextStyle(fontSize: 14),
-                    ),
-                    onPressed: controller.copyPlayUrl,
-                    icon: const Icon(Remix.file_copy_line),
-                    label: const Text("复制播放直链"),
+                  Obx(
+                    () => AppSettingsController.instance.playerShowPlayUrl.value
+                        ? TextButton.icon(
+                            style: TextButton.styleFrom(
+                              textStyle: const TextStyle(fontSize: 14),
+                            ),
+                            onPressed: controller.copyPlayUrl,
+                            icon: const Icon(Remix.file_copy_line),
+                            label: const Text("复制播放直链"),
+                          )
+                        : const SizedBox.shrink(),
                   ),
                 ],
               ),
@@ -541,12 +519,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               decoration: BoxDecoration(
                 color: Theme.of(context).cardColor,
                 border: Border(
-                  left: BorderSide(
-                    color: Colors.grey.withAlpha(25),
-                  ),
-                  bottom: BorderSide(
-                    color: Colors.grey.withAlpha(25),
-                  ),
+                  left: BorderSide(color: Colors.grey.withAlpha(25)),
+                  bottom: BorderSide(color: Colors.grey.withAlpha(25)),
                 ),
               ),
               alignment: Alignment.centerLeft,
@@ -560,10 +534,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             ),
           Expanded(
             child: Column(
-              children: [
-                buildUserProfile(context),
-                buildMessageArea(),
-              ],
+              children: [buildUserProfile(context), buildMessageArea()],
             ),
           ),
         ],
@@ -577,11 +548,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        border: Border(
-          top: BorderSide(
-            color: Colors.grey.withAlpha(25),
-          ),
-        ),
+        border: Border(top: BorderSide(color: Colors.grey.withAlpha(25))),
       ),
       child: Row(
         children: [
@@ -633,17 +600,29 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           final revision = controller.ohosPlayerRevision.value;
           controller.ohosScaleRevision.value;
           final fullScreen = controller.fullScreenState.value;
+          final controlsVisible =
+              controller.showControlsState.value &&
+              !controller.lockControlsState.value;
+          final mediaQuery = MediaQuery.of(context);
+          final safePadding = EdgeInsets.fromLTRB(
+            mediaQuery.viewPadding.left,
+            mediaQuery.viewPadding.top,
+            mediaQuery.viewPadding.right,
+            mediaQuery.viewPadding.bottom,
+          );
           if (controller.showOfflineOverlay) {
             return Stack(
               fit: StackFit.expand,
               children: [
                 const Center(
-                  child: Text(
-                    "未开播",
-                    style: TextStyle(color: Colors.white),
-                  ),
+                  child: Text("未开播", style: TextStyle(color: Colors.white)),
                 ),
-                if (fullScreen) _buildOhosTopBar(context),
+                if (fullScreen)
+                  _buildOhosTopBarOverlay(
+                    context,
+                    controlsVisible: controlsVisible,
+                    safePadding: safePadding,
+                  ),
               ],
             );
           }
@@ -659,7 +638,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                         )
                       : const CircularProgressIndicator(),
                 ),
-                if (fullScreen) _buildOhosTopBar(context),
+                if (fullScreen)
+                  _buildOhosTopBarOverlay(
+                    context,
+                    controlsVisible: controlsVisible,
+                    safePadding: safePadding,
+                  ),
               ],
             );
           }
@@ -684,15 +668,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               forcedAspectRatio = 4 / 3;
               break;
           }
-          final controlsVisible = controller.showControlsState.value &&
-              !controller.lockControlsState.value;
-          final mediaQuery = MediaQuery.of(context);
-          final safePadding = EdgeInsets.fromLTRB(
-            mediaQuery.viewPadding.left,
-            mediaQuery.viewPadding.top,
-            mediaQuery.viewPadding.right,
-            mediaQuery.viewPadding.bottom,
-          );
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -708,6 +683,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   onControllerDisposed: controller.detachOhosVideoController,
                   onGenerationValueChanged:
                       controller.updateOhosVideoStateForGeneration,
+                  onFirstFrame: controller.updateOhosFirstFrameForGeneration,
                   onCompleted: controller.mediaEnd,
                   initialVolume: controller.ohosVolume.value,
                   fit: fit,
@@ -722,18 +698,14 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 controller,
                 enableQuickAccessLongPress: fullScreen,
               ),
-              if (!controller.ohosScreenshotInProgress.value)
-                buildLiveSubtitleOverlay(context, controller),
               if (controller.ohosBuffering.value &&
                   !controller.ohosScreenshotInProgress.value)
                 const Center(child: CircularProgressIndicator()),
               if (fullScreen && !controller.ohosScreenshotInProgress.value)
-                AnimatedPositioned(
-                  left: 0,
-                  right: 0,
-                  top: controlsVisible ? 0 : -(48 + safePadding.top),
-                  duration: const Duration(milliseconds: 200),
-                  child: _buildOhosTopBar(context),
+                _buildOhosTopBarOverlay(
+                  context,
+                  controlsVisible: controlsVisible,
+                  safePadding: safePadding,
                 ),
               if (!controller.ohosScreenshotInProgress.value)
                 AnimatedPositioned(
@@ -763,6 +735,20 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     );
   }
 
+  Widget _buildOhosTopBarOverlay(
+    BuildContext context, {
+    required bool controlsVisible,
+    required EdgeInsets safePadding,
+  }) {
+    return AnimatedPositioned(
+      left: 0,
+      right: 0,
+      top: controlsVisible ? 0 : -(48 + safePadding.top),
+      duration: const Duration(milliseconds: 200),
+      child: _buildOhosTopBar(context),
+    );
+  }
+
   Widget _buildOhosTopBar(BuildContext context) {
     final padding = MediaQuery.viewPaddingOf(context);
     final detail = controller.detail.value;
@@ -787,11 +773,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           IconButton(
             tooltip: "退出全屏",
             onPressed: controller.exitFull,
-            icon: const Icon(
-              Icons.arrow_back,
-              color: Colors.white,
-              size: 24,
-            ),
+            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
           ),
           AppStyle.hGap12,
           Expanded(
@@ -835,10 +817,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         return Container(
           height: 48 + padding.bottom,
           padding: EdgeInsets.only(
-            left:
-                fullScreen ? padding.left + _ohosFullscreenHorizontalInset : 0,
-            right:
-                fullScreen ? padding.right + _ohosFullscreenHorizontalInset : 0,
+            left: fullScreen
+                ? padding.left + _ohosFullscreenHorizontalInset
+                : 0,
+            right: fullScreen
+                ? padding.right + _ohosFullscreenHorizontalInset
+                : 0,
             bottom: padding.bottom,
           ),
           decoration: const BoxDecoration(
@@ -883,10 +867,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   padding: const EdgeInsets.only(left: 8),
                   child: Text(
                     controller.liveDuration.value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                    ),
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
                   ),
                 ),
               const Spacer(),
@@ -906,10 +887,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   onPressed: () => showQualitesInfo(controller),
                   child: Text(
                     controller.currentQualityInfo.value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                    ),
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
                   ),
                 ),
               if (fullScreen && !compact && controller.playUrls.isNotEmpty)
@@ -917,10 +895,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   onPressed: () => showLinesInfo(controller),
                   child: Text(
                     controller.currentLineInfo.value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                    ),
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
                   ),
                 ),
               if (compact)
@@ -1040,9 +1015,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     }
     return Stack(
       children: [
-        const Positioned.fill(
-          child: ColoredBox(color: Colors.black),
-        ),
+        const Positioned.fill(child: ColoredBox(color: Colors.black)),
         Video(
           key: controller.globalPlayerKey,
           controller: controller.videoController,
@@ -1071,7 +1044,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
         Obx(
           () => Visibility(
-            visible: controller.waitingForPlaybackUrl.value &&
+            visible:
+                controller.waitingForPlaybackUrl.value &&
                 !controller.showOfflineOverlay,
             child: const Center(
               child: Text(
@@ -1090,16 +1064,20 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   top: 12,
                   child: Container(
                     constraints: const BoxConstraints(maxWidth: 340),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withAlpha(180),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       controller.networkHint.value,
-                      style:
-                          const TextStyle(fontSize: 12, color: Colors.white70),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.white70,
+                      ),
                     ),
                   ),
                 ),
@@ -1113,18 +1091,11 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         border: Border(
-          top: BorderSide(
-            color: Colors.grey.withAlpha(25),
-          ),
-          bottom: BorderSide(
-            color: Colors.grey.withAlpha(25),
-          ),
+          top: BorderSide(color: Colors.grey.withAlpha(25)),
+          bottom: BorderSide(color: Colors.grey.withAlpha(25)),
         ),
       ),
-      padding: AppStyle.edgeInsetsA8.copyWith(
-        left: 12,
-        right: 12,
-      ),
+      padding: AppStyle.edgeInsetsA8.copyWith(left: 12, right: 12),
       child: Obx(
         () => Row(
           mainAxisAlignment: MainAxisAlignment.start,
@@ -1154,10 +1125,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   AppStyle.vGap4,
                   Row(
                     children: [
-                      Image.asset(
-                        controller.site.logo,
-                        width: 20,
-                      ),
+                      Image.asset(controller.site.logo, width: 20),
                       AppStyle.hGap4,
                       Text(
                         controller.site.name,
@@ -1175,16 +1143,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
-                  Remix.fire_fill,
-                  size: 20,
-                  color: Colors.orange,
-                ),
+                const Icon(Remix.fire_fill, size: 20, color: Colors.orange),
                 AppStyle.hGap4,
                 Text(
-                  Utils.onlineToString(
-                    controller.online.value,
-                  ),
+                  Utils.onlineToString(controller.online.value),
                   style: const TextStyle(fontSize: 14),
                 ),
               ],
@@ -1199,11 +1161,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        border: Border(
-          top: BorderSide(
-            color: Colors.grey.withAlpha(25),
-          ),
-        ),
+        border: Border(top: BorderSide(color: Colors.grey.withAlpha(25))),
       ),
       padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
       child: Row(
@@ -1256,7 +1214,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
 
   Widget buildMessageArea() {
     return Obx(() {
-      final hasSuperChatTab = controller.site.id == Constant.kBiliBili ||
+      final hasSuperChatTab =
+          controller.site.id == Constant.kBiliBili ||
           controller.site.id == Constant.kHuya;
       final tabs = <Widget>[];
       final pages = <Widget>[];
@@ -1277,8 +1236,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   controller.superChats.isNotEmpty
                       ? "${controller.site.id == Constant.kHuya ? "头条" : "SC"}(${controller.superChats.length})"
                       : controller.site.id == Constant.kHuya
-                          ? "头条"
-                          : "SC",
+                      ? "头条"
+                      : "SC",
                 ),
               ),
             );
@@ -1296,9 +1255,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             }
             keys.add(key);
             tabs.add(
-              Tab(
-                text: controller.site.id == Constant.kDouyu ? "亲密榜" : "贡献榜",
-              ),
+              Tab(text: controller.site.id == Constant.kDouyu ? "亲密榜" : "贡献榜"),
             );
             pages.add(
               KeepAliveWrapper(
@@ -1339,8 +1296,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         pages.add(buildChatList());
       }
       final selectedKey = controller.liveRoomSelectedPanelKey.value;
-      final initialIndex =
-          keys.contains(selectedKey) ? keys.indexOf(selectedKey) : 0;
+      final initialIndex = keys.contains(selectedKey)
+          ? keys.indexOf(selectedKey)
+          : 0;
       return Expanded(
         child: DefaultTabController(
           key: ValueKey(keys.join("|")),
@@ -1359,11 +1317,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 },
                 tabs: tabs,
               ),
-              Expanded(
-                child: TabBarView(
-                  children: pages,
-                ),
-              ),
+              Expanded(child: TabBarView(children: pages)),
             ],
           ),
         ),
@@ -1508,10 +1462,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
         Padding(
           padding: AppStyle.edgeInsetsA12,
-          child: Text(
-            "聊天区",
-            style: Get.textTheme.titleSmall,
-          ),
+          child: Text("当前直播间", style: Get.textTheme.titleSmall),
         ),
         SettingsCard(
           child: Column(
@@ -1520,26 +1471,14 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               Obx(
                 () => SettingsNumber(
                   title: "文字大小",
-                  value:
-                      AppSettingsController.instance.chatTextSize.value.toInt(),
+                  value: AppSettingsController.instance.chatTextSize.value
+                      .toInt(),
                   min: 8,
                   max: 36,
                   onChanged: (e) {
-                    AppSettingsController.instance
-                        .setChatTextSize(e.toDouble());
-                  },
-                ),
-              ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsNumber(
-                  title: "上下间隔",
-                  value:
-                      AppSettingsController.instance.chatTextGap.value.toInt(),
-                  min: 0,
-                  max: 12,
-                  onChanged: (e) {
-                    AppSettingsController.instance.setChatTextGap(e.toDouble());
+                    AppSettingsController.instance.setChatTextSize(
+                      e.toDouble(),
+                    );
                   },
                 ),
               ),
@@ -1556,251 +1495,37 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               AppStyle.divider,
               Obx(
                 () => SettingsSwitch(
-                  title: "播放器中显示SC",
-                  value:
-                      AppSettingsController.instance.playershowSuperChat.value,
-                  onChanged: (e) {
-                    AppSettingsController.instance.setPlayerShowSuperChat(e);
-                  },
-                ),
-              ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsMenu<bool>(
-                  title: controller.site.id == Constant.kHuya ? "头条排序" : "SC排序",
-                  value: AppSettingsController.instance.superChatSortDesc.value,
-                  valueMap: const {
-                    false: "按消失时间正序",
-                    true: "按消失时间倒序",
-                  },
-                  onChanged: (e) {
-                    AppSettingsController.instance.setSuperChatSortDesc(e);
-                    controller.superChats.refresh();
-                  },
-                ),
-              ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsSwitch(
-                  title: "重点动态",
-                  subtitle: "汇总短时间内重复较多的弹幕内容",
-                  value:
-                      AppSettingsController.instance.liveEventFlowEnable.value,
-                  onChanged: (e) {
-                    AppSettingsController.instance.setLiveEventFlowEnable(e);
-                    if (!e) {
-                      controller.clearLiveEventFlow();
-                    }
-                  },
-                ),
-              ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsSwitch(
-                  title: "全屏显示重点动态",
-                  subtitle: "在播放器全屏时显示当前重复弹幕摘要",
-                  value: AppSettingsController
-                      .instance.liveEventFlowOverlayEnable.value,
-                  onChanged: AppSettingsController
-                      .instance.setLiveEventFlowOverlayEnable,
-                ),
-              ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsNumber(
-                  title: "动态统计跨度",
-                  subtitle: "多少秒内的重复弹幕合并计数",
-                  value: AppSettingsController
-                      .instance.liveEventFlowWindowSeconds.value,
-                  min: AppSettingsController.kLiveEventFlowMinWindowSeconds,
-                  max: AppSettingsController.kLiveEventFlowMaxWindowSeconds,
-                  step: 5,
-                  onChanged: AppSettingsController
-                      .instance.setLiveEventFlowWindowSeconds,
-                ),
-              ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsNumber(
-                  title: "动态展示时间",
-                  subtitle: "一条动态多久没有更新后自动消失",
-                  value: AppSettingsController
-                      .instance.liveEventFlowDisplaySeconds.value,
-                  min: AppSettingsController.kLiveEventFlowMinDisplaySeconds,
-                  max: AppSettingsController.kLiveEventFlowMaxDisplaySeconds,
-                  step: 1,
-                  onChanged: AppSettingsController
-                      .instance.setLiveEventFlowDisplaySeconds,
-                ),
-              ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsNumber(
-                  title: "动态起显次数",
-                  subtitle: "同一句重复达到多少次后进入重点动态",
-                  value: AppSettingsController
-                      .instance.liveEventFlowMinCount.value,
-                  min: AppSettingsController.kLiveEventFlowMinCount,
-                  max: AppSettingsController.kLiveEventFlowMaxCount,
-                  step: 1,
-                  onChanged:
-                      AppSettingsController.instance.setLiveEventFlowMinCount,
-                ),
-              ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsNumber(
-                  title: "动态保留数量",
-                  subtitle: "控制动态页最多保留多少条摘要",
-                  value:
-                      AppSettingsController.instance.liveEventFlowLimit.value,
-                  min: AppSettingsController.kLiveEventFlowMinLimit,
-                  max: AppSettingsController.kLiveEventFlowMaxLimit,
-                  step: 50,
-                  onChanged:
-                      AppSettingsController.instance.setLiveEventFlowLimit,
-                ),
-              ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsSwitch(
                   title: "重复弹幕过滤",
-                  subtitle: AppSettingsController.instance.danmuDedupeStrictMode
-                      ? "刷屏严父：不同用户重复发同一句也只显示一次"
-                      : "普通：同一用户在最近若干条内重复发同一句只显示一次",
+                  subtitle: "过滤短时间内重复出现的弹幕",
                   value: AppSettingsController.instance.danmuDedupeEnable.value,
                   onChanged: (e) {
                     AppSettingsController.instance.setDanmuDedupeEnable(e);
                   },
                 ),
               ),
-              AppStyle.divider,
-              Obx(
-                () => SettingsMenu<int>(
-                  title: "过滤模式",
-                  subtitle: "刷屏严父会忽略用户，只按弹幕内容去重",
-                  value: AppSettingsController.instance.danmuDedupeMode.value,
-                  valueMap: const {
-                    AppSettingsController.kDanmuDedupeModeUser: "普通",
-                    AppSettingsController.kDanmuDedupeModeStrict: "刷屏严父",
-                  },
-                  onChanged: (e) {
-                    AppSettingsController.instance.setDanmuDedupeMode(e);
-                  },
-                ),
-              ),
-              AppStyle.divider,
-              Obx(() {
-                final strictMode =
-                    AppSettingsController.instance.danmuDedupeStrictMode;
-                return SettingsNumber(
-                  title: "过滤窗口",
-                  subtitle: strictMode
-                      ? "严父默认 10 条；超过 20 条可能会让弹幕明显变少"
-                      : "默认 10 条；窗口越大越容易过滤刷屏",
-                  value: AppSettingsController.instance.danmuDedupeWindow.value,
-                  min: AppSettingsController.instance.danmuDedupeWindowMin,
-                  max: AppSettingsController.kDanmuDedupeMaxWindow,
-                  onChanged: (e) {
-                    AppSettingsController.instance.setDanmuDedupeWindow(e);
-                    if (AppSettingsController.instance.danmuDedupeStrictMode &&
-                        AppSettingsController.instance.danmuDedupeWindow.value >
-                            AppSettingsController
-                                .kDanmuDedupeStrictWarnWindow) {
-                      SmartDialog.showToast("过滤窗口超过 20 条后，弹幕可能会明显变少");
-                    }
-                  },
-                );
-              }),
-              Obx(() {
-                if (AppSettingsController.instance.danmuDedupeStrictMode) {
-                  return const SizedBox.shrink();
-                }
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    AppStyle.divider,
-                    SettingsNumber(
-                      title: "过滤步长",
-                      subtitle: "默认 2；数值越大检查窗口移动越少",
-                      value:
-                          AppSettingsController.instance.danmuDedupeStep.value,
-                      min: 1,
-                      max: 20,
-                      onChanged: (e) {
-                        AppSettingsController.instance.setDanmuDedupeStep(e);
-                      },
-                    ),
-                  ],
-                );
-              }),
-              if (controller.supportsContributionRank) ...[
-                AppStyle.divider,
-                Obx(
-                  () => SettingsSwitch(
-                    title: controller.site.id == Constant.kDouyu
-                        ? "显示亲密榜"
-                        : "显示贡献榜",
-                    subtitle: "关闭后会隐藏排行榜标签页，降低对官方功能的替代感",
-                    value: AppSettingsController
-                        .instance.contributionRankEnable.value,
-                    onChanged: (e) {
-                      AppSettingsController.instance
-                          .setContributionRankEnable(e);
-                      if (e) {
-                        controller.fetchContributionRank(forceRefresh: true);
-                      }
-                    },
-                  ),
-                ),
-              ],
             ],
           ),
         ),
-        if (LiveSubtitleService.instance.uiEnabled) ...[
-          Padding(
-            padding: AppStyle.edgeInsetsA12,
-            child: Text(
-              "实时字幕",
-              style: Get.textTheme.titleSmall,
-            ),
-          ),
-          buildSubtitleSettingsCard(),
-        ],
         Padding(
           padding: AppStyle.edgeInsetsA12,
-          child: Text(
-            "更多设置",
-            style: Get.textTheme.titleSmall,
-          ),
+          child: Text("更多设置", style: Get.textTheme.titleSmall),
         ),
         SettingsCard(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              SettingsAction(title: "网络诊断与播放信息", onTap: _showDiagnosticsMenu),
+              AppStyle.divider,
+              SettingsAction(title: "关键词屏蔽", onTap: controller.showDanmuShield),
+              AppStyle.divider,
               SettingsAction(
-                title: "关键词屏蔽",
-                onTap: controller.showDanmuShield,
+                title: "完整弹幕设置",
+                onTap: () => Get.toNamed(RoutePath.kSettingsDanmu),
               ),
               AppStyle.divider,
               SettingsAction(
-                title: "弹幕设置",
-                onTap: controller.showDanmuSettingsSheet,
-              ),
-              AppStyle.divider,
-              SettingsAction(
-                title: "直播设置",
-                onTap: controller.showLiveSettingsSheet,
-              ),
-              AppStyle.divider,
-              SettingsAction(
-                title: "定时关闭",
-                onTap: controller.showAutoExitSheet,
-              ),
-              AppStyle.divider,
-              SettingsAction(
-                title: "画面尺寸",
-                onTap: controller.showPlayerSettingsSheet,
+                title: "完整播放设置",
+                onTap: () => Get.toNamed(RoutePath.kSettingsPlay),
               ),
             ],
           ),
@@ -1821,9 +1546,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   void showMore() {
     Utils.showModalBottomSheetSafe(
       context: Get.context!,
-      constraints: const BoxConstraints(
-        maxWidth: 600,
-      ),
+      constraints: const BoxConstraints(maxWidth: 600),
       isScrollControlled: true,
       useSafeArea: true,
       builder: (context) => Utils.bottomSheetSafeArea(
@@ -1831,38 +1554,15 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.refresh),
-              title: const Text("刷新"),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                controller.refreshRoom();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.play_circle_outline),
-              title: const Text("切换清晰度"),
+              leading: const Icon(Icons.tune),
+              title: const Text("播放调整"),
+              subtitle: Text(
+                "${controller.currentQualityInfo.value} · ${controller.currentLineInfo.value}",
+              ),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
-                controller.showQualitySheet();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.switch_video_outlined),
-              title: const Text("切换线路"),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Get.back();
-                controller.showPlayUrlsSheet();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.aspect_ratio_outlined),
-              title: const Text("画面尺寸"),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Get.back();
-                controller.showPlayerSettingsSheet();
+                _showPlaybackActions();
               },
             ),
             ListTile(
@@ -1895,82 +1595,23 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 controller.showAutoExitSheet();
               },
             ),
-            if (LiveSubtitleService.instance.uiEnabled)
-              ListTile(
-                leading: const Icon(Icons.subtitles_outlined),
-                title: const Text("实时字幕"),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Get.back();
-                  showSubtitleSettingsSheet();
-                },
-              ),
             ListTile(
-              leading: const Icon(Icons.history_outlined),
-              title: const Text("观看历史"),
+              leading: const Icon(Icons.ios_share_outlined),
+              title: const Text("分享与链接"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
-                controller.openHistoryPage();
+                _showShareActions();
               },
             ),
             ListTile(
-              leading: const Icon(Icons.interests_outlined),
-              title: const Text("同类推荐"),
-              subtitle: Text(controller.currentRecommendationSubtitle),
-              trailing: const Icon(Icons.chevron_right),
-              enabled: controller.hasCategoryRecommendation,
-              onTap: !controller.hasCategoryRecommendation
-                  ? null
-                  : () {
-                      Get.back();
-                      controller.openCategoryRecommendation();
-                    },
-            ),
-            ListTile(
-              leading: const Icon(Icons.share_sharp),
-              title: const Text("分享直播间"),
+              leading: const Icon(Icons.monitor_heart_outlined),
+              title: const Text("网络诊断与播放信息"),
+              subtitle: const Text("检查当前播放线路或查看播放器状态"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
-                controller.share();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.copy),
-              title: const Text("复制链接"),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Get.back();
-                controller.copyUrl();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.open_in_new),
-              title: const Text("APP中打开"),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Get.back();
-                controller.openNaviteAPP();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.network_check_outlined),
-              title: const Text("网络诊断"),
-              subtitle: const Text("测试到播放端点与公共 DNS 的连接，判断网络还是平台问题"),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Get.back();
-                showNetworkDiagnose(controller);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.info_outline_rounded),
-              title: const Text("播放信息"),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Get.back();
-                controller.showDebugInfo();
+                _showDiagnosticsMenu();
               },
             ),
           ],
@@ -1979,289 +1620,112 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     );
   }
 
-  Widget buildSubtitleSettingsCard() {
-    if (!LiveSubtitleService.instance.uiEnabled) {
-      return const SizedBox.shrink();
-    }
-    final settings = AppSettingsController.instance;
-    return SettingsCard(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+  void _showPlaybackActions() {
+    Utils.showBottomSheet(
+      title: "播放调整",
+      child: ListView(
         children: [
-          Obx(
-            () => SettingsSwitch(
-              title: "启用实时字幕",
-              subtitle:
-                  "需要先选择本机模型路径，${LiveSubtitleService.instance.platformStatusLabel}",
-              value: settings.liveSubtitleEnable.value,
-              onChanged: (e) async {
-                if (e) {
-                  if (!LiveSubtitleService.instance.canStartRuntime) {
-                    SmartDialog.showToast("当前平台暂不支持实时字幕识别");
-                    return;
-                  }
-                  final hasModel = await LiveSubtitleService.instance
-                      .validateModelPath(settings.liveSubtitleModelPath.value);
-                  if (!hasModel) {
-                    SmartDialog.showToast("请先选择有效的字幕模型路径");
-                    return;
-                  }
-                }
-                settings.setLiveSubtitleEnable(e);
-                await LiveSubtitleService.instance.syncPreviewFromSettings();
-              },
-            ),
-          ),
-          AppStyle.divider,
-          Obx(
-            () {
-              final modelPath = settings.liveSubtitleModelPath.value;
-              final label = modelPath.isEmpty ? "未选择" : p.basename(modelPath);
-              return SettingsAction(
-                title: "模型关键文件",
-                subtitle:
-                    LiveSubtitleService.instance.modelPathSubtitle(modelPath),
-                value: label,
-                onTap: pickSubtitleModelPath,
-              );
+          ListTile(
+            leading: const Icon(Icons.play_circle_outline),
+            title: const Text("切换清晰度"),
+            subtitle: Text(controller.currentQualityInfo.value),
+            onTap: () {
+              Get.back();
+              controller.showQualitySheet();
             },
           ),
-          AppStyle.divider,
-          SettingsAction(
-            title: "模型推荐下载",
-            subtitle: "按设备性能选择高级 / 中级 / 甜点级模型",
-            onTap: showSubtitleModelRecommendations,
+          ListTile(
+            leading: const Icon(Icons.switch_video_outlined),
+            title: const Text("切换线路"),
+            subtitle: Text(controller.currentLineInfo.value),
+            onTap: () {
+              Get.back();
+              controller.showPlayUrlsSheet();
+            },
           ),
-          AppStyle.divider,
-          Obx(
-            () => SettingsMenu<String>(
-              title: "字幕语言",
-              value: settings.liveSubtitleLanguage.value,
-              valueMap: const {
-                "auto": "自动",
-                "zh": "中文",
-                "en": "英语",
-                "ja": "日语",
-                "ko": "韩语",
-              },
-              onChanged: (e) async {
-                settings.setLiveSubtitleLanguage(e);
-                await LiveSubtitleService.instance.syncPreviewFromSettings();
-              },
-            ),
-          ),
-          AppStyle.divider,
-          Obx(
-            () => SettingsNumber(
-              title: "字幕字号",
-              value: settings.liveSubtitleFontSize.value.toInt(),
-              min: 12,
-              max: 36,
-              unit: "px",
-              onChanged: (e) {
-                settings.setLiveSubtitleFontSize(e.toDouble());
-              },
-            ),
-          ),
-          AppStyle.divider,
-          Obx(
-            () => SettingsNumber(
-              title: "水平位置",
-              value: (settings.liveSubtitleOffsetX.value * 100).round(),
-              min: 5,
-              max: 95,
-              unit: "%",
-              onChanged: (e) {
-                settings.setLiveSubtitleOffset(x: e / 100);
-              },
-            ),
-          ),
-          AppStyle.divider,
-          Obx(
-            () => SettingsNumber(
-              title: "垂直位置",
-              value: (settings.liveSubtitleOffsetY.value * 100).round(),
-              min: 8,
-              max: 92,
-              unit: "%",
-              onChanged: (e) {
-                settings.setLiveSubtitleOffset(y: e / 100);
-              },
-            ),
-          ),
-          AppStyle.divider,
-          Obx(
-            () => SettingsMenu<int>(
-              title: "字幕颜色",
-              value: settings.liveSubtitleColor.value,
-              valueMap: const {
-                0xffffffff: "白色",
-                0xffffeb3b: "黄色",
-                0xff80cbc4: "青绿色",
-                0xffffb3c7: "粉色",
-                0xff111111: "黑色",
-              },
-              onChanged: (e) {
-                settings.setLiveSubtitleColor(e);
-              },
-            ),
-          ),
-          AppStyle.divider,
-          Obx(
-            () => SettingsMenu<int>(
-              title: "字幕粗细",
-              value: settings.liveSubtitleFontWeight.value,
-              valueMap: const {
-                4: "正常",
-                5: "中等",
-                6: "半粗",
-                7: "加粗",
-                8: "很粗",
-              },
-              onChanged: (e) {
-                settings.setLiveSubtitleFontWeight(e);
-              },
-            ),
-          ),
-          AppStyle.divider,
-          Obx(
-            () => SettingsSwitch(
-              title: "字幕背景",
-              value: settings.liveSubtitleBackgroundEnable.value,
-              onChanged: (e) {
-                settings.setLiveSubtitleBackgroundEnable(e);
-              },
-            ),
-          ),
-          AppStyle.divider,
-          Obx(
-            () => SettingsSwitch(
-              title: "锁定字幕位置",
-              subtitle: "锁定后播放页只显示字幕，鼠标悬停时显示解锁按钮",
-              value: settings.liveSubtitlePositionLocked.value,
-              onChanged: (e) {
-                settings.setLiveSubtitlePositionLocked(e);
-              },
-            ),
+          ListTile(
+            leading: const Icon(Icons.aspect_ratio_outlined),
+            title: const Text("画面尺寸"),
+            onTap: () {
+              Get.back();
+              controller.showPlayerSettingsSheet();
+            },
           ),
         ],
       ),
     );
   }
 
-  void showSubtitleSettingsSheet() {
-    if (!LiveSubtitleService.instance.uiEnabled) {
-      return;
-    }
-    Utils.showModalBottomSheetSafe(
-      context: Get.context!,
-      constraints: const BoxConstraints(maxWidth: 600),
-      isScrollControlled: true,
-      showDragHandle: true,
-      useSafeArea: true,
-      builder: (context) => Utils.bottomSheetSafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: AppStyle.edgeInsetsA12.copyWith(
-            bottom: AppStyle.bottomBarHeight,
+  void _showShareActions() {
+    Utils.showBottomSheet(
+      title: "分享与链接",
+      child: ListView(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.share_outlined),
+            title: const Text("分享直播间"),
+            onTap: () {
+              Get.back();
+              controller.share();
+            },
           ),
-          children: [
-            Padding(
-              padding: AppStyle.edgeInsetsH12.copyWith(bottom: 8),
-              child: Text(
-                "实时字幕",
-                style: Get.textTheme.titleMedium,
-              ),
-            ),
-            buildSubtitleSettingsCard(),
-          ],
-        ),
+          ListTile(
+            leading: const Icon(Icons.copy),
+            title: const Text("复制直播链接"),
+            onTap: () {
+              Get.back();
+              controller.copyUrl();
+            },
+          ),
+          Obx(
+            () => AppSettingsController.instance.playerShowPlayUrl.value
+                ? ListTile(
+                    leading: const Icon(Icons.link),
+                    title: const Text("复制播放直链"),
+                    subtitle: const Text("复制当前清晰度和播放线路"),
+                    onTap: () {
+                      Get.back();
+                      controller.copyPlayUrl();
+                    },
+                  )
+                : const SizedBox.shrink(),
+          ),
+          ListTile(
+            leading: const Icon(Icons.open_in_new),
+            title: const Text("在官方 APP 中打开"),
+            onTap: () {
+              Get.back();
+              controller.openNaviteAPP();
+            },
+          ),
+        ],
       ),
     );
   }
 
-  Future<void> pickSubtitleModelPath() async {
-    if (!LiveSubtitleService.instance.uiEnabled) {
-      return;
-    }
-    String? selectedPath;
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        dialogTitle: "选择字幕模型关键 onnx 文件",
-        type: FileType.custom,
-        allowedExtensions: const ["onnx"],
-      );
-      selectedPath = result?.files.single.path;
-    } catch (_) {
-      selectedPath = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: "选择字幕模型文件夹",
-      );
-    }
-    if (selectedPath == null || selectedPath.isEmpty) {
-      return;
-    }
-    final info = await LiveSubtitleService.instance.inspectModelPath(
-      selectedPath,
-    );
-    if (info == null) {
-      SmartDialog.showToast("未识别模型，请选择推荐模型的关键 onnx 文件");
-      return;
-    }
-    if (!info.isValid) {
-      SmartDialog.showToast("模型缺少：${info.missingFileNames.join("、")}");
-      return;
-    }
-    AppSettingsController.instance.setLiveSubtitleModelPath(info.keyFilePath);
-    await LiveSubtitleService.instance.syncPreviewFromSettings();
-  }
-
-  void showSubtitleModelRecommendations() {
-    if (!LiveSubtitleService.instance.uiEnabled) {
-      return;
-    }
-    Utils.showDialogSafe<dynamic>(
-      context: Get.context!,
-      builder: (_) => AlertDialog(
-        title: const Text("字幕模型推荐"),
-        content: const SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: EdgeInsets.only(bottom: 8),
-                child: Text(
-                  "选一个档位，下载该档位列出的全部文件，放到同一个文件夹；App 里选择关键 onnx 文件。其他 .weights、非 int8 onnx 和 test_wavs 不用下载。蓝奏云/百度网盘镜像链接看 README。",
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ),
-              _SubtitleModelTile(
-                title: "高级（高性能桌面）",
-                subtitle:
-                    "下载：large-v3-encoder.int8.onnx、large-v3-decoder.int8.onnx、large-v3-tokens.txt。App 里选 encoder 这个 onnx。",
-                url:
-                    "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-large-v3",
-              ),
-              _SubtitleModelTile(
-                title: "中级（中文直播优先）",
-                subtitle:
-                    "下载：model.int8.onnx、tokens.txt、config.yaml、am.mvn。App 里选 model.int8.onnx。",
-                url:
-                    "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2023-09-14",
-              ),
-              _SubtitleModelTile(
-                title: "甜点级（先试这个）",
-                subtitle:
-                    "下载：encoder-epoch-99-avg-1.int8.onnx、decoder-epoch-99-avg-1.int8.onnx、joiner-epoch-99-avg-1.int8.onnx、tokens.txt、bpe.model、bpe.vocab。App 里选 encoder 这个 onnx。",
-                url:
-                    "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
-              ),
-            ],
+  void _showDiagnosticsMenu() {
+    Utils.showBottomSheet(
+      title: "网络诊断与播放信息",
+      maxHeightFactor: 0.5,
+      child: ListView(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.network_check_outlined),
+            title: const Text("网络诊断"),
+            subtitle: const Text("检查当前播放线路和公共 DNS 的连接"),
+            onTap: () {
+              Get.back();
+              showNetworkDiagnose(controller);
+            },
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Get.back(),
-            child: const Text("关闭"),
+          ListTile(
+            leading: const Icon(Icons.info_outline_rounded),
+            title: const Text("播放信息"),
+            subtitle: const Text("查看当前清晰度、线路和播放器状态"),
+            onTap: () {
+              Get.back();
+              controller.showDebugInfo();
+            },
           ),
         ],
       ),
@@ -2280,31 +1744,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       return "${m.toString().padLeft(2, '0')}分钟${s.toString().padLeft(2, '0')}秒";
     }
     return "${s.toString().padLeft(2, '0')}秒";
-  }
-}
-
-class _SubtitleModelTile extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final String url;
-
-  const _SubtitleModelTile({
-    required this.title,
-    required this.subtitle,
-    required this.url,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(title),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Icons.open_in_new),
-      onTap: () {
-        launchUrlString(url, mode: LaunchMode.externalApplication);
-      },
-    );
   }
 }
 
@@ -2339,12 +1778,11 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
     final playbackResult = await NetworkDiagnoseService.diagnosePlaybackUrl(
       widget.controller.currentNetworkDiagnosePlaybackUrl,
     );
-    final results = [
-      if (playbackResult != null) playbackResult,
-    ];
+    final results = [if (playbackResult != null) playbackResult];
     if (!mounted) return;
-    final summary =
-        NetworkDiagnoseService.summarizePlaybackEndpoint(playbackResult);
+    final summary = NetworkDiagnoseService.summarizePlaybackEndpoint(
+      playbackResult,
+    );
     final healthSnapshot = widget.controller.currentLiveLinkHealthSnapshot;
     setState(() {
       _results
@@ -2411,8 +1849,10 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                     Expanded(
                       child: Text(
                         row.label,
-                        style:
-                            const TextStyle(fontSize: 12, color: Colors.grey),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -2445,19 +1885,17 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
             Row(
               children: [
                 const Expanded(
-                  child: Text("网络诊断",
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  child: Text(
+                    "网络诊断",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
                 ),
                 IconButton(
                   tooltip: "重新测试",
                   onPressed: _running ? null : _run,
                   icon: const Icon(Icons.refresh),
                 ),
-                IconButton(
-                  onPressed: Get.back,
-                  icon: const Icon(Icons.close),
-                ),
+                IconButton(onPressed: Get.back, icon: const Icon(Icons.close)),
               ],
             ),
             if (_running)
@@ -2489,15 +1927,17 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                           color: r.lost == r.samples
                               ? Colors.red
                               : r.lost > 0 || r.avgMs > 250
-                                  ? Colors.orange
-                                  : Colors.green,
+                              ? Colors.orange
+                              : Colors.green,
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(
                         r.lost > 0 ? "连接失败 ${r.lost}/${r.samples}" : "连接正常",
-                        style:
-                            const TextStyle(fontSize: 12, color: Colors.grey),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Text(
@@ -2514,10 +1954,7 @@ class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
                   color: Colors.black.withAlpha(10),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text(
-                  _summary,
-                  style: const TextStyle(fontSize: 13),
-                ),
+                child: Text(_summary, style: const TextStyle(fontSize: 13)),
               ),
             ],
           ],

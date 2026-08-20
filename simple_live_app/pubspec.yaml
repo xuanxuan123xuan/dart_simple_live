@@ -1,5 +1,5 @@
 name: simple_live_app
-version: 1.13.2+11302
+version: 1.13.3+11303
 publish_to: none
 description: "Simple Live APP"
 environment:
@@ -96,14 +96,14 @@ dependencies:
       url: https://github.com/xuanxuan123xuan/flutter_packages.git
       ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/video_player/video_player
+  video_player_ohos:
+    path: third_party/video_player_ohos
 
   flutter:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  sherpa_onnx: 1.13.4
-
-
+  flutter_markdown: ^0.7.7+1
 dev_dependencies:
   flutter_lints: ^2.0.0
   build_runner: ^2.3.3
@@ -113,17 +113,6 @@ dev_dependencies:
     sdk: flutter
 
 dependency_overrides:
-  # sherpa_onnx 1.13.4 对平台包使用 ^1.13.4。1.13.5 发布后会被自动
-  # 混装，其中 macOS 的 SherpaOnnxC.framework 无法通过 codesign。
-  # 全平台统一钉回已在 CI 验证通过的 1.13.4，避免无 lockfile 时漂移。
-  sherpa_onnx_android_arm64: 1.13.4
-  sherpa_onnx_android_armeabi: 1.13.4
-  sherpa_onnx_android_x86: 1.13.4
-  sherpa_onnx_android_x86_64: 1.13.4
-  sherpa_onnx_ios: 1.13.4
-  sherpa_onnx_linux: 1.13.4
-  sherpa_onnx_macos: 1.13.4
-  sherpa_onnx_windows: 1.13.4
   # core 声明 git 源 dart_quickjs（纯 Dart，可解析/测试）；
   # app 侧统一覆盖为本地 compat（鸿蒙 OHOS 3.22 工具链不能消费
   # git 源的 Dart 3.10 Native Assets），避免"同一包双源"冲突。

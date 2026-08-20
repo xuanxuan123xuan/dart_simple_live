@@ -10,8 +10,7 @@ name: 构建 iOS IPA
 # 注意：不读 simple_live_app/.fvmrc。HarmonyOS hap 走 build_ohos_hap.ps1 里
 # 自带的 OHOS Flutter fork（oh-3.41.9-release 线，GitHub 镜像），也不读 .fvmrc。
 #
-# Xcode 15.4 在 macos-14 镜像上默认提供；3.41 亦兼容，仍显式指定避免
-# 镜像默认版本变动后静默走到 16.x。
+# Modern 图标使用 Icon Composer 的 .icon 格式，需要 Xcode 26 编译。
 #
 # 产物默认是未签名 IPA，需要 AltStore / Sideloadly 之类的工具侧载。
 # 配好证书 secrets 后可勾选 signed 产出可直接安装的已签名 IPA。
@@ -48,14 +47,11 @@ permissions:
 env:
   # 与 simple_live_app/pubspec.yaml 里那 7 处 "Flutter 3.22 compatible" 对齐。
   FLUTTER_VERSION: "3.41.x"
-  XCODE_VERSION: "15.4"
+  XCODE_VERSION: "26.0"
 
 jobs:
   build-ios:
-    # 不用 macos-latest：那是 Xcode 16 镜像，Flutter 3.22 在上面链接会失败。
-    # macos-14 自 2026-07-06 起进入弃用期，2026-11-02 后不可用，届时本
-    # workflow 需连同 Flutter 版本一起升级。
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:
@@ -98,6 +94,13 @@ jobs:
         working-directory: simple_live_app
         run: flutter pub get
 
+      - name: 校验 Liquid Glass 图标资源
+        shell: bash
+        run: |
+          test -f simple_live_app/ios/Runner/AppIconModern.icon/icon.json
+          xcode_major="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
+          test "$xcode_major" -ge 26
+
       - name: 运行 core 单元测试（离线，不含真实平台 API 集成测试）
         if: ${{ inputs.run_tests }}
         working-directory: simple_live_core
@@ -113,6 +116,8 @@ jobs:
       - name: 读取应用版本
         id: appver
         shell: bash
+        env:
+          APP_UPDATE_CHANNEL: ${{ github.ref_name == 'dev' && 'dev' || 'stable' }}
         run: |
           dart run simple_live_app/tool/app_version.dart check
           echo "version=$(dart run simple_live_app/tool/app_version.dart print name)" >> "$GITHUB_OUTPUT"

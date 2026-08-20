@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>SimpleLive live danmaku bubble</title>
+  <g transform="rotate(6 512 512)">
+    <rect x="650" y="224" width="284" height="146" rx="73" fill="#55D8A6"/>
+    <rect x="710" y="270" width="153" height="27" rx="13.5" fill="#EFFFF8"/>
+    <rect x="710" y="311" width="92" height="27" rx="13.5" fill="#EFFFF8"/>
+  </g>
+</svg>

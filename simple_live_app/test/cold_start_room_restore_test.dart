@@ -55,4 +55,37 @@ void main() {
       isFalse,
     );
   });
+
+  test('auto exit disable is persisted in storage', () async {
+    final settings = AppSettingsController();
+
+    await settings.setAutoExitEnable(true);
+    expect(
+      storage.getValue(LocalStorageService.kAutoExitEnable, false),
+      isTrue,
+    );
+
+    await settings.setAutoExitEnable(false);
+
+    expect(settings.autoExitEnable.value, isFalse);
+    expect(
+      storage.getValue(LocalStorageService.kAutoExitEnable, true),
+      isFalse,
+    );
+  });
+
+  test('special follow visibility defaults off and is persisted', () async {
+    final settings = AppSettingsController();
+
+    expect(settings.followShowSpecialFollow.value, isFalse);
+
+    settings.setFollowShowSpecialFollow(true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(settings.followShowSpecialFollow.value, isTrue);
+    expect(
+      storage.getValue(LocalStorageService.kFollowShowSpecialFollow, false),
+      isTrue,
+    );
+  });
 }

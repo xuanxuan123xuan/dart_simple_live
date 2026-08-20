@@ -58,7 +58,7 @@ class FollowUserController extends BasePageController<FollowUser> {
     FollowUserTag(id: "0", tag: "全部", userId: []),
     FollowUserTag(id: "1", tag: "直播中", userId: []),
     FollowUserTag(id: "2", tag: "未开播", userId: []),
-    FollowUserTag(id: "3", tag: "状态未知", userId: []),
+    FollowUserTag(id: "3", tag: "未确认", userId: []),
   ].obs;
 
   // 用户自定义标签
@@ -209,6 +209,10 @@ class FollowUserController extends BasePageController<FollowUser> {
       includeAllNormals: true,
       force: true,
       scope: const FollowRefreshScope.all(),
+      // The all-refresh action is latency-sensitive: wait only for live
+      // status.  The current page's visible cards will refresh their metadata
+      // through filterData() -> refreshVisiblePreviews() in the background.
+      allowDetailRefresh: false,
     );
     filterData();
   }
@@ -273,6 +277,11 @@ class FollowUserController extends BasePageController<FollowUser> {
     return result;
   }
 
+  bool _shouldDisplayFollowUser(FollowUser item) {
+    return AppSettingsController.instance.followShowSpecialFollow.value ||
+        !item.isSpecialFollow;
+  }
+
   List<FollowGroupOption> get groupOptions {
     final options = <FollowGroupOption>[
       const FollowGroupOption(id: "all", title: "全部"),
@@ -281,10 +290,11 @@ class FollowUserController extends BasePageController<FollowUser> {
       options.addAll(const [
         FollowGroupOption(id: "live", title: "直播中", liveStatus: 2),
         FollowGroupOption(id: "not_live", title: "未开播", liveStatus: 1),
-        FollowGroupOption(id: "unknown", title: "状态未知", liveStatus: 0),
+        FollowGroupOption(id: "unknown", title: "未确认", liveStatus: 0),
       ]);
     } else {
       final siteIds = FollowService.instance.followList
+          .where(_shouldDisplayFollowUser)
           .map((item) => item.siteId)
           .toSet()
           .toList();
@@ -325,7 +335,9 @@ class FollowUserController extends BasePageController<FollowUser> {
         break;
       }
     }
-    final source = FollowService.instance.followList;
+    final source = FollowService.instance.followList.where(
+      _shouldDisplayFollowUser,
+    );
     if (selected == null || selected.id == "all") {
       selectedGroupId.value = "all";
       return FollowService.instance.sortFollowUsers(
@@ -404,6 +416,12 @@ class FollowUserController extends BasePageController<FollowUser> {
 
   void setShowLiveCover(bool value) {
     AppSettingsController.instance.setFollowShowLiveCover(value);
+    filterData();
+  }
+
+  void setShowSpecialFollow(bool value) {
+    AppSettingsController.instance.setFollowShowSpecialFollow(value);
+    currentDisplayPage.value = 1;
     filterData();
   }
 

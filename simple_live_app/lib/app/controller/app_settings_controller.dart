@@ -8,10 +8,12 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/danmu_shield_preset.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
+import 'package:simple_live_app/services/app_icon_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
@@ -63,6 +65,8 @@ class AppSettingsController extends GetxController {
     LogicalKeyboardKey.keyG.keyId: "G",
     LogicalKeyboardKey.keyB.keyId: "B",
     LogicalKeyboardKey.keyN.keyId: "N",
+    LogicalKeyboardKey.arrowUp.keyId: "上方向键",
+    LogicalKeyboardKey.arrowDown.keyId: "下方向键",
   };
 
   /// 缩放模式
@@ -81,6 +85,12 @@ class AppSettingsController extends GetxController {
   void _loadFromStorage() {
     themeMode.value = LocalStorageService.instance
         .getValue(LocalStorageService.kThemeMode, 0);
+    appIconVariant.value = AppIconVariant.fromStorage(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kAppIconVariant,
+        AppIconVariant.classic.storageValue,
+      ),
+    ).storageValue;
     firstRun = LocalStorageService.instance
         .getValue(LocalStorageService.kFirstRun, true);
     danmuSize.value = LocalStorageService.instance
@@ -116,6 +126,10 @@ class AppSettingsController extends GetxController {
 
     hardwareDecode.value = LocalStorageService.instance
         .getValue(LocalStorageService.kHardwareDecode, true);
+    iosOriginalQualityPowerSaving.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kIosOriginalQualityPowerSaving,
+      true,
+    );
     chatTextSize.value = LocalStorageService.instance
         .getValue(LocalStorageService.kChatTextSize, 14.0);
 
@@ -173,6 +187,8 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kAutoPipOnExit, false);
     playershowSuperChat.value = LocalStorageService.instance
         .getValue(LocalStorageService.kPlayerShowSuperChat, false);
+    playerShowPlayUrl.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kPlayerShowPlayUrl, false);
     liveEventFlowEnable.value = LocalStorageService.instance.getValue(
       LocalStorageService.kLiveEventFlowEnable,
       false,
@@ -277,36 +293,6 @@ class AppSettingsController extends GetxController {
     importedMpvConfPath.value = LocalStorageService.instance
         .getValue(LocalStorageService.kImportedMpvConfPath, "");
 
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kLiveSubtitleEnable, false);
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kLiveSubtitleStartupGuard, false);
-    liveSubtitleEnable.value = false;
-    liveSubtitleModelPath.value = LocalStorageService.instance
-        .getValue(LocalStorageService.kLiveSubtitleModelPath, "");
-    liveSubtitleLanguage.value = LocalStorageService.instance
-        .getValue(LocalStorageService.kLiveSubtitleLanguage, "auto");
-    liveSubtitleFontSize.value = LocalStorageService.instance
-        .getValue(LocalStorageService.kLiveSubtitleFontSize, 18.0);
-    liveSubtitlePosition.value = LocalStorageService.instance
-        .getValue(LocalStorageService.kLiveSubtitlePosition, 1);
-    liveSubtitleOffsetX.value = LocalStorageService.instance
-        .getValue(LocalStorageService.kLiveSubtitleOffsetX, 0.5);
-    liveSubtitleOffsetY.value = LocalStorageService.instance
-        .getValue(LocalStorageService.kLiveSubtitleOffsetY, 0.82);
-    liveSubtitleColor.value = LocalStorageService.instance
-        .getValue(LocalStorageService.kLiveSubtitleColor, 0xffffffff);
-    liveSubtitleFontWeight.value = LocalStorageService.instance
-        .getValue(LocalStorageService.kLiveSubtitleFontWeight, 6);
-    liveSubtitleBackgroundEnable.value = LocalStorageService.instance.getValue(
-      LocalStorageService.kLiveSubtitleBackgroundEnable,
-      true,
-    );
-    liveSubtitlePositionLocked.value = LocalStorageService.instance.getValue(
-      LocalStorageService.kLiveSubtitlePositionLocked,
-      false,
-    );
-
     videoOutputDriver.value = LocalStorageService.instance.getValue(
       LocalStorageService.kVideoOutputDriver,
       Platform.isAndroid ? "gpu" : "libmpv",
@@ -383,6 +369,10 @@ class AppSettingsController extends GetxController {
     );
     followShowLiveCover.value = LocalStorageService.instance.getValue(
       LocalStorageService.kFollowShowLiveCover,
+      false,
+    );
+    followShowSpecialFollow.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kFollowShowSpecialFollow,
       false,
     );
 
@@ -565,6 +555,18 @@ class AppSettingsController extends GetxController {
         LogicalKeyboardKey.keyC.keyId,
       ),
     );
+    liveRoomShortcutVolumeUp.value = _normalizeLiveRoomShortcut(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kLiveRoomShortcutVolumeUp,
+        LogicalKeyboardKey.arrowUp.keyId,
+      ),
+    );
+    liveRoomShortcutVolumeDown.value = _normalizeLiveRoomShortcut(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kLiveRoomShortcutVolumeDown,
+        LogicalKeyboardKey.arrowDown.keyId,
+      ),
+    );
   }
 
   void setNoFirstRun() {
@@ -614,11 +616,49 @@ class AppSettingsController extends GetxController {
     Get.changeThemeMode(mode);
   }
 
+  var appIconVariant = AppIconVariant.classic.storageValue.obs;
+  var appIconChanging = false.obs;
+
+  Future<String?> setAppIconVariant(String value) async {
+    final variant = AppIconVariant.fromStorage(value);
+    if (variant.storageValue == appIconVariant.value) {
+      return null;
+    }
+    if (!AppIconService.isSupported) {
+      return "当前系统不支持运行时切换应用图标";
+    }
+
+    appIconChanging.value = true;
+    try {
+      await AppIconService.setIcon(variant);
+      appIconVariant.value = variant.storageValue;
+      await LocalStorageService.instance.setValue(
+        LocalStorageService.kAppIconVariant,
+        variant.storageValue,
+      );
+      return null;
+    } catch (error, stackTrace) {
+      Log.logPrint("切换应用图标失败: $error\n$stackTrace");
+      return "切换失败，请稍后重试";
+    } finally {
+      appIconChanging.value = false;
+    }
+  }
+
   var hardwareDecode = true.obs;
   void setHardwareDecode(bool e) {
     hardwareDecode.value = e;
     LocalStorageService.instance
         .setValue(LocalStorageService.kHardwareDecode, e);
+  }
+
+  var iosOriginalQualityPowerSaving = true.obs;
+  void setIosOriginalQualityPowerSaving(bool e) {
+    iosOriginalQualityPowerSaving.value = e;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kIosOriginalQualityPowerSaving,
+      e,
+    );
   }
 
   var chatTextSize = 14.0.obs;
@@ -940,10 +980,12 @@ class AppSettingsController extends GetxController {
   }
 
   var autoExitEnable = false.obs;
-  void setAutoExitEnable(bool e) {
+  Future<void> setAutoExitEnable(bool e) async {
     autoExitEnable.value = e;
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kAutoExitEnable, e);
+    await LocalStorageService.instance.setValue(
+      LocalStorageService.kAutoExitEnable,
+      e,
+    );
   }
 
   var autoExitDuration = 60.obs;
@@ -1049,6 +1091,13 @@ class AppSettingsController extends GetxController {
     playershowSuperChat.value = e;
     LocalStorageService.instance
         .setValue(LocalStorageService.kPlayerShowSuperChat, e);
+  }
+
+  var playerShowPlayUrl = false.obs;
+  void setPlayerShowPlayUrl(bool e) {
+    playerShowPlayUrl.value = e;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kPlayerShowPlayUrl, e);
   }
 
   var danmuShieldEnable = true.obs;
@@ -1950,53 +1999,94 @@ class AppSettingsController extends GetxController {
         : kShortcutDisabled;
   }
 
+  Map<RxInt, String> get _liveRoomShortcutAssignments => {
+        liveRoomShortcutFullScreen: "切换全屏",
+        liveRoomShortcutDanmaku: "显示/隐藏弹幕",
+        liveRoomShortcutMute: "静音/取消静音",
+        liveRoomShortcutRefresh: "刷新直播间",
+        liveRoomShortcutToggleChat: "收起/展开聊天区",
+        liveRoomShortcutVolumeUp: "调高音量",
+        liveRoomShortcutVolumeDown: "调低音量",
+      };
+
+  void _setLiveRoomShortcut({
+    required int value,
+    required RxInt target,
+    required String storageKey,
+  }) {
+    final normalized = _normalizeLiveRoomShortcut(value);
+    if (normalized != kShortcutDisabled) {
+      for (final entry in _liveRoomShortcutAssignments.entries) {
+        if (entry.key != target && entry.key.value == normalized) {
+          SmartDialog.showToast("该按键已用于${entry.value}");
+          return;
+        }
+      }
+    }
+    target.value = normalized;
+    LocalStorageService.instance.setValue(storageKey, normalized);
+  }
+
   var liveRoomShortcutFullScreen = LogicalKeyboardKey.keyF.keyId.obs;
   void setLiveRoomShortcutFullScreen(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutFullScreen.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutFullScreen,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutFullScreen,
+      storageKey: LocalStorageService.kLiveRoomShortcutFullScreen,
     );
   }
 
   var liveRoomShortcutDanmaku = LogicalKeyboardKey.keyD.keyId.obs;
   void setLiveRoomShortcutDanmaku(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutDanmaku.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutDanmaku,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutDanmaku,
+      storageKey: LocalStorageService.kLiveRoomShortcutDanmaku,
     );
   }
 
   var liveRoomShortcutMute = LogicalKeyboardKey.keyM.keyId.obs;
   void setLiveRoomShortcutMute(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutMute.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutMute,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutMute,
+      storageKey: LocalStorageService.kLiveRoomShortcutMute,
     );
   }
 
   var liveRoomShortcutRefresh = LogicalKeyboardKey.keyR.keyId.obs;
   void setLiveRoomShortcutRefresh(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutRefresh.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutRefresh,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutRefresh,
+      storageKey: LocalStorageService.kLiveRoomShortcutRefresh,
     );
   }
 
   var liveRoomShortcutToggleChat = LogicalKeyboardKey.keyC.keyId.obs;
   void setLiveRoomShortcutToggleChat(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutToggleChat.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutToggleChat,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutToggleChat,
+      storageKey: LocalStorageService.kLiveRoomShortcutToggleChat,
+    );
+  }
+
+  var liveRoomShortcutVolumeUp = LogicalKeyboardKey.arrowUp.keyId.obs;
+  void setLiveRoomShortcutVolumeUp(int value) {
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutVolumeUp,
+      storageKey: LocalStorageService.kLiveRoomShortcutVolumeUp,
+    );
+  }
+
+  var liveRoomShortcutVolumeDown = LogicalKeyboardKey.arrowDown.keyId.obs;
+  void setLiveRoomShortcutVolumeDown(int value) {
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutVolumeDown,
+      storageKey: LocalStorageService.kLiveRoomShortcutVolumeDown,
     );
   }
 
@@ -2018,6 +2108,7 @@ class AppSettingsController extends GetxController {
   var followOnlyLive = false.obs;
   var followRefreshOnEnter = false.obs;
   var followShowLiveCover = false.obs;
+  var followShowSpecialFollow = false.obs;
 
   String _normalizeFollowDisplayStyle(String value) {
     if (followDisplayStyleOptions.contains(value)) {
@@ -2071,6 +2162,14 @@ class AppSettingsController extends GetxController {
     followShowLiveCover.value = value;
     LocalStorageService.instance.setValue(
       LocalStorageService.kFollowShowLiveCover,
+      value,
+    );
+  }
+
+  void setFollowShowSpecialFollow(bool value) {
+    followShowSpecialFollow.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kFollowShowSpecialFollow,
       value,
     );
   }
@@ -2411,99 +2510,6 @@ class AppSettingsController extends GetxController {
     customPlayerOutput.value = e;
     LocalStorageService.instance
         .setValue(LocalStorageService.kCustomPlayerOutput, e);
-  }
-
-  var liveSubtitleEnable = false.obs;
-  void setLiveSubtitleEnable(bool e) {
-    liveSubtitleEnable.value = e;
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kLiveSubtitleEnable, e);
-  }
-
-  var liveSubtitleModelPath = "".obs;
-  void setLiveSubtitleModelPath(String e) {
-    liveSubtitleModelPath.value = e.trim();
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveSubtitleModelPath,
-      liveSubtitleModelPath.value,
-    );
-  }
-
-  var liveSubtitleLanguage = "auto".obs;
-  void setLiveSubtitleLanguage(String e) {
-    liveSubtitleLanguage.value = e.trim().isEmpty ? "auto" : e.trim();
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveSubtitleLanguage,
-      liveSubtitleLanguage.value,
-    );
-  }
-
-  var liveSubtitleFontSize = 18.0.obs;
-  void setLiveSubtitleFontSize(double e) {
-    final value = e.clamp(12.0, 36.0).toDouble();
-    liveSubtitleFontSize.value = value;
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kLiveSubtitleFontSize, value);
-  }
-
-  var liveSubtitlePosition = 1.obs;
-  void setLiveSubtitlePosition(int e) {
-    final value = e.clamp(0, 2).toInt();
-    liveSubtitlePosition.value = value;
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kLiveSubtitlePosition, value);
-  }
-
-  var liveSubtitleOffsetX = 0.5.obs;
-  var liveSubtitleOffsetY = 0.82.obs;
-  void setLiveSubtitleOffset({
-    double? x,
-    double? y,
-  }) {
-    if (x != null) {
-      final value = x.clamp(0.05, 0.95).toDouble();
-      liveSubtitleOffsetX.value = value;
-      LocalStorageService.instance
-          .setValue(LocalStorageService.kLiveSubtitleOffsetX, value);
-    }
-    if (y != null) {
-      final value = y.clamp(0.08, 0.92).toDouble();
-      liveSubtitleOffsetY.value = value;
-      LocalStorageService.instance
-          .setValue(LocalStorageService.kLiveSubtitleOffsetY, value);
-    }
-  }
-
-  var liveSubtitleColor = 0xffffffff.obs;
-  void setLiveSubtitleColor(int e) {
-    liveSubtitleColor.value = e;
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kLiveSubtitleColor, e);
-  }
-
-  var liveSubtitleFontWeight = 6.obs;
-  void setLiveSubtitleFontWeight(int e) {
-    final value = e.clamp(1, 9).toInt();
-    liveSubtitleFontWeight.value = value;
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kLiveSubtitleFontWeight, value);
-  }
-
-  FontWeight get liveSubtitleResolvedFontWeight =>
-      FontWeight.values[liveSubtitleFontWeight.value.clamp(1, 9).toInt() - 1];
-
-  var liveSubtitleBackgroundEnable = true.obs;
-  void setLiveSubtitleBackgroundEnable(bool e) {
-    liveSubtitleBackgroundEnable.value = e;
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kLiveSubtitleBackgroundEnable, e);
-  }
-
-  var liveSubtitlePositionLocked = false.obs;
-  void setLiveSubtitlePositionLocked(bool e) {
-    liveSubtitlePositionLocked.value = e;
-    LocalStorageService.instance
-        .setValue(LocalStorageService.kLiveSubtitlePositionLocked, e);
   }
 
   var videoOutputDriver = "".obs;

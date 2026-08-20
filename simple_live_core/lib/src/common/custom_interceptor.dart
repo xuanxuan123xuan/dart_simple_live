@@ -28,9 +28,16 @@ Request Headers：${HttpLogSanitizer.redact(options.headers)}''',
   void onError(DioException err, ErrorInterceptorHandler handler) {
     var time =
         DateTime.now().millisecondsSinceEpoch - err.requestOptions.extra["ts"];
+    final errorDetail = HttpLogSanitizer.redactText(
+      [err.message, err.error?.toString()]
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .join('\n'),
+      requestUri: err.requestOptions.uri,
+    );
     if (CoreLog.requestLogType == RequestLogType.all) {
       CoreLog.e('''[HTTP Error] [${err.type}] [Time:${time}ms]
-${HttpLogSanitizer.redactText(err.message, requestUri: err.requestOptions.uri)}
+$errorDetail
 
 Request Method：${err.requestOptions.method}
 Response Code：${err.response?.statusCode}
@@ -39,10 +46,13 @@ Request Query：${HttpLogSanitizer.redact(err.requestOptions.queryParameters)}
 Request Data：${HttpLogSanitizer.redact(err.requestOptions.data)}
 Request Headers：${HttpLogSanitizer.redact(err.requestOptions.headers)}
 Response Headers：${HttpLogSanitizer.redact(err.response?.headers.map)}
-Response Data：${HttpLogSanitizer.redact(err.response?.data)}''', err.stackTrace);
+Response Data：${HttpLogSanitizer.redact(err.response?.data)}''',
+          err.stackTrace);
     } else {
       CoreLog.e(
-        "[HTTP Error] [${err.type}] [Time:${time}ms]\n[${err.response?.statusCode}] ${HttpLogSanitizer.redactUri(err.requestOptions.uri)}",
+        "[HTTP Error] [${err.type}] [Time:${time}ms]\n"
+        "[${err.response?.statusCode}] ${HttpLogSanitizer.redactUri(err.requestOptions.uri)}"
+        "${errorDetail.isEmpty ? '' : '\n$errorDetail'}",
         err.stackTrace,
       );
     }

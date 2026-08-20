@@ -49,31 +49,22 @@ class Utils {
   }) async {
     var result = await Get.dialog(
       AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: AppStyle.radius16,
-        ),
+        shape: RoundedRectangleBorder(borderRadius: AppStyle.radius16),
         titlePadding: AppStyle.edgeInsetsA24.copyWith(left: 48.w, right: 48.w),
-        contentPadding:
-            AppStyle.edgeInsetsA24.copyWith(left: 48.w, right: 48.w),
+        contentPadding: AppStyle.edgeInsetsA24.copyWith(
+          left: 48.w,
+          right: 48.w,
+        ),
         insetPadding: AppStyle.edgeInsetsA16,
         actionsPadding: AppStyle.edgeInsetsA16,
         surfaceTintColor: Colors.transparent,
         backgroundColor: Get.theme.cardColor,
-        title: Text(
-          title,
-          style: AppStyle.titleStyleWhite,
-        ),
+        title: Text(title, style: AppStyle.titleStyleWhite),
         content: Padding(
           padding: AppStyle.edgeInsetsV12,
           child: selectable
-              ? SelectableText(
-                  content,
-                  style: AppStyle.textStyleWhite,
-                )
-              : Text(
-                  content,
-                  style: AppStyle.textStyleWhite,
-                ),
+              ? SelectableText(content, style: AppStyle.textStyleWhite)
+              : Text(content, style: AppStyle.textStyleWhite),
         ),
         actions: [
           TextButton(
@@ -102,8 +93,12 @@ class Utils {
   /// - `content` 内容
   /// - `title` 弹窗标题
   /// - `confirm` 确认按钮内容，留空为确定
-  static Future<bool> showMessageDialog(String content,
-      {String title = '', String confirm = '', bool selectable = false}) async {
+  static Future<bool> showMessageDialog(
+    String content, {
+    String title = '',
+    String confirm = '',
+    bool selectable = false,
+  }) async {
     var result = await Get.dialog(
       AlertDialog(
         title: Text(title),
@@ -127,6 +122,7 @@ class Utils {
     String content, {
     String title = '',
     String? hintText,
+    int maxLines = 1,
     String confirm = '',
     String cancel = '',
     TextValidate? validate,
@@ -134,20 +130,17 @@ class Utils {
     final textEditingController = TextEditingController(text: content);
     var result = await Get.dialog(
       AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: AppStyle.radius16,
-        ),
+        shape: RoundedRectangleBorder(borderRadius: AppStyle.radius16),
         titlePadding: AppStyle.edgeInsetsA24.copyWith(left: 48.w, right: 48.w),
-        contentPadding:
-            AppStyle.edgeInsetsA24.copyWith(left: 48.w, right: 48.w),
+        contentPadding: AppStyle.edgeInsetsA24.copyWith(
+          left: 48.w,
+          right: 48.w,
+        ),
         insetPadding: AppStyle.edgeInsetsA16,
         actionsPadding: AppStyle.edgeInsetsA16,
         surfaceTintColor: Colors.transparent,
         backgroundColor: Get.theme.cardColor,
-        title: Text(
-          title,
-          style: AppStyle.titleStyleWhite,
-        ),
+        title: Text(title, style: AppStyle.titleStyleWhite),
         content: Padding(
           padding: AppStyle.edgeInsetsV12,
           child: SizedBox(
@@ -155,6 +148,7 @@ class Utils {
             child: TextField(
               controller: textEditingController,
               autofocus: true,
+              maxLines: maxLines,
               style: AppStyle.textStyleWhite,
               decoration: InputDecoration(
                 border: const OutlineInputBorder(),
@@ -274,9 +268,7 @@ class Utils {
       animationTime: const Duration(milliseconds: 200),
       builder: (context) => Container(
         width: width,
-        decoration: BoxDecoration(
-          color: Get.theme.cardColor,
-        ),
+        decoration: BoxDecoration(color: Get.theme.cardColor),
         child: child,
       ),
     );
@@ -295,9 +287,7 @@ class Utils {
           alignment: Alignment.topRight,
           child: Container(
             width: width,
-            decoration: BoxDecoration(
-              color: Get.theme.cardColor,
-            ),
+            decoration: BoxDecoration(color: Get.theme.cardColor),
             child: child,
           ),
         ),

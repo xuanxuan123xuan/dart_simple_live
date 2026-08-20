@@ -6,6 +6,13 @@ import 'package:get/get.dart';
 import 'package:simple_live_app/modules/category/detail/category_detail_controller.dart';
 import 'package:simple_live_app/modules/category/detail/category_detail_page.dart';
 import 'package:simple_live_app/modules/indexed/indexed_controller.dart';
+import 'package:simple_live_app/modules/mine/about/about_page.dart';
+import 'package:simple_live_app/modules/mine/help/help_page.dart';
+import 'package:simple_live_app/modules/mine/help/support_tools_controller.dart';
+import 'package:simple_live_app/modules/mine/help/support_tools_page.dart';
+import 'package:simple_live_app/modules/mine/update/app_update_controller.dart';
+import 'package:simple_live_app/modules/mine/update/app_update_page.dart';
+import 'package:simple_live_app/modules/other/debug_log_page.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/live_room_page.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_controller.dart';
@@ -18,6 +25,8 @@ import 'package:simple_live_app/modules/sync/remote_sync/webdav/remote_sync_webd
 import 'package:simple_live_app/modules/sync/remote_sync/webdav/remote_sync_webdav_controller.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/webdav/remote_sync_webdav_page.dart';
 import 'package:simple_live_app/modules/sync/sync_page.dart';
+import 'package:simple_live_app/modules/sync/advanced_connection/advanced_connection_controller.dart';
+import 'package:simple_live_app/modules/sync/advanced_connection/advanced_connection_page.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/room/remote_sync_room_controller.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/room/remote_sync_room_page.dart';
 import 'package:simple_live_app/modules/search/search_aggregate_controller.dart';
@@ -28,8 +37,6 @@ import 'package:simple_live_app/modules/sync/local_sync/device/sync_device_contr
 import 'package:simple_live_app/modules/sync/local_sync/device/sync_device_page.dart';
 import 'package:simple_live_app/modules/sync/local_sync/scan_qr/sync_scan_qr_controller.dart';
 import 'package:simple_live_app/modules/sync/local_sync/scan_qr/sync_scan_qr_page.dart';
-import 'package:simple_live_app/modules/mine/parse/parse_controller.dart';
-import 'package:simple_live_app/modules/mine/parse/parse_page.dart';
 import 'package:simple_live_app/modules/sync/local_sync/local_sync_controller.dart';
 import 'package:simple_live_app/modules/sync/local_sync/local_sync_page.dart';
 import 'package:simple_live_app/modules/mine/account/account_controller.dart';
@@ -59,6 +66,7 @@ import 'package:simple_live_app/modules/settings/other/other_settings_page.dart'
 import 'package:simple_live_app/modules/settings/multi_room_settings_page.dart';
 import 'package:simple_live_app/modules/settings/playback_page_settings_page.dart';
 import 'package:simple_live_app/modules/settings/play_settings_page.dart';
+import 'package:simple_live_app/modules/settings/settings_page.dart';
 
 import '../modules/indexed/indexed_page.dart';
 import 'app_navigation.dart';
@@ -75,6 +83,37 @@ class AppPages {
         BindingsBuilder.put(() => IndexedController()),
         //BindingsBuilder.put(() => HomeController()),
       ],
+    ),
+    // 关于
+    GetPage(
+      name: RoutePath.kAbout,
+      page: () => const AboutPage(),
+    ),
+    GetPage(
+      name: RoutePath.kAppUpdate,
+      page: () => const AppUpdatePage(),
+      binding: BindingsBuilder.put(() => AppUpdateController()),
+    ),
+    // 设置总览
+    GetPage(
+      name: RoutePath.kSettings,
+      page: () => const SettingsPage(),
+    ),
+    // 帮助与排障
+    GetPage(
+      name: RoutePath.kHelp,
+      page: () => const HelpPage(),
+    ),
+    // 当前运行日志
+    GetPage(
+      name: RoutePath.kDebugLog,
+      page: () => const DebugLogPage(),
+    ),
+    // 持久日志与配置恢复
+    GetPage(
+      name: RoutePath.kSupportTools,
+      page: () => const SupportToolsPage(),
+      binding: BindingsBuilder.put(() => SupportToolsController()),
     ),
     // 观看记录
     GetPage(
@@ -207,14 +246,6 @@ class AppPages {
       name: RoutePath.kSettingsAutoExit,
       page: () => const AutoExitSettingsPage(),
     ),
-    //工具箱
-    GetPage(
-      name: RoutePath.kTools,
-      page: () => const ParsePage(),
-      bindings: [
-        BindingsBuilder.put(() => ParseController()),
-      ],
-    ),
     //关键词屏蔽
     GetPage(
       name: RoutePath.kSettingsDanmuShield,
@@ -296,6 +327,12 @@ class AppPages {
         BindingsBuilder.put(() => ProfileBackupController()),
       ],
     ),
+    // 同步高级连接设置
+    GetPage(
+      name: RoutePath.kSyncAdvancedConnection,
+      page: () => const AdvancedConnectionPage(),
+      binding: BindingsBuilder.put(() => AdvancedConnectionController()),
+    ),
     // 本地同步
     GetPage(
       name: RoutePath.kLocalSync,
@@ -354,7 +391,7 @@ class AppPages {
       name: RoutePath.kRemoteSyncWebDavConfig,
       page: () => const RemoteSyncWebDAVConfigPage(),
     ),
-    //其他设置
+    //高级设置
     GetPage(
       name: RoutePath.kSettingsOther,
       page: () => const OtherSettingsPage(),

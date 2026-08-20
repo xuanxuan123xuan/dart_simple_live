@@ -12,7 +12,6 @@ import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
-import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -151,9 +150,6 @@ class ProfileBackupService extends GetxService {
 
     if (options.settings || options.shields || options.shieldPresets) {
       AppSettingsController.instance.reloadFromStorage();
-    }
-    if (options.settings) {
-      await LiveSubtitleService.instance.syncPreviewFromSettings();
     }
     EventBus.instance.emit(Constant.kUpdateFollow, 0);
     EventBus.instance.emit(Constant.kUpdateHistory, 0);
@@ -324,9 +320,6 @@ class ProfileBackupService extends GetxService {
 
     if (options.settings || options.shields || options.shieldPresets) {
       AppSettingsController.instance.reloadFromStorage();
-    }
-    if (options.settings) {
-      await LiveSubtitleService.instance.syncPreviewFromSettings();
     }
     if (options.follows) {
       await FollowService.instance.loadData(updateStatus: false);

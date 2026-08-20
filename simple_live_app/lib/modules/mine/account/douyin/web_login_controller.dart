@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -20,8 +21,9 @@ class DouyinWebLoginController extends BaseController {
   static const _desktopSafariUserAgent =
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
       'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
-  static const _ohosWebCookieChannel =
-      MethodChannel('simple_live/ohos_web_cookie');
+  static const _ohosWebCookieChannel = MethodChannel(
+    'simple_live/ohos_web_cookie',
+  );
 
   InAppWebViewController? webViewController;
   ohos_webview.WebViewController? ohosWebViewController;
@@ -38,14 +40,11 @@ class DouyinWebLoginController extends BaseController {
     if (Utils.isOhos) {
       _initializeOhosWebView();
     }
-    _sessionPollTimer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) {
-        if (_pageReady) {
-          unawaited(saveCookie(silent: true));
-        }
-      },
-    );
+    _sessionPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_pageReady) {
+        unawaited(saveCookie(silent: true));
+      }
+    });
   }
 
   @override
@@ -90,9 +89,7 @@ class DouyinWebLoginController extends BaseController {
 
   void onWebViewCreated(InAppWebViewController controller) {
     webViewController = controller;
-    controller.loadUrl(
-      urlRequest: URLRequest(url: WebUri(_loginUrl)),
-    );
+    controller.loadUrl(urlRequest: URLRequest(url: WebUri(_loginUrl)));
   }
 
   void onLoadStart(InAppWebViewController controller, Uri? uri) {
@@ -208,10 +205,10 @@ class DouyinWebLoginController extends BaseController {
       'https://live.douyin.com',
     ]) {
       if (Utils.isOhos) {
-        final cookie = await _ohosWebCookieChannel.invokeMethod<String>(
-              'getCookie',
-              {'url': url},
-            ) ??
+        final cookie =
+            await _ohosWebCookieChannel.invokeMethod<String>('getCookie', {
+              'url': url,
+            }) ??
             '';
         _mergeCookieString(values, cookie);
       } else {
@@ -226,7 +223,47 @@ class DouyinWebLoginController extends BaseController {
         }
       }
     }
+    if (!Utils.isOhos) {
+      // `xmst` is the msToken used by Douyin's own web search requests. Keep
+      // it with the saved browser session so the native search request does
+      // not replace it with an unrelated random token.
+      final msToken = await _readLocalStorageValue('xmst');
+      if (msToken.isNotEmpty) {
+        values['msToken'] = msToken;
+      }
+      final webSessionId = await _readLocalStorageValue('s_v_web_id');
+      if (webSessionId.isNotEmpty) {
+        values.putIfAbsent('s_v_web_id', () => webSessionId);
+      }
+    }
     return values.entries.map((e) => '${e.key}=${e.value}').join('; ');
+  }
+
+  Future<String> _readLocalStorageValue(String key) async {
+    final controller = webViewController;
+    if (controller == null) {
+      return '';
+    }
+    try {
+      final result = await controller.evaluateJavascript(
+        source: 'window.localStorage.getItem(${jsonEncode(key)}) || ""',
+      );
+      if (result == null) {
+        return '';
+      }
+      final text = result.toString().trim();
+      if (text.isEmpty || text == 'null') {
+        return '';
+      }
+      if (text.startsWith('"') && text.endsWith('"')) {
+        final decoded = jsonDecode(text);
+        return decoded is String ? decoded.trim() : '';
+      }
+      return text;
+    } catch (_) {
+      // Cookie extraction remains usable when localStorage is unavailable.
+      return '';
+    }
   }
 
   void _mergeCookieString(Map<String, String> values, String cookie) {

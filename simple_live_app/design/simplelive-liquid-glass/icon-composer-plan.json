@@ -1,0 +1,32 @@
+{
+  "name": "SimpleLive",
+  "canvas": {
+    "width": 1024,
+    "height": 1024,
+    "background": "#F8F5EF",
+    "systemMask": true
+  },
+  "importOrder": [
+    "layers/01-background.svg",
+    "layers/02-window.svg",
+    "layers/03-window-chrome.svg",
+    "layers/04-play.svg",
+    "layers/05-floating-danmaku.svg",
+    "layers/06-live-bubble.svg",
+    "layers/07-live-signal.svg",
+    "layers/08-simplelive-wordmark.svg"
+  ],
+  "groups": [
+    { "name": "Window", "layers": [2, 3], "glass": "subtle" },
+    { "name": "Playback", "layers": [4], "glass": "subtle" },
+    { "name": "Floating comments", "layers": [5], "glass": "medium" },
+    { "name": "Live status", "layers": [6, 7], "glass": "subtle" },
+    { "name": "Brand", "layers": [8], "glass": "off", "alwaysVisible": true }
+  ],
+  "appearanceNotes": {
+    "dark": "Darken the canvas and lift the lavender chrome; preserve the coral wordmark.",
+    "tinted": "Map the wordmark to the highest-contrast tint tone; do not hide it.",
+    "clearLight": "Keep the wordmark opaque and reduce refraction behind it.",
+    "clearDark": "Keep the wordmark opaque and use a light coral value."
+  }
+}

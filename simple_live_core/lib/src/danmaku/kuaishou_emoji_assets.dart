@@ -10,6 +10,7 @@ import 'dart:convert';
 
 import 'package:simple_live_core/src/common/core_log.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/danmaku/kuaishou_mobile_emoji_assets.dart';
 
 const Map<String, String> kuaishouEmojiAssets = {
   '[666]':
@@ -431,9 +432,50 @@ const Map<String, String> kuaishouEmojiAssets = {
 /// 运行时从快手接口拉取的最新映射（优先于内置静态表）。
 Map<String, String> _dynamicKuaishouEmoji = const {};
 
-/// 解析单个表情 token（如 `[奸笑]`）：动态覆盖优先，内置表兜底。
-String? resolveKuaishouEmoji(String token) =>
-    _dynamicKuaishouEmoji[token] ?? kuaishouEmojiAssets[token];
+const Map<String, String> _kuaishouEmojiAliasMap = {
+  '[點讚]': '[点赞]',
+  '[讚]': '[赞]',
+  '[點點關注]': '[点点关注]',
+  '[早安]': '[早上好]',
+  '[哈囉]': '[打招呼]',
+  '[愛你]': '[爱你]',
+  '[我愛你]': '[我爱你]',
+  '[發]': '[发]',
+  '[發財]': '[发财]',
+  '[打電話]': '[打电话]',
+  '[聽音樂]': '[听音乐]',
+  '[學習]': '[学习]',
+  '[放輕鬆]': '[放轻松]',
+  '[睡覺]': '[睡觉]',
+  '[iloveu]': '[ILoveU]',
+};
+
+/// 解析单个表情 token：运行时映射、移动端词库、网页词库依次兜底。
+String? resolveKuaishouEmoji(String token) => _resolveKuaishouEmojiToken(token);
+
+String? _resolveKuaishouEmojiToken(String token) {
+  final candidates = <String>[token];
+  final lower = token.toLowerCase();
+  if (lower != token) {
+    candidates.add(lower);
+  }
+  for (var index = 0; index < candidates.length; index += 1) {
+    final alias = _kuaishouEmojiAliasMap[candidates[index]];
+    if (alias != null && !candidates.contains(alias)) {
+      candidates.add(alias);
+    }
+  }
+  for (final candidate in candidates) {
+    if (candidate.isEmpty) continue;
+    final resolved = _dynamicKuaishouEmoji[candidate] ??
+        kuaishouMobileEmojiAssets[candidate] ??
+        kuaishouEmojiAssets[candidate];
+    if (resolved != null) {
+      return resolved;
+    }
+  }
+  return null;
+}
 
 const String kuaishouEmojiPanelUrl =
     'https://live.kuaishou.com/live_api/emoji/panel';
@@ -469,13 +511,33 @@ Future<void> refreshKuaishouEmoji({
     final map = <String, String>{};
     data.forEach((key, value) {
       if (key is String && value is String) {
-        map[key] = value.startsWith('//') ? 'https:$value' : value;
+        final url = _normalizeKuaishouEmojiUrl(value);
+        if (url != null) {
+          map[key] = url;
+        }
       }
     });
     if (map.isEmpty) return;
-    _dynamicKuaishouEmoji = map;
+    _dynamicKuaishouEmoji = {
+      ..._dynamicKuaishouEmoji,
+      ...map,
+    };
     CoreLog.d('快手表情映射已刷新：${map.length} 项');
   } catch (e) {
     CoreLog.d('快手表情映射解析失败: $e');
   }
+}
+
+String? _normalizeKuaishouEmojiUrl(String value) {
+  var url = value.trim();
+  if (url.startsWith('//')) {
+    url = 'https:$url';
+  } else if (url.startsWith('http://')) {
+    url = 'https://${url.substring('http://'.length)}';
+  }
+  final uri = Uri.tryParse(url);
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+    return null;
+  }
+  return uri.toString();
 }

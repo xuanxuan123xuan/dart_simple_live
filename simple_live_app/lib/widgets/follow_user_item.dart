@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
@@ -57,17 +55,82 @@ class FollowUserItem extends StatelessWidget {
       return _buildAvatarListCard(context, compact: compact);
     }
     final theme = Theme.of(context);
-    final coverWidth = compact ? 118.0 : 148.0;
-    final avatarSize = compact ? 38.0 : 46.0;
+    final coverWidth = compact ? 122.0 : 152.0;
+    final coverHeight = coverWidth * 9 / 16;
+    final avatarSize = compact ? 34.0 : 40.0;
+    final avatarOverlap = avatarSize / 2;
     final radius = BorderRadius.circular(compact ? 14 : 16);
+    final cardColor = _cardBackgroundColor(theme);
     final titleStyle = compact
-        ? theme.textTheme.titleSmall
-        : theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600);
+        ? theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            height: 1.05,
+          )
+        : theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            height: 1.05,
+          );
+    final roomTitleStyle =
+        (compact ? theme.textTheme.bodySmall : theme.textTheme.bodyMedium)
+            ?.copyWith(
+      fontWeight: FontWeight.w600,
+      height: 1.05,
+    );
     final subtitleStyle = theme.textTheme.bodySmall?.copyWith(
       color: Colors.grey.shade600,
+      height: 1.05,
     );
+    final liveDuration = _liveDurationText();
+    final platformText =
+        liveDuration.isEmpty ? _site.name : "${_site.name} · $liveDuration";
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final metadataTextScaler = TextScaler.linear(
+      textScale > 1.1 ? 1.1 : textScale,
+    );
+    Widget buildPlatformRow() {
+      return Row(
+        children: [
+          Image.asset(
+            _site.logo,
+            width: compact ? 14 : 16,
+            height: compact ? 14 : 16,
+          ),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(
+              platformText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: subtitleStyle,
+            ),
+          ),
+          if (playing) ...[
+            const SizedBox(width: 6),
+            Text(
+              "正在观看",
+              maxLines: 1,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w600,
+                height: 1.05,
+              ),
+            ),
+          ],
+          if (showSpecialMark && item.isSpecialFollow)
+            const Padding(
+              padding: EdgeInsets.only(left: 5),
+              child: Icon(
+                Icons.star,
+                color: Colors.amber,
+                size: 15,
+              ),
+            ),
+        ],
+      );
+    }
+
     return Material(
-      color: theme.cardColor,
+      color: cardColor,
       borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -75,124 +138,99 @@ class FollowUserItem extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: playing
-                  ? theme.colorScheme.primary.withAlpha(180)
-                  : Colors.black.withAlpha(20),
-              width: playing ? 1.4 : 0.8,
-            ),
-            borderRadius: radius,
-          ),
-          padding: EdgeInsets.all(compact ? 8 : 10),
+          foregroundDecoration: _cardFrameDecoration(theme, radius),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               SizedBox(
-                width: coverWidth,
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: _buildCover(context, radius: compact ? 12 : 14),
+                width: coverWidth + avatarOverlap,
+                height: coverHeight,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    SizedBox(
+                      width: coverWidth,
+                      height: coverHeight,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(compact ? 10 : 12),
+                        child: _buildCover(
+                          context,
+                          radius: compact ? 10 : 12,
+                          showTitleOverlay: false,
+                          showStatusPlaceholder: false,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: coverWidth - avatarOverlap,
+                      top: (coverHeight - avatarSize) / 2,
+                      child: _buildFramedAvatar(
+                        size: avatarSize,
+                        borderColor: cardColor,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              SizedBox(width: compact ? 10 : 12),
+              SizedBox(width: compact ? 6 : 8),
               Expanded(
-                child: SizedBox.expand(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          NetImage(
-                            item.face,
-                            width: avatarSize,
-                            height: avatarSize,
-                            borderRadius: avatarSize / 2,
-                          ),
-                          SizedBox(width: compact ? 8 : 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text.rich(
-                                  TextSpan(
-                                    text: item.userName,
-                                    children: [
-                                      WidgetSpan(
-                                        alignment:
-                                            ui.PlaceholderAlignment.middle,
-                                        child: Padding(
-                                          padding:
-                                              const EdgeInsets.only(left: 8),
-                                          child: _buildStatusDot(),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: titleStyle,
+                child: SizedBox(
+                  height: coverHeight,
+                  child: MediaQuery(
+                    data: MediaQuery.of(context).copyWith(
+                      textScaler: metadataTextScaler,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: item.liveStatus.value == 2
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      item.userName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: titleStyle,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _displayRoomTitle(),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: roomTitleStyle,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    buildPlatformRow(),
+                                  ],
+                                )
+                              : Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      item.userName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.left,
+                                      style: titleStyle,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    buildPlatformRow(),
+                                  ],
                                 ),
-                                SizedBox(height: compact ? 4 : 6),
-                                Text(
-                                  _displayRoomTitle(),
-                                  maxLines: compact ? 1 : 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.bodyMedium,
-                                ),
-                              ],
-                            ),
-                          ),
-                          SizedBox(width: compact ? 6 : 8),
-                          _buildActionArea(
-                            context,
-                            compact: compact,
-                            vertical: true,
-                          ),
-                        ],
-                      ),
-                      Wrap(
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          Image.asset(
-                            _site.logo,
-                            width: compact ? 16 : 18,
-                            height: compact ? 16 : 18,
-                          ),
-                          Text(
-                            _site.name,
-                            style: subtitleStyle,
-                          ),
-                          _buildInfoChip(
-                            context,
-                            label: getStatus(item.liveStatus.value),
-                            active: item.liveStatus.value == 2,
-                          ),
-                          if (_liveDurationText().isNotEmpty)
-                            Text(
-                              _liveDurationText(),
-                              style: subtitleStyle,
-                            ),
-                          if (playing)
-                            Text(
-                              "正在观看",
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          if (showSpecialMark && item.isSpecialFollow)
-                            const Icon(
-                              Icons.star,
-                              color: Colors.amber,
-                              size: 16,
-                            ),
-                        ],
-                      ),
-                    ],
+                        ),
+                        SizedBox(width: compact ? 2 : 4),
+                        _buildActionArea(
+                          context,
+                          compact: true,
+                          vertical: true,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -214,7 +252,7 @@ class FollowUserItem extends StatelessWidget {
       color: Colors.grey.shade600,
     );
     return Material(
-      color: theme.cardColor,
+      color: _cardBackgroundColor(theme),
       borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -222,15 +260,7 @@ class FollowUserItem extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: playing
-                  ? theme.colorScheme.primary.withAlpha(180)
-                  : Colors.black.withAlpha(16),
-              width: playing ? 1.4 : 0.6,
-            ),
-            borderRadius: radius,
-          ),
+          foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: EdgeInsets.symmetric(
             horizontal: compact ? 10 : 12,
             vertical: compact ? 8 : 10,
@@ -330,8 +360,18 @@ class FollowUserItem extends StatelessWidget {
     }
     final theme = Theme.of(context);
     final radius = BorderRadius.circular(16);
+    final cardColor = _cardBackgroundColor(theme);
+    const avatarSize = 44.0;
+    const avatarOverlap = 16.0;
+    const contentInset = 12.0;
+    const avatarNameOffset = avatarSize + 8;
+    final showHeaderUserName = item.liveStatus.value == 2;
+    final subtitleStyle = theme.textTheme.bodySmall?.copyWith(
+      color: Colors.grey.shade600,
+      height: 1.15,
+    );
     return Material(
-      color: theme.cardColor,
+      color: cardColor,
       borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -339,86 +379,122 @@ class FollowUserItem extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: playing
-                  ? theme.colorScheme.primary.withAlpha(180)
-                  : Colors.black.withAlpha(24),
-              width: playing ? 1.4 : 0.8,
-            ),
-            borderRadius: radius,
-          ),
+          foregroundDecoration: _cardFrameDecoration(theme, radius),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              AspectRatio(
-                aspectRatio: 16 / 9,
-                child: _buildCover(context, radius: 0),
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: _buildCover(
+                      context,
+                      radius: 0,
+                      showTitleOverlay: false,
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    bottom: -avatarOverlap,
+                    child: _buildFramedAvatar(
+                      size: avatarSize,
+                      borderColor: cardColor,
+                    ),
+                  ),
+                ],
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Row(
+                  padding: const EdgeInsets.fromLTRB(
+                    contentInset,
+                    2,
+                    contentInset,
+                    4,
+                  ),
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      NetImage(
-                        item.face,
-                        width: 42,
-                        height: 42,
-                        borderRadius: 21,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              item.userName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _displayRoomTitle(),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium,
-                            ),
-                            const Spacer(),
-                            Wrap(
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              spacing: 6,
-                              runSpacing: 4,
-                              children: [
-                                Image.asset(
-                                  _site.logo,
-                                  width: 16,
-                                  height: 16,
-                                ),
-                                Text(
-                                  _site.name,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: Colors.grey.shade600,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(width: avatarNameOffset),
+                          if (showHeaderUserName)
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 1),
+                                child: Text(
+                                  item.userName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.05,
                                   ),
                                 ),
-                                _buildInfoChip(
-                                  context,
-                                  label: getStatus(item.liveStatus.value),
-                                  active: item.liveStatus.value == 2,
-                                ),
-                              ],
+                              ),
+                            )
+                          else
+                            const Spacer(),
+                          if (showHeaderUserName) const SizedBox(width: 6),
+                          _buildActionArea(
+                            context,
+                            compact: true,
+                            vertical: false,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Flexible(
+                        fit: FlexFit.tight,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _cardRoomText(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              height: 1.1,
                             ),
-                          ],
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      _buildActionArea(
-                        context,
-                        compact: true,
-                        vertical: true,
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Image.asset(_site.logo, width: 14, height: 14),
+                          const SizedBox(width: 5),
+                          Flexible(
+                            child: Text(
+                              _site.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: subtitleStyle,
+                            ),
+                          ),
+                          if (playing) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              "正在观看",
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.primary,
+                                fontWeight: FontWeight.w600,
+                                height: 1.1,
+                              ),
+                            ),
+                          ],
+                          if (showSpecialMark && item.isSpecialFollow)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 6),
+                              child: Icon(
+                                Icons.star,
+                                color: Colors.amber,
+                                size: 15,
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ),
@@ -431,11 +507,32 @@ class FollowUserItem extends StatelessWidget {
     );
   }
 
+  Widget _buildFramedAvatar({
+    required double size,
+    required Color borderColor,
+  }) {
+    return Container(
+      width: size,
+      height: size,
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: borderColor,
+        borderRadius: BorderRadius.circular(size / 2),
+      ),
+      child: NetImage(
+        item.face,
+        width: size - 4,
+        height: size - 4,
+        borderRadius: (size - 4) / 2,
+      ),
+    );
+  }
+
   Widget _buildAvatarCard(BuildContext context) {
     final theme = Theme.of(context);
     final radius = BorderRadius.circular(16);
     return Material(
-      color: theme.cardColor,
+      color: _cardBackgroundColor(theme),
       borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -443,15 +540,7 @@ class FollowUserItem extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: playing
-                  ? theme.colorScheme.primary.withAlpha(180)
-                  : Colors.black.withAlpha(24),
-              width: playing ? 1.4 : 0.8,
-            ),
-            borderRadius: radius,
-          ),
+          foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: const EdgeInsets.all(12),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -512,19 +601,52 @@ class FollowUserItem extends StatelessWidget {
     );
   }
 
-  Widget _buildCover(BuildContext context, {required double radius}) {
+  Color _cardBackgroundColor(ThemeData theme) {
+    if (theme.brightness == Brightness.dark) {
+      return theme.colorScheme.surfaceContainerHigh;
+    }
+    return theme.cardColor;
+  }
+
+  BoxDecoration _cardFrameDecoration(
+    ThemeData theme,
+    BorderRadius radius,
+  ) {
+    final borderColor = playing
+        ? theme.colorScheme.primary
+        : theme.colorScheme.outlineVariant.withAlpha(
+            theme.brightness == Brightness.dark ? 230 : 180,
+          );
+    return BoxDecoration(
+      border: Border.all(
+        color: borderColor,
+        width: playing ? 2 : 1,
+      ),
+      borderRadius: radius,
+    );
+  }
+
+  Widget _buildCover(
+    BuildContext context, {
+    required double radius,
+    bool showTitleOverlay = true,
+    bool showStatusPlaceholder = true,
+  }) {
     final theme = Theme.of(context);
     if (item.liveStatus.value != 2) {
+      final isUnconfirmed = item.liveStatus.value == 0;
       return Container(
         color: theme.colorScheme.surfaceContainerHighest,
         alignment: Alignment.center,
-        child: Text(
-          "未直播",
-          style: theme.textTheme.titleMedium?.copyWith(
-            color: Colors.grey.shade600,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        child: showStatusPlaceholder || isUnconfirmed
+            ? Text(
+                isUnconfirmed ? "未确认" : "未直播",
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            : null,
       );
     }
     final coverImage = _coverImage;
@@ -548,57 +670,44 @@ class FollowUserItem extends StatelessWidget {
                   coverImage,
                   fit: BoxFit.cover,
                   borderRadius: radius,
+                  cacheWidth: 640,
+                  cacheHeight: 360,
+                  clearMemoryCacheWhenDispose: true,
+                  imageCacheName: NetImage.liveCoverCacheName,
+                  cacheMaxAge: const Duration(minutes: 10),
                 ),
         ),
-        Positioned(
-          left: 8,
-          top: 8,
-          child: _buildInfoChip(
-            context,
-            label: getStatus(item.liveStatus.value),
-            active: item.liveStatus.value == 2,
-          ),
-        ),
-        if (playing)
+        if (showTitleOverlay)
           Positioned(
+            left: 8,
             right: 8,
-            top: 8,
-            child: _buildInfoChip(
-              context,
-              label: "正在观看",
-              active: true,
+            bottom: 8,
+            child: Text(
+              _displayRoomTitle(),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                shadows: [
+                  Shadow(
+                    blurRadius: 8,
+                    color: Colors.black54,
+                  ),
+                ],
+              ),
             ),
           ),
-        Positioned(
-          left: 8,
-          right: 8,
-          bottom: 8,
-          child: Text(
-            _displayRoomTitle(),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              shadows: [
-                Shadow(
-                  blurRadius: 8,
-                  color: Colors.black54,
-                ),
-              ],
-            ),
-          ),
-        ),
       ],
     );
   }
 
-  Widget _buildStatusDot() {
+  Widget _buildStatusDot({double size = 8}) {
     final active = item.liveStatus.value == 2;
     return Container(
-      width: 8,
-      height: 8,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: active ? Colors.green : Colors.grey,
         borderRadius: BorderRadius.circular(99),
@@ -636,18 +745,31 @@ class FollowUserItem extends StatelessWidget {
     required bool vertical,
   }) {
     final iconSize = compact ? 18.0 : 20.0;
+    Widget constrainVerticalAction(Widget child) {
+      return vertical ? SizedBox.square(dimension: 28, child: child) : child;
+    }
+
     final children = <Widget>[
-      if (onSpecialTap != null)
-        IconButton(
-          tooltip: item.isSpecialFollow ? "取消特别关注" : "特别关注",
-          iconSize: iconSize,
-          visualDensity: VisualDensity.compact,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: onSpecialTap,
-          icon: Icon(
-            item.isSpecialFollow ? Icons.star : Icons.star_border,
-            color: item.isSpecialFollow ? Colors.amber : null,
+      if (showSpecialMark && onSpecialTap != null)
+        constrainVerticalAction(
+          IconButton(
+            tooltip: item.isSpecialFollow ? "取消特别关注" : "特别关注",
+            iconSize: iconSize,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: vertical
+                ? const BoxConstraints()
+                : const BoxConstraints(minWidth: 28, minHeight: 28),
+            style: vertical
+                ? IconButton.styleFrom(
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  )
+                : null,
+            onPressed: onSpecialTap,
+            icon: Icon(
+              item.isSpecialFollow ? Icons.star : Icons.star_border,
+              color: item.isSpecialFollow ? Colors.amber : null,
+            ),
           ),
         )
       else if (showSpecialMark && item.isSpecialFollow)
@@ -657,13 +779,22 @@ class FollowUserItem extends StatelessWidget {
           size: iconSize,
         ),
       if (onRemove != null)
-        IconButton(
-          iconSize: iconSize,
-          visualDensity: VisualDensity.compact,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: onRemove,
-          icon: const Icon(Remix.dislike_line),
+        constrainVerticalAction(
+          IconButton(
+            iconSize: iconSize,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: vertical
+                ? const BoxConstraints()
+                : const BoxConstraints(minWidth: 28, minHeight: 28),
+            style: vertical
+                ? IconButton.styleFrom(
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  )
+                : null,
+            onPressed: onRemove,
+            icon: const Icon(Remix.dislike_line),
+          ),
         ),
     ];
     if (children.isEmpty) {
@@ -698,6 +829,10 @@ class FollowUserItem extends StatelessWidget {
       return showLiveCover ? "直播封面与标题补齐中" : item.userName;
     }
     return item.userName;
+  }
+
+  String _cardRoomText() {
+    return item.liveStatus.value == 2 ? _displayRoomTitle() : item.userName;
   }
 
   String getStatus(int status) {

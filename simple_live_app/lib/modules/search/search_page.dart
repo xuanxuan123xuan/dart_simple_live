@@ -1,10 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/modules/search/search_aggregate_controller.dart';
 import 'package:simple_live_app/modules/search/search_aggregate_view.dart';
+import 'package:simple_live_app/routes/app_navigation.dart';
+import 'package:simple_live_app/services/guide_service.dart';
+import 'package:simple_live_app/services/live_room_link_parser.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({Key? key}) : super(key: key);
@@ -15,6 +19,8 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   final controller = Get.find<SearchAggregateController>();
+  final linkParser = LiveRoomLinkParser();
+  final guideKey = GlobalKey();
   late final TextEditingController searchController;
   late final RxInt searchMode;
 
@@ -33,16 +39,44 @@ class _SearchPageState extends State<SearchPage> {
         if (!mounted || controller.isClosed) {
           return;
         }
-        unawaited(controller.search(initialKeyword, searchMode.value));
+        unawaited(search());
       });
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final args = Get.arguments;
+      if (args is Map &&
+          args['guide'] == 'search' &&
+          Get.isRegistered<GuideService>()) {
+        final guide = Get.find<GuideService>();
+        guide.startSearchGuide();
+        guide.syncFocusRectFromKey(guideKey, inflateBy: 8);
+      }
+    });
   }
 
-  void search() {
+  Future<void> search() async {
     if (!mounted || controller.isClosed) {
       return;
     }
-    unawaited(controller.search(searchController.text, searchMode.value));
+    final input = searchController.text.trim();
+    final extractedUrl = LiveRoomLinkParser.extractHttpUrl(input);
+    if (extractedUrl.isNotEmpty) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      final target = await linkParser.parse(extractedUrl);
+      if (!mounted || controller.isClosed) {
+        return;
+      }
+      if (target != null) {
+        AppNavigator.toLiveRoomDetail(
+          site: target.site,
+          roomId: target.roomId,
+        );
+        return;
+      }
+      SmartDialog.showToast("无法识别此直播链接");
+      return;
+    }
+    await controller.search(input, searchMode.value);
   }
 
   @override
@@ -63,37 +97,42 @@ class _SearchPageState extends State<SearchPage> {
           icon: const Icon(Icons.arrow_back),
         ),
         titleSpacing: 0,
-        title: TextField(
-          controller: searchController,
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          onSubmitted: (_) => search(),
-          decoration: InputDecoration(
-            hintText: "搜点什么吧",
-            isDense: true,
-            border: OutlineInputBorder(borderRadius: AppStyle.radius24),
-            contentPadding: AppStyle.edgeInsetsH12,
-            prefixIcon: Obx(
-              () => DropdownButtonHideUnderline(
-                child: DropdownButton<int>(
-                  value: searchMode.value,
-                  padding: AppStyle.edgeInsetsL8,
-                  iconSize: 18,
-                  items: const [
-                    DropdownMenuItem(value: 0, child: Text("房间")),
-                    DropdownMenuItem(value: 1, child: Text("主播")),
-                  ],
-                  onChanged: (value) {
-                    searchMode.value = value ?? 0;
-                    if (searchController.text.trim().isNotEmpty) search();
-                  },
+        title: KeyedSubtree(
+          key: guideKey,
+          child: TextField(
+            controller: searchController,
+            autofocus: true,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) => unawaited(search()),
+            decoration: InputDecoration(
+              hintText: "搜点什么吧",
+              isDense: true,
+              border: OutlineInputBorder(borderRadius: AppStyle.radius24),
+              contentPadding: AppStyle.edgeInsetsH12,
+              prefixIcon: Obx(
+                () => DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    value: searchMode.value,
+                    padding: AppStyle.edgeInsetsL8,
+                    iconSize: 18,
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text("房间")),
+                      DropdownMenuItem(value: 1, child: Text("主播")),
+                    ],
+                    onChanged: (value) {
+                      searchMode.value = value ?? 0;
+                      if (searchController.text.trim().isNotEmpty) {
+                        unawaited(search());
+                      }
+                    },
+                  ),
                 ),
               ),
-            ),
-            suffixIcon: IconButton(
-              tooltip: "搜索",
-              onPressed: search,
-              icon: const Icon(Icons.search),
+              suffixIcon: IconButton(
+                tooltip: "搜索",
+                onPressed: () => unawaited(search()),
+                icon: const Icon(Icons.search),
+              ),
             ),
           ),
         ),

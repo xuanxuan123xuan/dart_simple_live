@@ -1,6 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get/get.dart';
+import 'package:hive/hive.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 
 void main() {
   test('account pool only degrades primary to secondary to anonymous', () {
@@ -34,6 +39,43 @@ void main() {
       ..suspendedUntil = DateTime(2026, 1, 2);
 
     expect(session.isAvailable(DateTime(2026, 1, 3)), isFalse);
+  });
+
+  test('temporary follow cooldown makes a configured account unavailable', () {
+    final session = KuaishouAccountSession(KuaishouAccountSlot.primary)
+      ..cookie = 'kuaishou.live.web_st=token'
+      ..cooldownUntil = DateTime(2026, 8, 12, 12, 5);
+
+    expect(session.isAvailable(DateTime(2026, 8, 12, 12)), isFalse);
+    expect(session.isAvailable(DateTime(2026, 8, 12, 12, 6)), isTrue);
+  });
+
+  test('expired anonymous cooldown reactivates the site account transport',
+      () async {
+    final tempDirectory = await Directory.systemTemp.createTemp(
+      'kuaishou_account_pool_test_',
+    );
+    Hive.init(tempDirectory.path);
+    final storage = LocalStorageService();
+    await storage.init();
+    Get.put<LocalStorageService>(storage);
+    final site = KuaishouSite();
+    final account = KuaishouAccountService(site: site);
+    account.primary
+      ..cookie = 'userId=primary_user; token=primary'
+      ..cooldownUntil = DateTime(2026, 8, 12, 12, 5);
+    account.mode.value = KuaishouAccountPoolMode.anonymous;
+    site.activateAnonymousMode();
+
+    account.refreshAvailability(DateTime(2026, 8, 12, 12, 6));
+
+    expect(account.mode.value, KuaishouAccountPoolMode.primary);
+    expect(site.anonymousMode, isFalse);
+    expect(site.activeAccountSessionKey, KuaishouAccountSlot.primary.name);
+
+    await Hive.close();
+    await tempDirectory.delete(recursive: true);
+    Get.reset();
   });
 
   test('next Shanghai midnight covers month and year rollover', () {

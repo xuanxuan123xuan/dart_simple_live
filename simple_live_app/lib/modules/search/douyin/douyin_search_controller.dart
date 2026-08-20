@@ -6,7 +6,6 @@ import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
-import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:webview_flutter/webview_flutter.dart' as ohos_webview;
@@ -121,6 +120,5 @@ class DouyinSearchController extends BaseController {
 
   void openBrowser() {
     launchUrlString(searchUrl);
-    Get.offAndToNamed(RoutePath.kTools);
   }
 }

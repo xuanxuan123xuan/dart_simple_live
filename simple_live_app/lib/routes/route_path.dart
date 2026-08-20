@@ -3,6 +3,24 @@ class RoutePath {
   /// 首页
   static const kIndex = "/index";
 
+  /// 关于 Simple Live
+  static const kAbout = "/about";
+
+  /// 检查更新
+  static const kAppUpdate = "/about/update";
+
+  /// 设置总览
+  static const kSettings = "/settings";
+
+  /// 帮助与排障
+  static const kHelp = "/help";
+
+  /// 当前运行日志
+  static const kDebugLog = "/help/log";
+
+  /// 持久日志与配置恢复
+  static const kSupportTools = "/help/support_tools";
+
   /// 搜索
   static const kSearch = "/search";
 
@@ -33,7 +51,7 @@ class RoutePath {
   /// 弹幕关键词屏蔽
   static const kSettingsDanmuShield = "/settings/danmu/shield";
 
-  /// 其他设置
+  /// 高级设置
   static const kSettingsOther = "/settings/other";
 
   /// 历史记录
@@ -41,9 +59,6 @@ class RoutePath {
 
   /// 我的关注
   static const kFollowUser = "/user/follow";
-
-  /// 工具箱
-  static const kTools = "/other/tools";
 
   /// 主页设置
   static const kSettingsIndexed = "/settings/indexed";
@@ -83,6 +98,9 @@ class RoutePath {
 
   /// 配置包导入导出
   static const kProfileBackup = "/sync/profile_backup";
+
+  /// 同步高级连接设置
+  static const kSyncAdvancedConnection = "/sync/advanced_connection";
 
   /// 扫描
   static const kSyncScan = "/sync/scan";

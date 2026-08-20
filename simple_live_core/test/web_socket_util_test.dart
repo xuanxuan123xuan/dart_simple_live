@@ -202,4 +202,48 @@ void main() {
     await _flushAsync();
     expect(calls, 1);
   });
+
+  test('deduplicates and limits candidate urls for one connection round',
+      () async {
+    final calls = <String>[];
+    final timers = <_FakeTimer>[];
+    final socket = WebScoketUtils(
+      url: 'wss://primary.test/ws',
+      backupUrl: 'wss://backup-a.test/ws',
+      backupUrls: const [
+        'wss://backup-a.test/ws',
+        'wss://backup-b.test/ws',
+      ],
+      heartBeatTime: 0,
+      maxConnectAttempts: 2,
+      connector: (url, _) {
+        calls.add(url);
+        throw StateError('failure');
+      },
+      retryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    );
+
+    expect(socket.connectUrls, [
+      'wss://primary.test/ws',
+      'wss://backup-a.test/ws',
+      'wss://backup-b.test/ws',
+    ]);
+
+    await socket.connect();
+    timers[0].fire();
+    await _flushAsync();
+    timers[1].fire();
+    await _flushAsync();
+
+    expect(calls, [
+      'wss://primary.test/ws',
+      'wss://backup-a.test/ws',
+      'wss://primary.test/ws',
+    ]);
+    socket.close();
+  });
 }

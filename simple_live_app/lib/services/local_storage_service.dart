@@ -20,6 +20,9 @@ class LocalStorageService extends GetxService {
   static const String kLiveRoomShortcutRefresh = "LiveRoomShortcutRefresh";
   static const String kLiveRoomShortcutToggleChat =
       "LiveRoomShortcutToggleChat";
+  static const String kLiveRoomShortcutVolumeUp = "LiveRoomShortcutVolumeUp";
+  static const String kLiveRoomShortcutVolumeDown =
+      "LiveRoomShortcutVolumeDown";
   static const String kLastSearchSiteId = "LastSearchSiteId";
   static const String kFollowGroupMode = "FollowGroupMode";
   static const String kFollowSelectedGroupId = "FollowSelectedGroupId";
@@ -27,6 +30,7 @@ class LocalStorageService extends GetxService {
   static const String kFollowOnlyLive = "FollowOnlyLive";
   static const String kFollowRefreshOnEnter = "FollowRefreshOnEnter";
   static const String kFollowShowLiveCover = "FollowShowLiveCover";
+  static const String kFollowShowSpecialFollow = "FollowShowSpecialFollow";
   static const String kRememberWindowPlacement = "RememberWindowPlacement";
   static const String kDesktopWindowBounds = "DesktopWindowBounds";
   static const String kDesktopWindowMaximized = "DesktopWindowMaximized";
@@ -41,6 +45,7 @@ class LocalStorageService extends GetxService {
   static const String kRoomQualityMemory = "RoomQualityMemory";
   static const String kMultiRoomLayout = "MultiRoomLayout";
   static const String kThemeMode = "ThemeMode";
+  static const String kAppIconVariant = "AppIconVariant";
   static const String kDebugModeKey = "DebugMode";
   static const String kDanmuSize = "DanmuSize";
   static const String kDanmuSpeed = "DanmuSpeed";
@@ -62,6 +67,8 @@ class LocalStorageService extends GetxService {
   static const String kDanmuFontWeight = "DanmuFontWeight";
   static const String kContributionRankEnable = "ContributionRankEnable";
   static const String kHardwareDecode = "HardwareDecode";
+  static const String kIosOriginalQualityPowerSaving =
+      "IosOriginalQualityPowerSaving";
   static const String kChatTextSize = "ChatTextSize";
   static const String kChatTextGap = "ChatTextGap";
   static const String kChatBubbleStyle = "ChatBubbleStyle";
@@ -86,6 +93,7 @@ class LocalStorageService extends GetxService {
   static const String kAutoFullScreen = "AutoFullScreen";
   static const String kAutoPipOnExit = "AutoPipOnExit";
   static const String kPlayerShowSuperChat = "PlayerShowSuperChat";
+  static const String kPlayerShowPlayUrl = "PlayerShowPlayUrl";
   static const String kLiveEventFlowEnable = "LiveEventFlowEnable";
   static const String kLiveEventFlowLimit = "LiveEventFlowLimit";
   static const String kLiveEventFlowOverlayEnable =
@@ -146,21 +154,6 @@ class LocalStorageService extends GetxService {
   static const String kWebDAVLastRecoverTime = "kWebDAVLastRecoverTime";
   static const String kSyncServerUrl = "SyncServerUrl";
   static const String kSyncProxyUrl = "SyncProxyUrl";
-  static const String kLiveSubtitleEnable = "LiveSubtitleEnable";
-  static const String kLiveSubtitleModelPath = "LiveSubtitleModelPath";
-  static const String kLiveSubtitleLanguage = "LiveSubtitleLanguage";
-  static const String kLiveSubtitleFontSize = "LiveSubtitleFontSize";
-  static const String kLiveSubtitlePosition = "LiveSubtitlePosition";
-  static const String kLiveSubtitleOffsetX = "LiveSubtitleOffsetX";
-  static const String kLiveSubtitleOffsetY = "LiveSubtitleOffsetY";
-  static const String kLiveSubtitleColor = "LiveSubtitleColor";
-  static const String kLiveSubtitleFontWeight = "LiveSubtitleFontWeight";
-  static const String kLiveSubtitleBackgroundEnable =
-      "LiveSubtitleBackgroundEnable";
-  static const String kLiveSubtitlePositionLocked =
-      "LiveSubtitlePositionLocked";
-  static const String kLiveSubtitleStartupGuard = "LiveSubtitleStartupGuard";
-
   late Box settingsBox;
   late Box<String> shieldBox;
   late Box<String> shieldPresetBox;

@@ -25,6 +25,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_signal_adapter.dart';
+import 'package:simple_live_app/modules/live_room/player/ohos_line_failover_policy.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
@@ -37,7 +38,6 @@ import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
-import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart'
     show didLivePlaybackHostChange;
@@ -49,6 +49,7 @@ import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/desktop_refresh_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
+import 'package:simple_live_app/widgets/immersive_volume_slider.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
@@ -63,6 +64,14 @@ export 'live_room_auto_quality_buffer_tracker.dart'
 
 import 'live_room_auto_quality_buffer_tracker.dart';
 import 'kuaishou_playback_recovery_tracker.dart';
+
+@visibleForTesting
+bool shouldResumeLiveRoomAfterInlineMultiRoom({
+  required bool playing,
+  required bool buffering,
+}) {
+  return playing || buffering;
+}
 
 @visibleForTesting
 bool shouldAcceptOfflineRoomRefresh({
@@ -755,6 +764,7 @@ class LiveRoomController extends PlayerController
   final OhosPlaybackSignalAdapter _ohosPlaybackSignalAdapter =
       OhosPlaybackSignalAdapter();
   DateTime? _lastAutoQualityDownAt;
+  final Set<int> _ohosFailedLineIndices = <int>{};
   StreamSubscription<bool>? _autoQualityBufferingSubscription;
 
   void _setupAutoQualityAdjust() {
@@ -786,17 +796,40 @@ class LiveRoomController extends PlayerController
       buffering: buffering,
       now: now,
     );
-    if (!shouldDegrade ||
-        qualityLocked.value ||
-        currentQuality < 0 ||
-        currentQuality >= qualites.length - 1) {
+    if (!shouldDegrade) {
       return;
     }
     if (_lastAutoQualityDownAt != null &&
         now.difference(_lastAutoQualityDownAt!) < const Duration(seconds: 30)) {
       return;
     }
+    if (Utils.isOhos && playUrls.length > 1) {
+      _ohosFailedLineIndices.add(currentLineIndex);
+      final candidate = selectNextOhosFailoverLine(
+        currentLineIndex: currentLineIndex,
+        lineCount: playUrls.length,
+        failedLineIndices: _ohosFailedLineIndices,
+      );
+      if (candidate != null) {
+        _lastAutoQualityDownAt = now;
+        SmartDialog.showToast("线路波动，已自动切换备用线路");
+        unawaited(
+          changePlayLine(
+            candidate,
+            persist: false,
+            reconnectReason: LiveReconnectReason.automaticLineFailover,
+          ),
+        );
+        return;
+      }
+    }
+    if (qualityLocked.value ||
+        currentQuality < 0 ||
+        currentQuality >= qualites.length - 1) {
+      return;
+    }
     _lastAutoQualityDownAt = now;
+    _ohosFailedLineIndices.clear();
     currentQuality += 1;
     currentQualityInfo.value = qualites[currentQuality].quality;
     SmartDialog.showToast("网络波动，已自动降低清晰度");
@@ -859,6 +892,7 @@ class LiveRoomController extends PlayerController
     _autoQualityBufferTracker.reset();
     _autoQualityWarmupStartedForRoom = false;
     _lastAutoQualityDownAt = null;
+    _ohosFailedLineIndices.clear();
     _resetKuaishouPlaybackRecoverySession();
   }
 
@@ -1480,7 +1514,12 @@ class LiveRoomController extends PlayerController
       } else if (span.isImage) {
         final imageUrl = (span.imageUrl ?? "").trim();
         if (imageUrl.isNotEmpty) {
-          parts.add(DanmakuContentPart.image(imageUrl));
+          parts.add(
+            DanmakuContentPart.image(
+              imageUrl,
+              fallbackText: span.fallbackText,
+            ),
+          );
         }
       }
     }
@@ -1857,6 +1896,27 @@ class LiveRoomController extends PlayerController
     updateOhosVideoState(value);
   }
 
+  void updateOhosFirstFrameForGeneration(int playerGeneration) {
+    if (!Utils.isOhos ||
+        _roomDisposed ||
+        playerGeneration != ohosPlayerRevision.value) {
+      return;
+    }
+    final signal = _ohosPlaybackSignalAdapter.markFirstFrame(
+      roomGeneration: _loadGeneration,
+      playerGeneration: playerGeneration,
+    );
+    if (signal == null) {
+      return;
+    }
+    Log.d(
+      'OHOS playback signal=${signal.type.name} '
+      'roomGeneration=${signal.roomGeneration} '
+      'playerGeneration=${signal.playerGeneration} '
+      'source=${signal.sourceFingerprint}',
+    );
+  }
+
   void _refreshDanmakuOverlay(String reason) {
     if (!showDanmakuState.value) {
       return;
@@ -2036,6 +2096,8 @@ class LiveRoomController extends PlayerController
     try {
       Log.i(
           "定时关闭到点：platform=${Platform.operatingSystem} room=${site.id}/$roomId");
+      autoExitEnable.value = false;
+      await AppSettingsController.instance.setAutoExitEnable(false);
       await cancelAutoPipOnLeave();
       await stopBackgroundPlaybackService();
       await liveDanmaku.stop();
@@ -2153,7 +2215,6 @@ class LiveRoomController extends PlayerController
       await player.stop();
     }
     await liveDanmaku.stop();
-    LiveSubtitleService.instance.stop();
     super.onClose();
   }
 
@@ -2358,6 +2419,12 @@ class LiveRoomController extends PlayerController
       }
 
       addHistory();
+      unawaited(
+        FollowService.instance.syncFollowStatusFromRoomDetail(
+          detail.value!,
+          siteId: site.id,
+        ),
+      );
       // 刷新关注状态
       followed.value = DBService.instance.getFollowExist("${site.id}_$roomId");
       final initialLiveState = detail.value!.resolvedLiveStatus;
@@ -2776,6 +2843,7 @@ class LiveRoomController extends PlayerController
           );
     if (persist) {
       _manualLineSelectionRevision += 1;
+      _ohosFailedLineIndices.clear();
     }
     currentLineIndex = index;
     if (persist) {
@@ -2799,7 +2867,8 @@ class LiveRoomController extends PlayerController
     required int requestRevision,
     required int loadGeneration,
   }) {
-    if (!AppSettingsController.instance.autoSelectFastestLine.value ||
+    if (Utils.isOhos ||
+        !AppSettingsController.instance.autoSelectFastestLine.value ||
         !_hasActivePlaybackSession ||
         !_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
       return;
@@ -2993,12 +3062,6 @@ class LiveRoomController extends PlayerController
         protocol: streamProtocol,
         requestRevision: requestRevision,
         loadGeneration: loadGeneration,
-      );
-      unawaited(
-        LiveSubtitleService.instance.syncPreviewFromSettings(
-          mediaUrl: finalUrl,
-          httpHeaders: playHeaders,
-        ),
       );
     } finally {
       if (identical(_playerReopenCompleter, reopenCompleter)) {
@@ -3523,24 +3586,18 @@ class LiveRoomController extends PlayerController
     SmartDialog.showToast("已复制直播间链接");
   }
 
-  /// 复制当前生成的播放直链
-  void copyPlayUrl() async {
-    // 未开播时不复制
+  /// 复制当前实际播放线路，保持与播放器的线路和 HTTPS 设置一致。
+  void copyPlayUrl() {
     if (!liveStatus.value) {
+      SmartDialog.showToast("当前直播间未开播");
       return;
     }
-    // 播放地址未就绪时不复制
-    if (currentQuality < 0 || currentQuality >= qualites.length) {
+    final currentUrl = currentNetworkDiagnosePlaybackUrl;
+    if (currentUrl.isEmpty) {
       SmartDialog.showToast("播放地址未就绪");
       return;
     }
-    var playUrl = await site.liveSite
-        .getPlayUrls(detail: detail.value!, quality: qualites[currentQuality]);
-    if (playUrl.urls.isEmpty) {
-      SmartDialog.showToast("无法读取播放地址");
-      return;
-    }
-    Utils.copyToClipboard(playUrl.urls.first);
+    Utils.copyToClipboard(currentUrl);
     SmartDialog.showToast("已复制播放直链");
   }
 
@@ -3627,6 +3684,7 @@ class LiveRoomController extends PlayerController
     bool keepAlive = false,
   }) {
     hidevolumeTimer?.cancel();
+    pauseControlsAutoHide();
     SmartDialog.showAttach(
       targetContext: targetContext,
       alignment: Alignment.topCenter,
@@ -3634,28 +3692,21 @@ class LiveRoomController extends PlayerController
       maskColor: const Color(0x00000000),
       tag: volumeSliderDialogTag,
       keepSingle: true,
+      onDismiss: resumeControlsAutoHide,
       builder: (context) {
         return MouseRegion(
           onEnter: (_) => hidevolumeTimer?.cancel(),
           onExit: (_) => hideVolumeSlider(),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: AppStyle.radius12,
-              color: Theme.of(context).cardColor,
-            ),
-            padding: AppStyle.edgeInsetsA4,
-            child: Obx(
-              () => SizedBox(
-                width: 200,
-                child: Slider(
-                  min: 0,
-                  max: 100,
-                  value: AppSettingsController.instance.playerVolume.value,
-                  onChanged: (newValue) {
-                    setSessionPlayerVolume(newValue, persist: true);
-                  },
-                ),
-              ),
+          child: Obx(
+            () => ImmersiveVolumeSlider(
+              value: AppSettingsController.instance.playerVolume.value,
+              onChanged: (newValue) {
+                setSessionPlayerVolume(newValue, persist: true);
+              },
+              onMute: () {
+                unawaited(toggleMute());
+                hideVolumeSlider();
+              },
             ),
           ),
         );
@@ -4344,14 +4395,15 @@ class LiveRoomController extends PlayerController
               Expanded(
                 child: RefreshIndicator(
                   onRefresh: FollowService.instance.loadData,
-                  child: ListView.builder(
+                  child: ListView.separated(
                     key: const PageStorageKey<String>(
                       "liveRoomFollowUserSelection",
                     ),
                     controller: scrollController,
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: AppStyle.edgeInsetsV8,
+                    padding: AppStyle.edgeInsetsA12.copyWith(bottom: 20),
                     itemCount: followUsers.length,
+                    separatorBuilder: (_, __) => AppStyle.vGap8,
                     itemBuilder: (_, i) {
                       var item = followUsers[i];
                       return _buildLiveRoomFollowItem(
@@ -4493,14 +4545,11 @@ class LiveRoomController extends PlayerController
 
     // 等待右侧选择面板退场，避免遮罩与路由动画叠在一起。
     await Future.delayed(const Duration(milliseconds: 220));
-    final wasPlaying = player.state.playing;
+    final shouldResumeSingleRoom = _shouldResumeAfterInlineMultiRoom();
+    final positionBeforeMultiRoom = _lastKnownPlayerPosition;
     try {
-      if (wasPlaying) {
-        await suspendLiveLatencyChase(
-          MpvLiveLatencyProtectionReason.userPaused,
-        );
-        await player.pause();
-        recordLiveLinkHealthEvent(LiveLinkEventType.playbackPausedByUser);
+      if (shouldResumeSingleRoom) {
+        await _pauseForInlineMultiRoom();
       }
       final result = await AppNavigator.toMultiRoom(
         [currentRoom, addedRoom],
@@ -4513,15 +4562,69 @@ class LiveRoomController extends PlayerController
       }
     } finally {
       if (!_roomDisposed && !isPlayerClosing) {
-        if (wasPlaying) {
-          await player.play();
-          await resumeLiveLatencyChase();
-          recordLiveLinkHealthEvent(LiveLinkEventType.playbackResumedByUser);
+        if (shouldResumeSingleRoom) {
+          await _resumeAfterInlineMultiRoom(positionBeforeMultiRoom);
         }
         if (fullScreenState.value) {
           await restoreFullScreenSystemUi();
         }
       }
+    }
+  }
+
+  bool _shouldResumeAfterInlineMultiRoom() {
+    if (Utils.isOhos) {
+      final value = ohosVideoController?.value;
+      return shouldResumeLiveRoomAfterInlineMultiRoom(
+        playing: value?.isPlaying ?? false,
+        buffering: value?.isBuffering ?? false,
+      );
+    }
+    return shouldResumeLiveRoomAfterInlineMultiRoom(
+      playing: player.state.playing,
+      buffering: player.state.buffering,
+    );
+  }
+
+  Future<void> _pauseForInlineMultiRoom() async {
+    if (Utils.isOhos) {
+      await ohosVideoController?.pause();
+      return;
+    }
+    await suspendLiveLatencyChase(MpvLiveLatencyProtectionReason.sourceChanged);
+    await player.pause();
+  }
+
+  Future<void> _resumeAfterInlineMultiRoom(
+    Duration? positionBeforeMultiRoom,
+  ) async {
+    if (Utils.isOhos) {
+      final controller = ohosVideoController;
+      if (controller != null &&
+          controller.value.isInitialized &&
+          !controller.value.hasError) {
+        await controller.play();
+        updateOhosVideoState(controller.value);
+      }
+      return;
+    }
+    await player.play();
+    await resumeLiveLatencyChase();
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (_roomDisposed ||
+        isPlayerClosing ||
+        !liveStatus.value ||
+        currentLineIndex < 0 ||
+        playUrls.isEmpty) {
+      return;
+    }
+    final stalled = !player.state.playing ||
+        (positionBeforeMultiRoom != null &&
+            _lastKnownPlayerPosition <= positionBeforeMultiRoom);
+    if (stalled) {
+      Log.d("多开返回后单直播间未恢复播放，重试 play()");
+      await player.play();
+      await resumeLiveLatencyChase();
     }
   }
 
@@ -4548,7 +4651,7 @@ class LiveRoomController extends PlayerController
               value: autoExitEnable.value,
               onChanged: (e) {
                 autoExitEnable.value = e;
-                AppSettingsController.instance.setAutoExitEnable(e);
+                unawaited(AppSettingsController.instance.setAutoExitEnable(e));
                 if (e) {
                   setAutoExit();
                 } else {
@@ -4714,6 +4817,12 @@ ${error?.toString()}
 ----------------
 ${errorStackTrace ?? ""}''');
     SmartDialog.showToast("已复制错误信息");
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    refreshIosVideoOutputLimit(force: true);
   }
 
   @override

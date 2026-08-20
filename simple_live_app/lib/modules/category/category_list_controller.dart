@@ -26,6 +26,15 @@ class CategoryListController extends BasePageController<AppLiveCategory> {
   }
 
   @override
+  bool hasMoreForPage({
+    required List<AppLiveCategory> items,
+    required int page,
+    required int pageSize,
+  }) {
+    return false;
+  }
+
+  @override
   Future refreshData() async {
     if (!_hasLoadedOnce || site.liveSite is! KuaishouSite) {
       return super.refreshData();

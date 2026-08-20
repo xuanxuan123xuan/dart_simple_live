@@ -31,6 +31,10 @@ class SearchListView extends StatelessWidget {
       child: Obx(
         () => Column(
           children: [
+            if (controller.site.id == "douyin" &&
+                controller.searchMode.value == 1 &&
+                !controller.pageEmpty.value)
+              const DouyinAnchorSearchNotice(),
             Expanded(
               child: controller.searchMode.value == 0
                   ? PageGridView(
@@ -51,6 +55,9 @@ class SearchListView extends StatelessWidget {
                       crossAxisCount: userRowCount,
                       pageController: controller,
                       firstRefresh: false,
+                      emptyWidget: controller.site.id == "douyin"
+                          ? const DouyinAnchorSearchEmpty()
+                          : null,
                       itemBuilder: (_, i) {
                         var item = controller.list[i] as LiveAnchorItem;
                         return SearchAnchorTile(
@@ -118,7 +125,7 @@ class SearchAnchorTile extends StatelessWidget {
           Flexible(
             child: Text(
               isDerived
-                  ? (item.liveStatus ? "直播中 · 派生结果" : "未开播 · 派生结果")
+                  ? (item.liveStatus ? "直播中 · 来自直播间搜索" : "未开播 · 来自直播间搜索")
                   : (item.liveStatus ? "直播中" : "未开播"),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -134,6 +141,58 @@ class SearchAnchorTile extends StatelessWidget {
       onTap: () => AppNavigator.toLiveRoomDetail(
         site: site,
         roomId: item.roomId,
+      ),
+    );
+  }
+}
+
+class DouyinAnchorSearchNotice extends StatelessWidget {
+  const DouyinAnchorSearchNotice({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(12, 4, 12, 6),
+      child: Row(
+        children: [
+          Icon(
+            Icons.error_outline,
+            size: 16,
+            color: Colors.grey,
+          ),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "仅匹配正在直播的抖音主播，未开播不会显示。",
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class DouyinAnchorSearchEmpty extends StatelessWidget {
+  const DouyinAnchorSearchEmpty({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, size: 18, color: Colors.grey),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "没有匹配到正在直播的抖音主播。",
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          ),
+        ],
       ),
     );
   }
