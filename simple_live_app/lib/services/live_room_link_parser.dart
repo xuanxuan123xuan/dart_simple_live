@@ -104,14 +104,23 @@ class LiveRoomLinkParser {
 
   LiveRoomLinkTarget? _target(String siteId, String roomId) {
     final normalizedRoomId = roomId.trim();
-    if (normalizedRoomId.isEmpty ||
-        !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(normalizedRoomId)) {
+    if (!_isValidRoomId(siteId, normalizedRoomId)) {
       return null;
     }
     final site = Sites.allSites[siteId];
     return site == null
         ? null
         : LiveRoomLinkTarget(site: site, roomId: normalizedRoomId);
+  }
+
+  bool _isValidRoomId(String siteId, String roomId) {
+    if (roomId.isEmpty || roomId == '.' || roomId == '..') {
+      return false;
+    }
+    final pattern = siteId == Constant.kDouyin
+        ? RegExp(r'^[A-Za-z0-9_.-]+$')
+        : RegExp(r'^[A-Za-z0-9_-]+$');
+    return pattern.hasMatch(roomId) && RegExp(r'[A-Za-z0-9]').hasMatch(roomId);
   }
 
   static String _firstPathSegment(Uri uri) {

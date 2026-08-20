@@ -109,61 +109,68 @@ class _SiteSection extends StatelessWidget {
             ],
           ),
         ),
-        if (state.site.id == "douyin" && query.searchMode == 1)
-          const DouyinAnchorSearchNotice(),
         if (state.isLoading)
           const _SectionStatus(
             icon: Icons.hourglass_empty,
             message: "正在加载",
           )
-        else if (state.isEmpty)
-          const _SectionStatus(
-            icon: Icons.remove_circle_outline,
-            message: "暂无结果",
-          )
-        else if (state.hasError)
-          _SectionStatus(
-            icon: Icons.error_outline,
-            message: SearchAggregateErrorPresentation.message(state.error),
-            actionLabel: isDouyinAuthFailure ? "去配置" : null,
-            onAction:
-                isDouyinAuthFailure ? AppNavigator.toDouyinCookieConfig : null,
-          )
-        else if (query.searchMode == 0)
-          MasonryGridView.count(
-            padding: AppStyle.edgeInsetsH12,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: math.min(
-              state.items.length,
-              roomLayout.crossAxisCount,
+        else if (state.site.id == "douyin" &&
+            query.searchMode == 1 &&
+            state.isEmpty)
+          const DouyinAnchorSearchEmpty()
+        else ...[
+          if (state.site.id == "douyin" && query.searchMode == 1)
+            const DouyinAnchorSearchNotice(),
+          if (state.isEmpty)
+            const _SectionStatus(
+              icon: Icons.remove_circle_outline,
+              message: "暂无结果",
+            )
+          else if (state.hasError)
+            _SectionStatus(
+              icon: Icons.error_outline,
+              message: SearchAggregateErrorPresentation.message(state.error),
+              actionLabel: isDouyinAuthFailure ? "去配置" : null,
+              onAction: isDouyinAuthFailure
+                  ? AppNavigator.toDouyinCookieConfig
+                  : null,
+            )
+          else if (query.searchMode == 0)
+            MasonryGridView.count(
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: math.min(
+                state.items.length,
+                roomLayout.crossAxisCount,
+              ),
+              crossAxisCount: roomLayout.crossAxisCount,
+              crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
+              mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
+              itemBuilder: (_, index) => LiveRoomCard(
+                state.site,
+                state.items[index] as LiveRoomItem,
+              ),
+            )
+          else
+            GridView.builder(
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: math.min(state.items.length, anchorColumns),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: anchorColumns,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 4,
+                mainAxisExtent: 80,
+              ),
+              itemBuilder: (_, index) => SearchAnchorTile(
+                site: state.site,
+                item: state.items[index] as LiveAnchorItem,
+                metadata: state.metadata,
+              ),
             ),
-            crossAxisCount: roomLayout.crossAxisCount,
-            crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
-            mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
-            itemBuilder: (_, index) => LiveRoomCard(
-              state.site,
-              state.items[index] as LiveRoomItem,
-            ),
-          )
-        else
-          GridView.builder(
-            padding: AppStyle.edgeInsetsH12,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: math.min(state.items.length, anchorColumns),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: anchorColumns,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 4,
-              mainAxisExtent: 80,
-            ),
-            itemBuilder: (_, index) => SearchAnchorTile(
-              site: state.site,
-              item: state.items[index] as LiveAnchorItem,
-              metadata: state.metadata,
-            ),
-          ),
+        ],
         const Divider(height: 1),
       ],
     );

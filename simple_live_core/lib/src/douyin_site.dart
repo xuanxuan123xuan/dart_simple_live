@@ -1326,31 +1326,47 @@ class DouyinSite implements LiveSite {
     _throwIfCancelled(cancellation);
     final normalizedResponse =
         responseText.trimLeft().replaceFirst('\ufeff', '');
-    if (normalizedResponse.isEmpty || normalizedResponse == 'blocked') {
-      throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
-    }
     dynamic result;
-    try {
-      result = json.decode(normalizedResponse);
-    } catch (error) {
-      final lowerResponse = normalizedResponse.toLowerCase();
-      if (lowerResponse.startsWith('<!doctype html') ||
-          lowerResponse.startsWith('<html') ||
-          lowerResponse.contains('__ac_nonce') ||
-          lowerResponse.contains('captcha')) {
-        throw CoreError(
-          "抖音直播搜索返回了验证页面，请重新网页登录后再试",
-          kind: CoreErrorKind.search,
-          cause: error,
-        );
+    int? statusCode;
+    dynamic responseData;
+    if (normalizedResponse.isEmpty || normalizedResponse == 'blocked') {
+      final upstreamResult = await _trySearchWithUpstreamCompatibility(
+        uri: uri,
+        keyword: keyword,
+        requestHeaders: requestHeaders,
+        savedCookie: savedCookie,
+        cancellation: cancellation,
+      );
+      if (upstreamResult == null) {
+        throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
       }
-      throw _invalidDouyinSearchResponse(error);
+      result = upstreamResult;
+      statusCode = 0;
+      responseData = upstreamResult["data"];
     }
-    if (result is! Map) {
-      throw _invalidDouyinSearchResponse();
+    if (result == null) {
+      try {
+        result = json.decode(normalizedResponse);
+      } catch (error) {
+        final lowerResponse = normalizedResponse.toLowerCase();
+        if (lowerResponse.startsWith('<!doctype html') ||
+            lowerResponse.startsWith('<html') ||
+            lowerResponse.contains('__ac_nonce') ||
+            lowerResponse.contains('captcha')) {
+          throw CoreError(
+            "抖音直播搜索返回了验证页面，请重新网页登录后再试",
+            kind: CoreErrorKind.search,
+            cause: error,
+          );
+        }
+        throw _invalidDouyinSearchResponse(error);
+      }
+      if (result is! Map) {
+        throw _invalidDouyinSearchResponse();
+      }
+      statusCode = int.tryParse(result["status_code"]?.toString() ?? "");
+      responseData = result["data"];
     }
-    var statusCode = int.tryParse(result["status_code"]?.toString() ?? "");
-    var responseData = result["data"];
     _logDebug(
       "抖音搜索主请求：status=${statusCode ?? 'missing'}，"
       "data=${responseData is List ? responseData.length : 'invalid'}，"
@@ -1360,38 +1376,32 @@ class DouyinSite implements LiveSite {
       throw _douyinSearchAuthError();
     }
     if (statusCode != null && statusCode != 0) {
-      throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
+      final upstreamResult = await _trySearchWithUpstreamCompatibility(
+        uri: uri,
+        keyword: keyword,
+        requestHeaders: requestHeaders,
+        savedCookie: savedCookie,
+        cancellation: cancellation,
+      );
+      if (upstreamResult == null) {
+        throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
+      }
+      result = upstreamResult;
+      statusCode = 0;
+      responseData = upstreamResult["data"];
     }
     if (statusCode == 0 && responseData is List && responseData.isEmpty) {
-      try {
-        final upstreamResult = await _retrySearchWithUpstreamStrategy(
-          uri: uri,
-          keyword: keyword,
-          requestHeaders: requestHeaders,
-          savedCookie: savedCookie,
-          cancellation: cancellation,
-        );
-        final upstreamStatus = int.tryParse(
-          upstreamResult["status_code"]?.toString() ?? "",
-        );
-        final upstreamData = upstreamResult["data"];
-        _logDebug(
-          "抖音搜索上游兼容重试：status=${upstreamStatus ?? 'missing'}，"
-          "data=${upstreamData is List ? upstreamData.length : 'invalid'}，"
-          "has_more=${upstreamResult['has_more'] ?? 'missing'}",
-        );
-        if (upstreamStatus == 0 &&
-            upstreamData is List &&
-            upstreamData.isNotEmpty) {
-          result = upstreamResult;
-          statusCode = upstreamStatus;
-          responseData = upstreamData;
-        }
-      } catch (error) {
-        if (error is CoreCancelledError) {
-          rethrow;
-        }
-        _logDebug("抖音搜索上游兼容重试失败：${error.runtimeType}");
+      final upstreamResult = await _trySearchWithUpstreamCompatibility(
+        uri: uri,
+        keyword: keyword,
+        requestHeaders: requestHeaders,
+        savedCookie: savedCookie,
+        cancellation: cancellation,
+      );
+      if (upstreamResult != null) {
+        result = upstreamResult;
+        statusCode = 0;
+        responseData = upstreamResult["data"];
       }
     }
     final data = responseData;
@@ -1438,6 +1448,44 @@ class DouyinSite implements LiveSite {
         responseHasMore == null ? items.length >= 10 : responseHasMore > 0;
     _logDebug("抖音搜索解析完成：rooms=${items.length}，hasMore=$hasMore");
     return LiveSearchRoomResult(hasMore: hasMore, items: items);
+  }
+
+  Future<Map<dynamic, dynamic>?> _trySearchWithUpstreamCompatibility({
+    required Uri uri,
+    required String keyword,
+    required Map<String, dynamic> requestHeaders,
+    required String savedCookie,
+    CoreCancellation? cancellation,
+  }) async {
+    try {
+      final upstreamResult = await _retrySearchWithUpstreamStrategy(
+        uri: uri,
+        keyword: keyword,
+        requestHeaders: requestHeaders,
+        savedCookie: savedCookie,
+        cancellation: cancellation,
+      );
+      final upstreamStatus = int.tryParse(
+        upstreamResult["status_code"]?.toString() ?? "",
+      );
+      final upstreamData = upstreamResult["data"];
+      _logDebug(
+        "抖音搜索上游兼容重试：status=${upstreamStatus ?? 'missing'}，"
+        "data=${upstreamData is List ? upstreamData.length : 'invalid'}，"
+        "has_more=${upstreamResult['has_more'] ?? 'missing'}",
+      );
+      if (upstreamStatus == 0 &&
+          upstreamData is List &&
+          upstreamData.isNotEmpty) {
+        return upstreamResult;
+      }
+    } catch (error) {
+      if (error is CoreCancelledError) {
+        rethrow;
+      }
+      _logDebug("抖音搜索上游兼容重试失败：${error.runtimeType}");
+    }
+    return null;
   }
 
   Future<Map<dynamic, dynamic>> _retrySearchWithUpstreamStrategy({

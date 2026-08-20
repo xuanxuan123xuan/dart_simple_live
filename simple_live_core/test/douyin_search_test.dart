@@ -163,6 +163,7 @@ void main() {
             ),
       ),
     );
+    expect(interceptor.requests, [_DouyinSearchInterceptor.searchRequest]);
   });
 
   test('signs the search URL after HEAD with the same user agent', () async {
@@ -376,6 +377,96 @@ void main() {
     });
   });
 
+  test('uses upstream compatibility after a blocked primary response',
+      () async {
+    interceptor.respondToHeadWithCookies([
+      'ttwid=head-ttwid; Path=/',
+      '__ac_nonce=head-nonce; Path=/',
+    ]);
+    interceptor.respondToSearchTextSequence([
+      'blocked',
+      jsonEncode(_searchResponse()),
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('blocked');
+
+    expect(result.items, hasLength(1));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+      _DouyinSearchInterceptor.headRequest,
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
+    expect(
+      interceptor.searchOptionsHistory.last.uri.queryParameters
+          .containsKey('a_bogus'),
+      isFalse,
+    );
+  });
+
+  test('uses upstream compatibility after a generic restricted status',
+      () async {
+    interceptor.respondToHeadWithCookies([
+      'ttwid=head-ttwid; Path=/',
+    ]);
+    interceptor.respondToSearchSequence([
+      {'status_code': 1, 'data': []},
+      _searchResponse(),
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final result = await site.searchRooms('restricted');
+
+    expect(result.items, hasLength(1));
+    expect(interceptor.requests, [
+      _DouyinSearchInterceptor.searchRequest,
+      _DouyinSearchInterceptor.headRequest,
+      _DouyinSearchInterceptor.searchRequest,
+    ]);
+  });
+
+  test('keeps the primary error when upstream compatibility is not useful',
+      () async {
+    interceptor.respondToHead();
+    interceptor.respondToSearchSequence([
+      {'status_code': 1, 'data': []},
+      {'status_code': 2483},
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    await expectLater(
+      site.searchRooms('restricted'),
+      throwsA(
+        isA<CoreError>()
+            .having((error) => error.kind, 'kind', CoreErrorKind.search)
+            .having(
+              (error) => error.message,
+              'message',
+              '抖音直播搜索被限制，请稍后再试',
+            )
+            .having(
+              (error) => error is DouyinSearchAuthError,
+              'is auth error',
+              isFalse,
+            ),
+      ),
+    );
+  });
+
+  test('does not hide a primary auth failure behind upstream compatibility',
+      () async {
+    interceptor.respondToSearchSequence([
+      {'status_code': 2483},
+      _searchResponse(),
+    ]);
+    final site = _testSite()..cookie = 'sessionid=user-session';
+
+    final error = await _captureAuthError(site);
+
+    expect(error.reason, DouyinSearchAuthFailureReason.rejected);
+    expect(interceptor.requests, [_DouyinSearchInterceptor.searchRequest]);
+  });
+
   test('keeps a genuinely empty result when both strategies are empty',
       () async {
     interceptor.respondToHead();
@@ -568,6 +659,13 @@ class _DouyinSearchInterceptor extends Interceptor {
   void respondToSearchWithText(String response) {
     _searchResponse = response;
     _searchResponseSequence.clear();
+  }
+
+  void respondToSearchTextSequence(List<String> responses) {
+    _searchResponse = null;
+    _searchResponseSequence
+      ..clear()
+      ..addAll(responses);
   }
 
   void respondToSearchSequence(List<Object> responses) {

@@ -32,7 +32,8 @@ class SearchListView extends StatelessWidget {
         () => Column(
           children: [
             if (controller.site.id == "douyin" &&
-                controller.searchMode.value == 1)
+                controller.searchMode.value == 1 &&
+                !controller.pageEmpty.value)
               const DouyinAnchorSearchNotice(),
             Expanded(
               child: controller.searchMode.value == 0
@@ -54,6 +55,9 @@ class SearchListView extends StatelessWidget {
                       crossAxisCount: userRowCount,
                       pageController: controller,
                       firstRefresh: false,
+                      emptyWidget: controller.site.id == "douyin"
+                          ? const DouyinAnchorSearchEmpty()
+                          : null,
                       itemBuilder: (_, i) {
                         var item = controller.list[i] as LiveAnchorItem;
                         return SearchAnchorTile(
@@ -148,16 +152,44 @@ class DouyinAnchorSearchNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Padding(
-      padding: EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: EdgeInsets.fromLTRB(12, 4, 12, 6),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.info_outline, size: 18, color: Colors.grey),
+          Icon(
+            Icons.error_outline,
+            size: 16,
+            color: Colors.grey,
+          ),
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              "抖音不支持直接搜索主播。这里只能从直播间搜索中匹配正在直播的主播，未开播主播不会显示。",
+              "仅匹配正在直播的抖音主播，未开播不会显示。",
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class DouyinAnchorSearchEmpty extends StatelessWidget {
+  const DouyinAnchorSearchEmpty({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, size: 18, color: Colors.grey),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "没有匹配到正在直播的抖音主播。",
+              style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ),
         ],

@@ -96,6 +96,10 @@ void main() {
         '24680',
       );
       expect(
+        (await parser.parse('https://live.douyin.com/LM.060313'))?.roomId,
+        'LM.060313',
+      );
+      expect(
         (await parser.parse(
           'https://webcast.amemv.com/webcast/reflow/13579',
         ))
@@ -126,6 +130,17 @@ void main() {
       ]) {
         expect(await parser.parse(url), isNull, reason: url);
       }
+    });
+
+    test('keeps dotted room ids scoped to Douyin live links', () async {
+      final parser = LiveRoomLinkParser();
+
+      expect(
+        (await parser.parse('https://live.douyin.com/LM.060313，'))?.roomId,
+        'LM.060313',
+      );
+      expect(await parser.parse('https://www.huya.com/room.name'), isNull);
+      expect(await parser.parse('https://live.douyin.com/..'), isNull);
     });
 
     test('returns a strongly typed target with the matching site', () async {

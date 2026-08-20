@@ -22,6 +22,7 @@ class PageGridView extends StatelessWidget {
   final double? childAspectRatio;
   final double? mainAxisExtent;
   final bool useFixedGrid;
+  final Widget? emptyWidget;
   const PageGridView({
     required this.itemBuilder,
     required this.pageController,
@@ -35,6 +36,7 @@ class PageGridView extends StatelessWidget {
     this.childAspectRatio,
     this.mainAxisExtent,
     this.useFixedGrid = false,
+    this.emptyWidget,
     required this.crossAxisCount,
     Key? key,
   }) : super(key: key);
@@ -122,9 +124,10 @@ class PageGridView extends StatelessWidget {
           ),
           Offstage(
             offstage: !pageController.pageEmpty.value,
-            child: AppEmptyWidget(
-              onRefresh: () => pageController.refreshData(),
-            ),
+            child: emptyWidget ??
+                AppEmptyWidget(
+                  onRefresh: () => pageController.refreshData(),
+                ),
           ),
           Offstage(
             offstage: !(showPageLoadding && pageController.pageLoadding.value),
