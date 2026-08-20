@@ -403,12 +403,24 @@ class _DesktopWindowLifecycle with WindowListener {
       }
       final width = bounds.width.clamp(280.0, displayRect.width).toDouble();
       final height = bounds.height.clamp(280.0, displayRect.height).toDouble();
-      final left = bounds.left
-          .clamp(displayRect.left, displayRect.right - width)
-          .toDouble();
-      final top = bounds.top
-          .clamp(displayRect.top, displayRect.bottom - height)
-          .toDouble();
+
+      // Windows DWM may report edge-snapped frames a few pixels outside the
+      // visible work area. Keep that relative overhang so restoring a snapped
+      // window does not leave a small gap at the screen edge.
+      const maxDwmOverhang = 16.0;
+      final minLeft =
+          displayRect.left - (Platform.isWindows ? maxDwmOverhang : 0.0);
+      final maxLeft = displayRect.right -
+          width +
+          (Platform.isWindows ? maxDwmOverhang : 0.0);
+      final minTop =
+          displayRect.top - (Platform.isWindows ? maxDwmOverhang : 0.0);
+      final maxTop = displayRect.bottom -
+          height +
+          (Platform.isWindows ? maxDwmOverhang : 0.0);
+
+      final left = bounds.left.clamp(minLeft, maxLeft).toDouble();
+      final top = bounds.top.clamp(minTop, maxTop).toDouble();
       return Rect.fromLTWH(left, top, width, height);
     }
     return null;
@@ -939,6 +951,12 @@ class MyApp extends StatelessWidget {
       if (shortcut == LogicalKeyboardKey.keyN.keyId) {
         return physicalKey == PhysicalKeyboardKey.keyN;
       }
+      if (shortcut == LogicalKeyboardKey.arrowUp.keyId) {
+        return physicalKey == PhysicalKeyboardKey.arrowUp;
+      }
+      if (shortcut == LogicalKeyboardKey.arrowDown.keyId) {
+        return physicalKey == PhysicalKeyboardKey.arrowDown;
+      }
       return false;
     }
 
@@ -952,6 +970,16 @@ class MyApp extends StatelessWidget {
     }
     if (matches(settings.liveRoomShortcutMute.value)) {
       await liveRoomController.toggleMute();
+      return;
+    }
+    if (_isDesktopPlatform &&
+        matches(settings.liveRoomShortcutVolumeUp.value)) {
+      await liveRoomController.adjustDesktopPlayerVolumeByShortcut(5);
+      return;
+    }
+    if (_isDesktopPlatform &&
+        matches(settings.liveRoomShortcutVolumeDown.value)) {
+      await liveRoomController.adjustDesktopPlayerVolumeByShortcut(-5);
       return;
     }
     if (matches(settings.liveRoomShortcutRefresh.value)) {
@@ -1026,6 +1054,10 @@ class MyApp extends StatelessWidget {
           return shortcut == LogicalKeyboardKey.keyB.keyId;
         case "keyN":
           return shortcut == LogicalKeyboardKey.keyN.keyId;
+        case "arrowUp":
+          return shortcut == LogicalKeyboardKey.arrowUp.keyId;
+        case "arrowDown":
+          return shortcut == LogicalKeyboardKey.arrowDown.keyId;
         default:
           return false;
       }
@@ -1041,6 +1073,14 @@ class MyApp extends StatelessWidget {
     }
     if (matchesDesktopShortcut(settings.liveRoomShortcutMute.value)) {
       await liveRoomController.toggleMute();
+      return;
+    }
+    if (matchesDesktopShortcut(settings.liveRoomShortcutVolumeUp.value)) {
+      await liveRoomController.adjustDesktopPlayerVolumeByShortcut(5);
+      return;
+    }
+    if (matchesDesktopShortcut(settings.liveRoomShortcutVolumeDown.value)) {
+      await liveRoomController.adjustDesktopPlayerVolumeByShortcut(-5);
       return;
     }
     if (matchesDesktopShortcut(settings.liveRoomShortcutRefresh.value)) {
