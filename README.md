@@ -4,7 +4,7 @@
 <h2 align="center">Simple Live — dev 开发版</h2>
 
 <p align="center">
-简简单单的看直播 · <code>v1.13.3</code> · 分支 <code>dev</code>
+简简单单的看直播 · <code>v26.3.1</code> · 分支 <code>dev</code>
 </p>
 
 ![浅色模式](/assets/screenshot_light.jpg)
