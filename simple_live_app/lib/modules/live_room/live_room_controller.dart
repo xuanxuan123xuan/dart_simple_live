@@ -66,6 +66,14 @@ import 'live_room_auto_quality_buffer_tracker.dart';
 import 'kuaishou_playback_recovery_tracker.dart';
 
 @visibleForTesting
+bool shouldResumeLiveRoomAfterInlineMultiRoom({
+  required bool playing,
+  required bool buffering,
+}) {
+  return playing || buffering;
+}
+
+@visibleForTesting
 bool shouldAcceptOfflineRoomRefresh({
   required bool playbackActive,
   required int consecutiveOfflineReports,
@@ -4387,14 +4395,15 @@ class LiveRoomController extends PlayerController
               Expanded(
                 child: RefreshIndicator(
                   onRefresh: FollowService.instance.loadData,
-                  child: ListView.builder(
+                  child: ListView.separated(
                     key: const PageStorageKey<String>(
                       "liveRoomFollowUserSelection",
                     ),
                     controller: scrollController,
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: AppStyle.edgeInsetsV8,
+                    padding: AppStyle.edgeInsetsA12.copyWith(bottom: 20),
                     itemCount: followUsers.length,
+                    separatorBuilder: (_, __) => AppStyle.vGap8,
                     itemBuilder: (_, i) {
                       var item = followUsers[i];
                       return _buildLiveRoomFollowItem(
@@ -4536,14 +4545,11 @@ class LiveRoomController extends PlayerController
 
     // 等待右侧选择面板退场，避免遮罩与路由动画叠在一起。
     await Future.delayed(const Duration(milliseconds: 220));
-    final wasPlaying = player.state.playing;
+    final shouldResumeSingleRoom = _shouldResumeAfterInlineMultiRoom();
+    final positionBeforeMultiRoom = _lastKnownPlayerPosition;
     try {
-      if (wasPlaying) {
-        await suspendLiveLatencyChase(
-          MpvLiveLatencyProtectionReason.userPaused,
-        );
-        await player.pause();
-        recordLiveLinkHealthEvent(LiveLinkEventType.playbackPausedByUser);
+      if (shouldResumeSingleRoom) {
+        await _pauseForInlineMultiRoom();
       }
       final result = await AppNavigator.toMultiRoom(
         [currentRoom, addedRoom],
@@ -4556,15 +4562,69 @@ class LiveRoomController extends PlayerController
       }
     } finally {
       if (!_roomDisposed && !isPlayerClosing) {
-        if (wasPlaying) {
-          await player.play();
-          await resumeLiveLatencyChase();
-          recordLiveLinkHealthEvent(LiveLinkEventType.playbackResumedByUser);
+        if (shouldResumeSingleRoom) {
+          await _resumeAfterInlineMultiRoom(positionBeforeMultiRoom);
         }
         if (fullScreenState.value) {
           await restoreFullScreenSystemUi();
         }
       }
+    }
+  }
+
+  bool _shouldResumeAfterInlineMultiRoom() {
+    if (Utils.isOhos) {
+      final value = ohosVideoController?.value;
+      return shouldResumeLiveRoomAfterInlineMultiRoom(
+        playing: value?.isPlaying ?? false,
+        buffering: value?.isBuffering ?? false,
+      );
+    }
+    return shouldResumeLiveRoomAfterInlineMultiRoom(
+      playing: player.state.playing,
+      buffering: player.state.buffering,
+    );
+  }
+
+  Future<void> _pauseForInlineMultiRoom() async {
+    if (Utils.isOhos) {
+      await ohosVideoController?.pause();
+      return;
+    }
+    await suspendLiveLatencyChase(MpvLiveLatencyProtectionReason.sourceChanged);
+    await player.pause();
+  }
+
+  Future<void> _resumeAfterInlineMultiRoom(
+    Duration? positionBeforeMultiRoom,
+  ) async {
+    if (Utils.isOhos) {
+      final controller = ohosVideoController;
+      if (controller != null &&
+          controller.value.isInitialized &&
+          !controller.value.hasError) {
+        await controller.play();
+        updateOhosVideoState(controller.value);
+      }
+      return;
+    }
+    await player.play();
+    await resumeLiveLatencyChase();
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (_roomDisposed ||
+        isPlayerClosing ||
+        !liveStatus.value ||
+        currentLineIndex < 0 ||
+        playUrls.isEmpty) {
+      return;
+    }
+    final stalled = !player.state.playing ||
+        (positionBeforeMultiRoom != null &&
+            _lastKnownPlayerPosition <= positionBeforeMultiRoom);
+    if (stalled) {
+      Log.d("多开返回后单直播间未恢复播放，重试 play()");
+      await player.play();
+      await resumeLiveLatencyChase();
     }
   }
 

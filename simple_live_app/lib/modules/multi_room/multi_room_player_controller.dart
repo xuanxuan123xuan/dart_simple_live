@@ -176,6 +176,7 @@ class MultiRoomPlayerController extends GetxController {
     int? initialQualityIndex,
     int? initialLineIndex,
     bool initialPaused = false,
+    bool initialPlaybackSuspendedForFocus = false,
     bool initialAppActive = true,
     MpvLiveLatencyPlaybackRole initialLiveLatencyRole =
         MpvLiveLatencyPlaybackRole.multiRoomSecondaryOrInactive,
@@ -193,6 +194,7 @@ class MultiRoomPlayerController extends GetxController {
     _restoreQualityIndex = initialQualityIndex;
     _restoreLineIndex = initialLineIndex;
     paused.value = initialPaused;
+    _playbackSuspendedForFocus = initialPlaybackSuspendedForFocus;
   }
 
   late final Player player = Player(
@@ -279,6 +281,7 @@ class MultiRoomPlayerController extends GetxController {
   bool _routeTransitionClosed = false;
   Future<void>? _routeTransitionFuture;
   bool _playbackDesired = false;
+  bool _playbackSuspendedForFocus = false;
   int _playbackIntentRevision = 0;
   bool _danmakuActive = false;
   Future<void>? _danmakuStopFuture;
@@ -366,14 +369,14 @@ class MultiRoomPlayerController extends GetxController {
 
   bool get isMemoryQualityDegraded => _memoryPressureQualityIndex != null;
 
-  bool get playbackDesired => _playbackDesired && !paused.value;
+  bool get playbackDesired =>
+      _playbackDesired && !paused.value && !_playbackSuspendedForFocus;
 
   bool get shouldRecoverPlayback =>
       !_disposed &&
       !_playerDisposed &&
       !_routeTransitionClosed &&
-      !paused.value &&
-      _playbackDesired &&
+      playbackDesired &&
       liveStatus.value;
 
   /// 当前线路列表。
@@ -567,7 +570,7 @@ class MultiRoomPlayerController extends GetxController {
       shouldSampleMultiRoomLiveHealth(
         appActive: _liveLatencyAppActive,
         paused: paused.value,
-        playbackDesired: _playbackDesired,
+        playbackDesired: playbackDesired,
         liveStatus: liveStatus.value,
         hasActiveSource:
             _activeLiveProtocol != null && _liveLinkHealth.current != null,
@@ -992,7 +995,7 @@ class MultiRoomPlayerController extends GetxController {
     _playbackDesired = true;
     await player.open(
       Media(url, httpHeaders: _playHeaders),
-      play: !paused.value,
+      play: playbackDesired,
     );
     if (_disposed || _routeTransitionClosed) return;
     final completedAt = DateTime.now();
@@ -1039,19 +1042,48 @@ class MultiRoomPlayerController extends GetxController {
   /// 已被中断的原生输出。
   Future<void> ensurePlaying(bool forceRestart) {
     return _enqueue(() async {
-      if (_disposed || paused.value || !_playbackDesired || !liveStatus.value) {
+      if (_disposed || !playbackDesired || !liveStatus.value) {
         return;
       }
       if (forceRestart) {
         await player.pause();
-        if (_disposed ||
-            paused.value ||
-            !_playbackDesired ||
-            !liveStatus.value) {
+        if (_disposed || !playbackDesired || !liveStatus.value) {
           return;
         }
       }
       await player.play();
+    });
+  }
+
+  /// Temporarily pauses a tile that is hidden by focus mode without changing
+  /// the user's explicit paused state.
+  Future<void> setFocusSuspended(bool value) {
+    if (_playbackSuspendedForFocus == value) {
+      return Future<void>.value();
+    }
+    _playbackSuspendedForFocus = value;
+    if (value && _isBuffering) {
+      _finishBuffering(DateTime.now());
+    }
+    return _enqueue(() async {
+      if (_disposed || _playbackSuspendedForFocus != value) {
+        return;
+      }
+      if (value) {
+        await _stopLiveLatencySampling(
+          reason: MpvLiveLatencyProtectionReason.lifecycleInterrupted,
+        );
+        if (_disposed || _playbackSuspendedForFocus != value) {
+          return;
+        }
+        await player.pause();
+      } else if (playbackDesired && liveStatus.value) {
+        await player.play();
+        if (_disposed || _playbackSuspendedForFocus != value) {
+          return;
+        }
+        await _startLiveLatencySampling();
+      }
     });
   }
 
@@ -1123,7 +1155,7 @@ class MultiRoomPlayerController extends GetxController {
           return;
         }
         await player.pause();
-      } else if (_playbackDesired && liveStatus.value) {
+      } else if (playbackDesired && liveStatus.value) {
         await player.play();
         if (intentRevision != _playbackIntentRevision ||
             paused.value != value) {
