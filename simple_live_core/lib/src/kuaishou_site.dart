@@ -504,6 +504,28 @@ class KuaishouSite extends LiveSite {
     return LiveStatusState.unknown;
   }
 
+  static Map? selectLiveRoomFromPlayList(
+    Iterable<dynamic> playList,
+    String roomId,
+  ) {
+    final rooms = playList.whereType<Map>().toList(growable: false);
+    if (rooms.isEmpty) {
+      return null;
+    }
+
+    final targetRoomId = roomId.trim();
+    final matchingRooms = targetRoomId.isEmpty
+        ? rooms
+        : rooms
+            .where((room) => _matchesRoomId(room, targetRoomId))
+            .toList(growable: false);
+    final candidates = matchingRooms.isEmpty ? rooms : matchingRooms;
+    return candidates.firstWhere(
+      resolveLiveStatus,
+      orElse: () => candidates.first,
+    );
+  }
+
   static bool resolveLiveStatus(Map room) =>
       resolveLiveState(room) == LiveStatusState.live;
 
@@ -513,6 +535,13 @@ class KuaishouSite extends LiveSite {
       return nested;
     }
     return room;
+  }
+
+  static bool _matchesRoomId(Map room, String roomId) {
+    final author = room["author"] is Map ? room["author"] as Map : const {};
+    return author["id"]?.toString().trim() == roomId ||
+        room["authorId"]?.toString().trim() == roomId ||
+        room["userId"]?.toString().trim() == roomId;
   }
 
   static bool _isLiveFlag(dynamic value) {
@@ -1909,13 +1938,11 @@ class KuaishouSite extends LiveSite {
         return null;
       }
 
-      final liveState = resolvePlayListState(playList);
-      var selected = rooms.first;
-      if (liveState == LiveStatusState.live) {
-        selected = rooms.firstWhere(
-          (room) => resolveLiveState(room) == LiveStatusState.live,
-        );
+      final selected = selectLiveRoomFromPlayList(playList, roomId);
+      if (selected == null) {
+        return null;
       }
+      final liveState = resolveLiveState(selected);
 
       final liveStream = _resolveLiveStream(selected);
       final author =

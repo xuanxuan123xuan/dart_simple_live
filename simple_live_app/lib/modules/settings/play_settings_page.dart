@@ -46,6 +46,16 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                       },
                     ),
                   ),
+                if (Platform.isIOS) AppStyle.divider,
+                if (Platform.isIOS)
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "原画省电优化",
+                      subtitle: "限制渲染纹理不超过屏幕实际像素，不降低直播源清晰度；异常时可关闭",
+                      value: controller.iosOriginalQualityPowerSaving.value,
+                      onChanged: controller.setIosOriginalQualityPowerSaving,
+                    ),
+                  ),
                 if (Platform.isAndroid) AppStyle.divider,
                 Obx(
                   () => Visibility(

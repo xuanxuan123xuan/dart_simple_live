@@ -16,7 +16,6 @@ class ScrollDanmakuPainter extends CustomPainter {
   final bool running;
   final int tick;
   final Map<String, ui.Image> emojiImageCache;
-  final int batchThreshold;
 
   final double totalDuration;
   final Paint selfSendPaint = Paint()
@@ -36,31 +35,35 @@ class ScrollDanmakuPainter extends CustomPainter {
     this.danmakuHeight,
     this.running,
     this.tick,
-    this.emojiImageCache, {
-    this.batchThreshold = 10, // 默认值为10，可以自行调整
-  }) : totalDuration = danmakuDurationInSeconds * 1000;
+    this.emojiImageCache,
+  ) : totalDuration = danmakuDurationInSeconds * 1000;
 
   @override
   void paint(Canvas canvas, Size size) {
     final startPosition = size.width;
 
-    if (scrollDanmakuItems.length > batchThreshold) {
-      // 弹幕数量超过阈值时使用批量绘制
-      final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
-      final Canvas pictureCanvas = Canvas(pictureRecorder);
+    for (var item in scrollDanmakuItems) {
+      item.lastDrawTick ??= item.creationTime;
+      final endPosition = -item.width;
+      final distance = startPosition - endPosition;
+      item.xPosition = item.xPosition +
+          (((item.lastDrawTick! - tick) / totalDuration) * distance);
 
-      for (var item in scrollDanmakuItems) {
-        item.lastDrawTick ??= item.creationTime;
-        final endPosition = -item.width;
-        final distance = startPosition - endPosition;
-        item.xPosition = item.xPosition +
-            (((item.lastDrawTick! - tick) / totalDuration) * distance);
+      if (item.xPosition < -item.width || item.xPosition > size.width) {
+        continue;
+      }
 
-        if (item.xPosition < -item.width || item.xPosition > size.width) {
-          continue;
-        }
+      item.paragraph ??= Utils.generateParagraph(
+        item.content,
+        item.width,
+        fontSize,
+        fontWeight,
+        emojiScale,
+        fontFamily,
+      );
 
-        item.paragraph ??= Utils.generateParagraph(
+      if (showStroke) {
+        item.strokeParagraph ??= Utils.generateStrokeParagraph(
           item.content,
           item.width,
           fontSize,
@@ -68,112 +71,36 @@ class ScrollDanmakuPainter extends CustomPainter {
           emojiScale,
           fontFamily,
         );
-
-        if (showStroke) {
-          item.strokeParagraph ??= Utils.generateStrokeParagraph(
-            item.content,
-            item.width,
-            fontSize,
-            fontWeight,
-            emojiScale,
-            fontFamily,
-          );
-          if (item.strokeParagraph != null) {
-            pictureCanvas.drawParagraph(
-              item.strokeParagraph!,
-              Offset(item.xPosition, item.yPosition),
-            );
-          }
-        }
-
-        if (item.content.selfSend) {
-          pictureCanvas.drawRect(
-            Offset(item.xPosition, item.yPosition).translate(-2, 2) &
-                (Size(item.width, item.height) + const Offset(4, 0)),
-            selfSendPaint,
+        if (item.strokeParagraph != null) {
+          canvas.drawParagraph(
+            item.strokeParagraph!,
+            Offset(item.xPosition, item.yPosition),
           );
         }
-
-        final offset = Offset(item.xPosition, item.yPosition);
-        pictureCanvas.drawParagraph(item.paragraph!, offset);
-        Utils.drawEmojiImages(
-          pictureCanvas,
-          item.paragraph!,
-          item.content,
-          offset,
-          emojiImageCache,
-          fontSize,
-          fontWeight,
-          emojiScale,
-          fontFamily,
-        );
-        item.lastDrawTick = tick;
       }
 
-      final ui.Picture picture = pictureRecorder.endRecording();
-      canvas.drawPicture(picture);
-    } else {
-      // 弹幕数量较少时直接绘制 (节约创建 canvas 的开销)
-      for (var item in scrollDanmakuItems) {
-        item.lastDrawTick ??= item.creationTime;
-        final endPosition = -item.width;
-        final distance = startPosition - endPosition;
-        item.xPosition = item.xPosition +
-            (((item.lastDrawTick! - tick) / totalDuration) * distance);
-
-        if (item.xPosition < -item.width || item.xPosition > size.width) {
-          continue;
-        }
-
-        item.paragraph ??= Utils.generateParagraph(
-          item.content,
-          item.width,
-          fontSize,
-          fontWeight,
-          emojiScale,
-          fontFamily,
+      if (item.content.selfSend) {
+        canvas.drawRect(
+          Offset(item.xPosition, item.yPosition).translate(-2, 2) &
+              (Size(item.width, item.height) + const Offset(4, 0)),
+          selfSendPaint,
         );
-
-        if (showStroke) {
-          item.strokeParagraph ??= Utils.generateStrokeParagraph(
-            item.content,
-            item.width,
-            fontSize,
-            fontWeight,
-            emojiScale,
-            fontFamily,
-          );
-          if (item.strokeParagraph != null) {
-            canvas.drawParagraph(
-              item.strokeParagraph!,
-              Offset(item.xPosition, item.yPosition),
-            );
-          }
-        }
-
-        if (item.content.selfSend) {
-          canvas.drawRect(
-            Offset(item.xPosition, item.yPosition).translate(-2, 2) &
-                (Size(item.width, item.height) + const Offset(4, 0)),
-            selfSendPaint,
-          );
-        }
-
-        final offset = Offset(item.xPosition, item.yPosition);
-        canvas.drawParagraph(item.paragraph!, offset);
-        Utils.drawEmojiImages(
-          canvas,
-          item.paragraph!,
-          item.content,
-          offset,
-          emojiImageCache,
-          fontSize,
-          fontWeight,
-          emojiScale,
-          fontFamily,
-        );
-        item.lastDrawTick = tick;
       }
+
+      final offset = Offset(item.xPosition, item.yPosition);
+      canvas.drawParagraph(item.paragraph!, offset);
+      Utils.drawEmojiImages(
+        canvas,
+        item.paragraph!,
+        item.content,
+        offset,
+        emojiImageCache,
+        fontSize,
+        fontWeight,
+        emojiScale,
+        fontFamily,
+      );
+      item.lastDrawTick = tick;
     }
   }
 

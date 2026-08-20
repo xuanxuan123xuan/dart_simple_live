@@ -13,6 +13,7 @@ import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
@@ -64,6 +65,8 @@ class AppSettingsController extends GetxController {
     LogicalKeyboardKey.keyG.keyId: "G",
     LogicalKeyboardKey.keyB.keyId: "B",
     LogicalKeyboardKey.keyN.keyId: "N",
+    LogicalKeyboardKey.arrowUp.keyId: "上方向键",
+    LogicalKeyboardKey.arrowDown.keyId: "下方向键",
   };
 
   /// 缩放模式
@@ -123,6 +126,10 @@ class AppSettingsController extends GetxController {
 
     hardwareDecode.value = LocalStorageService.instance
         .getValue(LocalStorageService.kHardwareDecode, true);
+    iosOriginalQualityPowerSaving.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kIosOriginalQualityPowerSaving,
+      true,
+    );
     chatTextSize.value = LocalStorageService.instance
         .getValue(LocalStorageService.kChatTextSize, 14.0);
 
@@ -548,6 +555,18 @@ class AppSettingsController extends GetxController {
         LogicalKeyboardKey.keyC.keyId,
       ),
     );
+    liveRoomShortcutVolumeUp.value = _normalizeLiveRoomShortcut(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kLiveRoomShortcutVolumeUp,
+        LogicalKeyboardKey.arrowUp.keyId,
+      ),
+    );
+    liveRoomShortcutVolumeDown.value = _normalizeLiveRoomShortcut(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kLiveRoomShortcutVolumeDown,
+        LogicalKeyboardKey.arrowDown.keyId,
+      ),
+    );
   }
 
   void setNoFirstRun() {
@@ -631,6 +650,15 @@ class AppSettingsController extends GetxController {
     hardwareDecode.value = e;
     LocalStorageService.instance
         .setValue(LocalStorageService.kHardwareDecode, e);
+  }
+
+  var iosOriginalQualityPowerSaving = true.obs;
+  void setIosOriginalQualityPowerSaving(bool e) {
+    iosOriginalQualityPowerSaving.value = e;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kIosOriginalQualityPowerSaving,
+      e,
+    );
   }
 
   var chatTextSize = 14.0.obs;
@@ -1971,53 +1999,94 @@ class AppSettingsController extends GetxController {
         : kShortcutDisabled;
   }
 
+  Map<RxInt, String> get _liveRoomShortcutAssignments => {
+        liveRoomShortcutFullScreen: "切换全屏",
+        liveRoomShortcutDanmaku: "显示/隐藏弹幕",
+        liveRoomShortcutMute: "静音/取消静音",
+        liveRoomShortcutRefresh: "刷新直播间",
+        liveRoomShortcutToggleChat: "收起/展开聊天区",
+        liveRoomShortcutVolumeUp: "调高音量",
+        liveRoomShortcutVolumeDown: "调低音量",
+      };
+
+  void _setLiveRoomShortcut({
+    required int value,
+    required RxInt target,
+    required String storageKey,
+  }) {
+    final normalized = _normalizeLiveRoomShortcut(value);
+    if (normalized != kShortcutDisabled) {
+      for (final entry in _liveRoomShortcutAssignments.entries) {
+        if (entry.key != target && entry.key.value == normalized) {
+          SmartDialog.showToast("该按键已用于${entry.value}");
+          return;
+        }
+      }
+    }
+    target.value = normalized;
+    LocalStorageService.instance.setValue(storageKey, normalized);
+  }
+
   var liveRoomShortcutFullScreen = LogicalKeyboardKey.keyF.keyId.obs;
   void setLiveRoomShortcutFullScreen(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutFullScreen.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutFullScreen,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutFullScreen,
+      storageKey: LocalStorageService.kLiveRoomShortcutFullScreen,
     );
   }
 
   var liveRoomShortcutDanmaku = LogicalKeyboardKey.keyD.keyId.obs;
   void setLiveRoomShortcutDanmaku(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutDanmaku.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutDanmaku,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutDanmaku,
+      storageKey: LocalStorageService.kLiveRoomShortcutDanmaku,
     );
   }
 
   var liveRoomShortcutMute = LogicalKeyboardKey.keyM.keyId.obs;
   void setLiveRoomShortcutMute(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutMute.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutMute,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutMute,
+      storageKey: LocalStorageService.kLiveRoomShortcutMute,
     );
   }
 
   var liveRoomShortcutRefresh = LogicalKeyboardKey.keyR.keyId.obs;
   void setLiveRoomShortcutRefresh(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutRefresh.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutRefresh,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutRefresh,
+      storageKey: LocalStorageService.kLiveRoomShortcutRefresh,
     );
   }
 
   var liveRoomShortcutToggleChat = LogicalKeyboardKey.keyC.keyId.obs;
   void setLiveRoomShortcutToggleChat(int value) {
-    final normalized = _normalizeLiveRoomShortcut(value);
-    liveRoomShortcutToggleChat.value = normalized;
-    LocalStorageService.instance.setValue(
-      LocalStorageService.kLiveRoomShortcutToggleChat,
-      normalized,
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutToggleChat,
+      storageKey: LocalStorageService.kLiveRoomShortcutToggleChat,
+    );
+  }
+
+  var liveRoomShortcutVolumeUp = LogicalKeyboardKey.arrowUp.keyId.obs;
+  void setLiveRoomShortcutVolumeUp(int value) {
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutVolumeUp,
+      storageKey: LocalStorageService.kLiveRoomShortcutVolumeUp,
+    );
+  }
+
+  var liveRoomShortcutVolumeDown = LogicalKeyboardKey.arrowDown.keyId.obs;
+  void setLiveRoomShortcutVolumeDown(int value) {
+    _setLiveRoomShortcut(
+      value: value,
+      target: liveRoomShortcutVolumeDown,
+      storageKey: LocalStorageService.kLiveRoomShortcutVolumeDown,
     );
   }
 

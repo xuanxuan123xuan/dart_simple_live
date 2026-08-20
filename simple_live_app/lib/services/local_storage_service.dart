@@ -20,6 +20,9 @@ class LocalStorageService extends GetxService {
   static const String kLiveRoomShortcutRefresh = "LiveRoomShortcutRefresh";
   static const String kLiveRoomShortcutToggleChat =
       "LiveRoomShortcutToggleChat";
+  static const String kLiveRoomShortcutVolumeUp = "LiveRoomShortcutVolumeUp";
+  static const String kLiveRoomShortcutVolumeDown =
+      "LiveRoomShortcutVolumeDown";
   static const String kLastSearchSiteId = "LastSearchSiteId";
   static const String kFollowGroupMode = "FollowGroupMode";
   static const String kFollowSelectedGroupId = "FollowSelectedGroupId";
@@ -64,6 +67,8 @@ class LocalStorageService extends GetxService {
   static const String kDanmuFontWeight = "DanmuFontWeight";
   static const String kContributionRankEnable = "ContributionRankEnable";
   static const String kHardwareDecode = "HardwareDecode";
+  static const String kIosOriginalQualityPowerSaving =
+      "IosOriginalQualityPowerSaving";
   static const String kChatTextSize = "ChatTextSize";
   static const String kChatTextGap = "ChatTextGap";
   static const String kChatBubbleStyle = "ChatBubbleStyle";

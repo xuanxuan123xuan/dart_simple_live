@@ -106,6 +106,63 @@ class HttpClient {
     }
   }
 
+  /// Get请求，返回原始二进制数据。
+  ///
+  /// 用于 protobuf、压缩包等不能经过文本解码的响应。
+  Future<List<int>> getBytes(
+    String url, {
+    Map<String, dynamic>? queryParameters,
+    Map<String, dynamic>? header,
+    CancelToken? cancel,
+    CoreCancellation? cancellation,
+    Duration? timeout,
+  }) async {
+    final binding = _bindCancellation(cancellation, cancel);
+    final requestCancel =
+        binding?.dioToken ?? cancel ?? (timeout == null ? null : CancelToken());
+    var timedOut = false;
+    final timeoutTimer = timeout == null
+        ? null
+        : Timer(timeout, () {
+            timedOut = true;
+            requestCancel?.cancel('hard timeout');
+          });
+    try {
+      queryParameters ??= {};
+      header ??= {};
+      final result = await dio.get<List<int>>(
+        url,
+        queryParameters: queryParameters,
+        options: Options(responseType: ResponseType.bytes, headers: header),
+        cancelToken: requestCancel,
+      );
+      return result.data ?? const <int>[];
+    } catch (e) {
+      if (e is DioException && e.type == DioExceptionType.cancel) {
+        if (timedOut) {
+          throw CoreError(
+            "发送GET二进制请求超时",
+            kind: CoreErrorKind.network,
+            cause: e,
+          );
+        }
+        throw CoreCancelledError(cause: e);
+      } else if (e is DioException && e.type == DioExceptionType.badResponse) {
+        throw CoreError(
+          e.message ?? "",
+          statusCode: e.response?.statusCode ?? 0,
+          kind: CoreErrorKind.http,
+          cause: e,
+        );
+      } else {
+        throw CoreError("发送GET二进制请求失败", kind: CoreErrorKind.network, cause: e);
+      }
+    } finally {
+      timeoutTimer?.cancel();
+      binding?.dispose();
+    }
+  }
+
   /// Get请求，返回Map
   /// * [url] 请求链接
   /// * [queryParameters] 请求参数

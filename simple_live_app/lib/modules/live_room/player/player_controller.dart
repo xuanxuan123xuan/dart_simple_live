@@ -33,12 +33,73 @@ import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_sampling_loop.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
+import 'package:simple_live_app/services/ios_video_output_size.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:video_player/video_player.dart';
 
 const _ohosMediaChannel = MethodChannel('simple_live/ohos_media');
+const _androidWindowChannel = MethodChannel('simple_live/app_window');
+int _androidWindowHandlerGeneration = 0;
+
+bool isAndroidExternalPlayerWindow({
+  required bool inPip,
+  required bool inMultiWindow,
+  required bool isFreeform,
+}) {
+  return !inPip && (inMultiWindow || isFreeform);
+}
+
+bool shouldUseAndroidPhoneOrientationPolicy({
+  required double displayWidth,
+  required double displayHeight,
+  required double devicePixelRatio,
+}) {
+  if (!displayWidth.isFinite ||
+      !displayHeight.isFinite ||
+      !devicePixelRatio.isFinite ||
+      displayWidth <= 0 ||
+      displayHeight <= 0 ||
+      devicePixelRatio <= 0) {
+    return false;
+  }
+  return math.min(displayWidth, displayHeight) / devicePixelRatio < 600;
+}
+
+bool shouldRequestLandscapeForAndroidExternalWindow({
+  required bool inPip,
+  required bool inMultiWindow,
+  required bool isFreeform,
+  required bool playerFullscreen,
+  required bool isVerticalVideo,
+  required bool canLockOrientation,
+}) {
+  return isAndroidExternalPlayerWindow(
+        inPip: inPip,
+        inMultiWindow: inMultiWindow,
+        isFreeform: isFreeform,
+      ) &&
+      playerFullscreen &&
+      !isVerticalVideo &&
+      canLockOrientation;
+}
+
+bool shouldRestoreAndroidFullscreenAfterExternalWindowExit({
+  required bool wasInExternalWindow,
+  required bool isInExternalWindow,
+  required bool playerFullscreen,
+  required bool hasPendingLandscapeRequest,
+  required bool isVerticalVideo,
+  required bool canLockOrientation,
+}) {
+  return wasInExternalWindow &&
+      !isInExternalWindow &&
+      playerFullscreen &&
+      hasPendingLandscapeRequest &&
+      !isVerticalVideo &&
+      canLockOrientation;
+}
 
 class _DanmakuReplayEntry {
   final String message;
@@ -751,6 +812,9 @@ mixin PlayerStateMixin on PlayerMixin {
   /// 是否处于全屏状态
   RxBool fullScreenState = false.obs;
   RxBool ohosFullscreenTransition = false.obs;
+  RxBool androidInPipState = false.obs;
+  RxBool androidInMultiWindowState = false.obs;
+  RxBool androidFreeformState = false.obs;
 
   /// 鸿蒙全屏过渡期间收到退出请求时置位，待过渡结束后立即消费执行退出。
   /// 避免过渡中 exitFull 直接返回导致 fullScreenState/方向/系统栏残留。
@@ -961,6 +1025,18 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
     danmakuController = null;
   }
 
+  void setDanmakuVisible(bool visible) {
+    if (showDanmakuState.value == visible) {
+      return;
+    }
+    showDanmakuState.value = visible;
+    if (visible) {
+      danmakuController?.resume();
+    } else {
+      danmakuController?.pause();
+    }
+  }
+
   void clearDanmakuReplayHistory() {
     _danmakuReplayHistory.clear();
   }
@@ -1064,6 +1140,11 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   final pip = Floating();
   StreamSubscription<PiPStatus>? _pipSubscription;
   StreamSubscription<bool>? _ohosPipSubscription;
+  int? _androidWindowHandlerToken;
+  bool _androidWindowChannelActive = false;
+  bool _mobileSystemUiApplied = false;
+  bool _androidLandscapePendingAfterExternalWindow = false;
+  int _androidExternalWindowExitGeneration = 0;
 
   //final VolumeController volumeController = VolumeController();
 
@@ -1077,6 +1158,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     if (Utils.isOhos) {
       _ensureOhosPipStatusListener();
     }
+    if (Platform.isAndroid) {
+      _ensureAndroidWindowStateListener();
+    }
 
     // 开始隐藏计时
     resetHideControlsTimer();
@@ -1089,12 +1173,29 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   /// 释放一些系统状态
   Future resetSystem() async {
+    final hadAndroidExternalLandscape =
+        Platform.isAndroid && _androidLandscapePendingAfterExternalWindow;
+    _androidLandscapePendingAfterExternalWindow = false;
+    _androidExternalWindowExitGeneration += 1;
     _pipSubscription?.cancel();
     _ohosPipSubscription?.cancel();
+    if (Platform.isAndroid && _androidWindowChannelActive) {
+      final token = _androidWindowHandlerToken;
+      if (token != null && token == _androidWindowHandlerGeneration) {
+        _androidWindowChannel.setMethodCallHandler(null);
+      }
+      _androidWindowChannelActive = false;
+      _androidWindowHandlerToken = null;
+    }
     //pip.dispose();
     await releasePlaybackDisplayLease();
 
-    await resetPreferredOrientation();
+    if (_mobileSystemUiApplied) {
+      await resetPreferredOrientation();
+      _mobileSystemUiApplied = false;
+    } else if (hadAndroidExternalLandscape) {
+      await resetPreferredOrientation();
+    }
     if (Platform.isAndroid ||
         Platform.isIOS ||
         Platform.isMacOS ||
@@ -1159,6 +1260,32 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       }
     } else if (Platform.isAndroid || Platform.isIOS) {
       fullScreenState.value = true;
+      if (Platform.isAndroid) {
+        await _refreshAndroidWindowState();
+        final canLockAndroidOrientation =
+            _shouldUseAndroidPhoneOrientationPolicy();
+        final isExternalWindow = isAndroidExternalPlayerWindow(
+          inPip: androidInPipState.value,
+          inMultiWindow: androidInMultiWindowState.value,
+          isFreeform: androidFreeformState.value,
+        );
+        if (isExternalWindow) {
+          _androidLandscapePendingAfterExternalWindow =
+              canLockAndroidOrientation && !isVertical.value;
+          if (shouldRequestLandscapeForAndroidExternalWindow(
+            inPip: androidInPipState.value,
+            inMultiWindow: androidInMultiWindowState.value,
+            isFreeform: androidFreeformState.value,
+            playerFullscreen: fullScreenState.value,
+            isVerticalVideo: isVertical.value,
+            canLockOrientation: canLockAndroidOrientation,
+          )) {
+            await setLandscapeOrientation();
+          }
+          return;
+        }
+        _androidLandscapePendingAfterExternalWindow = false;
+      }
       // 开关开启时全屏总是横屏：iPad 竖屏系统强制显示状态栏，
       // 只有横屏才能可靠隐藏。默认关闭并跟随视频方向。
       if (!isVertical.value ||
@@ -1217,6 +1344,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         'SystemUi: restoreFullScreenSystemUi enter fullScreen=${fullScreenState.value} smallWindow=${smallWindowState.value}');
     _playbackDisplayLease?.setImmersiveSystemUi(true);
     await PlaybackDisplayCoordinator.instance.settle();
+    if (Platform.isAndroid) {
+      _mobileSystemUiApplied = true;
+    }
     if (Platform.isIOS) {
       // iOS 横竖屏旋转/路由动画完成（约 300-400ms）后会重新应用系统栏
       // 样式，把之前的 hidden 覆盖掉。延迟多次重检（最长 3s），确保动画
@@ -1253,6 +1383,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       await exitSmallWindow();
       return;
     }
+    final hadAndroidExternalLandscape =
+        Platform.isAndroid && _androidLandscapePendingAfterExternalWindow;
+    _androidLandscapePendingAfterExternalWindow = false;
+    _androidExternalWindowExitGeneration += 1;
     if (Utils.isOhos) {
       if (ohosFullscreenTransition.value) {
         // 全屏过渡中：不要直接 return（会导致全屏/方向/系统栏残留），
@@ -1290,10 +1424,18 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       showControls();
       return;
     }
+    if (Platform.isAndroid) {
+      fullScreenState.value = false;
+    }
     if (Platform.isAndroid || Platform.isIOS) {
       _playbackDisplayLease?.setImmersiveSystemUi(false);
       await PlaybackDisplayCoordinator.instance.settle();
-      await resetPreferredOrientation();
+      if (_mobileSystemUiApplied || !Platform.isAndroid) {
+        await resetPreferredOrientation();
+        _mobileSystemUiApplied = false;
+      } else if (hadAndroidExternalLandscape) {
+        await resetPreferredOrientation();
+      }
       await Future.delayed(const Duration(milliseconds: 32));
     } else {
       await _serializeDesktopWindowModeTransition(() async {
@@ -1322,7 +1464,9 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       onPlayerWindowModeExited();
       return;
     }
-    fullScreenState.value = false;
+    if (!Platform.isAndroid) {
+      fullScreenState.value = false;
+    }
     onPlayerWindowModeExited();
 
     //danmakuController?.clear();
@@ -1529,12 +1673,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   void toggleDanmakuByShortcut() {
-    showDanmakuState.value = !showDanmakuState.value;
-    if (!showDanmakuState.value) {
-      danmakuController?.clear();
-    } else {
-      danmakuController?.resume();
-    }
+    setDanmakuVisible(!showDanmakuState.value);
   }
 
   Future<void> toggleMute() async {
@@ -1607,6 +1746,29 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
   }
 
+  Future<void> adjustDesktopPlayerVolumeByShortcut(int delta) async {
+    if (delta == 0 ||
+        !(Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+      return;
+    }
+
+    final current = player.state.volume > 0
+        ? player.state.volume.clamp(0.0, 100.0).toDouble()
+        : AppSettingsController.instance.playerVolume.value
+            .clamp(0.0, 100.0)
+            .toDouble();
+    final target = (current + delta).clamp(0.0, 100.0).toDouble();
+    await setSessionPlayerVolume(target, persist: true);
+
+    showGestureTip.value = true;
+    gestureTipText.value = "音量 ${target.round()}%";
+    hideSeekTipTimer?.cancel();
+    hideSeekTipTimer = Timer(const Duration(milliseconds: 900), () {
+      showGestureTip.value = false;
+      gestureTipText.value = "";
+    });
+  }
+
   /// 设置横屏
   Future setLandscapeOrientation() async {
     Log.d('SystemUi: setLandscapeOrientation enter');
@@ -1635,6 +1797,14 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   Future resetPreferredOrientation() async {
     if (Platform.isIOS) {
       await setPortraitOrientation();
+      return;
+    }
+    if (Platform.isAndroid) {
+      if (_shouldUseAndroidPhoneOrientationPolicy()) {
+        await setPortraitOrientation();
+      } else {
+        await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+      }
       return;
     }
     if (await beforeIOS16()) {
@@ -1816,6 +1986,147 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     );
   }
 
+  bool _shouldUseAndroidPhoneOrientationPolicy() {
+    if (!Platform.isAndroid) {
+      return false;
+    }
+    final context = Get.context;
+    final display = context == null ? null : View.maybeOf(context)?.display;
+    final fallbackViews = WidgetsBinding.instance.platformDispatcher.views;
+    final resolvedDisplay =
+        display ?? (fallbackViews.isEmpty ? null : fallbackViews.first.display);
+    if (resolvedDisplay == null) {
+      return false;
+    }
+    return shouldUseAndroidPhoneOrientationPolicy(
+      displayWidth: resolvedDisplay.size.width,
+      displayHeight: resolvedDisplay.size.height,
+      devicePixelRatio: resolvedDisplay.devicePixelRatio,
+    );
+  }
+
+  void _ensureAndroidWindowStateListener() {
+    if (!Platform.isAndroid || _androidWindowChannelActive) {
+      return;
+    }
+    final token = ++_androidWindowHandlerGeneration;
+    _androidWindowHandlerToken = token;
+    _androidWindowChannelActive = true;
+    _androidWindowChannel.setMethodCallHandler((call) async {
+      if (token != _androidWindowHandlerToken ||
+          call.method != 'windowStateChanged') {
+        return null;
+      }
+      final arguments = call.arguments;
+      if (arguments is Map) {
+        _applyAndroidWindowState(arguments);
+      }
+      return null;
+    });
+    unawaited(_refreshAndroidWindowState());
+  }
+
+  Future<void> _refreshAndroidWindowState() async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    try {
+      final state =
+          await _androidWindowChannel.invokeMapMethod<String, Object?>(
+        'getWindowState',
+      );
+      if (state != null) {
+        _applyAndroidWindowState(state);
+      }
+    } catch (e) {
+      Log.d("读取 Android 窗口状态失败: $e");
+    }
+  }
+
+  void _applyAndroidWindowState(Map<dynamic, dynamic> arguments) {
+    final inPip = arguments['inPip'] == true;
+    final inMultiWindow = arguments['inMultiWindow'] == true;
+    final isFreeform = arguments['isFreeform'] == true;
+    final wasInPip = androidInPipState.value;
+    final wasInExternalWindow = isAndroidExternalPlayerWindow(
+      inPip: wasInPip,
+      inMultiWindow: androidInMultiWindowState.value,
+      isFreeform: androidFreeformState.value,
+    );
+    final isInExternalWindow = isAndroidExternalPlayerWindow(
+      inPip: inPip,
+      inMultiWindow: inMultiWindow,
+      isFreeform: isFreeform,
+    );
+    androidInPipState.value = inPip;
+    androidInMultiWindowState.value = inMultiWindow;
+    androidFreeformState.value = isFreeform;
+    unawaited(_syncAndroidExternalWindowLandscapeOrientation());
+    if (shouldRestoreAndroidFullscreenAfterExternalWindowExit(
+      wasInExternalWindow: wasInExternalWindow,
+      isInExternalWindow: isInExternalWindow,
+      playerFullscreen: fullScreenState.value,
+      hasPendingLandscapeRequest: _androidLandscapePendingAfterExternalWindow,
+      isVerticalVideo: isVertical.value,
+      canLockOrientation: _shouldUseAndroidPhoneOrientationPolicy(),
+    )) {
+      unawaited(_restoreAndroidFullscreenAfterExternalWindowExit());
+    }
+    if (inPip && !wasInPip) {
+      _applyPipEnteredState();
+    } else if (!inPip && wasInPip) {
+      _restorePipExitedState();
+    }
+  }
+
+  Future<void> _syncAndroidExternalWindowLandscapeOrientation() async {
+    if (!Platform.isAndroid ||
+        !shouldRequestLandscapeForAndroidExternalWindow(
+          inPip: androidInPipState.value,
+          inMultiWindow: androidInMultiWindowState.value,
+          isFreeform: androidFreeformState.value,
+          playerFullscreen: fullScreenState.value,
+          isVerticalVideo: isVertical.value,
+          canLockOrientation: _shouldUseAndroidPhoneOrientationPolicy(),
+        )) {
+      return;
+    }
+    try {
+      await setLandscapeOrientation();
+    } catch (e) {
+      Log.d("系统自由窗请求横屏失败: $e");
+    }
+  }
+
+  Future<void> _restoreAndroidFullscreenAfterExternalWindowExit() async {
+    final token = ++_androidExternalWindowExitGeneration;
+    await Future.delayed(const Duration(milliseconds: 160));
+    if (!Platform.isAndroid ||
+        token != _androidExternalWindowExitGeneration ||
+        !fullScreenState.value ||
+        isVertical.value ||
+        !_shouldUseAndroidPhoneOrientationPolicy() ||
+        !_androidLandscapePendingAfterExternalWindow ||
+        isAndroidExternalPlayerWindow(
+          inPip: androidInPipState.value,
+          inMultiWindow: androidInMultiWindowState.value,
+          isFreeform: androidFreeformState.value,
+        )) {
+      return;
+    }
+    try {
+      await SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: [],
+      );
+      _mobileSystemUiApplied = true;
+      await setLandscapeOrientation();
+      _androidLandscapePendingAfterExternalWindow = false;
+    } catch (e) {
+      Log.d("系统小窗展开后恢复横屏失败: $e");
+    }
+  }
+
   void _ensurePipStatusListener() {
     _pipSubscription ??= pip.pipStatusStream.listen((event) {
       if (event == PiPStatus.enabled) {
@@ -1857,7 +2168,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     danmakuStateBeforePIP = showDanmakuState.value;
     if (AppSettingsController.instance.pipHideDanmu.value &&
         danmakuStateBeforePIP) {
-      showDanmakuState.value = false;
+      setDanmakuVisible(false);
     }
     showControlsState.value = false;
   }
@@ -1868,10 +2179,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
     _pipStateApplied = false;
     _autoPipOnLeaveConfigured = false;
-    showDanmakuState.value = danmakuStateBeforePIP;
-    if (showDanmakuState.value) {
-      danmakuController?.resume();
-    }
+    setDanmakuVisible(danmakuStateBeforePIP);
   }
 
   Future<void> cancelAutoPipOnLeave() async {
@@ -2277,15 +2585,56 @@ class PlayerController extends BaseController
   StreamSubscription? _completedSubscription;
   StreamSubscription? _widthSubscription;
   StreamSubscription? _heightSubscription;
+  StreamSubscription<VideoParams>? _videoParamsSubscription;
   StreamSubscription? _logSubscription;
   StreamSubscription? _playingSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
+  Timer? _iosVideoOutputSyncTimer;
+  Worker? _iosOriginalQualityPowerSavingWorker;
+  IosVideoOutputSize? _iosVideoOutputSize;
+  int? _iosVideoSourceWidth;
+  int? _iosVideoSourceHeight;
+  bool _iosVideoOutputForceApply = false;
+
+  String get videoOutputResolution {
+    final output = _iosVideoOutputSize;
+    if (output != null) {
+      return output.toString();
+    }
+    return '${player.state.width ?? 0}x${player.state.height ?? 0}';
+  }
 
   // Fix Issue #57: 流错误重试计数器
   int _streamErrorRetryCount = 0;
   DateTime? _lastStreamErrorTime;
   bool _streamErrorRecoveryInFlight = false;
   Timer? _surfaceHealthCheckTimer;
+  bool _surfaceRecoveryInFlight = false;
+  int _surfaceRecoveryAttempts = 0;
+  int? _surfaceRecoveryGeneration;
+  String? _surfaceRecoverySource;
+  int _surfaceRecoveryToken = 0;
+  DateTime? _lastSurfaceRecoveryAt;
+  DateTime? _surfaceRecoveryGraceUntil;
+  Timer? _playbackStallWatchdogTimer;
+  Timer? _playbackStallStableTimer;
+  Duration? _stallLastPosition;
+  DateTime? _stallLastProgressAt;
+  DateTime? _lastPlaybackStallRecoveryAt;
+  int? _stallLiveGeneration;
+  String? _stallMediaUri;
+  int _playbackStallRecoveryAttempts = 0;
+  bool _playbackStallRecoveryInFlight = false;
+
+  static const _stablePlaybackDuration = Duration(seconds: 30);
+  static const _surfaceRecoveryCooldown = Duration(seconds: 3);
+  static const _surfaceRecoveryGraceDuration = Duration(seconds: 8);
+  static const _surfaceRecoveryValidationDelay = Duration(milliseconds: 600);
+  static const _maxSurfaceRecoveryAttempts = 3;
+  static const _playbackStallSampleInterval = Duration(seconds: 3);
+  static const _playbackStallTimeout = Duration(seconds: 15);
+  static const _playbackBufferingStallTimeout = Duration(seconds: 30);
+  static const _playbackStallCooldown = Duration(seconds: 5);
 
   /// 自动网络诊断提示（达到 tracker 阈值的独立缓冲开始时触发，
   /// 显示在画面左上角）。
@@ -2356,7 +2705,121 @@ class PlayerController extends BaseController
   /// 当前实际播放 URL。子类提供后，诊断会使用其真实 host/port。
   String get currentNetworkDiagnosePlaybackUrl => '';
 
+  void _handleVideoParamsForIosOutput(VideoParams params) {
+    var width = params.dw ?? params.w ?? player.state.width;
+    var height = params.dh ?? params.h ?? player.state.height;
+    final rotate = params.rotate ?? 0;
+    if (rotate % 180 != 0) {
+      final originalWidth = width;
+      width = height;
+      height = originalWidth;
+    }
+    _scheduleIosVideoOutputSync(
+      sourceWidth: width,
+      sourceHeight: height,
+      force: true,
+    );
+  }
+
+  void refreshIosVideoOutputLimit({bool force = true}) {
+    _scheduleIosVideoOutputSync(
+      sourceWidth: _iosVideoSourceWidth ?? player.state.width,
+      sourceHeight: _iosVideoSourceHeight ?? player.state.height,
+      force: force,
+    );
+  }
+
+  void _scheduleIosVideoOutputSync({
+    int? sourceWidth,
+    int? sourceHeight,
+    bool force = false,
+  }) {
+    if (!Platform.isIOS || _playerClosing) {
+      return;
+    }
+    if (sourceWidth != null && sourceWidth > 0) {
+      _iosVideoSourceWidth = sourceWidth;
+    }
+    if (sourceHeight != null && sourceHeight > 0) {
+      _iosVideoSourceHeight = sourceHeight;
+    }
+    _iosVideoOutputForceApply = _iosVideoOutputForceApply || force;
+    _iosVideoOutputSyncTimer?.cancel();
+    _iosVideoOutputSyncTimer = Timer(
+      const Duration(milliseconds: 120),
+      () {
+        final shouldForce = _iosVideoOutputForceApply;
+        _iosVideoOutputForceApply = false;
+        unawaited(_applyIosVideoOutputLimit(force: shouldForce));
+      },
+    );
+  }
+
+  Future<void> _applyIosVideoOutputLimit({required bool force}) async {
+    if (!Platform.isIOS || _playerClosing) {
+      return;
+    }
+    final settings = AppSettingsController.instance;
+    if (!settings.iosOriginalQualityPowerSaving.value) {
+      if (force || _iosVideoOutputSize != null) {
+        try {
+          await videoController.setSize();
+          _iosVideoOutputSize = null;
+          Log.d("iOS 原画省电优化已关闭，恢复源分辨率纹理");
+        } catch (e) {
+          Log.w("恢复 iOS 源分辨率纹理失败: $e");
+        }
+      }
+      return;
+    }
+
+    final sourceWidth = _iosVideoSourceWidth;
+    final sourceHeight = _iosVideoSourceHeight;
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (sourceWidth == null ||
+        sourceHeight == null ||
+        sourceWidth <= 0 ||
+        sourceHeight <= 0 ||
+        views.isEmpty) {
+      return;
+    }
+    final physicalSize = views.first.physicalSize;
+    final target = calculateIosVideoOutputSize(
+      sourceWidth: sourceWidth,
+      sourceHeight: sourceHeight,
+      screenPhysicalWidth: physicalSize.width,
+      screenPhysicalHeight: physicalSize.height,
+    );
+    if (target == null || (!force && target == _iosVideoOutputSize)) {
+      return;
+    }
+
+    try {
+      if (force && _iosVideoOutputSize != null) {
+        await videoController.setSize();
+      }
+      await videoController.setSize(
+        width: target.width,
+        height: target.height,
+      );
+      _iosVideoOutputSize = target;
+      Log.i(
+        "iOS 视频纹理限幅：source=${sourceWidth}x$sourceHeight "
+        "screen=${physicalSize.width.toInt()}x${physicalSize.height.toInt()} "
+        "output=$target",
+      );
+    } catch (e, stackTrace) {
+      Log.e("应用 iOS 视频纹理限幅失败: $e", stackTrace);
+    }
+  }
+
   void initStream() {
+    if (Platform.isIOS) {
+      _iosOriginalQualityPowerSavingWorker = ever<bool>(
+        AppSettingsController.instance.iosOriginalQualityPowerSaving,
+        (_) => refreshIosVideoOutputLimit(),
+      );
+    }
     _errorSubscription = player.stream.error.listen((event) {
       Log.d("播放器错误：$event");
       // 跳过无音频输出的错误
@@ -2402,7 +2865,10 @@ class PlayerController extends BaseController
       _setKeepScreenAwake(!isPlayerClosing && event);
       unawaited(_syncBackgroundPlaybackService(event));
       if (event) {
+        _surfaceRecoveryGraceUntil =
+            DateTime.now().add(_surfaceRecoveryGraceDuration);
         Log.d("Playing");
+        refreshIosVideoOutputLimit(force: true);
         // 播放成功，重置流错误计数
         _streamErrorRetryCount = 0;
         unawaited(resumeLiveLatencyChase());
@@ -2450,13 +2916,14 @@ class PlayerController extends BaseController
       if (event == null || event <= 0) {
         if (player.state.playing) {
           Log.w("播放器宽度异常: $event (播放中)，可能是Surface失效");
-          _handleInvalidVideoSize();
+          unawaited(_handleInvalidVideoSize());
         }
         return;
       }
 
       isVertical.value =
           (player.state.height ?? 9) > (player.state.width ?? 16);
+      unawaited(_syncAndroidExternalWindowLandscapeOrientation());
     });
     _heightSubscription = player.stream.height.listen((event) {
       Log.d(
@@ -2466,17 +2933,22 @@ class PlayerController extends BaseController
       if (event == null || event <= 0) {
         if (player.state.playing) {
           Log.w("播放器高度异常: $event (播放中)，可能是Surface失效");
-          _handleInvalidVideoSize();
+          unawaited(_handleInvalidVideoSize());
         }
         return;
       }
 
       isVertical.value =
           (player.state.height ?? 9) > (player.state.width ?? 16);
+      unawaited(_syncAndroidExternalWindowLandscapeOrientation());
     });
+    _videoParamsSubscription = player.stream.videoParams.listen(
+      _handleVideoParamsForIosOutput,
+    );
 
     // Fix Issue #57: 启动Surface健康检查
     _startSurfaceHealthCheck();
+    _startPlaybackStallWatchdog();
 
     // 缓冲边沿计数：按 false->true 计数独立缓冲开始，达到阈值自动触发网络诊断。
     _bufferingSubscription = player.stream.buffering.listen((buffering) {
@@ -2568,6 +3040,7 @@ class PlayerController extends BaseController
     _completedSubscription?.cancel();
     _widthSubscription?.cancel();
     _heightSubscription?.cancel();
+    _videoParamsSubscription?.cancel();
     _logSubscription?.cancel();
     _pipSubscription?.cancel();
     _ohosPipSubscription?.cancel();
@@ -2575,6 +3048,27 @@ class PlayerController extends BaseController
     _bufferingSubscription?.cancel();
     _networkHintTimer?.cancel();
     _surfaceHealthCheckTimer?.cancel();
+    _playbackStallWatchdogTimer?.cancel();
+    _playbackStallStableTimer?.cancel();
+    _iosVideoOutputSyncTimer?.cancel();
+    _iosOriginalQualityPowerSavingWorker?.dispose();
+    _iosOriginalQualityPowerSavingWorker = null;
+    _iosVideoOutputSyncTimer = null;
+    _surfaceHealthCheckTimer = null;
+    _surfaceRecoveryToken += 1;
+    _surfaceRecoveryInFlight = false;
+    _surfaceRecoveryAttempts = 0;
+    _surfaceRecoveryGeneration = null;
+    _surfaceRecoverySource = null;
+    _lastSurfaceRecoveryAt = null;
+    _surfaceRecoveryGraceUntil = null;
+    _stallLastPosition = null;
+    _stallLastProgressAt = null;
+    _lastPlaybackStallRecoveryAt = null;
+    _stallLiveGeneration = null;
+    _stallMediaUri = null;
+    _playbackStallRecoveryAttempts = 0;
+    _playbackStallRecoveryInFlight = false;
   }
 
   // Fix Issue #57: 判断是否为流错误（网络/解码错误）
@@ -2686,24 +3180,250 @@ class PlayerController extends BaseController
     }
   }
 
-  // Fix Issue #57: 处理异常的视频尺寸（Surface失效）
-  Future<void> _handleInvalidVideoSize() async {
-    Log.w("检测到视频尺寸异常，尝试恢复Surface");
+  void _startPlaybackStallWatchdog() {
+    _playbackStallWatchdogTimer?.cancel();
+    _playbackStallWatchdogTimer = Timer.periodic(
+      _playbackStallSampleInterval,
+      (_) => _checkPlaybackStall(),
+    );
+  }
 
-    // 短暂暂停再恢复，触发Surface重建
-    try {
-      if (player.state.playing && !_playerClosing) {
-        await suspendLiveLatencyChase(
-          MpvLiveLatencyProtectionReason.playbackStalled,
-        );
-        await player.pause();
-        await Future.delayed(const Duration(milliseconds: 300));
-        await player.play();
-        await resumeLiveLatencyChase();
+  void _checkPlaybackStall() {
+    if (_playerClosing) {
+      return;
+    }
+    final state = player.state;
+    if (!state.playing || state.completed) {
+      _resetPlaybackStallSample();
+      return;
+    }
+    final media = _currentPlaylistMedia();
+    final mediaUri = media?.uri.trim();
+    if (mediaUri == null || mediaUri.isEmpty) {
+      return;
+    }
+    final generation = _livePlaybackGeneration;
+    if (_stallLiveGeneration != generation || _stallMediaUri != mediaUri) {
+      _stallLiveGeneration = generation;
+      _stallMediaUri = mediaUri;
+      _stallLastPosition = state.position;
+      _stallLastProgressAt = DateTime.now();
+      _playbackStallRecoveryAttempts = 0;
+      _playbackStallStableTimer?.cancel();
+      _playbackStallStableTimer = null;
+      return;
+    }
+
+    final now = DateTime.now();
+    final position = state.position;
+    if (_stallLastPosition == null || position != _stallLastPosition) {
+      _stallLastPosition = position;
+      _stallLastProgressAt = now;
+      if (_playbackStallRecoveryAttempts > 0 &&
+          _playbackStallStableTimer == null) {
+        _playbackStallStableTimer = Timer(_stablePlaybackDuration, () {
+          _playbackStallStableTimer = null;
+          if (_stallLiveGeneration == generation && player.state.playing) {
+            _playbackStallRecoveryAttempts = 0;
+          }
+        });
       }
+      return;
+    }
+    final lastProgressAt = _stallLastProgressAt;
+    if (lastProgressAt == null ||
+        now.difference(lastProgressAt) <
+            (state.buffering
+                ? _playbackBufferingStallTimeout
+                : _playbackStallTimeout)) {
+      return;
+    }
+    if (_surfaceRecoveryGraceUntil != null &&
+        now.isBefore(_surfaceRecoveryGraceUntil!)) {
+      return;
+    }
+    if (_playbackStallRecoveryInFlight ||
+        _playbackStallRecoveryAttempts >= _maxSurfaceRecoveryAttempts ||
+        (_lastPlaybackStallRecoveryAt != null &&
+            now.difference(_lastPlaybackStallRecoveryAt!) <
+                _playbackStallCooldown)) {
+      return;
+    }
+    unawaited(_recoverPlaybackStall(generation, mediaUri));
+  }
+
+  Future<void> _recoverPlaybackStall(int generation, String mediaUri) async {
+    if (_playbackStallRecoveryInFlight ||
+        _stallLiveGeneration != generation ||
+        _stallMediaUri != mediaUri) {
+      return;
+    }
+    _playbackStallRecoveryInFlight = true;
+    _playbackStallRecoveryAttempts += 1;
+    _lastPlaybackStallRecoveryAt = DateTime.now();
+    _stallLastProgressAt = DateTime.now();
+    Log.w(
+      "检测到直播流长时间无进度，自动刷新播放 "
+      "($_playbackStallRecoveryAttempts/$_maxSurfaceRecoveryAttempts)",
+    );
+    try {
+      mediaError("直播流停滞，自动刷新");
+    } finally {
+      _playbackStallRecoveryInFlight = false;
+    }
+  }
+
+  void _resetPlaybackStallSample() {
+    _stallLastPosition = null;
+    _stallLastProgressAt = null;
+    _playbackStallStableTimer?.cancel();
+    _playbackStallStableTimer = null;
+  }
+
+  // Fix Issue #57 & #97: 处理异常的视频尺寸（Surface失效）。
+  // 恢复流程有界且串行，避免起播/切源时的短暂尺寸事件反复重启解码器。
+  Future<void> _handleInvalidVideoSize() async {
+    if (!player.state.playing || _playerClosing) {
+      return;
+    }
+    if (_streamErrorRecoveryInFlight) {
+      return;
+    }
+
+    final now = DateTime.now();
+    if (_surfaceRecoveryGraceUntil != null &&
+        now.isBefore(_surfaceRecoveryGraceUntil!)) {
+      return;
+    }
+    if (_surfaceRecoveryInFlight) {
+      return;
+    }
+
+    final currentMedia = _currentPlaylistMedia();
+    final mediaUri = currentMedia?.uri.toString() ?? '';
+    final sourceIdentity = canonicalizeLivePlaybackSource(mediaUri);
+    if (currentMedia == null || sourceIdentity.isEmpty) {
+      return;
+    }
+
+    final generation = _livePlaybackGeneration;
+    if (_surfaceRecoveryGeneration != generation ||
+        _surfaceRecoverySource != sourceIdentity) {
+      _surfaceRecoveryGeneration = generation;
+      _surfaceRecoverySource = sourceIdentity;
+      _surfaceRecoveryAttempts = 0;
+      _lastSurfaceRecoveryAt = null;
+    }
+    if (_surfaceRecoveryAttempts >= _maxSurfaceRecoveryAttempts) {
+      Log.w("Surface恢复次数已达上限（$_maxSurfaceRecoveryAttempts次），暂不重复重启");
+      return;
+    }
+    if (_lastSurfaceRecoveryAt != null &&
+        now.difference(_lastSurfaceRecoveryAt!) < _surfaceRecoveryCooldown) {
+      return;
+    }
+
+    _surfaceRecoveryInFlight = true;
+    _surfaceRecoveryAttempts += 1;
+    _lastSurfaceRecoveryAt = now;
+    final recoveryToken = ++_surfaceRecoveryToken;
+    Log.w(
+      "检测到视频尺寸异常，尝试恢复Surface "
+      "($_surfaceRecoveryAttempts/$_maxSurfaceRecoveryAttempts)",
+    );
+
+    try {
+      await suspendLiveLatencyChase(
+        MpvLiveLatencyProtectionReason.playbackStalled,
+      );
+      await player.pause();
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!_isCurrentSurfaceRecovery(
+        token: recoveryToken,
+        generation: generation,
+        sourceIdentity: sourceIdentity,
+      )) {
+        return;
+      }
+      await player.play();
+      await Future.delayed(_surfaceRecoveryValidationDelay);
+      if (!_isCurrentSurfaceRecovery(
+        token: recoveryToken,
+        generation: generation,
+        sourceIdentity: sourceIdentity,
+      )) {
+        return;
+      }
+      if (!_hasInvalidVideoSize() || !player.state.playing) {
+        await resumeLiveLatencyChase();
+        return;
+      }
+
+      final activeMedia = _currentPlaylistMedia();
+      final activeSource = canonicalizeLivePlaybackSource(
+        activeMedia?.uri.toString() ?? '',
+      );
+      if (activeMedia == null || activeSource != sourceIdentity) {
+        return;
+      }
+      Log.w("Surface恢复失败，重开当前媒体");
+      await player.open(activeMedia);
+      if (!_isCurrentSurfaceRecovery(
+        token: recoveryToken,
+        generation: generation,
+        sourceIdentity: sourceIdentity,
+      )) {
+        return;
+      }
+      await resetLiveLatencyChase();
+      final recoveryGeneration = _livePlaybackGeneration;
+      await startLivePlaybackLightweightSampling(source: mediaUri);
+      if (_playerClosing ||
+          recoveryGeneration != _livePlaybackGeneration ||
+          sourceIdentity != _livePlaybackSource) {
+        return;
+      }
+      _surfaceRecoveryGraceUntil =
+          DateTime.now().add(_surfaceRecoveryGraceDuration);
     } catch (e, stackTrace) {
       Log.e("恢复Surface失败: $e", stackTrace);
+    } finally {
+      if (recoveryToken == _surfaceRecoveryToken) {
+        _surfaceRecoveryInFlight = false;
+      }
     }
+  }
+
+  Media? _currentPlaylistMedia() {
+    final playlist = player.state.playlist;
+    if (playlist.medias.isEmpty ||
+        playlist.index < 0 ||
+        playlist.index >= playlist.medias.length) {
+      return null;
+    }
+    return playlist.medias[playlist.index];
+  }
+
+  bool _hasInvalidVideoSize() {
+    final width = player.state.width;
+    final height = player.state.height;
+    return width == null || width <= 0 || height == null || height <= 0;
+  }
+
+  bool _isCurrentSurfaceRecovery({
+    required int token,
+    required int generation,
+    required String sourceIdentity,
+  }) {
+    if (token != _surfaceRecoveryToken ||
+        _playerClosing ||
+        generation != _livePlaybackGeneration) {
+      return false;
+    }
+    final activeSource = canonicalizeLivePlaybackSource(
+      _currentPlaylistMedia()?.uri.toString() ?? '',
+    );
+    return activeSource == sourceIdentity;
   }
 
   // Fix Issue #57: Surface健康检查（每3秒检查一次）
@@ -2722,13 +3442,12 @@ class PlayerController extends BaseController
         }
 
         // 检测：播放中但尺寸为null = Surface异常
-        if (player.state.playing &&
-            (player.state.width == null || player.state.height == null)) {
+        if (player.state.playing && _hasInvalidVideoSize()) {
           Log.w(
             "Surface健康检查失败: playing=${player.state.playing} "
             "width=${player.state.width} height=${player.state.height}",
           );
-          _handleInvalidVideoSize();
+          unawaited(_handleInvalidVideoSize());
         }
       },
     );
@@ -2761,105 +3480,85 @@ class PlayerController extends BaseController
     return BackgroundPlaybackService.instance.stop();
   }
 
-  void showDebugInfo() {
+  Future<Map<String, String>> _readMpvDiagnosticProperties() async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) {
+      return const {};
+    }
+
+    final result = <String, String>{};
+    for (final name in const [
+      'hwdec-current',
+      'video-codec',
+      'estimated-vf-fps',
+      'container-fps',
+      'video-bitrate',
+    ]) {
+      try {
+        final value = (await platform.getProperty(name)).trim();
+        if (value.isNotEmpty) {
+          result[name] = value;
+        }
+      } catch (e) {
+        Log.d("读取 mpv 播放属性 $name 失败: $e", false);
+      }
+    }
+    return result;
+  }
+
+  Future<void> showDebugInfo() async {
     if (Utils.isOhos) {
       _showOhosDebugInfo();
       return;
     }
+    final mpvProperties = await _readMpvDiagnosticProperties();
+    final videoTrack = player.state.track.video;
+    final sourceResolution =
+        '${player.state.width ?? 0}x${player.state.height ?? 0}';
+    final outputResolution = videoOutputResolution;
+    final hwdec = mpvProperties['hwdec-current'] ?? '无（软件解码或尚未开始）';
+    final codec = mpvProperties['video-codec'] ?? videoTrack.codec ?? '未知';
+    final fps = mpvProperties['estimated-vf-fps'] ??
+        mpvProperties['container-fps'] ??
+        videoTrack.fps?.toString() ??
+        '未知';
+    final videoBitrate = mpvProperties['video-bitrate'] ??
+        videoTrack.bitrate?.toString() ??
+        '未知';
+
+    Widget diagnosticTile(String title, Object? value) {
+      final text = value?.toString() ?? '未知';
+      return ListTile(
+        title: Text(title),
+        subtitle: Text(text),
+        onTap: () {
+          Clipboard.setData(ClipboardData(text: '$title\n$text'));
+        },
+      );
+    }
+
+    Log.i(
+      '播放诊断：hwdec=$hwdec codec=$codec fps=$fps bitrate=$videoBitrate '
+      'source=$sourceResolution output=$outputResolution',
+    );
     Utils.showBottomSheet(
       title: "播放信息",
       maxHeightFactor: 0.5,
       child: ListView(
         children: [
-          ListTile(
-            title: const Text("Resolution"),
-            subtitle: Text('${player.state.width}x${player.state.height}'),
-            onTap: () {
-              Clipboard.setData(
-                ClipboardData(
-                  text:
-                      "Resolution\n${player.state.width}x${player.state.height}",
-                ),
-              );
-            },
-          ),
-          ListTile(
-            title: const Text("VideoParams"),
-            subtitle: Text(player.state.videoParams.toString()),
-            onTap: () {
-              Clipboard.setData(
-                ClipboardData(
-                  text: "VideoParams\n${player.state.videoParams}",
-                ),
-              );
-            },
-          ),
-          ListTile(
-            title: const Text("AudioParams"),
-            subtitle: Text(player.state.audioParams.toString()),
-            onTap: () {
-              Clipboard.setData(
-                ClipboardData(
-                  text: "AudioParams\n${player.state.audioParams}",
-                ),
-              );
-            },
-          ),
-          ListTile(
-            title: const Text("Media"),
-            subtitle: Text(player.state.playlist.toString()),
-            onTap: () {
-              Clipboard.setData(
-                ClipboardData(
-                  text: "Media\n${player.state.playlist}",
-                ),
-              );
-            },
-          ),
-          ListTile(
-            title: const Text("AudioTrack"),
-            subtitle: Text(player.state.track.audio.toString()),
-            onTap: () {
-              Clipboard.setData(
-                ClipboardData(
-                  text: "AudioTrack\n${player.state.track.audio}",
-                ),
-              );
-            },
-          ),
-          ListTile(
-            title: const Text("VideoTrack"),
-            subtitle: Text(player.state.track.video.toString()),
-            onTap: () {
-              Clipboard.setData(
-                ClipboardData(
-                  text: "VideoTrack\n${player.state.track.video}",
-                ),
-              );
-            },
-          ),
-          ListTile(
-            title: const Text("AudioBitrate"),
-            subtitle: Text(player.state.audioBitrate.toString()),
-            onTap: () {
-              Clipboard.setData(
-                ClipboardData(
-                  text: "AudioBitrate\n${player.state.audioBitrate}",
-                ),
-              );
-            },
-          ),
-          ListTile(
-            title: const Text("Volume"),
-            subtitle: Text(player.state.volume.toString()),
-            onTap: () {
-              Clipboard.setData(
-                ClipboardData(
-                  text: "Volume\n${player.state.volume}",
-                ),
-              );
-            },
-          ),
+          diagnosticTile('实际硬件解码', hwdec),
+          diagnosticTile('视频编码', codec),
+          diagnosticTile('视频 FPS', fps),
+          diagnosticTile('视频码率（bit/s）', videoBitrate),
+          diagnosticTile('源分辨率', sourceResolution),
+          diagnosticTile('输出纹理分辨率', outputResolution),
+          diagnosticTile('VideoParams', player.state.videoParams),
+          diagnosticTile('AudioParams', player.state.audioParams),
+          diagnosticTile('Media', player.state.playlist),
+          diagnosticTile('AudioTrack', player.state.track.audio),
+          diagnosticTile('VideoTrack', videoTrack),
+          diagnosticTile('AudioBitrate', player.state.audioBitrate),
+          diagnosticTile('Volume', player.state.volume),
         ],
       ),
     );

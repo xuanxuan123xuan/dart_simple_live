@@ -256,6 +256,49 @@ void main() {
         LiveStatusState.unknown,
       );
     });
+
+    test('selects the requested room before choosing a live playlist entry',
+        () {
+      final room = KuaishouSite.selectLiveRoomFromPlayList([
+        {
+          'author': {'id': 'target-room'},
+          'isLiving': false,
+          'liveStream': {'id': ''},
+        },
+        {
+          'author': {'id': 'target-room'},
+          'isLiving': false,
+          'liveStream': {'id': 'target-stream'},
+        },
+        {
+          'author': {'id': 'other-room'},
+          'isLiving': true,
+          'liveStream': {'id': 'other-stream'},
+        },
+      ], 'target-room');
+
+      expect(room, isNotNull);
+      expect((room!['liveStream'] as Map)['id'], 'target-stream');
+    });
+
+    test('does not let another live playlist room override target offline', () {
+      final room = KuaishouSite.selectLiveRoomFromPlayList([
+        {
+          'author': {'id': 'target-room'},
+          'isLiving': false,
+          'liveStream': {'id': ''},
+        },
+        {
+          'author': {'id': 'other-room'},
+          'isLiving': true,
+          'liveStream': {'id': 'other-stream'},
+        },
+      ], 'target-room');
+
+      expect(room, isNotNull);
+      expect((room!['author'] as Map)['id'], 'target-room');
+      expect(KuaishouSite.resolveLiveState(room), LiveStatusState.offline);
+    });
   });
 
   test('extracts nested playable urls and rejects non-stream values', () {
