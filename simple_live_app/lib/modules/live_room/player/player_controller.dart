@@ -205,11 +205,12 @@ mixin PlayerMixin {
       LiveLinkHealthShadowCollector(
     tracker: LiveLinkHealthTracker(
       capabilities: LiveLinkHealthCapabilities(
+        // AVPlayer 没有等价的音频欠载回调，保持 unsupported。
         audioUnderrunEvents: !Utils.isOhos,
-        // OHOS currently exposes only a widget rebuild request here, not a
-        // reliable async playback-success callback. Report the metric as
-        // unsupported instead of presenting a misleading zero reconnects.
-        automaticReconnectEvents: !Utils.isOhos,
+        // 鸿蒙侧的重开由 OhosReconnectConfirmation 与原生播放确认
+        // （initialized / 首帧 / 心跳）配对后才记账，语义与 mpv 侧的
+        // "重开完成即计次"一致，因此两端都按支持上报。
+        automaticReconnectEvents: true,
       ),
     ),
   );
@@ -418,6 +419,9 @@ mixin PlayerMixin {
             streamActive:
                 value.isInitialized && (value.isPlaying || value.isBuffering),
             demuxerCacheSeconds: ohosCacheSeconds,
+            playbackEndpointReachable: currentPlaybackEndpointReachable(
+              sampledAt,
+            ),
           ),
         );
         return;
@@ -461,6 +465,9 @@ mixin PlayerMixin {
             demuxerCacheSeconds: cacheDurationSeconds,
             receiveBytesPerSecond: throughput.receiveBytesPerSecond,
             estimatedMediaBitsPerSecond: throughput.estimatedMediaBitsPerSecond,
+            playbackEndpointReachable: currentPlaybackEndpointReachable(
+              sampledAt,
+            ),
           ),
         );
       }
@@ -712,6 +719,64 @@ mixin PlayerMixin {
   void recordOhosDemuxerCacheDuration(Duration? cacheDuration) {
     _ohosDemuxerCacheSeconds =
         cacheDuration == null ? null : cacheDuration.inMilliseconds / 1000.0;
+  }
+
+  /// 最近一次原生时钟跳动的时刻，仅供播放信息面板展示。
+  DateTime? _ohosLastNativeHeartbeatAt;
+
+  /// 最近一次播放端点 TCP 建连探测的结论及其时刻。
+  ///
+  /// 复用自动网络诊断已经付出的探测开销，不额外开探测循环：健康采样是每秒一次，
+  /// 而一次探测最坏要几秒，按采样节奏探测会在网络已经变差时继续加重负担。
+  bool? _lastEndpointReachable;
+  DateTime? _lastEndpointReachableAt;
+
+  /// 端点结论的有效期，与探测冷却（30s）对齐。
+  ///
+  /// 不取评估器长窗口的 60s：一个"不可达"结论会压制评估器的 catchupCacheDrain
+  /// 归因（见 live_link_health_evaluator.dart 的 `endpointReachable != false`），
+  /// 窗口越长，网络已恢复、mpv 正在追帧时把追帧耗缓存误判成进流不足的机会越大。
+  /// 与冷却对齐后，同一时刻最多只有一个结论存活，过期即可被下一次探测刷新。
+  static const endpointReachabilityTtl = Duration(seconds: 30);
+
+  /// 仍在有效期内的端点可达性结论，过期或从未探测则为 null。
+  ///
+  /// 注意语义边界：这是"TCP 能否建连"，不是"码流是否在流动"。
+  bool? currentPlaybackEndpointReachable(DateTime at) {
+    final reachable = _lastEndpointReachable;
+    final observedAt = _lastEndpointReachableAt;
+    if (reachable == null || observedAt == null) {
+      return null;
+    }
+    if (at.difference(observedAt) >= endpointReachabilityTtl) {
+      return null;
+    }
+    return reachable;
+  }
+
+  /// 记录一次端点探测结论（由自动网络诊断复用调用）。
+  void recordPlaybackEndpointReachable(bool reachable, {DateTime? at}) {
+    _lastEndpointReachable = reachable;
+    _lastEndpointReachableAt = at ?? DateTime.now();
+  }
+
+  /// 清空端点探测结论（换房重置诊断会话时调用）。
+  void resetPlaybackEndpointReachable() {
+    _lastEndpointReachable = null;
+    _lastEndpointReachableAt = null;
+  }
+
+  /// 记录原生心跳时刻（只有 TIME_UPDATE 触发，缓存事件不算）。
+  void recordOhosNativeHeartbeat(DateTime? heartbeatAt) {
+    if (heartbeatAt == null) {
+      return;
+    }
+    _ohosLastNativeHeartbeatAt = heartbeatAt;
+  }
+
+  /// 换播放器代次时清空面板用的心跳时刻，避免旧代次心跳看起来仍然新鲜。
+  void resetOhosNativeHeartbeat() {
+    _ohosLastNativeHeartbeatAt = null;
   }
 
   final GlobalKey ohosPlayerWidgetKey =
@@ -2696,6 +2761,7 @@ class PlayerController extends BaseController
     _autoDiagnosisTracker.reset();
     _hasMarkedInitialStreamOpening = false;
     _lastAutoDiagnoseAt = null;
+    resetPlaybackEndpointReachable();
     _networkHintTimer?.cancel();
     _networkHintTimer = null;
     networkHint.value = "";
@@ -3031,6 +3097,13 @@ class PlayerController extends BaseController
       if (isPlayerClosing || generation != _diagnosisGeneration) {
         Log.d("[player-diag] diagnose result dropped (stale generation)");
         return;
+      }
+      // 复用这次已经付出的探测结果喂健康采样。lost == samples 才算不可达：
+      // 只要有一次建连成功，端点就是通的。
+      if (playbackResult != null) {
+        recordPlaybackEndpointReachable(
+          playbackResult.lost < playbackResult.samples,
+        );
       }
       networkHint.value =
           NetworkDiagnoseService.summarizePlaybackEndpoint(playbackResult);
@@ -3585,6 +3658,30 @@ class PlayerController extends BaseController
     );
   }
 
+  String _ohosLastHeartbeatAgeLabel() {
+    final heartbeatAt = _ohosLastNativeHeartbeatAt;
+    if (heartbeatAt == null) {
+      return "未上报";
+    }
+    final age = DateTime.now().difference(heartbeatAt);
+    return "${age.inMilliseconds}ms 前";
+  }
+
+  String _endpointReachableLabel() {
+    final observedAt = _lastEndpointReachableAt;
+    final reachable = _lastEndpointReachable;
+    if (reachable == null || observedAt == null) {
+      return "未探测";
+    }
+    final age = DateTime.now().difference(observedAt);
+    final freshness =
+        age >= PlayerMixin.endpointReachabilityTtl
+            ? "已过期"
+            : "${age.inSeconds}s 前";
+    // 这里是 TCP 建连结论，不是码流是否在流动。
+    return "${reachable ? "可建连" : "不可建连"}（$freshness）";
+  }
+
   void _showOhosDebugInfo() {
     final controller = _ohosVideoController;
     final value = controller?.value;
@@ -3620,6 +3717,20 @@ class PlayerController extends BaseController
         "${(ohosVolume.value * 100).round()}%",
       ),
       MapEntry("PlaybackSpeed", value?.playbackSpeed.toString() ?? "未知"),
+      MapEntry(
+        "CacheDepth",
+        _ohosDemuxerCacheSeconds == null
+            ? "未上报"
+            : "${_ohosDemuxerCacheSeconds!.toStringAsFixed(2)}s",
+      ),
+      MapEntry(
+        "Heartbeat",
+        _ohosLastHeartbeatAgeLabel(),
+      ),
+      MapEntry(
+        "EndpointReachable",
+        _endpointReachableLabel(),
+      ),
       MapEntry("Media", controller?.dataSource ?? "未创建"),
       if (value?.errorDescription != null)
         MapEntry("Error", value!.errorDescription!),

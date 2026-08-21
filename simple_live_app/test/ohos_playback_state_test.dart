@@ -513,4 +513,89 @@ void main() {
       isFalse,
     );
   });
+
+  test('cache telemetry cannot masquerade as a native heartbeat', () {
+    final player = File(
+      'lib/modules/live_room/player/ohos_video_player.dart',
+    ).readAsStringSync();
+
+    // 缓存事件不带 heartbeatAt。否则"缓冲还在报深度"会被当成
+    // "播放器还活着"，看门狗永远不开火。
+    expect(player, contains('heartbeatAt: _lastHeartbeatAt,'));
+    expect(player, isNot(contains('heartbeatAt: _lastHeartbeatAt ?? now')));
+    expect(player, contains('final DateTime? heartbeatAt;'));
+
+    final controller = File(
+      'lib/modules/live_room/live_room_controller.dart',
+    ).readAsStringSync();
+    final start = controller.indexOf(
+      'void updateOhosTelemetryForGeneration(',
+    );
+    final end = controller.indexOf(
+      'void updateOhosVideoStateForGeneration(',
+      start,
+    );
+    final method = controller.substring(start, end);
+
+    expect(start, greaterThanOrEqualTo(0));
+    expect(method, contains('final heartbeatAt = telemetry.heartbeatAt;'));
+    expect(method, contains('if (heartbeatAt != null)'));
+    // 心跳缺失时不得把 _ohosLastHeartbeatAt 写成 null 之外的值。
+    final heartbeatAssignment = method.indexOf(
+      '_ohosLastHeartbeatAt = heartbeatAt;',
+    );
+    final nullCheck = method.indexOf('if (heartbeatAt != null)');
+    expect(heartbeatAssignment, greaterThan(nullCheck));
+  });
+
+  test('OHOS reconnects settle on a native playback confirmation', () {
+    final controller = File(
+      'lib/modules/live_room/live_room_controller.dart',
+    ).readAsStringSync();
+
+    // 三条确认路径：initialized/首帧、首帧回调、心跳兜底。
+    expect(
+      '_confirmOhosReconnect('.allMatches(controller).length,
+      greaterThanOrEqualTo(4),
+    );
+    // 超时兜底必须存在，否则确认信号不来时这次重连会被静默丢掉。
+    expect(controller, contains('flushIfExpired('));
+    // 换房与销毁都要清掉待确认记录与超时定时器。
+    expect(
+      '_ohosReconnectConfirmation.reset();'.allMatches(controller).length,
+      2,
+    );
+    expect(
+      '_ohosReconnectConfirmationTimer?.cancel();'.allMatches(controller).length,
+      greaterThanOrEqualTo(3),
+    );
+    // 两处重开记账点都不再按平台跳过。
+    expect(controller, isNot(contains('recordedReason != null && !Utils.isOhos')));
+    expect(
+      controller,
+      isNot(contains('!Utils.isOhos &&\n          automaticReconnectReason')),
+    );
+  });
+
+  test('endpoint reachability reuses the diagnose probe and expires', () {
+    final player = File(
+      'lib/modules/live_room/player/player_controller.dart',
+    ).readAsStringSync();
+
+    // 复用自动诊断已付出的探测，不新开探测循环：健康采样是每秒一次，
+    // 一次探测最坏要几秒。
+    expect(
+      'NetworkDiagnoseService.diagnosePlaybackUrl('.allMatches(player).length,
+      1,
+    );
+    expect(player, contains('recordPlaybackEndpointReachable('));
+    expect(player, contains('playbackResult.lost < playbackResult.samples'));
+    // 结论有有效期，且与探测冷却对齐：一个过期的"不可达"会压制评估器的
+    // catchupCacheDrain 归因，窗口越长误判机会越大。
+    expect(
+      player,
+      contains('endpointReachabilityTtl = Duration(seconds: 30)'),
+    );
+    expect(player, contains('resetPlaybackEndpointReachable();'));
+  });
 }

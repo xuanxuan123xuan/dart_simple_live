@@ -62,9 +62,12 @@ import 'package:window_manager/window_manager.dart';
 export 'live_room_auto_quality_buffer_tracker.dart'
     show LiveRoomAutoQualityBufferTracker;
 export 'ohos_playback_degrade_evidence.dart' show OhosPlaybackDegradeEvidence;
+export 'ohos_reconnect_confirmation.dart'
+    show OhosReconnectConfirmation, OhosReconnectOutcome;
 
 import 'live_room_auto_quality_buffer_tracker.dart';
 import 'ohos_playback_degrade_evidence.dart';
+import 'ohos_reconnect_confirmation.dart';
 import 'kuaishou_playback_recovery_tracker.dart';
 
 @visibleForTesting
@@ -779,6 +782,16 @@ class LiveRoomController extends PlayerController
       KuaishouPlaybackRecoveryTracker();
   final OhosPlaybackSignalAdapter _ohosPlaybackSignalAdapter =
       OhosPlaybackSignalAdapter();
+
+  /// 鸿蒙自动重连的确认配对器。
+  ///
+  /// 鸿蒙的重开只是同步请求 widget 重建，必须等原生播放确认才算重连完成，
+  /// 否则恢复耗时只反映"请求发出"。见 [OhosReconnectConfirmation]。
+  final OhosReconnectConfirmation _ohosReconnectConfirmation =
+      OhosReconnectConfirmation();
+
+  /// 待确认重连的超时兜底。原生确认到达即取消。
+  Timer? _ohosReconnectConfirmationTimer;
   DateTime? _lastAutoQualityDownAt;
   final Set<int> _ohosFailedLineIndices = <int>{};
   StreamSubscription<bool>? _autoQualityBufferingSubscription;
@@ -916,6 +929,9 @@ class LiveRoomController extends PlayerController
     }
     _autoQualityBufferTracker.reset();
     _ohosDegradeEvidence.reset();
+    _ohosReconnectConfirmationTimer?.cancel();
+    _ohosReconnectConfirmationTimer = null;
+    _ohosReconnectConfirmation.reset();
     _autoQualityWarmupStartedForRoom = false;
     _lastAutoQualityDownAt = null;
     _ohosFailedLineIndices.clear();
@@ -1874,6 +1890,82 @@ class LiveRoomController extends PlayerController
         now.difference(lastHeartbeatAt) < ohosHeartbeatStallTimeout;
   }
 
+  /// 挂起一次鸿蒙自动重连，等原生播放确认后再写入健康事件。
+  ///
+  /// 与 mpv 侧的差别：mpv 的 `player.open()` resolve 时链路已经建立，
+  /// 所以那边在重开返回处直接记账；鸿蒙的重开返回只代表请求已发出。
+  ///
+  /// 调用时机要求：必须在 `initPlaylist` 推进 [ohosPlayerRevision] 之后、
+  /// 且在下一帧 widget 重建之前调用（当前两者之间没有 await，成立）。
+  /// 万一将来插入 await 使 initialized 先到，心跳与 15s 超时仍会兜住这次重连，
+  /// 只是恢复耗时会偏长——次数不会丢。
+  void _armOhosReconnect({
+    required LiveReconnectReason reason,
+    required bool? hostChanged,
+    required DateTime? startedAt,
+  }) {
+    final now = DateTime.now();
+    final displaced = _ohosReconnectConfirmation.arm(
+      reason: reason,
+      hostChanged: hostChanged,
+      startedAt: startedAt,
+      now: now,
+      playerGeneration: ohosPlayerRevision.value,
+    );
+    if (displaced != null) {
+      _recordOhosReconnectOutcome(displaced);
+    }
+    _ohosReconnectConfirmationTimer?.cancel();
+    _ohosReconnectConfirmationTimer = Timer(
+      _ohosReconnectConfirmation.confirmationTimeout,
+      () {
+        if (_roomDisposed) {
+          return;
+        }
+        final expired = _ohosReconnectConfirmation.flushIfExpired(
+          DateTime.now(),
+        );
+        if (expired != null) {
+          _recordOhosReconnectOutcome(expired);
+        }
+      },
+    );
+  }
+
+  /// 原生播放确认到达（initialized / 首帧 / 心跳任一），定稿待确认重连。
+  void _confirmOhosReconnect(int playerGeneration) {
+    if (_ohosReconnectConfirmation.pending == null) {
+      return;
+    }
+    final outcome = _ohosReconnectConfirmation.confirm(
+      playerGeneration: playerGeneration,
+      now: DateTime.now(),
+    );
+    if (outcome == null) {
+      return;
+    }
+    _ohosReconnectConfirmationTimer?.cancel();
+    _ohosReconnectConfirmationTimer = null;
+    _recordOhosReconnectOutcome(outcome);
+  }
+
+  void _recordOhosReconnectOutcome(OhosReconnectOutcome outcome) {
+    Log.d(
+      '鸿蒙自动重连记账 reason=${outcome.reason.name} '
+      'confirmed=${outcome.confirmed} '
+      'hostChanged=${outcome.hostChanged} '
+      'recovery=${outcome.recoveryDuration?.inMilliseconds ?? "unknown"}ms '
+      'playerGeneration=${outcome.playerGeneration}',
+    );
+    recordLiveLinkHealthEvent(
+      LiveLinkEventType.cdnReconnect,
+      at: outcome.occurredAt,
+      reconnectReason: outcome.reason,
+      reconnectHostChanged: outcome.hostChanged,
+      reconnectRecoveryDuration: outcome.recoveryDuration,
+    );
+  }
+
   /// 接收鸿蒙播放器的原生遥测（心跳与缓存深度）。
   void updateOhosTelemetryForGeneration(
     int playerGeneration,
@@ -1884,7 +1976,16 @@ class LiveRoomController extends PlayerController
         playerGeneration != ohosPlayerRevision.value) {
       return;
     }
-    _ohosLastHeartbeatAt = telemetry.heartbeatAt;
+    // 只有原生时钟跳动算心跳。缓存事件不带 heartbeatAt，避免"缓冲还在报深度"
+    // 被当成"播放器还活着"。
+    final heartbeatAt = telemetry.heartbeatAt;
+    if (heartbeatAt != null) {
+      _ohosLastHeartbeatAt = heartbeatAt;
+      recordOhosNativeHeartbeat(heartbeatAt);
+      // 兜底确认路径：有些直播源 currentTime 恒为 -1，首帧/进度可能都不来，
+      // 心跳是唯一能证明这代播放器真的活了的信号。
+      _confirmOhosReconnect(playerGeneration);
+    }
     if (telemetry.cacheDuration != null) {
       recordOhosDemuxerCacheDuration(telemetry.cacheDuration);
     }
@@ -1922,16 +2023,15 @@ class LiveRoomController extends PlayerController
           );
           break;
         case OhosPlaybackSignalType.firstFrame:
-        case OhosPlaybackSignalType.nativeError:
         case OhosPlaybackSignalType.initialized:
+          _logOhosPlaybackSignal(signal);
+          // AVPlayer 已接受地址并报出尺寸/时长，或已经出画：
+          // 这才是"重开真的成功了"，可以给待确认重连定稿。
+          _confirmOhosReconnect(signal.playerGeneration);
+          break;
+        case OhosPlaybackSignalType.nativeError:
         case OhosPlaybackSignalType.sourceReopened:
-          Log.d(
-            'OHOS playback signal=${signal.type.name} '
-            'roomGeneration=${signal.roomGeneration} '
-            'playerGeneration=${signal.playerGeneration} '
-            'source=${signal.sourceFingerprint} '
-            'error=${signal.nativeErrorCode ?? "none"}',
-          );
+          _logOhosPlaybackSignal(signal);
           break;
         case OhosPlaybackSignalType.playing:
         case OhosPlaybackSignalType.positionAdvanced:
@@ -1950,12 +2050,24 @@ class LiveRoomController extends PlayerController
     updateOhosVideoState(value);
   }
 
+  void _logOhosPlaybackSignal(OhosPlaybackSignal signal) {
+    Log.d(
+      'OHOS playback signal=${signal.type.name} '
+      'roomGeneration=${signal.roomGeneration} '
+      'playerGeneration=${signal.playerGeneration} '
+      'source=${signal.sourceFingerprint} '
+      'error=${signal.nativeErrorCode ?? "none"}',
+    );
+  }
+
   void updateOhosFirstFrameForGeneration(int playerGeneration) {
     if (!Utils.isOhos ||
         _roomDisposed ||
         playerGeneration != ohosPlayerRevision.value) {
       return;
     }
+    // 首帧是最强的播放确认，即使 markFirstFrame 已去重也要走确认。
+    _confirmOhosReconnect(playerGeneration);
     final signal = _ohosPlaybackSignalAdapter.markFirstFrame(
       roomGeneration: _loadGeneration,
       playerGeneration: playerGeneration,
@@ -1963,12 +2075,7 @@ class LiveRoomController extends PlayerController
     if (signal == null) {
       return;
     }
-    Log.d(
-      'OHOS playback signal=${signal.type.name} '
-      'roomGeneration=${signal.roomGeneration} '
-      'playerGeneration=${signal.playerGeneration} '
-      'source=${signal.sourceFingerprint}',
-    );
+    _logOhosPlaybackSignal(signal);
   }
 
   void _refreshDanmakuOverlay(String reason) {
@@ -2252,6 +2359,9 @@ class LiveRoomController extends PlayerController
     liveRoomRecommendationScrollController.dispose();
     autoExitTimer?.cancel();
     _autoQualityBufferingSubscription?.cancel();
+    _ohosReconnectConfirmationTimer?.cancel();
+    _ohosReconnectConfirmationTimer = null;
+    _ohosReconnectConfirmation.reset();
     _resetKuaishouPlaybackRecoverySession();
     _superChatRefreshTimer?.cancel();
     _liveEventFlowTimer?.cancel();
@@ -2860,22 +2970,29 @@ class LiveRoomController extends PlayerController
       if (userInitiatedQualityChange && _hasActivePlaybackSession) {
         recordLiveLinkHealthEvent(LiveLinkEventType.qualityChangedByUser);
       }
-      if (!Utils.isOhos &&
-          automaticReconnectReason != null &&
-          reconnectStartedAt != null) {
-        final completedAt = DateTime.now();
-        recordLiveLinkHealthEvent(
-          LiveLinkEventType.cdnReconnect,
-          at: completedAt,
-          reconnectReason: automaticReconnectReason,
-          reconnectHostChanged: didLivePlaybackHostChange(
-            previousSource,
-            _selectedPlaybackSource,
-          ),
-          reconnectRecoveryDuration: completedAt.difference(
-            reconnectStartedAt,
-          ),
+      if (automaticReconnectReason != null && reconnectStartedAt != null) {
+        final hostChanged = didLivePlaybackHostChange(
+          previousSource,
+          _selectedPlaybackSource,
         );
+        if (Utils.isOhos) {
+          _armOhosReconnect(
+            reason: automaticReconnectReason,
+            hostChanged: hostChanged,
+            startedAt: reconnectStartedAt,
+          );
+        } else {
+          final completedAt = DateTime.now();
+          recordLiveLinkHealthEvent(
+            LiveLinkEventType.cdnReconnect,
+            at: completedAt,
+            reconnectReason: automaticReconnectReason,
+            reconnectHostChanged: hostChanged,
+            reconnectRecoveryDuration: completedAt.difference(
+              reconnectStartedAt,
+            ),
+          );
+        }
       }
       _scheduleAutoSelectFastestLine(
         requestRevision: requestRevision,
@@ -3027,6 +3144,7 @@ class LiveRoomController extends PlayerController
       _lastOhosPlaybackPosition = Duration.zero;
       // 新的一代播放器拥有全新的时钟：旧心跳会把“从未起播”伪装成健康。
       _ohosLastHeartbeatAt = null;
+      resetOhosNativeHeartbeat();
       final nextPlayerGeneration = ohosPlayerRevision.value + 1;
       final assigned = _ohosPlaybackSignalAdapter.beginSource(
         roomGeneration: loadGeneration,
@@ -3279,21 +3397,32 @@ class LiveRoomController extends PlayerController
           (playbackUrlRefreshed
               ? LiveReconnectReason.playbackUrlRefresh
               : null);
-      if (recordedReason != null && !Utils.isOhos) {
-        final completedAt = DateTime.now();
-        recordLiveLinkHealthEvent(
-          LiveLinkEventType.cdnReconnect,
-          at: completedAt,
-          reconnectReason: recordedReason,
-          reconnectHostChanged: reconnectHostChanged ??
-              didLivePlaybackHostChange(
-                previousSource,
-                _selectedPlaybackSource,
-              ),
-          reconnectRecoveryDuration: reconnectStartedAt == null
-              ? null
-              : completedAt.difference(reconnectStartedAt),
-        );
+      if (recordedReason != null) {
+        final hostChanged = reconnectHostChanged ??
+            didLivePlaybackHostChange(
+              previousSource,
+              _selectedPlaybackSource,
+            );
+        if (Utils.isOhos) {
+          // 鸿蒙的 initPlaylist 返回时 AVPlayer 还没接受地址，
+          // 挂起等原生确认再记账，否则恢复耗时会偏短。
+          _armOhosReconnect(
+            reason: recordedReason,
+            hostChanged: hostChanged,
+            startedAt: reconnectStartedAt,
+          );
+        } else {
+          final completedAt = DateTime.now();
+          recordLiveLinkHealthEvent(
+            LiveLinkEventType.cdnReconnect,
+            at: completedAt,
+            reconnectReason: recordedReason,
+            reconnectHostChanged: hostChanged,
+            reconnectRecoveryDuration: reconnectStartedAt == null
+                ? null
+                : completedAt.difference(reconnectStartedAt),
+          );
+        }
       }
       return true;
     } catch (e, stackTrace) {

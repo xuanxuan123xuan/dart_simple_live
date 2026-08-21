@@ -31,13 +31,19 @@ typedef OhosVideoTelemetryChanged = void Function(
 @immutable
 class OhosPlaybackTelemetry {
   const OhosPlaybackTelemetry({
-    required this.heartbeatAt,
+    this.heartbeatAt,
     this.position,
     this.cacheDuration,
   });
 
-  /// When the most recent native heartbeat arrived.
-  final DateTime heartbeatAt;
+  /// When the most recent native clock tick arrived, or null when this
+  /// generation has never produced one.
+  ///
+  /// Only `TIME_UPDATE` sets this. Cache telemetry deliberately leaves it
+  /// untouched, because a buffer that no longer drains keeps reporting depth
+  /// long after the clock has died — treating that as a heartbeat would
+  /// disguise a dead player as a healthy one.
+  final DateTime? heartbeatAt;
 
   /// Timeline reported alongside the heartbeat, when AVPlayer exposes one.
   final Duration? position;
@@ -391,7 +397,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     widget.onTelemetry?.call(
       widget.revision,
       OhosPlaybackTelemetry(
-        heartbeatAt: _lastHeartbeatAt ?? now,
+        heartbeatAt: _lastHeartbeatAt,
         position: event.position,
         cacheDuration: _lastCacheDuration,
       ),
