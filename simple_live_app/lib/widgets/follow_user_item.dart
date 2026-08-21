@@ -402,6 +402,11 @@ class FollowUserItem extends StatelessWidget {
                       borderColor: cardColor,
                     ),
                   ),
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: _buildCoverActions(context),
+                  ),
                 ],
               ),
               Expanded(
@@ -415,14 +420,18 @@ class FollowUserItem extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(width: avatarNameOffset),
-                          if (showHeaderUserName)
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 1),
+                      // 操作按钮已移到封面右上角，这一行整宽留给主播名；未开播时
+                      // 名字下移到标题位，这里仅为头像下沉预留高度。
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          minHeight: avatarOverlap + 4,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            const SizedBox(width: avatarNameOffset),
+                            if (showHeaderUserName)
+                              Expanded(
                                 child: Text(
                                   item.userName,
                                   maxLines: 1,
@@ -433,17 +442,11 @@ class FollowUserItem extends StatelessWidget {
                                     height: 1.05,
                                   ),
                                 ),
-                              ),
-                            )
-                          else
-                            const Spacer(),
-                          if (showHeaderUserName) const SizedBox(width: 6),
-                          _buildActionArea(
-                            context,
-                            compact: true,
-                            vertical: false,
-                          ),
-                        ],
+                              )
+                            else
+                              const Spacer(),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Flexible(
@@ -485,15 +488,7 @@ class FollowUserItem extends StatelessWidget {
                               ),
                             ),
                           ],
-                          if (showSpecialMark && item.isSpecialFollow)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 6),
-                              child: Icon(
-                                Icons.star,
-                                color: Colors.amber,
-                                size: 15,
-                              ),
-                            ),
+                          // 特别关注状态由封面右上角的星标按钮呈现，此处不再重复。
                         ],
                       ),
                     ],
@@ -503,6 +498,77 @@ class FollowUserItem extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// 封面右上角的操作条：特别关注 + 取关。
+  ///
+  /// 放在封面上而非正文，是为了让名字行拿到整宽（小屏开启星标后名字会被挤成
+  /// 省略号），同时不受正文行高约束，点击区可以保持 36px。
+  Widget _buildCoverActions(BuildContext context) {
+    const buttonSize = 36.0;
+    final children = <Widget>[
+      if (showSpecialMark && onSpecialTap != null)
+        _buildCoverActionButton(
+          size: buttonSize,
+          tooltip: item.isSpecialFollow ? "取消特别关注" : "特别关注",
+          onPressed: onSpecialTap,
+          icon: item.isSpecialFollow ? Icons.star : Icons.star_border,
+          color: item.isSpecialFollow ? Colors.amber : Colors.white,
+        )
+      else if (showSpecialMark && item.isSpecialFollow)
+        const SizedBox.square(
+          dimension: buttonSize,
+          child: Center(
+            child: Icon(Icons.star, color: Colors.amber, size: 18),
+          ),
+        ),
+      if (onRemove != null)
+        _buildCoverActionButton(
+          size: buttonSize,
+          tooltip: "取消关注",
+          onPressed: onRemove,
+          icon: Remix.dislike_line,
+          color: Colors.white,
+        ),
+    ];
+    if (children.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(82),
+        borderRadius: BorderRadius.circular(buttonSize / 2),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: children,
+      ),
+    );
+  }
+
+  Widget _buildCoverActionButton({
+    required double size,
+    required String tooltip,
+    required IconData icon,
+    required Color color,
+    required Function()? onPressed,
+  }) {
+    return SizedBox.square(
+      dimension: size,
+      child: IconButton(
+        tooltip: tooltip,
+        iconSize: 18,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints(),
+        style: IconButton.styleFrom(
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: const CircleBorder(),
+        ),
+        onPressed: onPressed,
+        icon: Icon(icon, color: color),
       ),
     );
   }
@@ -747,6 +813,8 @@ class FollowUserItem extends StatelessWidget {
     required bool vertical,
   }) {
     final iconSize = compact ? 18.0 : 20.0;
+    // M3 的 IconButton 以 minimumSize(48) + visualDensity 结算尺寸，下面的
+    // constraints 不生效，压到 28px 必须走 tapTargetSize.shrinkWrap。
     Widget constrainVerticalAction(Widget child) {
       return vertical ? SizedBox.square(dimension: 28, child: child) : child;
     }

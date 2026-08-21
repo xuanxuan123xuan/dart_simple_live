@@ -358,9 +358,11 @@ class _FollowUserPageState extends State<FollowUserPage> {
       final cardWidth = availableWidth / crossAxisCount;
       final coverHeight = cardWidth * 9 / 16;
       final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+      // 正文高度按内容实测：头像下沉 20 + 名字行 + 标题行 + 平台行 + 上下留白。
+      // 操作按钮已浮到封面右上角，不再占正文高度。
       final bodyExtent = mobile
-          ? (96.0 + (textScale - 1.0) * 28.0).clamp(96.0, 116.0)
-          : (98.0 + (textScale - 1.0) * 28.0).clamp(98.0, 120.0);
+          ? (72.0 + (textScale - 1.0) * 28.0).clamp(72.0, 94.0)
+          : (74.0 + (textScale - 1.0) * 28.0).clamp(74.0, 96.0);
       final cardExtent =
           showLiveCover ? coverHeight + bodyExtent : (mobile ? 220.0 : 228.0);
       return _FollowLayoutSpec(

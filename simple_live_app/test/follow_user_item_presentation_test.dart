@@ -260,6 +260,108 @@ void main() {
     }
   });
 
+  testWidgets('covered card floats actions on the cover and frees the name', (
+    tester,
+  ) async {
+    // 操作按钮若留在正文，M3 IconButton 会把名字行撑到 40px 并在名字与标题间
+    // 留下大段空白；星标开启后两个按钮还会把窄屏名字挤成省略号。
+    for (final textScale in <double>[1.0, 1.3, 2.0]) {
+      for (final cardWidth in <double>[146.0, 191.5]) {
+        final bodyExtent = (72.0 + (textScale - 1.0) * 28.0).clamp(72.0, 94.0);
+        final coverHeight = cardWidth * 9 / 16;
+        // 名字取足够长的串，确保它会填满可用宽度而非按内容收缩。
+        const longName = '主播名字很长很长很长很长';
+        final item = _followUser()
+          ..userName = longName
+          ..face = 'asset://assets/images/bilibili.png'
+          ..roomCover = 'asset://assets/images/logo.png'
+          ..isSpecialFollow = true
+          ..liveStatus.value = 2;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MediaQuery(
+              data: MediaQueryData(
+                textScaler: TextScaler.linear(textScale),
+              ),
+              child: Scaffold(
+                body: Center(
+                  child: SizedBox(
+                    width: cardWidth,
+                    height: coverHeight + bodyExtent,
+                    child: FollowUserItem(
+                      item: item,
+                      style: FollowUserItemStyle.card,
+                      showLiveCover: true,
+                      showSpecialMark: true,
+                      onSpecialTap: () {},
+                      onRemove: () {},
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        final reason = 'scale=$textScale width=$cardWidth';
+        expect(tester.takeException(), isNull, reason: reason);
+
+        final cardRect = tester.getRect(find.byType(FollowUserItem));
+        final removeBtn = tester.getRect(
+          find.ancestor(
+            of: find.byIcon(Remix.dislike_line),
+            matching: find.byType(IconButton),
+          ),
+        );
+        final starBtn = tester.getRect(
+          find.ancestor(
+            of: find.byIcon(Icons.star),
+            matching: find.byType(IconButton),
+          ),
+        );
+
+        // 两个按钮并排浮在封面右上角，不占正文高度，点击区保持 36px。
+        expect(removeBtn.height, 36, reason: reason);
+        expect(starBtn.height, 36, reason: reason);
+        expect(starBtn.center.dy, closeTo(removeBtn.center.dy, 0.01),
+            reason: reason);
+        expect(
+          removeBtn.bottom,
+          lessThanOrEqualTo(cardRect.top + coverHeight),
+          reason: reason,
+        );
+        expect(
+          removeBtn.right,
+          lessThanOrEqualTo(cardRect.right),
+          reason: reason,
+        );
+        expect(starBtn.left, greaterThanOrEqualTo(cardRect.left),
+            reason: reason);
+
+        // 特别关注状态只呈现一次，平台行不再重复画星标。
+        expect(find.byIcon(Icons.star), findsOneWidget, reason: reason);
+
+        // 名字行拿到整宽：卡片内宽减去头像占位，不再被按钮切掉 56px。
+        final nameRect = tester.getRect(find.text(longName));
+        expect(
+          nameRect.width,
+          closeTo(cardWidth - 12 * 2 - (44 + 8), 0.01),
+          reason: reason,
+        );
+
+        // 名字行与标题之间不得再出现大段空白。
+        final titleRect = tester.getRect(find.text('直播间'));
+        expect(
+          titleRect.top - nameRect.bottom,
+          inInclusiveRange(0, 14),
+          reason: reason,
+        );
+      }
+    }
+  });
+
   testWidgets('hidden special action leaves remove action vertically centered',
       (
     tester,
