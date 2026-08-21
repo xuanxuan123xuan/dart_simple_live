@@ -67,6 +67,10 @@ export class VideoPlayer {
   private prepared: boolean = false;
   private firstFrameRendered: boolean = false;
   private disposed: boolean = false;
+  // HarmonyOS AVPlayer reports currentTime === -1 for sources whose timeline it
+  // cannot expose (observed on HTTP-FLV live). TIME_UPDATE still fires with a
+  // usable clock there, so keep its last value as the position fallback.
+  private lastKnownTimeMs: number = -1;
 
   constructor(playerModel: PlayerModel, textureEntry: SurfaceTextureEntry, rawFile: resourceManager.RawFileDescriptor | null, url: string | null, eventChannel: EventChannel, AudioFocus: Boolean, headers: Record<string, string> | null) {
     this.playerModel = playerModel;
@@ -134,6 +138,9 @@ export class VideoPlayer {
     this.sourceKind = this.resolveSourceKind();
     this.prepared = false;
     this.firstFrameRendered = false;
+    // The next source owns a fresh timeline; a stale fallback would otherwise
+    // read as progress and mask a source that never starts.
+    this.lastKnownTimeMs = -1;
   }
 
   private async assignMediaSourceIfNeeded(generation: number): Promise<void> {
@@ -252,10 +259,20 @@ export class VideoPlayer {
     });
 
     this.avPlayer.on(Events.TIME_UPDATE, (time: number) => {
+      if (this.disposed || this.avPlayer !== boundPlayer) {
+        return;
+      }
+      if (time >= 0) {
+        this.lastKnownTimeMs = time;
+      }
       this.initProgress(time);
+      this.sendPlaybackTime(time);
     });
 
     this.avPlayer.on(Events.BUFFER_UPDATE, (infoType: media.BufferingInfoType, value: number) => {
+      if (this.disposed || this.avPlayer !== boundPlayer) {
+        return;
+      }
       this.sendBufferingUpdate(infoType, value);
     });
 
@@ -349,11 +366,17 @@ export class VideoPlayer {
   }
 
   getPosition(): number {
-    if (this.avPlayer !== null) {
-      return this.avPlayer.currentTime;
-    } else {
+    if (this.avPlayer === null) {
       return 0;
     }
+    const currentTime = this.avPlayer.currentTime;
+    // Prefer the live value. Only fall back when AVPlayer declines to report a
+    // timeline (-1), so a genuine live-window rewind still reaches Flutter and
+    // its discontinuity handling stays intact.
+    if (currentTime >= 0) {
+      return currentTime;
+    }
+    return this.lastKnownTimeMs >= 0 ? this.lastKnownTimeMs : 0;
   }
 
   /**
@@ -694,6 +717,24 @@ export class VideoPlayer {
     this.eventSink?.success(event);
   }
 
+  /// Liveness heartbeat carrying the AVPlayer clock.
+  ///
+  /// A live source may expose no usable position, which leaves the Flutter
+  /// progress watchdog blind. The arrival of this event is itself the evidence
+  /// that the native clock still advances, independent of the value.
+  sendPlaybackTime(timeMs: number): void {
+    // Emitted roughly once per second per player. Dropping it while detached
+    // keeps QueuingEventSink bounded; liveness resumes once Flutter listens.
+    if (this.eventSink?.hasDelegate() !== true) {
+      return;
+    }
+    let event: HashMap<string, Object> = new HashMap<string, Object>();
+    event.set("event", "playbackTime");
+    event.set("textureId", this.textureEntry.getTextureId());
+    event.set("timeMs", timeMs);
+    this.eventSink?.success(event);
+  }
+
   sendBufferingUpdate(infoType: media.BufferingInfoType, bufferingPosition: number): void {
     let event: HashMap<string, Object> = new HashMap<string, Object>();
     if (infoType == media.BufferingInfoType.BUFFERING_START) {
@@ -701,22 +742,38 @@ export class VideoPlayer {
     } else if (infoType == media.BufferingInfoType.BUFFERING_END) {
       event.set("event", "bufferingEnd");
     } else if (infoType == media.BufferingInfoType.CACHED_DURATION) {
+      // Periodic telemetry, unlike the start/end edges below: drop it while no
+      // listener is attached rather than growing the queue for that window.
+      if (this.eventSink?.hasDelegate() !== true) {
+        return;
+      }
+      // Cache depth in milliseconds. Reported twice on purpose: as telemetry
+      // for the health layer, and as video_player's buffered range.
       event.set("event", "cachedDuration");
-      // 与 bufferingUpdate 保持一致，带上实际缓存时长（毫秒）。
+      event.set("textureId", this.textureEntry.getTextureId());
+      event.set("durationMs", bufferingPosition);
+      this.eventSink?.success(event);
+
+      let bufferedEvent: HashMap<string, Object> = new HashMap<string, Object>();
+      bufferedEvent.set("event", "bufferingUpdate");
       let range: ArrayList<number> = new ArrayList<number>();
       range.add(0);
       range.add(bufferingPosition);
       let valuesList: ArrayList<ArrayList<number>> = new ArrayList<ArrayList<number>>();
       valuesList.add(range);
-      event.set("values", valuesList);
+      bufferedEvent.set("values", valuesList);
+      this.eventSink?.success(bufferedEvent);
+      return;
     } else {
-      event.set("event", "bufferingUpdate");
-      let range: ArrayList<number> = new ArrayList<number>();
-      range.add(0);
-      range.add(bufferingPosition);
-      let valuesList: ArrayList<ArrayList<number>> = new ArrayList<ArrayList<number>>();
-      valuesList.add(range);
-      event.set("values", valuesList);
+      if (this.eventSink?.hasDelegate() !== true) {
+        return;
+      }
+      // BUFFERING_PERCENT carries 0..100, not milliseconds. Reporting it as a
+      // buffered range used to hand video_player a 0..100 ms window, which
+      // understates the cache by three orders of magnitude.
+      event.set("event", "bufferingPercent");
+      event.set("textureId", this.textureEntry.getTextureId());
+      event.set("percent", bufferingPosition);
     }
     this.eventSink?.success(event);
   }

@@ -61,8 +61,10 @@ import 'package:window_manager/window_manager.dart';
 
 export 'live_room_auto_quality_buffer_tracker.dart'
     show LiveRoomAutoQualityBufferTracker;
+export 'ohos_playback_degrade_evidence.dart' show OhosPlaybackDegradeEvidence;
 
 import 'live_room_auto_quality_buffer_tracker.dart';
+import 'ohos_playback_degrade_evidence.dart';
 import 'kuaishou_playback_recovery_tracker.dart';
 
 @visibleForTesting
@@ -720,6 +722,12 @@ class LiveRoomController extends PlayerController
   int _onlineRefreshFailures = 0;
   DateTime? _ohosHealthyPlaybackSince;
   Duration _lastOhosPlaybackPosition = Duration.zero;
+
+  /// 最近一次原生心跳到达的时间。
+  ///
+  /// 鸿蒙 AVPlayer 对部分直播源不暴露时间轴（currentTime 恒为 -1），此时
+  /// position 永远不前进。心跳“有没有来”成为唯一可用的存活证据。
+  DateTime? _ohosLastHeartbeatAt;
   bool _autoPipAttempting = false;
 
   @override
@@ -759,6 +767,14 @@ class LiveRoomController extends PlayerController
 
   final LiveRoomAutoQualityBufferTracker _autoQualityBufferTracker =
       LiveRoomAutoQualityBufferTracker();
+
+  /// 鸿蒙专用的降级证据门槛。
+  ///
+  /// 鸿蒙走这条更严格的判定，而不是 [_autoQualityBufferTracker] 的两次边沿：
+  /// AVPlayer 在 HTTP-FLV 直播下会发出很短的 buffering 脉冲，按边沿计数会每隔
+  /// 一两分钟就切一次线路，而每次切线路都会重建播放器、整屏转圈。
+  final OhosPlaybackDegradeEvidence _ohosDegradeEvidence =
+      OhosPlaybackDegradeEvidence();
   final KuaishouPlaybackRecoveryTracker _kuaishouPlaybackRecoveryTracker =
       KuaishouPlaybackRecoveryTracker();
   final OhosPlaybackSignalAdapter _ohosPlaybackSignalAdapter =
@@ -792,10 +808,19 @@ class LiveRoomController extends PlayerController
       return;
     }
     final now = DateTime.now();
-    final shouldDegrade = _autoQualityBufferTracker.update(
-      buffering: buffering,
-      now: now,
-    );
+    // 鸿蒙用证据门槛，其他平台保持原有的边沿计数不变。
+    final bool shouldDegrade;
+    if (Utils.isOhos) {
+      shouldDegrade =
+          _ohosDegradeEvidence.update(buffering: buffering, now: now);
+      if (shouldDegrade) {
+        // update 命中后会清空证据，所以这里读的是清空前记下的快照。
+        Log.d('[ohos-degrade] 缓冲证据达标，准备切换线路/降画质');
+      }
+    } else {
+      shouldDegrade =
+          _autoQualityBufferTracker.update(buffering: buffering, now: now);
+    }
     if (!shouldDegrade) {
       return;
     }
@@ -890,6 +915,7 @@ class LiveRoomController extends PlayerController
       resetAutoNetworkDiagnosisSession();
     }
     _autoQualityBufferTracker.reset();
+    _ohosDegradeEvidence.reset();
     _autoQualityWarmupStartedForRoom = false;
     _lastAutoQualityDownAt = null;
     _ohosFailedLineIndices.clear();
@@ -1819,20 +1845,48 @@ class LiveRoomController extends PlayerController
       _lastOhosPlaybackPosition = value.position;
       return;
     }
-    if (!didOhosPlaybackTimelineProgress(
+    final now = DateTime.now();
+    final positionProgressed = didOhosPlaybackTimelineProgress(
       current: value.position,
       previous: _lastOhosPlaybackPosition,
-    )) {
+    );
+    if (positionProgressed) {
+      _lastOhosPlaybackPosition = value.position;
+    } else if (!_ohosHeartbeatLooksAlive(now)) {
+      // 时间轴不前进、心跳也没来：不能认定为健康播放。
       return;
     }
-    _lastOhosPlaybackPosition = value.position;
-    final now = DateTime.now();
     _ohosHealthyPlaybackSince ??= now;
     if (mediaErrorRetryCount > 0 &&
         now.difference(_ohosHealthyPlaybackSince!) >=
             const Duration(seconds: 20)) {
       Log.d("鸿蒙播放器已稳定播放，重置错误重试计数");
       mediaErrorRetryCount = 0;
+    }
+  }
+
+  /// 原生心跳是否表明播放器仍在推进。
+  ///
+  /// 心跳约每秒一次，这里给足容忍窗口，避免一次调度抖动就被判成不活。
+  bool _ohosHeartbeatLooksAlive(DateTime now) {
+    final lastHeartbeatAt = _ohosLastHeartbeatAt;
+    return lastHeartbeatAt != null &&
+        now.difference(lastHeartbeatAt) < ohosHeartbeatStallTimeout;
+  }
+
+  /// 接收鸿蒙播放器的原生遥测（心跳与缓存深度）。
+  void updateOhosTelemetryForGeneration(
+    int playerGeneration,
+    OhosPlaybackTelemetry telemetry,
+  ) {
+    if (!Utils.isOhos ||
+        _roomDisposed ||
+        playerGeneration != ohosPlayerRevision.value) {
+      return;
+    }
+    _ohosLastHeartbeatAt = telemetry.heartbeatAt;
+    if (telemetry.cacheDuration != null) {
+      recordOhosDemuxerCacheDuration(telemetry.cacheDuration);
     }
   }
 
@@ -2796,6 +2850,7 @@ class LiveRoomController extends PlayerController
       _autoQualityWarmupStartedForRoom = true;
       final now = DateTime.now();
       _autoQualityBufferTracker.beginWarmup(now);
+      _ohosDegradeEvidence.beginWarmup(now);
       _kuaishouPlaybackRecoveryTracker.beginWarmup(now);
     }
     // 重置播放器错误重试次数
@@ -2964,11 +3019,14 @@ class LiveRoomController extends PlayerController
       errorMsg.value = "";
       final now = DateTime.now();
       _autoQualityBufferTracker.beginWarmup(now);
+      _ohosDegradeEvidence.beginWarmup(now);
       await startLivePlaybackLightweightSampling(
         source: playUrls[currentLineIndex],
       );
       _ohosHealthyPlaybackSince = null;
       _lastOhosPlaybackPosition = Duration.zero;
+      // 新的一代播放器拥有全新的时钟：旧心跳会把“从未起播”伪装成健康。
+      _ohosLastHeartbeatAt = null;
       final nextPlayerGeneration = ohosPlayerRevision.value + 1;
       final assigned = _ohosPlaybackSignalAdapter.beginSource(
         roomGeneration: loadGeneration,
@@ -4982,19 +5040,28 @@ ${errorStackTrace ?? ""}''');
   ///
   /// 允许后台继续播放时，断流后 HLS 直播窗口会停滞，position 不再推进；
   /// 与 [updateOhosVideoState] 维护的最后健康进度对比即可发现假播放。
-  /// 从未有过进度时保守视为健康（交给正常 play() 路径）。
+  ///
+  /// 分层兜底：position 不可用（部分直播源 currentTime 恒为 -1）时退到原生心跳；
+  /// 两者都没有过任何证据时保守视为健康，交给正常 play() 路径，宁可漏判也不要
+  /// 把一路正常播放的画面重连掉。
   bool _ohosPlaybackLooksStalled(VideoPlayerController controller) {
     final value = controller.value;
     if (value.hasError) {
       return true;
     }
-    if (!value.isPlaying || _lastOhosPlaybackPosition <= Duration.zero) {
+    if (!value.isPlaying) {
       return false;
     }
-    return !didOhosPlaybackTimelineProgress(
-      current: value.position,
-      previous: _lastOhosPlaybackPosition,
-    );
+    if (_lastOhosPlaybackPosition > Duration.zero) {
+      return !didOhosPlaybackTimelineProgress(
+        current: value.position,
+        previous: _lastOhosPlaybackPosition,
+      );
+    }
+    if (_ohosLastHeartbeatAt != null) {
+      return !_ohosHeartbeatLooksAlive(DateTime.now());
+    }
+    return false;
   }
 
   @override

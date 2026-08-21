@@ -402,6 +402,11 @@ mixin PlayerMixin {
           value.isBuffering || !value.isInitialized,
           at: sampledAt,
         );
+        final ohosCacheSeconds = _ohosDemuxerCacheSeconds;
+        if (ohosCacheSeconds != null) {
+          _latestLivePlaybackCacheSampledAt = sampledAt;
+          _latestLivePlaybackCacheDurationSeconds = ohosCacheSeconds;
+        }
         _recordLiveLinkHealthSample(
           LiveLinkHealthSample(
             generation: generation,
@@ -412,6 +417,7 @@ mixin PlayerMixin {
             playbackSpeed: value.playbackSpeed,
             streamActive:
                 value.isInitialized && (value.isPlaying || value.isBuffering),
+            demuxerCacheSeconds: ohosCacheSeconds,
           ),
         );
         return;
@@ -639,6 +645,7 @@ mixin PlayerMixin {
     _lastLiveLatencyChaseAudioUnderrunAt = null;
     _latestLivePlaybackCacheSampledAt = null;
     _latestLivePlaybackCacheDurationSeconds = null;
+    _ohosDemuxerCacheSeconds = null;
     await _cancelLivePlaybackSamplingInfrastructure();
     _livePlaybackSource = null;
     _livePlaybackProtocol = null;
@@ -665,6 +672,7 @@ mixin PlayerMixin {
     _lastLiveLatencyChaseAudioUnderrunAt = null;
     _latestLivePlaybackCacheSampledAt = null;
     _latestLivePlaybackCacheDurationSeconds = null;
+    _ohosDemuxerCacheSeconds = null;
     await _cancelLivePlaybackSamplingInfrastructure();
     _livePlaybackSource = null;
     _livePlaybackProtocol = null;
@@ -693,6 +701,19 @@ mixin PlayerMixin {
   }
 
   VideoPlayerController? _ohosVideoController;
+
+  /// 鸿蒙原生上报的读取缓存深度（秒）。
+  ///
+  /// 没有它时，鸿蒙的健康采样只有 intake 一个可用维度，
+  /// [LiveLinkHealthEvaluator] 永远停在 insufficientData，评分无从计算。
+  double? _ohosDemuxerCacheSeconds;
+
+  /// 记录一次鸿蒙原生缓存深度上报。
+  void recordOhosDemuxerCacheDuration(Duration? cacheDuration) {
+    _ohosDemuxerCacheSeconds =
+        cacheDuration == null ? null : cacheDuration.inMilliseconds / 1000.0;
+  }
+
   final GlobalKey ohosPlayerWidgetKey =
       GlobalKey(debugLabel: 'ohos-native-player');
   final RxBool ohosPlaying = false.obs;

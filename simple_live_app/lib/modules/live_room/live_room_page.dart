@@ -719,6 +719,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   onControllerDisposed: controller.detachOhosVideoController,
                   onGenerationValueChanged:
                       controller.updateOhosVideoStateForGeneration,
+                  onTelemetry: controller.updateOhosTelemetryForGeneration,
                   onFirstFrame: controller.updateOhosFirstFrameForGeneration,
                   onCompleted: controller.mediaEnd,
                   initialVolume: controller.ohosVolume.value,

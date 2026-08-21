@@ -2,20 +2,72 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:simple_live_app/app/log.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_player_ohos/video_player_ohos.dart' as ohos_plugin;
 
-enum OhosPlaybackHealthIssue { bufferingTimeout, playbackStall }
+enum OhosPlaybackHealthIssue {
+  bufferingTimeout,
+  playbackStall,
+
+  /// Neither the timeline nor the native heartbeat has ever been observed, so
+  /// liveness cannot be judged. Reported for diagnostics only: the picture may
+  /// well be fine, and retrying would interrupt a stream that is playing.
+  playbackUnobservable,
+}
 
 typedef OhosVideoValueChanged = void Function(
   int playerGeneration,
   VideoPlayerValue value,
 );
 
+/// Native playback telemetry for one player generation.
+typedef OhosVideoTelemetryChanged = void Function(
+  int playerGeneration,
+  OhosPlaybackTelemetry telemetry,
+);
+
+/// Liveness and cache evidence gathered from the native AVPlayer.
+@immutable
+class OhosPlaybackTelemetry {
+  const OhosPlaybackTelemetry({
+    required this.heartbeatAt,
+    this.position,
+    this.cacheDuration,
+  });
+
+  /// When the most recent native heartbeat arrived.
+  final DateTime heartbeatAt;
+
+  /// Timeline reported alongside the heartbeat, when AVPlayer exposes one.
+  final Duration? position;
+
+  /// Depth of the native read-ahead cache, when reported.
+  final Duration? cacheDuration;
+}
+
 const ohosBufferingTimeout = Duration(seconds: 8);
 const ohosPlaybackStallTimeout = Duration(seconds: 12);
 const ohosFirstFrameTimeout = Duration(seconds: 12);
 
+/// A heartbeat fires about once per second, so this tolerates a long gap
+/// before concluding the native player has gone quiet.
+const ohosHeartbeatStallTimeout = Duration(seconds: 10);
+
+/// Grace period before declaring liveness unobservable, giving both the
+/// timeline and the heartbeat a fair chance to show up first.
+const ohosUnobservableGrace = Duration(seconds: 20);
+
+/// Classifies playback health from the strongest evidence available.
+///
+/// Evidence is layered, strongest first:
+///  1. the timeline advances — unambiguously healthy;
+///  2. the timeline is frozen but native heartbeats keep arriving — alive with
+///     no exposed timeline, which is normal for HTTP-FLV live on HarmonyOS;
+///  3. neither signal has ever appeared — unjudgeable, never a retry trigger.
+///
+/// Buffering keeps its own independent timer, since a player can be stuck
+/// buffering while its clock still ticks.
 @visibleForTesting
 OhosPlaybackHealthIssue? detectOhosPlaybackHealthIssue({
   required VideoPlayerValue value,
@@ -23,20 +75,42 @@ OhosPlaybackHealthIssue? detectOhosPlaybackHealthIssue({
   required DateTime? bufferingSince,
   required DateTime lastProgressAt,
   required bool hasObservedProgress,
+  DateTime? lastHeartbeatAt,
+  bool hasObservedHeartbeat = false,
+  DateTime? monitoringSince,
 }) {
-  if (value.isBuffering &&
-      bufferingSince != null &&
-      (now.difference(bufferingSince) >= ohosBufferingTimeout ||
-          (hasObservedProgress &&
-              now.difference(lastProgressAt) >= ohosPlaybackStallTimeout))) {
-    return OhosPlaybackHealthIssue.bufferingTimeout;
+  final bool liveClockStalled = hasObservedProgress
+      ? now.difference(lastProgressAt) >= ohosPlaybackStallTimeout
+      : hasObservedHeartbeat &&
+          lastHeartbeatAt != null &&
+          now.difference(lastHeartbeatAt) >= ohosHeartbeatStallTimeout;
+
+  if (value.isBuffering) {
+    if (bufferingSince != null &&
+        (now.difference(bufferingSince) >= ohosBufferingTimeout ||
+            liveClockStalled)) {
+      return OhosPlaybackHealthIssue.bufferingTimeout;
+    }
+    return null;
   }
-  if (!value.isBuffering &&
-      value.isPlaying &&
-      hasObservedProgress &&
-      now.difference(lastProgressAt) >= ohosPlaybackStallTimeout) {
+
+  if (!value.isPlaying) {
+    return null;
+  }
+
+  if (liveClockStalled) {
     return OhosPlaybackHealthIssue.playbackStall;
   }
+
+  // No timeline and no heartbeat ever seen. Report it so the cause is visible
+  // in logs instead of silently disabling every progress-based safeguard.
+  if (!hasObservedProgress &&
+      !hasObservedHeartbeat &&
+      monitoringSince != null &&
+      now.difference(monitoringSince) >= ohosUnobservableGrace) {
+    return OhosPlaybackHealthIssue.playbackUnobservable;
+  }
+
   return null;
 }
 
@@ -89,6 +163,7 @@ class OhosVideoPlayer extends StatefulWidget {
     this.onControllerDisposed,
     this.onValueChanged,
     this.onGenerationValueChanged,
+    this.onTelemetry,
     this.onFirstFrame,
     this.onCompleted,
     this.fit = BoxFit.contain,
@@ -104,6 +179,7 @@ class OhosVideoPlayer extends StatefulWidget {
   final ValueChanged<VideoPlayerController>? onControllerDisposed;
   final ValueChanged<VideoPlayerValue>? onValueChanged;
   final OhosVideoValueChanged? onGenerationValueChanged;
+  final OhosVideoTelemetryChanged? onTelemetry;
   final ValueChanged<int>? onFirstFrame;
   final VoidCallback? onCompleted;
   final BoxFit fit;
@@ -132,10 +208,17 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   Timer? _watchdogTimer;
   Timer? _firstFrameTimer;
   StreamSubscription<ohos_plugin.OhosFirstFrameEvent>? _firstFrameSubscription;
+  StreamSubscription<ohos_plugin.OhosPlaybackTelemetryEvent>?
+      _telemetrySubscription;
   DateTime? _bufferingSince;
   DateTime _lastProgressAt = DateTime.now();
   Duration _lastPosition = Duration.zero;
   bool _hasObservedProgress = false;
+  DateTime? _lastHeartbeatAt;
+  bool _hasObservedHeartbeat = false;
+  Duration? _lastCacheDuration;
+  DateTime? _monitoringSince;
+  bool _unobservableReported = false;
   bool _completionReported = false;
   bool _firstFrameRendered = false;
   VideoPlayerValue? _previousValue;
@@ -146,6 +229,10 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     _firstFrameSubscription =
         ohos_plugin.OhosVideoPlayer.firstFrameEvents.listen((event) {
       _handleNativeFirstFrame(event);
+    });
+    _telemetrySubscription =
+        ohos_plugin.OhosVideoPlayer.playbackTelemetryEvents.listen((event) {
+      _handleNativeTelemetry(event);
     });
     _initialize();
   }
@@ -264,9 +351,51 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     _lastProgressAt = DateTime.now();
     _lastPosition = Duration.zero;
     _hasObservedProgress = false;
+    // A new source owns a fresh clock; stale liveness would mask one that
+    // never starts.
+    _lastHeartbeatAt = null;
+    _hasObservedHeartbeat = false;
+    _lastCacheDuration = null;
+    _monitoringSince = null;
+    _unobservableReported = false;
     _completionReported = false;
     _firstFrameRendered = false;
     _previousValue = null;
+  }
+
+  void _handleNativeTelemetry(
+    ohos_plugin.OhosPlaybackTelemetryEvent event,
+  ) {
+    final controller = _controller;
+    if (!mounted || controller == null) {
+      return;
+    }
+    // This app pins a video_player fork whose texture id is the only stable
+    // key shared with the native per-texture EventChannel.
+    // ignore: invalid_use_of_visible_for_testing_member
+    if (event.textureId != controller.textureId) {
+      return;
+    }
+
+    final now = DateTime.now();
+    if (event.cacheDuration != null) {
+      _lastCacheDuration = event.cacheDuration;
+    }
+    // Only the clock tick proves the native player is alive. Cache telemetry
+    // can keep arriving from a buffer that no longer drains.
+    if (event.kind == ohos_plugin.OhosPlaybackTelemetryKind.playbackTime) {
+      _lastHeartbeatAt = now;
+      _hasObservedHeartbeat = true;
+    }
+
+    widget.onTelemetry?.call(
+      widget.revision,
+      OhosPlaybackTelemetry(
+        heartbeatAt: _lastHeartbeatAt ?? now,
+        position: event.position,
+        cacheDuration: _lastCacheDuration,
+      ),
+    );
   }
 
   void _handleNativeFirstFrame(ohos_plugin.OhosFirstFrameEvent event) {
@@ -306,6 +435,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
 
   void _startWatchdog() {
     _watchdogTimer?.cancel();
+    _monitoringSince = DateTime.now();
     _watchdogTimer = Timer.periodic(
       _watchdogInterval,
       (_) => _checkPlaybackHealth(),
@@ -326,50 +456,54 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
 
     final value = controller.value;
     final now = DateTime.now();
+
     if (value.isBuffering) {
       _bufferingSince ??= now;
-      if (detectOhosPlaybackHealthIssue(
-            value: value,
-            now: now,
-            bufferingSince: _bufferingSince,
-            lastProgressAt: _lastProgressAt,
-            hasObservedProgress: _hasObservedProgress,
-          ) ==
-          OhosPlaybackHealthIssue.bufferingTimeout) {
-        _reportError('播放器持续缓冲超过 ${ohosBufferingTimeout.inSeconds} 秒，正在重试');
+    } else {
+      _bufferingSince = null;
+
+      // Paused time must not count toward a later playback stall.
+      if (!value.isPlaying) {
+        _lastPosition = value.position;
+        _lastProgressAt = now;
+        return;
       }
-      return;
-    }
-    _bufferingSince = null;
 
-    // Paused time must not count toward a later playback stall.
-    if (!value.isPlaying) {
-      _lastPosition = value.position;
-      _lastProgressAt = now;
-      return;
+      if (didOhosPlaybackTimelineProgress(
+        current: value.position,
+        previous: _lastPosition,
+      )) {
+        _hasObservedProgress = true;
+        _lastPosition = value.position;
+        _lastProgressAt = now;
+        return;
+      }
     }
 
-    if (didOhosPlaybackTimelineProgress(
-      current: value.position,
-      previous: _lastPosition,
+    switch (detectOhosPlaybackHealthIssue(
+      value: value,
+      now: now,
+      bufferingSince: _bufferingSince,
+      lastProgressAt: _lastProgressAt,
+      hasObservedProgress: _hasObservedProgress,
+      lastHeartbeatAt: _lastHeartbeatAt,
+      hasObservedHeartbeat: _hasObservedHeartbeat,
+      monitoringSince: _monitoringSince,
     )) {
-      _hasObservedProgress = true;
-      _lastPosition = value.position;
-      _lastProgressAt = now;
-      return;
-    }
-
-    // Some live sources expose no timeline. Only use the progress watchdog
-    // after this source has advanced once; buffering still has its own timer.
-    if (detectOhosPlaybackHealthIssue(
-          value: value,
-          now: now,
-          bufferingSince: _bufferingSince,
-          lastProgressAt: _lastProgressAt,
-          hasObservedProgress: _hasObservedProgress,
-        ) ==
-        OhosPlaybackHealthIssue.playbackStall) {
-      _reportError('播放进度停止超过 ${ohosPlaybackStallTimeout.inSeconds} 秒，正在重试');
+      case OhosPlaybackHealthIssue.bufferingTimeout:
+        _reportError('播放器持续缓冲超过 ${ohosBufferingTimeout.inSeconds} 秒，正在重试');
+      case OhosPlaybackHealthIssue.playbackStall:
+        _reportError('播放进度停止超过 ${ohosPlaybackStallTimeout.inSeconds} 秒，正在重试');
+      case OhosPlaybackHealthIssue.playbackUnobservable:
+        // Deliberately not an error: the stream is very likely playing, and a
+        // retry here would interrupt a working picture for no reason.
+        if (!_unobservableReported) {
+          _unobservableReported = true;
+          Log.d('[ohos-player] 无法获取播放进度与心跳，已停用进度看门狗，'
+              '仅保留缓冲超时保护');
+        }
+      case null:
+        break;
     }
   }
 
@@ -390,6 +524,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     _watchdogTimer?.cancel();
     _firstFrameTimer?.cancel();
     _firstFrameSubscription?.cancel();
+    _telemetrySubscription?.cancel();
     final controller = _controller;
     final listener = _controllerListener;
     if (controller != null) {
