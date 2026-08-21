@@ -356,7 +356,7 @@ class AppUpdateService {
     if (parts.length != 3 || parts.any((item) => item == null)) {
       return 0;
     }
-    return parts[0]! * 10000 + parts[1]! * 100 + parts[2]!;
+    return parts[0]! * 1000 + parts[1]! * 100 + parts[2]!;
   }
 
   static Map<String, String> parseSha256(String body) {

@@ -69,7 +69,7 @@ Simple Live 会一直坚持**免费、开源、不向用户收费**。目前项�
 | Flutter | **3.41.x** | **3.41.x** |
 | Dart | **3.11.x** | **3.11.x** |
 | intl | **0.20.2** | **0.20.2** |
-| 版本号 | **1.13.2** | **1.13.3** |
+| 版本号 | **1.13.2** | **26.3.1** |
 | 定位 | 稳定版 | 测试版（新功能验证） |
 
 **dev 分支正在验证的内容**：
@@ -192,11 +192,13 @@ $FLUTTER_OHOS_ROOT/bin/flutter.bat build hap --release \
 major × 1000 + minor × 100 + patch
 ```
 
+其中 major 为两位年份（2026 即 `26`）；minor 为季度，取值 1～4；patch 为该季度内的发布序号，取值 0～99。
+
 修改版本后在 `simple_live_app` 目录执行：
 
 ```bash
 # 直接设置版本并同步所有派生文件
-dart run tool/app_version.dart set 1.14
+dart run tool/app_version.dart set 26.3.2
 ```
 
 ---
