@@ -57,7 +57,14 @@ void main() {
     ).readAsStringSync();
     final sync = File('lib/modules/sync/sync_page.dart').readAsStringSync();
 
-    expect(follow, contains('管理备份'));
+    // 关注页的入口改名为「数据管理」，并直接带 kFollowDataArgument 跳到
+    // 配置包页的关注分类，不再走 kSync 总入口。守的仍是同一条：
+    // 关注页只留一个数据入口，不散落导入/导出文本。
+    expect(follow, contains('数据管理'));
+    expect(follow, contains('RoutePath.kProfileBackup'));
+    expect(follow, contains('ProfileBackupController.kFollowDataArgument'));
+    expect(follow, isNot(contains('导出文本')));
+    expect(follow, isNot(contains('导入文本')));
     expect(shields, contains('管理备份'));
     expect(sync, contains('高级连接设置'));
     expect(sync, contains('配置包导入导出'));
