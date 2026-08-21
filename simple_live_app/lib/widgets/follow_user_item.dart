@@ -670,8 +670,6 @@ class FollowUserItem extends StatelessWidget {
                   coverImage,
                   fit: BoxFit.cover,
                   borderRadius: radius,
-                  cacheWidth: 640,
-                  cacheHeight: 360,
                   clearMemoryCacheWhenDispose: true,
                   imageCacheName: NetImage.liveCoverCacheName,
                   cacheMaxAge: const Duration(minutes: 10),
