@@ -53,7 +53,7 @@ class SyncPage extends StatelessWidget {
                 ListTile(
                   title: const Text("配置包导入导出"),
                   leading: const Icon(Remix.file_transfer_line),
-                  subtitle: const Text("跨平台迁移设置、关注、历史和屏蔽数据"),
+                  subtitle: const Text("按类别迁移设置、关注、历史和屏蔽数据"),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
                     Get.toNamed(RoutePath.kProfileBackup);

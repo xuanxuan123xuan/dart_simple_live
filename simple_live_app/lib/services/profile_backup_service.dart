@@ -42,32 +42,55 @@ class ProfileBackupService extends GetxService {
     LocalStorageService.kKuaishouAccountPoolState,
   };
 
-  Map<String, dynamic> exportProfileMap() {
-    final shieldPayload = _exportShieldValues();
-    final settingsPayload = _exportSettings();
-    final followUsers = DBService.instance
-        .getFollowList()
-        .map((item) => item.toJson())
-        .toList();
-    final followUserTags = DBService.instance
-        .getFollowTagList()
-        .map((item) => item.toJson())
-        .toList();
-    final histories =
-        DBService.instance.getHistores().map((item) => item.toJson()).toList();
+  Map<String, dynamic> exportProfileMap({
+    ProfileExportOptions options = const ProfileExportOptions(),
+  }) {
+    final shieldPayload = options.shields
+        ? _exportShieldValues()
+        : {
+            "raw": const [],
+            "keywords": const [],
+            "users": const [],
+            "userGroups": const <String, List<String>>{},
+          };
+    final settingsPayload =
+        options.settings ? _exportSettings() : <String, dynamic>{};
+    final accountsPayload =
+        options.accounts ? _exportAccounts() : {"items": const []};
+    final shieldPresetsPayload =
+        options.shieldPresets ? _exportShieldPresets() : const [];
+    final followUsers = options.follows
+        ? DBService.instance
+            .getFollowList()
+            .map((item) => item.toJson())
+            .toList()
+        : const [];
+    final followUserTags = options.follows
+        ? DBService.instance
+            .getFollowTagList()
+            .map((item) => item.toJson())
+            .toList()
+        : const [];
+    final histories = options.histories
+        ? DBService.instance
+            .getHistores()
+            .map((item) => item.toJson())
+            .toList()
+        : const [];
     return {
       "schema": schema,
       "schemaVersion": schemaVersion,
       "appVersion": Utils.packageInfo.version,
       "platform": Platform.operatingSystem,
       "exportedAt": DateTime.now().toIso8601String(),
-      "settings": settingsPayload,
-      "accounts": _exportAccounts(),
-      "danmuShield": shieldPayload,
-      "shieldPresets": _exportShieldPresets(),
-      "followUsers": followUsers,
-      "followUserTags": followUserTags,
-      "histories": histories,
+      "included": options.toJson(),
+      if (options.settings) "settings": settingsPayload,
+      if (options.accounts) "accounts": accountsPayload,
+      if (options.shields) "danmuShield": shieldPayload,
+      if (options.shieldPresets) "shieldPresets": shieldPresetsPayload,
+      if (options.follows) "followUsers": followUsers,
+      if (options.follows) "followUserTags": followUserTags,
+      if (options.histories) "histories": histories,
       "summary": {
         "settingCount": settingsPayload.length,
         "keywordShieldCount": (shieldPayload["keywords"] as List).length,
@@ -75,13 +98,17 @@ class ProfileBackupService extends GetxService {
         "followUserCount": followUsers.length,
         "followTagCount": followUserTags.length,
         "historyCount": histories.length,
-        "accountCount": (_exportAccounts()["items"] as List).length,
+        "shieldPresetCount": shieldPresetsPayload.length,
+        "accountCount": (accountsPayload["items"] as List).length,
       },
     };
   }
 
-  String exportProfileJson() {
-    return const JsonEncoder.withIndent("  ").convert(exportProfileMap());
+  String exportProfileJson({
+    ProfileExportOptions options = const ProfileExportOptions(),
+  }) {
+    return const JsonEncoder.withIndent("  ")
+        .convert(exportProfileMap(options: options));
   }
 
   Future<ProfileImportSummary> importProfileJson(
@@ -276,10 +303,12 @@ class ProfileBackupService extends GetxService {
         onProgress,
       );
     }
-    await _importAccounts(
-      payload["accounts"],
-      legacySettings: payload["settings"],
-    );
+    if (options.accounts) {
+      summary.accounts += await _importAccounts(
+        payload["accounts"],
+        legacySettings: payload["settings"],
+      );
+    }
     if (options.shieldPresets) {
       onProgress?.call(const SyncProgress(stage: "导入屏蔽预设"));
       await _importShieldPresets(
@@ -509,10 +538,11 @@ class ProfileBackupService extends GetxService {
     AppSettingsControllerSafe.reloadShields();
   }
 
-  Future<void> _importAccounts(
+  Future<int> _importAccounts(
     dynamic rawAccounts, {
     dynamic legacySettings,
   }) async {
+    var importedCount = 0;
     final items = rawAccounts is Map && rawAccounts["items"] is List
         ? rawAccounts["items"] as List
         : const [];
@@ -526,6 +556,7 @@ class ProfileBackupService extends GetxService {
       switch (siteId) {
         case Constant.kBiliBili:
           BiliBiliAccountService.instance.setCookie(cookie);
+          importedCount++;
           break;
         case Constant.kDouyin:
           if (cookie.isEmpty) {
@@ -533,6 +564,7 @@ class ProfileBackupService extends GetxService {
           } else {
             DouyinAccountService.instance.setCookie(cookie);
           }
+          importedCount++;
           break;
         case Constant.kKuaishou:
           importedKuaishou = true;
@@ -540,6 +572,7 @@ class ProfileBackupService extends GetxService {
             item,
             legacySettings: legacySettings,
           );
+          importedCount++;
           break;
       }
     }
@@ -563,8 +596,10 @@ class ProfileBackupService extends GetxService {
           },
           legacySettings: legacySettings,
         );
+        importedCount++;
       }
     }
+    return importedCount;
   }
 
   Future<void> _importFollowUsers(
@@ -681,8 +716,41 @@ class ProfileBackupService extends GetxService {
   }
 }
 
+class ProfileExportOptions {
+  final bool settings;
+  final bool accounts;
+  final bool shields;
+  final bool shieldPresets;
+  final bool follows;
+  final bool histories;
+
+  const ProfileExportOptions({
+    this.settings = true,
+    this.accounts = true,
+    this.shields = true,
+    this.shieldPresets = true,
+    this.follows = true,
+    this.histories = true,
+  });
+
+  bool get hasSelection =>
+      settings || accounts || shields || shieldPresets || follows || histories;
+
+  Map<String, bool> toJson() {
+    return {
+      "settings": settings,
+      "accounts": accounts,
+      "shields": shields,
+      "shieldPresets": shieldPresets,
+      "follows": follows,
+      "histories": histories,
+    };
+  }
+}
+
 class ProfileImportOptions {
   final bool settings;
+  final bool accounts;
   final bool shields;
   final bool shieldPresets;
   final bool follows;
@@ -690,15 +758,20 @@ class ProfileImportOptions {
 
   const ProfileImportOptions({
     this.settings = true,
+    this.accounts = true,
     this.shields = true,
     this.shieldPresets = true,
     this.follows = true,
     this.histories = true,
   });
+
+  bool get hasSelection =>
+      settings || accounts || shields || shieldPresets || follows || histories;
 }
 
 class ProfileImportSummary {
   int settings = 0;
+  int accounts = 0;
   int shields = 0;
   int shieldPresets = 0;
   int followUsers = 0;
@@ -708,7 +781,7 @@ class ProfileImportSummary {
 
   String get message {
     final base =
-        "设置 $settings 项，屏蔽 $shields 项，预设 $shieldPresets 个，关注 $followUsers 个，标签 $followTags 个，历史 $histories 条";
+        "设置 $settings 项，账号 $accounts 个，屏蔽 $shields 项，预设 $shieldPresets 个，关注 $followUsers 个，标签 $followTags 个，历史 $histories 条";
     return skipped > 0 ? "$base，跳过异常 $skipped 条" : base;
   }
 }

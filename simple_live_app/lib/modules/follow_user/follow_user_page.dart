@@ -8,6 +8,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/modules/follow_user/follow_user_controller.dart';
+import 'package:simple_live_app/modules/sync/profile_backup/profile_backup_controller.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
@@ -117,14 +118,11 @@ class _FollowUserPageState extends State<FollowUserPage> {
             tooltip: "更多",
             onSelected: (value) {
               switch (value) {
-                case "export_text":
-                  FollowService.instance.exportText();
-                  break;
-                case "input_text":
-                  FollowService.instance.inputText();
-                  break;
-                case "backup":
-                  Get.toNamed(RoutePath.kSync);
+                case "data":
+                  Get.toNamed(
+                    RoutePath.kProfileBackup,
+                    arguments: ProfileBackupController.kFollowDataArgument,
+                  );
                   break;
                 case "tags":
                   showTagsManager(controller);
@@ -133,32 +131,12 @@ class _FollowUserPageState extends State<FollowUserPage> {
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
-                value: "export_text",
+                value: "data",
                 child: Row(
                   children: [
-                    Icon(Remix.text),
+                    Icon(Remix.file_transfer_line),
                     SizedBox(width: 12),
-                    Text("导出文本"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: "input_text",
-                child: Row(
-                  children: [
-                    Icon(Remix.file_text_line),
-                    SizedBox(width: 12),
-                    Text("导入文本"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: "backup",
-                child: Row(
-                  children: [
-                    Icon(Remix.archive_line),
-                    SizedBox(width: 12),
-                    Text("管理备份"),
+                    Text("数据管理"),
                   ],
                 ),
               ),

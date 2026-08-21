@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:get/get.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
@@ -12,14 +13,78 @@ import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class ProfileBackupController extends BaseController {
+  static const String kFollowDataArgument = "follow_data";
+
+  final exportSettings = true.obs;
+  final exportFollows = true.obs;
+  final exportHistories = true.obs;
+  final exportShields = true.obs;
+  final exportShieldPresets = true.obs;
+  final exportAccounts = false.obs;
+
+  final importSettings = true.obs;
+  final importFollows = true.obs;
+  final importHistories = true.obs;
+  final importShields = true.obs;
+  final importShieldPresets = true.obs;
+  final importAccounts = false.obs;
+
+  @override
+  void onInit() {
+    super.onInit();
+    if (Get.arguments == kFollowDataArgument) {
+      selectFollowDataOnly();
+    }
+  }
+
+  void selectFollowDataOnly() {
+    exportSettings.value = false;
+    exportFollows.value = true;
+    exportHistories.value = false;
+    exportShields.value = false;
+    exportShieldPresets.value = false;
+    exportAccounts.value = false;
+
+    importSettings.value = false;
+    importFollows.value = true;
+    importHistories.value = false;
+    importShields.value = false;
+    importShieldPresets.value = false;
+    importAccounts.value = false;
+  }
+
+  ProfileExportOptions get exportOptions => ProfileExportOptions(
+        settings: exportSettings.value,
+        follows: exportFollows.value,
+        histories: exportHistories.value,
+        shields: exportShields.value,
+        shieldPresets: exportShieldPresets.value,
+        accounts: exportAccounts.value,
+      );
+
+  ProfileImportOptions get importOptions => ProfileImportOptions(
+        settings: importSettings.value,
+        follows: importFollows.value,
+        histories: importHistories.value,
+        shields: importShields.value,
+        shieldPresets: importShieldPresets.value,
+        accounts: importAccounts.value,
+      );
+
   Future<void> exportProfile() async {
     try {
+      final options = exportOptions;
+      if (!options.hasSelection) {
+        SmartDialog.showToast("请至少选择一项导出内容");
+        return;
+      }
       var status = await Utils.checkStorgePermission();
       if (!status) {
         SmartDialog.showToast("没有存储权限");
         return;
       }
-      final content = ProfileBackupService.instance.exportProfileJson();
+      final content =
+          ProfileBackupService.instance.exportProfileJson(options: options);
       final fileName =
           "SimpleLive_Profile_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json";
       if (Utils.isOhos) {
@@ -55,6 +120,11 @@ class ProfileBackupController extends BaseController {
 
   Future<void> importProfile() async {
     try {
+      final options = importOptions;
+      if (!options.hasSelection) {
+        SmartDialog.showToast("请至少选择一项导入内容");
+        return;
+      }
       var status = await Utils.checkStorgePermission();
       if (!status) {
         SmartDialog.showToast("没有存储权限");
@@ -76,6 +146,7 @@ class ProfileBackupController extends BaseController {
         final summary = await ProfileBackupService.instance.importProfileJson(
           content,
           overwrite: overwrite,
+          options: options,
           onProgress: SyncProgressDialog.update,
         );
         SyncProgressDialog.dismiss();
@@ -94,6 +165,7 @@ class ProfileBackupController extends BaseController {
       final summary = await ProfileBackupService.instance.importProfileJson(
         content,
         overwrite: overwrite,
+        options: options,
         onProgress: SyncProgressDialog.update,
       );
       SyncProgressDialog.dismiss();
