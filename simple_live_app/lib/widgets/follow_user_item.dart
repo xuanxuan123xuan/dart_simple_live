@@ -158,7 +158,7 @@ class FollowUserItem extends StatelessWidget {
                           context,
                           radius: compact ? 10 : 12,
                           showTitleOverlay: false,
-                          showStatusPlaceholder: false,
+                          compact: compact,
                         ),
                       ),
                     ),
@@ -630,7 +630,7 @@ class FollowUserItem extends StatelessWidget {
     BuildContext context, {
     required double radius,
     bool showTitleOverlay = true,
-    bool showStatusPlaceholder = true,
+    bool compact = false,
   }) {
     final theme = Theme.of(context);
     if (item.liveStatus.value != 2) {
@@ -638,15 +638,19 @@ class FollowUserItem extends StatelessWidget {
       return Container(
         color: theme.colorScheme.surfaceContainerHighest,
         alignment: Alignment.center,
-        child: showStatusPlaceholder || isUnconfirmed
-            ? Text(
-                isUnconfirmed ? "未确认" : "未直播",
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w600,
-                ),
-              )
-            : null,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Text(
+          isUnconfirmed ? "未确认" : "未直播",
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: (compact
+                  ? theme.textTheme.titleSmall
+                  : theme.textTheme.titleMedium)
+              ?.copyWith(
+            color: Colors.grey.shade600,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       );
     }
     final coverImage = _coverImage;

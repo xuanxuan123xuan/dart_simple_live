@@ -215,6 +215,51 @@ void main() {
     expect(find.text('未确认'), findsOneWidget);
   });
 
+  testWidgets('offline covered list layouts label the cover placeholder', (
+    tester,
+  ) async {
+    for (final layout in <(FollowUserItemStyle, double, double)>[
+      (FollowUserItemStyle.defaultList, 94, 152),
+      (FollowUserItemStyle.compactList, 77, 122),
+    ]) {
+      for (final textScale in <double>[1.0, 1.3]) {
+        final item = _followUser()
+          ..face = 'asset://assets/images/bilibili.png'
+          ..liveStatus.value = 1;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MediaQuery(
+              data: MediaQueryData(
+                textScaler: TextScaler.linear(textScale),
+              ),
+              child: Scaffold(
+                body: SizedBox(
+                  width: 420,
+                  height: layout.$2,
+                  child: FollowUserItem(
+                    item: item,
+                    style: layout.$1,
+                    showLiveCover: true,
+                    onRemove: () {},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('未直播'), findsOneWidget);
+        // 占位文字必须落在封面区域内，不能溢出到信息列。
+        final statusRect = tester.getRect(find.text('未直播'));
+        expect(statusRect.width, lessThanOrEqualTo(layout.$3));
+        expect(statusRect.height, lessThanOrEqualTo(layout.$3 * 9 / 16));
+      }
+    }
+  });
+
   testWidgets('hidden special action leaves remove action vertically centered',
       (
     tester,
