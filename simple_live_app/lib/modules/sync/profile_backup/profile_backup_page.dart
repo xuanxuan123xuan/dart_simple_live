@@ -28,7 +28,7 @@ class ProfileBackupPage extends GetView<ProfileBackupController> {
           Padding(
             padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
             child: Text(
-              "导入内容",
+              "导入配置包",
               style: Get.textTheme.titleSmall,
             ),
           ),
@@ -110,52 +110,20 @@ class ProfileBackupPage extends GetView<ProfileBackupController> {
     return SettingsCard(
       child: Column(
         children: [
-          _buildOptionTile(
-            icon: Icons.settings_outlined,
-            title: "设置",
-            subtitle: "导入包内播放、显示、刷新等设置",
-            value: controller.importSettings,
-            onChanged: (value) => controller.importSettings.value = value,
-          ),
-          AppStyle.divider,
-          _buildOptionTile(
-            icon: Icons.people_outline,
-            title: "关注列表与标签",
-            subtitle: "导入关注主播、标签和特别关注标记",
-            value: controller.importFollows,
-            onChanged: (value) => controller.importFollows.value = value,
-          ),
-          AppStyle.divider,
-          _buildOptionTile(
-            icon: Icons.history,
-            title: "观看历史",
-            subtitle: "导入包内观看记录",
-            value: controller.importHistories,
-            onChanged: (value) => controller.importHistories.value = value,
-          ),
-          AppStyle.divider,
-          _buildOptionTile(
-            icon: Icons.shield_outlined,
-            title: "弹幕屏蔽规则",
-            subtitle: "导入关键词和用户屏蔽规则",
-            value: controller.importShields,
-            onChanged: (value) => controller.importShields.value = value,
-          ),
-          AppStyle.divider,
-          _buildOptionTile(
-            icon: Icons.bookmarks_outlined,
-            title: "屏蔽预设",
-            subtitle: "导入包内屏蔽规则预设",
-            value: controller.importShieldPresets,
-            onChanged: (value) => controller.importShieldPresets.value = value,
-          ),
-          AppStyle.divider,
-          _buildOptionTile(
-            icon: Icons.lock_outline,
-            title: "账号登录信息",
-            subtitle: "恢复包内平台账号 Cookie，默认不导入",
-            value: controller.importAccounts,
-            onChanged: (value) => controller.importAccounts.value = value,
+          Padding(
+            padding: AppStyle.edgeInsetsA12,
+            child: Row(
+              children: [
+                const Icon(Icons.checklist_rtl_outlined),
+                AppStyle.hGap12,
+                Expanded(
+                  child: Text(
+                    "选择配置包后会自动识别包内含有的内容，再勾选需要导入的分类并确认。",
+                    style: Get.textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
           ),
           AppStyle.divider,
           Padding(
@@ -165,7 +133,7 @@ class ProfileBackupPage extends GetView<ProfileBackupController> {
               child: FilledButton.icon(
                 onPressed: controller.importProfile,
                 icon: const Icon(Remix.upload_2_line),
-                label: const Text("导入配置包"),
+                label: const Text("选择配置包"),
               ),
             ),
           ),

@@ -7,6 +7,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/modules/sync/profile_backup/profile_import_dialog.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
@@ -22,12 +23,8 @@ class ProfileBackupController extends BaseController {
   final exportShieldPresets = true.obs;
   final exportAccounts = false.obs;
 
-  final importSettings = true.obs;
-  final importFollows = true.obs;
-  final importHistories = true.obs;
-  final importShields = true.obs;
-  final importShieldPresets = true.obs;
-  final importAccounts = false.obs;
+  /// 从关注页进入时只预勾选关注数据，其余分类仍按包内实际内容展示。
+  Set<ProfileCategory>? importPreselection;
 
   @override
   void onInit() {
@@ -45,12 +42,7 @@ class ProfileBackupController extends BaseController {
     exportShieldPresets.value = false;
     exportAccounts.value = false;
 
-    importSettings.value = false;
-    importFollows.value = true;
-    importHistories.value = false;
-    importShields.value = false;
-    importShieldPresets.value = false;
-    importAccounts.value = false;
+    importPreselection = {ProfileCategory.follows};
   }
 
   ProfileExportOptions get exportOptions => ProfileExportOptions(
@@ -60,15 +52,6 @@ class ProfileBackupController extends BaseController {
         shields: exportShields.value,
         shieldPresets: exportShieldPresets.value,
         accounts: exportAccounts.value,
-      );
-
-  ProfileImportOptions get importOptions => ProfileImportOptions(
-        settings: importSettings.value,
-        follows: importFollows.value,
-        histories: importHistories.value,
-        shields: importShields.value,
-        shieldPresets: importShieldPresets.value,
-        accounts: importAccounts.value,
       );
 
   Future<void> exportProfile() async {
@@ -118,54 +101,45 @@ class ProfileBackupController extends BaseController {
     }
   }
 
+  /// 先选配置包，解析出包内实际含有的分类后再让用户勾选确认。
   Future<void> importProfile() async {
     try {
-      final options = importOptions;
-      if (!options.hasSelection) {
-        SmartDialog.showToast("请至少选择一项导入内容");
-        return;
-      }
       var status = await Utils.checkStorgePermission();
       if (!status) {
         SmartDialog.showToast("没有存储权限");
         return;
       }
-      final overwrite = await Utils.showAlertDialog(
-        "是否覆盖本地数据？选择“不覆盖”会合并导入，保留本机已有数据。",
-        title: "导入配置包",
-        confirm: "覆盖",
-        cancel: "不覆盖",
-      );
-      if (Utils.isOhos) {
-        // 与导出一致：调用鸿蒙文件管理器选择配置包，而非粘贴 JSON。
-        final content = await OhosDocumentService.pickText();
-        if (content == null || content.trim().isEmpty) {
-          return; // 用户取消选择
-        }
-        SyncProgressDialog.show(const SyncProgress(stage: "正在导入配置包"));
-        final summary = await ProfileBackupService.instance.importProfileJson(
-          content,
-          overwrite: overwrite,
-          options: options,
-          onProgress: SyncProgressDialog.update,
-        );
-        SyncProgressDialog.dismiss();
-        SmartDialog.showToast("导入完成：${summary.message}");
+      final content = await _pickProfileContent();
+      if (content == null) {
+        return; // 用户取消选择
+      }
+
+      final ProfileInspection inspection;
+      try {
+        inspection = ProfileBackupService.instance.inspectProfileJson(content);
+      } on FormatException catch (e) {
+        SmartDialog.showToast(e.message);
         return;
       }
-      final picked = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ["json"],
-      );
-      if (picked == null || picked.files.single.path == null) {
+      if (inspection.isEmpty) {
+        SmartDialog.showToast("配置包里没有可导入的内容");
         return;
       }
+
+      final decision = await ProfileImportDialog.show(
+        inspection,
+        preselected: importPreselection,
+      );
+      if (decision == null) {
+        return; // 用户取消导入
+      }
+
       SyncProgressDialog.show(const SyncProgress(stage: "正在导入配置包"));
-      final content = await File(picked.files.single.path!).readAsString();
-      final summary = await ProfileBackupService.instance.importProfileJson(
-        content,
-        overwrite: overwrite,
-        options: options,
+      final summary =
+          await ProfileBackupService.instance.importInspectedProfile(
+        inspection,
+        overwrite: decision.overwrite,
+        options: decision.options,
         onProgress: SyncProgressDialog.update,
       );
       SyncProgressDialog.dismiss();
@@ -175,5 +149,25 @@ class ProfileBackupController extends BaseController {
       Log.logPrint(e);
       SmartDialog.showToast("导入失败：$e");
     }
+  }
+
+  /// 返回 null 表示用户取消了选择。
+  Future<String?> _pickProfileContent() async {
+    if (Utils.isOhos) {
+      // 与导出一致：调用鸿蒙文件管理器选择配置包，而非粘贴 JSON。
+      final content = await OhosDocumentService.pickText();
+      if (content == null || content.trim().isEmpty) {
+        return null;
+      }
+      return content;
+    }
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ["json"],
+    );
+    if (picked == null || picked.files.single.path == null) {
+      return null;
+    }
+    return File(picked.files.single.path!).readAsString();
   }
 }

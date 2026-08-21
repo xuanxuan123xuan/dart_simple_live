@@ -118,7 +118,27 @@ class ProfileBackupService extends GetxService {
     SyncProgressCallback? onProgress,
   }) async {
     onProgress?.call(const SyncProgress(stage: "解析配置包"));
+    return importInspectedProfile(
+      inspectProfileJson(content),
+      overwrite: overwrite,
+      options: options,
+      onProgress: onProgress,
+    );
+  }
+
+  /// 解析配置包并识别包内实际包含的分类，供导入前按包内容勾选。
+  /// 解析失败会抛 [FormatException]，与 [importProfileJson] 的提示一致。
+  ProfileInspection inspectProfileJson(String content) {
     final decoded = jsonDecode(content);
+    // 上游「导出关注列表」写出的是顶层数组，没有任何包裹对象，
+    // 统一包成 {"data": [...]} 后走旧版数据文件那条分支。
+    if (decoded is List) {
+      return ProfileInspection(
+        kind: ProfilePackageKind.legacyDataFile,
+        payload: {"data": decoded},
+        categories: _inspectLegacyDataFileCategories({"data": decoded}),
+      );
+    }
     if (decoded is! Map) {
       throw const FormatException("不是 Simple Live 配置包");
     }
@@ -129,30 +149,62 @@ class ProfileBackupService extends GetxService {
       if (!_supportedSchemaVersions.contains(version)) {
         throw const FormatException("暂不支持该配置包版本");
       }
-      return importProfileMap(
-        payload,
-        overwrite: overwrite,
-        options: options,
-        onProgress: onProgress,
+      return ProfileInspection(
+        kind: ProfilePackageKind.profile,
+        payload: payload,
+        schemaVersion: version,
+        appVersion: payload["appVersion"]?.toString(),
+        exportedAt: payload["exportedAt"]?.toString(),
+        categories: _inspectProfileCategories(payload),
       );
     }
     if (payload["type"] == "simple_live") {
-      return importLegacyProfileMap(
-        payload,
-        overwrite: overwrite,
-        options: options,
-        onProgress: onProgress,
+      return ProfileInspection(
+        kind: ProfilePackageKind.legacyProfile,
+        payload: payload,
+        categories: _inspectLegacyProfileCategories(payload),
       );
     }
     if (_looksLikeLegacyDataFile(payload)) {
-      return importLegacyDataFileMap(
-        payload,
-        overwrite: overwrite,
-        options: options,
-        onProgress: onProgress,
+      return ProfileInspection(
+        kind: ProfilePackageKind.legacyDataFile,
+        payload: payload,
+        categories: _inspectLegacyDataFileCategories(payload),
       );
     }
     throw const FormatException("不是 Simple Live 配置包");
+  }
+
+  /// 按已解析的配置包导入，避免二次解析 JSON。
+  Future<ProfileImportSummary> importInspectedProfile(
+    ProfileInspection inspection, {
+    bool overwrite = false,
+    ProfileImportOptions options = const ProfileImportOptions(),
+    SyncProgressCallback? onProgress,
+  }) {
+    switch (inspection.kind) {
+      case ProfilePackageKind.profile:
+        return importProfileMap(
+          inspection.payload,
+          overwrite: overwrite,
+          options: options,
+          onProgress: onProgress,
+        );
+      case ProfilePackageKind.legacyProfile:
+        return importLegacyProfileMap(
+          inspection.payload,
+          overwrite: overwrite,
+          options: options,
+          onProgress: onProgress,
+        );
+      case ProfilePackageKind.legacyDataFile:
+        return importLegacyDataFileMap(
+          inspection.payload,
+          overwrite: overwrite,
+          options: options,
+          onProgress: onProgress,
+        );
+    }
   }
 
   Future<ProfileImportSummary> importLegacyProfileMap(
@@ -217,6 +269,225 @@ class ProfileBackupService extends GetxService {
     });
   }
 
+  Map<ProfileCategory, ProfileCategoryInfo> _inspectProfileCategories(
+    Map<String, dynamic> payload,
+  ) {
+    final result = <ProfileCategory, ProfileCategoryInfo>{};
+    final settings = payload["settings"];
+    if (settings is Map && settings.isNotEmpty) {
+      final count = settings.keys
+          .where((key) => !_excludedSettings.contains(key.toString()))
+          .length;
+      if (count > 0) {
+        result[ProfileCategory.settings] =
+            ProfileCategoryInfo(count: count, detail: "$count 项");
+      }
+    }
+
+    final accountCount = _countAccounts(payload["accounts"]);
+    if (accountCount > 0) {
+      result[ProfileCategory.accounts] = ProfileCategoryInfo(
+        count: accountCount,
+        detail: "$accountCount 个平台",
+      );
+    }
+
+    final shieldInfo = _inspectShieldPayload(payload["danmuShield"]);
+    if (shieldInfo != null) {
+      result[ProfileCategory.shields] = shieldInfo;
+    }
+
+    final presets = payload["shieldPresets"];
+    if (presets is List && presets.isNotEmpty) {
+      result[ProfileCategory.shieldPresets] = ProfileCategoryInfo(
+        count: presets.length,
+        detail: "${presets.length} 个",
+      );
+    }
+
+    final followInfo = _inspectFollowPayload(payload);
+    if (followInfo != null) {
+      result[ProfileCategory.follows] = followInfo;
+    }
+
+    final histories = _readPayloadList(payload, ["histories", "history"]);
+    if (histories is List && histories.isNotEmpty) {
+      result[ProfileCategory.histories] = ProfileCategoryInfo(
+        count: histories.length,
+        detail: "${histories.length} 条",
+      );
+    }
+    return result;
+  }
+
+  Map<ProfileCategory, ProfileCategoryInfo> _inspectLegacyProfileCategories(
+    Map<String, dynamic> payload,
+  ) {
+    final result = <ProfileCategory, ProfileCategoryInfo>{};
+    final config = payload["config"];
+    if (config is Map) {
+      final count = config.keys
+          .where((key) => !_excludedSettings.contains(key.toString()))
+          .length;
+      if (count > 0) {
+        result[ProfileCategory.settings] =
+            ProfileCategoryInfo(count: count, detail: "$count 项");
+      }
+    }
+    final shields = _legacyShieldValues(payload["shield"]);
+    if (shields.isNotEmpty) {
+      result[ProfileCategory.shields] = ProfileCategoryInfo(
+        count: shields.length,
+        detail: "${shields.length} 项",
+      );
+    }
+    return result;
+  }
+
+  Map<ProfileCategory, ProfileCategoryInfo> _inspectLegacyDataFileCategories(
+    Map<String, dynamic> payload,
+  ) {
+    final result = <ProfileCategory, ProfileCategoryInfo>{};
+    final rawList = payload["data"];
+    if (rawList is List) {
+      // 老版本单一数组文件：按首个元素的字段猜测类型，与导入逻辑保持一致。
+      if (rawList.isEmpty) {
+        return result;
+      }
+      final firstMap = rawList.whereType<Map>().firstOrNull;
+      if (firstMap != null) {
+        // 顺序必须与 _importLegacyDataList 一致，且按「独有字段」判别：
+        // updateTime 只有历史有，userId 数组只有标签有，
+        // roomId/siteId 是历史和关注共有的，只能放最后兜底。
+        if (firstMap.containsKey("updateTime")) {
+          result[ProfileCategory.histories] = ProfileCategoryInfo(
+            count: rawList.length,
+            detail: "${rawList.length} 条",
+          );
+        } else if (firstMap["userId"] is List) {
+          result[ProfileCategory.follows] = ProfileCategoryInfo(
+            count: rawList.length,
+            detail: "${rawList.length} 个标签",
+          );
+        } else if (firstMap.containsKey("roomId") ||
+            firstMap.containsKey("siteId")) {
+          result[ProfileCategory.follows] = ProfileCategoryInfo(
+            count: rawList.length,
+            detail: "${rawList.length} 个关注",
+          );
+        }
+        return result;
+      }
+      if (rawList.every((item) => item is String)) {
+        result[ProfileCategory.shields] = ProfileCategoryInfo(
+          count: rawList.length,
+          detail: "${rawList.length} 项",
+        );
+      }
+      return result;
+    }
+
+    final followInfo = _inspectFollowPayload(payload);
+    if (followInfo != null) {
+      result[ProfileCategory.follows] = followInfo;
+    }
+    final histories = _readPayloadList(payload, ["histories", "history"]);
+    if (histories is List && histories.isNotEmpty) {
+      result[ProfileCategory.histories] = ProfileCategoryInfo(
+        count: histories.length,
+        detail: "${histories.length} 条",
+      );
+    }
+    return result;
+  }
+
+  ProfileCategoryInfo? _inspectFollowPayload(Map<String, dynamic> payload) {
+    final users = _readPayloadList(payload, [
+      "followUsers",
+      "follows",
+      "favorites",
+    ]);
+    final tags = _readPayloadList(payload, [
+      "followUserTags",
+      "tags",
+    ]);
+    final userCount = users is List ? users.length : 0;
+    final tagCount = tags is List ? tags.length : 0;
+    if (userCount == 0 && tagCount == 0) {
+      return null;
+    }
+    final parts = [
+      if (userCount > 0) "$userCount 个关注",
+      if (tagCount > 0) "$tagCount 个标签",
+    ];
+    return ProfileCategoryInfo(
+      count: userCount + tagCount,
+      detail: parts.join("，"),
+    );
+  }
+
+  ProfileCategoryInfo? _inspectShieldPayload(dynamic rawShield) {
+    if (rawShield is! Map) {
+      return null;
+    }
+    final raw = rawShield["raw"];
+    if (raw is List && raw.isNotEmpty) {
+      return ProfileCategoryInfo(
+        count: raw.length,
+        detail: "${raw.length} 项",
+      );
+    }
+    final keywords = rawShield["keywords"];
+    final keywordCount = keywords is List ? keywords.length : 0;
+    var userCount = 0;
+    final groups = rawShield["userGroups"];
+    if (groups is Map) {
+      for (final value in groups.values) {
+        if (value is List) {
+          userCount += value.length;
+        }
+      }
+    }
+    if (keywordCount == 0 && userCount == 0) {
+      return null;
+    }
+    final parts = [
+      if (keywordCount > 0) "$keywordCount 个关键词",
+      if (userCount > 0) "$userCount 个用户",
+    ];
+    return ProfileCategoryInfo(
+      count: keywordCount + userCount,
+      detail: parts.join("，"),
+    );
+  }
+
+  /// 只统计真正带登录态的平台，空 Cookie 的占位项不算。
+  int _countAccounts(dynamic rawAccounts) {
+    if (rawAccounts is! Map || rawAccounts["items"] is! List) {
+      return 0;
+    }
+    var count = 0;
+    for (final item in rawAccounts["items"] as List) {
+      if (item is! Map) {
+        continue;
+      }
+      final cookie = item["cookie"]?.toString().trim() ?? "";
+      if (cookie.isNotEmpty) {
+        count++;
+        continue;
+      }
+      // 快手把 Cookie 放在 slots 里，需要单独看槽位。
+      final slots = item["slots"];
+      if (slots is Map &&
+          slots.values.any((slot) =>
+              slot is Map &&
+              (slot["cookie"]?.toString().trim() ?? "").isNotEmpty)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   Future<ProfileImportSummary> importLegacyDataFileMap(
     Map<String, dynamic> payload, {
     bool overwrite = false,
@@ -234,23 +505,23 @@ class ProfileBackupService extends GetxService {
       );
     } else {
       if (options.follows) {
+        final rawTags = _readPayloadList(payload, [
+          "followUserTags",
+          "tags",
+        ]);
         await _importFollowUsers(
-            _readPayloadList(payload, [
-              "followUsers",
-              "follows",
-              "favorites",
-            ]),
-            summary,
-            overwrite,
-            onProgress);
-        await _importFollowTags(
-            _readPayloadList(payload, [
-              "followUserTags",
-              "tags",
-            ]),
-            summary,
-            overwrite,
-            onProgress);
+          _readPayloadList(payload, [
+            "followUsers",
+            "follows",
+            "favorites",
+          ]),
+          summary,
+          overwrite,
+          onProgress,
+          // 没带独立标签列表时，按关注项内的 tag 字段重建分组。
+          syncTagsFromUserField: rawTags is! List || rawTags.isEmpty,
+        );
+        await _importFollowTags(rawTags, summary, overwrite, onProgress);
       }
       if (options.histories) {
         await _importHistories(
@@ -606,11 +877,13 @@ class ProfileBackupService extends GetxService {
     dynamic rawUsers,
     ProfileImportSummary summary,
     bool overwrite,
-    SyncProgressCallback? onProgress,
-  ) async {
+    SyncProgressCallback? onProgress, {
+    bool syncTagsFromUserField = false,
+  }) async {
     final result = await BulkDataImportService.importFollowUsers(
       rawUsers,
       overwrite: overwrite,
+      syncTagsFromUserField: syncTagsFromUserField,
       onProgress: onProgress,
     );
     summary.followUsers += result.imported;
@@ -672,21 +945,34 @@ class ProfileBackupService extends GetxService {
     }
     final firstMap = rawList.whereType<Map>().firstOrNull;
     if (firstMap != null) {
-      if (firstMap.containsKey("userId") || firstMap.containsKey("tag")) {
-        if (options.follows) {
-          await _importFollowTags(rawList, summary, overwrite, onProgress);
-        }
-        return;
-      }
+      // 按「独有字段」判别，顺序不能随意调整：
+      // updateTime 只有历史有；userId 数组只有标签有；
+      // roomId/siteId 是历史和关注共有的，只能放最后兜底。
+      // 旧实现先判 tag，导致上游关注列表（每项都带 tag 字符串）
+      // 被整份误认成标签，写进标签表且关注一个都不进。
       if (firstMap.containsKey("updateTime")) {
         if (options.histories) {
           await _importHistories(rawList, summary, overwrite, onProgress);
         }
         return;
       }
+      if (firstMap["userId"] is List) {
+        if (options.follows) {
+          await _importFollowTags(rawList, summary, overwrite, onProgress);
+        }
+        return;
+      }
       if (firstMap.containsKey("roomId") || firstMap.containsKey("siteId")) {
         if (options.follows) {
-          await _importFollowUsers(rawList, summary, overwrite, onProgress);
+          await _importFollowUsers(
+            rawList,
+            summary,
+            overwrite,
+            onProgress,
+            // 上游把标签放在每个关注项的 tag 字段里，没有独立标签列表，
+            // 需要据此重建标签，否则分组信息全丢。
+            syncTagsFromUserField: true,
+          );
         }
         return;
       }
@@ -765,8 +1051,73 @@ class ProfileImportOptions {
     this.histories = true,
   });
 
+  /// 只导入勾选的分类，其余一律关闭。
+  factory ProfileImportOptions.fromCategories(Set<ProfileCategory> selected) {
+    return ProfileImportOptions(
+      settings: selected.contains(ProfileCategory.settings),
+      accounts: selected.contains(ProfileCategory.accounts),
+      shields: selected.contains(ProfileCategory.shields),
+      shieldPresets: selected.contains(ProfileCategory.shieldPresets),
+      follows: selected.contains(ProfileCategory.follows),
+      histories: selected.contains(ProfileCategory.histories),
+    );
+  }
+
   bool get hasSelection =>
       settings || accounts || shields || shieldPresets || follows || histories;
+}
+
+/// 配置包分类，顺序即导入界面的展示顺序。
+enum ProfileCategory {
+  settings("设置", "播放、显示、刷新等偏好设置"),
+  follows("关注列表与标签", "关注主播、标签和特别关注标记"),
+  histories("观看历史", "直播间观看记录"),
+  shields("弹幕屏蔽规则", "关键词和用户屏蔽规则"),
+  shieldPresets("屏蔽预设", "已保存的屏蔽规则预设"),
+  accounts("账号登录信息", "平台 Cookie，默认不勾选");
+
+  const ProfileCategory(this.title, this.subtitle);
+
+  final String title;
+  final String subtitle;
+}
+
+class ProfileCategoryInfo {
+  /// 条目数量，仅用于提示，不参与导入逻辑。
+  final int count;
+
+  /// 面向界面的数量描述，如「12 个关注，3 个标签」。
+  final String detail;
+
+  const ProfileCategoryInfo({required this.count, required this.detail});
+}
+
+enum ProfilePackageKind { profile, legacyProfile, legacyDataFile }
+
+/// 一次配置包解析的结果：包类型、原始内容和包内实际存在的分类。
+class ProfileInspection {
+  final ProfilePackageKind kind;
+  final Map<String, dynamic> payload;
+  final int? schemaVersion;
+  final String? appVersion;
+  final String? exportedAt;
+  final Map<ProfileCategory, ProfileCategoryInfo> categories;
+
+  const ProfileInspection({
+    required this.kind,
+    required this.payload,
+    required this.categories,
+    this.schemaVersion,
+    this.appVersion,
+    this.exportedAt,
+  });
+
+  bool get isEmpty => categories.isEmpty;
+
+  /// 按枚举声明顺序返回包内可导入的分类。
+  List<ProfileCategory> get availableCategories => ProfileCategory.values
+      .where((category) => categories.containsKey(category))
+      .toList();
 }
 
 class ProfileImportSummary {
