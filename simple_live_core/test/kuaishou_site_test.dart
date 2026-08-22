@@ -1045,6 +1045,125 @@ void main() {
       expect(fallbackRequests, 1);
       expect(accountEvents, isEmpty);
     });
+
+    test('follow refresh 429 arms global cooldown and pauses later refreshes',
+        () async {
+      var requests = 0;
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              requests += 1;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouRateLimitedPage(roomId: 'limited-room'),
+                ),
+              );
+            },
+          ),
+        );
+      final accountEvents = <KuaishouAccountHealthEvent>[];
+      final site = KuaishouSite(
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )
+        ..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        )
+        ..onAccountSessionHealthEvent = (_, event) {
+          accountEvents.add(event);
+        };
+
+      await expectLater(
+        KuaishouRequestTrace.run(
+          KuaishouRequestSource.followStatus,
+          () => site.getFollowLiveStatusState(roomId: 'limited-room'),
+          scopeId: 'kuaishou:follow-refresh',
+          forceNetwork: true,
+        ),
+        throwsA(
+          isA<CoreError>().having((error) => error.statusCode, 'status', 429),
+        ),
+      );
+
+      // Follow refresh has no in-core account failover, so the throttle is
+      // terminal for this attempt and must pause host-wide background traffic.
+      expect(site.coordinator.inCooldown, isTrue);
+      // A transient device/IP limit must not suspend the account for the day.
+      expect(accountEvents, isEmpty);
+
+      // A later refresh is served entirely from the cooldown gate: the state is
+      // reported as unknown (not a false "offline") and no request is issued.
+      final requestsAfterCooldown = requests;
+      final nextState = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.followStatus,
+        () => site.getFollowLiveStatusState(roomId: 'another-room'),
+        scopeId: 'kuaishou:follow-refresh',
+        forceNetwork: true,
+      );
+
+      expect(nextState, LiveStatusState.unknown);
+      expect(requests, requestsAfterCooldown,
+          reason: 'cooldown must stop further follow-refresh network requests');
+    });
+
+    test('follow refresh room requests observe the coordinator minimum interval',
+        () async {
+      final requestTimes = <DateTime>[];
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              requestTimes.add(DateTime.now());
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouOfflinePage(
+                    roomId: options.uri.pathSegments.last,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: dio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: const Duration(milliseconds: 120),
+          maxJitter: Duration.zero,
+        ),
+      );
+
+      await Future.wait([
+        for (final roomId in const ['pace-a', 'pace-b', 'pace-c'])
+          KuaishouRequestTrace.run(
+            KuaishouRequestSource.followStatus,
+            () => site.getFollowLiveStatusState(roomId: roomId),
+            scopeId: 'kuaishou:follow-refresh',
+            forceNetwork: true,
+          ),
+      ]);
+
+      expect(requestTimes, hasLength(3));
+      // Previously follow refresh bypassed the coordinator lane, so concurrent
+      // room requests went out back-to-back with no spacing at all.
+      for (var i = 1; i < requestTimes.length; i++) {
+        final gap = requestTimes[i].difference(requestTimes[i - 1]);
+        expect(
+          gap,
+          greaterThanOrEqualTo(const Duration(milliseconds: 100)),
+          reason: 'request $i should be spaced by the coordinator interval',
+        );
+      }
+    });
   });
 
   group('KuaishouSite foreground account fallback', () {

@@ -1365,6 +1365,21 @@ class KuaishouSite extends LiveSite {
     }
   }
 
+  /// Side-effect-free check for "another account could still be tried".
+  ///
+  /// [_resolveFallbackTransport] calls [accountFallbackProvider] and may reset
+  /// credentials, so it must not be used for diagnostics: doing so consumes a
+  /// failover slot that the real retry is about to request.
+  bool _hasUntriedFallbackAccount(_KuaishouAccountTransport attempted) {
+    final active = _activeTransport;
+    if (!identical(active, attempted) &&
+        active.sessionKey != attempted.sessionKey &&
+        _currentCookieHeaderFor(active).isNotEmpty) {
+      return true;
+    }
+    return accountFallbackProvider != null;
+  }
+
   _KuaishouAccountTransport? _resolveFallbackTransport(
     _KuaishouAccountTransport attempted,
   ) {
@@ -1676,19 +1691,20 @@ class KuaishouSite extends LiveSite {
         );
       }
 
-      // Follow refresh is bounded by the app-level 2->4 adaptive limiter.
-      // Bypass the single coordinator lane so its workers are truly parallel.
-      final resultText = source == KuaishouRequestSource.followStatus
-          ? await request()
-          : await coordinator.schedule<String>(
-              priority: _priorityForSource(source),
-              key: '${transport.cacheNamespace}:http:room_page:'
-                  '${authenticated ? "auth" : "anon"}:$roomId',
-              logLabel: maskedRoom,
-              scopeId: KuaishouRequestTrace.scopeId,
-              timeout: const Duration(seconds: 5),
-              task: request,
-            );
+      // Every room-page fetch goes through the coordinator, including follow
+      // refresh. Bypassing it left the lowest-priority background traffic as
+      // the only path with no cooldown gate, no minimum interval and no scope
+      // cancellation, which is what let a throttled state keep re-requesting.
+      // App-level concurrency still bounds how many flows arrive here.
+      final resultText = await coordinator.schedule<String>(
+        priority: _priorityForSource(source),
+        key: '${transport.cacheNamespace}:http:room_page:'
+            '${authenticated ? "auth" : "anon"}:$roomId',
+        logLabel: maskedRoom,
+        scopeId: KuaishouRequestTrace.scopeId,
+        timeout: const Duration(seconds: 5),
+        task: request,
+      );
       _ensureCurrentSession(transport, sessionEpoch);
       _throwIfExplicitRateLimit(resultText);
       if (authenticated && looksLikeCredentialInvalidPage(resultText)) {
@@ -1740,6 +1756,13 @@ class KuaishouSite extends LiveSite {
         'status=$statusCode kind=$errorKind '
         'ms=${stopwatch.elapsedMilliseconds}',
       );
+      // Mirrors the failover rule in _getRoomDetailWithinBudget: follow refresh
+      // owns account failover at the app batch level and throws straight out of
+      // core, so a throttle there is terminal for this attempt. Other sources
+      // still retry on the backup account, so they must not pause the host yet.
+      final canFailoverAccount =
+          source != KuaishouRequestSource.followStatus &&
+              _hasUntriedFallbackAccount(transport);
       _classifyAndMaybeCooldown(
         statusCode,
         e,
@@ -1749,6 +1772,7 @@ class KuaishouSite extends LiveSite {
         cookieHeader: headers['cookie']?.toString() ?? '',
         isChallengePage: isChallengePage,
         isCredentialInvalid: isCredentialInvalid,
+        canFailoverAccount: canFailoverAccount,
       );
       // A risk/limit response must terminate this detail attempt. Falling
       // through to an anonymous retry would turn one blocked request into a
@@ -1828,6 +1852,9 @@ class KuaishouSite extends LiveSite {
   }
 
   /// 根据响应分类并记录登录会话的连续拒绝证据。
+  ///
+  /// [canFailoverAccount] 为 true 时表示调用方还会用另一个账号重试，此时
+  /// 单账号被限流不是设备级证据，不能启动全局冷却。
   void _classifyAndMaybeCooldown(
     int statusCode,
     Object error, {
@@ -1837,6 +1864,7 @@ class KuaishouSite extends LiveSite {
     required String cookieHeader,
     bool isChallengePage = false,
     bool isCredentialInvalid = false,
+    bool canFailoverAccount = false,
   }) {
     if (isCredentialInvalid || statusCode == 401) {
       transport.lastErrorClassification =
@@ -1854,7 +1882,21 @@ class KuaishouSite extends LiveSite {
     if (immediateCooldown != null) {
       transport.lastErrorClassification =
           KuaishouErrorClassification.rateLimited;
+      // Deliberately not a health event: 429 is device/IP throttling, not
+      // evidence that this account is bad. Reporting it would suspend the slot
+      // until Shanghai midnight for what is usually a transient limit.
       transport.lastHealthEvent = null;
+      // Arm the global cooldown only when this attempt is terminal. Without it
+      // the coordinator's cooldown gate is never entered, so background follow
+      // refresh, status polling and credential retries resume on the next tick
+      // and re-trigger the same limit. When the caller can still fall back to
+      // another account, one throttled account is not device-level evidence
+      // and a host-wide pause would kill that working recovery path. Public
+      // JSON business codes never reach this method, so catalog/search
+      // throttling still fails locally with no host pause.
+      if (!canFailoverAccount) {
+        coordinator.beginCooldown(immediateCooldown);
+      }
       return;
     }
     if (statusCode == 403) {
@@ -2204,7 +2246,11 @@ class KuaishouSite extends LiveSite {
           priority: _priorityForSource(source),
           key: 'http:anonymous_public_detail:$roomId',
           logLabel: _maskRoomId(roomId),
-          allowDuringCooldown: true,
+          // Anonymous requests carry no account, so a user opening a room may
+          // still probe during cooldown. Background follow refresh must not:
+          // exempting it would let the whole follow list keep hitting the host
+          // during the pause and defeat the cooldown entirely.
+          allowDuringCooldown: source != KuaishouRequestSource.followStatus,
           task: () => _anonymousDio.get<String>(
             url,
             options: Options(
@@ -2356,8 +2402,8 @@ class KuaishouSite extends LiveSite {
     final cookieJar = transport.sessionCookieJar!;
     final requestHeaders = _headersWithCookieFor(transport);
     final requestCookieHeader = requestHeaders['cookie']?.toString() ?? '';
+    final source = KuaishouRequestTrace.current;
     try {
-      final source = KuaishouRequestTrace.current;
       Future<Response<String>> request() {
         _ensureTransportAvailable(transport, source);
         return dio
@@ -2371,16 +2417,18 @@ class KuaishouSite extends LiveSite {
             .timeout(const Duration(seconds: 4));
       }
 
-      final response = source == KuaishouRequestSource.followStatus
-          ? await request()
-          : await coordinator.schedule<Response<String>>(
-              priority: _priorityForSource(source),
-              key: '${transport.cacheNamespace}:http:cookie_handshake:$roomId',
-              logLabel: maskedRoom,
-              scopeId: KuaishouRequestTrace.scopeId,
-              timeout: const Duration(seconds: 5),
-              task: request,
-            );
+      // Like the room-page fetch, the Cookie handshake must go through the
+      // coordinator for every source. Leaving follow refresh outside meant the
+      // background path skipped the cooldown gate and kept issuing handshakes
+      // while the host was supposed to be paused.
+      final response = await coordinator.schedule<Response<String>>(
+        priority: _priorityForSource(source),
+        key: '${transport.cacheNamespace}:http:cookie_handshake:$roomId',
+        logLabel: maskedRoom,
+        scopeId: KuaishouRequestTrace.scopeId,
+        timeout: const Duration(seconds: 5),
+        task: request,
+      );
       final responseStatus = response.statusCode ?? 0;
       _throwIfExplicitRateLimit(response.data ?? '');
       if (responseStatus == 401 ||
@@ -2455,6 +2503,8 @@ class KuaishouSite extends LiveSite {
         cookieHeader: requestCookieHeader,
         isChallengePage: isChallengePage,
         isCredentialInvalid: isCredentialInvalid,
+        canFailoverAccount: source != KuaishouRequestSource.followStatus &&
+            _hasUntriedFallbackAccount(transport),
       );
       if (isCredentialInvalid ||
           isChallengePage ||

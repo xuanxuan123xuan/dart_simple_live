@@ -177,6 +177,15 @@ class KuaishouRequestCoordinator {
     );
   }
 
+  /// 冷却到期后，哪些优先级可以领取那唯一一个恢复探针。
+  ///
+  /// 用户主动进房仍然优先，但后台关注刷新也允许当探针：否则用户只看关注页、
+  /// 不点进任何直播间时，冷却到期后关注列表会一直停在「限流」不再恢复。
+  /// 探针始终只有一个名额，所以这不会让恢复阶段产生并发突发。
+  static bool _canClaimProbe(KuaishouRequestPriority priority) =>
+      priority == KuaishouRequestPriority.userEnter ||
+      priority == KuaishouRequestPriority.followRefresh;
+
   /// 立即结束冷却。
   void endCooldown() {
     _cooldownActive = false;
@@ -266,13 +275,12 @@ class KuaishouRequestCoordinator {
       return Future.error(KuaishouCooldownError('快手请求处于冷却期'));
     }
     if (_awaitingCooldownProbe && !allowDuringCooldown) {
-      if (priority != KuaishouRequestPriority.userEnter ||
-          _cooldownProbeClaimed) {
+      if (!_canClaimProbe(priority) || _cooldownProbeClaimed) {
         CoreLog.i(
-          '[ks-coordinator] rejected awaiting user probe '
+          '[ks-coordinator] rejected awaiting probe '
           'key=${logLabel ?? '<key>'}',
         );
-        return Future.error(KuaishouCooldownError('快手请求等待用户探针'));
+        return Future.error(KuaishouCooldownError('快手请求等待恢复探针'));
       }
       _cooldownProbeClaimed = true;
       cooldownProbe = true;
@@ -386,7 +394,7 @@ class KuaishouRequestCoordinator {
       if (!_awaitingCooldownProbe) {
         return false;
       }
-      if (request.priority == KuaishouRequestPriority.userEnter &&
+      if (_canClaimProbe(request.priority) &&
           (request.cooldownProbe || !_cooldownProbeClaimed)) {
         _cooldownProbeClaimed = true;
         request.cooldownProbe = true;
@@ -447,6 +455,13 @@ class KuaishouRequestCoordinator {
         }
       } else if (!next.completer.isCompleted) {
         next.completer.completeError(e, stackTrace);
+      }
+      // 探针失败必须归还名额，否则 _cooldownProbeClaimed 永远为 true，
+      // 后续任何请求都会以「等待用户探针」被拒，冷却再也无法退出。
+      if (next.cooldownProbe && _awaitingCooldownProbe && epoch == _epoch) {
+        _cooldownProbeClaimed = false;
+        next.cooldownProbe = false;
+        CoreLog.i('[ks-coordinator] probe failed; probe slot released');
       }
     } finally {
       // 仅当在途项仍属于本次执行时移除，避免旧代次请求误删新请求的合并项。

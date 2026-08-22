@@ -351,7 +351,7 @@ void main() {
   });
 
   group('KuaishouRequestCoordinator 冷却', () {
-    test('冷却期停发；到期后只允许一次用户探针', () async {
+    test('冷却期停发；到期后只允许一次探针（用户进房优先）', () async {
       var now = DateTime(2026, 1, 1);
       final coordinator = KuaishouRequestCoordinator(
         nowProvider: () => now,
@@ -380,14 +380,7 @@ void main() {
       );
 
       now = now.add(const Duration(minutes: 6));
-      await expectLater(
-        coordinator.schedule(
-          priority: KuaishouRequestPriority.followRefresh,
-          key: 'background-after-expiry',
-          task: () async => 'blocked',
-        ),
-        throwsA(isA<KuaishouCooldownError>()),
-      );
+      // 冷却到期后第一个探针名额被用户进房领走，其余后台请求仍被拒。
       expect(
         await coordinator.schedule(
           priority: KuaishouRequestPriority.userEnter,
@@ -402,6 +395,69 @@ void main() {
         task: () async => 'ok',
       );
       expect(after, 'ok');
+    });
+
+    test('冷却到期后关注刷新也能当探针，无需用户先进房', () async {
+      var now = DateTime(2026, 1, 1);
+      final coordinator = KuaishouRequestCoordinator(
+        nowProvider: () => now,
+        minInterval: Duration.zero,
+        maxJitter: Duration.zero,
+      );
+      coordinator.beginCooldown(const Duration(minutes: 5));
+      now = now.add(const Duration(minutes: 6));
+
+      // 只看关注页、不点进直播间时，后台刷新自己就能把冷却探测掉。
+      expect(
+        await coordinator.schedule(
+          priority: KuaishouRequestPriority.followRefresh,
+          key: 'follow-probe',
+          task: () async => 'probe-ok',
+        ),
+        'probe-ok',
+      );
+      expect(coordinator.inCooldown, isFalse);
+
+      // 探针成功后恢复常规后台流量。
+      expect(
+        await coordinator.schedule(
+          priority: KuaishouRequestPriority.roomStatus,
+          key: 'after-follow-probe',
+          task: () async => 'ok',
+        ),
+        'ok',
+      );
+    });
+
+    test('探针失败后归还名额，下一次请求仍可重新探测', () async {
+      var now = DateTime(2026, 1, 1);
+      final coordinator = KuaishouRequestCoordinator(
+        nowProvider: () => now,
+        minInterval: Duration.zero,
+        maxJitter: Duration.zero,
+      );
+      coordinator.beginCooldown(const Duration(minutes: 5));
+      now = now.add(const Duration(minutes: 6));
+
+      await expectLater(
+        coordinator.schedule(
+          priority: KuaishouRequestPriority.followRefresh,
+          key: 'failing-probe',
+          task: () async => throw StateError('probe failed'),
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      // 名额未归还时，这里会永久停在「等待恢复探针」，冷却再也退不出去。
+      expect(
+        await coordinator.schedule(
+          priority: KuaishouRequestPriority.followRefresh,
+          key: 'retry-probe',
+          task: () async => 'probe-ok',
+        ),
+        'probe-ok',
+      );
+      expect(coordinator.inCooldown, isFalse);
     });
 
     test('cancelScope 只取消同作用域中尚未执行的请求', () async {
