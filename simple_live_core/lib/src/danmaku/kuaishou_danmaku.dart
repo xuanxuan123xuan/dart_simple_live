@@ -520,7 +520,14 @@ class KuaishouDanmaku extends LiveDanmaku {
       return null;
     }
 
-    final spans = _buildEmojiSpans(content);
+    // 上游可能把文本截断在表情 token 中间，先去掉尾部残片再切 spans，
+    // 保证 message 与 spans 一致（列表与弹幕层显示相同内容）。
+    final text = _stripTruncatedEmojiTail(content);
+    if (text.isEmpty) {
+      return null;
+    }
+
+    final spans = _buildEmojiSpans(text);
     final imageUrls = spans
         .where((item) => item.isImage)
         .map((item) => item.imageUrl!.trim())
@@ -530,7 +537,7 @@ class KuaishouDanmaku extends LiveDanmaku {
     return LiveMessage(
       type: LiveMessageType.chat,
       userName: userName,
-      message: content,
+      message: text,
       color: color,
       imageUrls: imageUrls.isEmpty ? null : imageUrls,
       spans: spans.isEmpty ? null : spans,
@@ -541,6 +548,45 @@ class KuaishouDanmaku extends LiveDanmaku {
   /// 未命中 [kuaishouEmojiAssets] 的方括号文本保持原样，避免误伤普通文本。
   static final RegExp _kuaishouEmojiPattern = RegExp(r'\[[^\[\]\r\n]{1,64}\]');
   static final Set<String> _reportedUnknownEmojiTokens = <String>{};
+
+  /// 尾部截断残片：按字节切断时可能落在 UTF-8 序列中间，
+  /// `utf8.decode(allowMalformed: true)` 会留下若干 U+FFFD。
+  static final RegExp _trailingReplacementChars = RegExp('�+\$');
+
+  /// 尾部截断残片的长度上限（不含 `[`），超过则视为普通文本不删。
+  ///
+  /// 两张词库 + 别名共 273 个 token，表情名长度分布为 1 字 ×25、2 字 ×156、
+  /// 3 字 ×64、4 字 ×25、5 字 ×1、6 字 ×2，即实测最长 6 字：真正被截断的
+  /// 残片一定很短。这个上限用来兜住误判的破坏力——没有它，
+  /// `substring(0, open)` 会删掉长度不受限的尾巴，例如
+  /// `主播这个操作[笑死我了哈哈哈哈哈` 会连着 `[` 一起丢掉 10 个字符。
+  static const int _kMaxTruncatedEmojiResidue = 8;
+
+  /// 去掉尾部被截断的表情 token 残片（如 `[奸笑][奸` 的 `[奸`）。
+  ///
+  /// 上游（服务端或发送方客户端）会在 token 中间截断文本，残片缺少 `]`
+  /// 无法匹配 [_kuaishouEmojiPattern]，会原样渲染成 `[`、`[奸` 之类的乱码。
+  /// 只要末尾存在未闭合的 `[`，且其后（去掉尾部 U+FFFD）不超过
+  /// [_kMaxTruncatedEmojiResidue] 个字符，就无条件丢弃这段残片——不再校验
+  /// 它是否为已知表情名的前缀，因为新上线、本地词库还没收录的表情永远过不了
+  /// 前缀校验，残片会漏到界面上。
+  ///
+  /// 代价是明确接受误判：用户自己打出的、结尾带未闭合 `[` 的短文本
+  /// （如 `你猜[`）也会被删掉。这是有意的取舍，破坏范围由上限兜住。
+  static String _stripTruncatedEmojiTail(String content) {
+    final open = content.lastIndexOf('[');
+    if (open < 0 || content.indexOf(']', open) >= 0) {
+      // 没有未闭合的 `[`，说明尾部不是被切断的 token。
+      return content;
+    }
+    final residue = content
+        .substring(open + 1)
+        .replaceFirst(_trailingReplacementChars, '');
+    if (residue.length > _kMaxTruncatedEmojiResidue) {
+      return content;
+    }
+    return content.substring(0, open);
+  }
 
   List<LiveMessageSpan> _buildEmojiSpans(String content) {
     final spans = <LiveMessageSpan>[];

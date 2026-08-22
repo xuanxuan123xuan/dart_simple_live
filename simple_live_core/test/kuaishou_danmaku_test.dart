@@ -172,6 +172,111 @@ void main() {
     expect(msg.imageUrls, hasLength(1));
   });
 
+  group('上游截断的尾部表情残片', () {
+    LiveMessage? decodeContent(String content) {
+      final messages = <LiveMessage>[];
+      final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+      danmaku.decodeMessage(
+        _socketMessage(
+          _feedPushWithContent(content),
+          compressionType: 0,
+        ),
+      );
+      return messages.isEmpty ? null : messages.single;
+    }
+
+    test('截断在表情名中间时丢弃残片', () {
+      final msg = decodeContent('[奸笑][奸')!;
+      expect(msg.message, '[奸笑]');
+      expect(msg.spans, hasLength(1));
+      expect(msg.spans!.single.isImage, isTrue);
+      expect(msg.spans!.single.fallbackText, '[奸笑]');
+    });
+
+    test('截断只剩裸左括号时丢弃残片', () {
+      final msg = decodeContent('[奸笑][')!;
+      expect(msg.message, '[奸笑]');
+      expect(msg.spans, hasLength(1));
+      expect(msg.spans!.single.isImage, isTrue);
+    });
+
+    test('字节截断产生的 U+FFFD 不影响识别', () {
+      final withName = decodeContent('[奸笑][奸�')!;
+      expect(withName.message, '[奸笑]');
+      expect(withName.spans!.where((s) => s.isText), isEmpty);
+
+      final bare = decodeContent('[奸笑][�')!;
+      expect(bare.message, '[奸笑]');
+      expect(bare.spans!.where((s) => s.isText), isEmpty);
+    });
+
+    test('大量表情后被截断时保留全部图片且不留残字', () {
+      final content = '${'[奸笑]' * 20}[奸';
+      final msg = decodeContent(content)!;
+      expect(msg.message, '[奸笑]' * 20);
+      expect(msg.spans, hasLength(20));
+      expect(msg.spans!.where((s) => s.isImage), hasLength(20));
+      expect(msg.spans!.where((s) => s.isText), isEmpty);
+      expect(msg.imageUrls, hasLength(1));
+    });
+
+    test('残片就是整条内容时整条丢弃', () {
+      expect(decodeContent('[奸'), isNull);
+      expect(decodeContent('['), isNull);
+      expect(decodeContent('[�'), isNull);
+    });
+
+    test('不像表情名但长度未超上限的残片同样丢弃（有意接受误判）', () {
+      // 残片 7 字未超上限：不再校验是否为已知表情名前缀，一律丢弃。
+      final msg = decodeContent('[奸笑][随便打的一段话')!;
+      expect(msg.message, '[奸笑]');
+      expect(msg.spans, hasLength(1));
+      expect(msg.spans!.single.isImage, isTrue);
+      expect(msg.spans!.where((s) => s.isText), isEmpty);
+    });
+
+    test('本地词库未收录的新表情残片也能丢弃（旧前缀校验的盲区）', () {
+      // 旧实现要求残片是已知表情名前缀，快手新上线、词库还没收录的表情
+      // 永远过不了校验，残片会漏到界面上；现在无条件丢弃。
+      expect(resolveKuaishouEmoji('[全新未收录表情]'), isNull);
+      final msg = decodeContent('[奸笑][全新未收录')!;
+      expect(msg.message, '[奸笑]');
+      expect(msg.spans, hasLength(1));
+      expect(msg.spans!.single.isImage, isTrue);
+      expect(msg.spans!.where((s) => s.isText), isEmpty);
+    });
+
+    test('残片超过长度上限时原样保留，避免吃掉长尾文本', () {
+      // 残片 9 字 > 上限 8：视为用户真的打了方括号，整条原样保留。
+      const content = '主播这个操作[笑死我了哈哈哈哈哈';
+      final msg = decodeContent(content)!;
+      expect(msg.message, content);
+      expect(msg.spans!.where((s) => s.isImage), isEmpty);
+      expect(
+        msg.spans!.where((s) => s.isText).map((s) => s.text).join(),
+        content,
+      );
+    });
+
+    test('残片长度正好在上限边界上：8 字丢弃、9 字保留', () {
+      const eight = '笑死我了哈哈哈哈';
+      expect(eight.length, 8);
+      final stripped = decodeContent('前缀文本[$eight')!;
+      expect(stripped.message, '前缀文本');
+
+      const nine = '笑死我了哈哈哈哈哈';
+      expect(nine.length, 9);
+      final kept = decodeContent('前缀文本[$nine')!;
+      expect(kept.message, '前缀文本[$nine');
+    });
+
+    test('已闭合的未知 token 与普通结尾不受影响', () {
+      expect(decodeContent('[不存在的]')!.message, '[不存在的]');
+      expect(decodeContent('[奸笑]完整结尾')!.message, '[奸笑]完整结尾');
+      expect(decodeContent('普通文本')!.message, '普通文本');
+    });
+  });
+
   test('parses official emoji tokens longer than the old 16 character limit',
       () async {
     const token = '[这是一个超过十六字符限制的移动端官方表情名称]';

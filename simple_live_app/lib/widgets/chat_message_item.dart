@@ -170,32 +170,77 @@ class ChatMessageText extends StatelessWidget {
       return [TextSpan(text: message)];
     }
 
+    final matches = _emojiTokenPattern.allMatches(message).toList(
+          growable: false,
+        );
+    final (tokenUrls, consumedUrls) = _pairTokensWithUrls(matches, urls);
+
     final result = <InlineSpan>[];
     var start = 0;
-    var imageIndex = 0;
-    for (final match in _emojiTokenPattern.allMatches(message)) {
-      if (imageIndex >= urls.length) {
-        break;
+    for (var i = 0; i < matches.length; i++) {
+      final url = tokenUrls[i];
+      if (url == null) {
+        // 没有地址可配对，token 原文留在待输出的文本区间里，避免丢字
+        continue;
       }
+      final match = matches[i];
       if (match.start > start) {
         result.add(TextSpan(text: message.substring(start, match.start)));
       }
       result.add(
         _buildImageSpan(
-          urls[imageIndex],
+          url,
           fallbackText: match.group(0),
         ),
       );
-      imageIndex += 1;
       start = match.end;
     }
     if (start < message.length) {
       result.add(TextSpan(text: message.substring(start)));
     }
-    for (; imageIndex < urls.length; imageIndex += 1) {
-      result.add(_buildImageSpan(urls[imageIndex]));
+    // 有些站点会给出文本里没有对应 token 的图片，剩余地址仍追加到末尾
+    for (var i = consumedUrls; i < urls.length; i += 1) {
+      result.add(_buildImageSpan(urls[i]));
     }
     return result;
+  }
+
+  /// 把文本里的表情 token 与 [urls] 配对，返回每个 token 的地址（配不上时为
+  /// null）以及已消耗的地址数量。
+  ///
+  /// 各站点的 [LiveMessage.imageUrls] 都是 `.toSet().toList()` 去重后的结果，
+  /// 重复表情只剩一个地址，按下标逐个配对会让第二次及以后的重复 token 退化成
+  /// 字面量文本。所以 token 数超过地址数时几乎必然是被去重过：改为按「首次出现
+  /// 顺序」给去重后的 token 分配地址，同一 token 的每次出现复用同一地址，正好
+  /// 抵消上游的去重。
+  static (List<String?>, int) _pairTokensWithUrls(
+    List<RegExpMatch> matches,
+    List<String> urls,
+  ) {
+    if (matches.length <= urls.length) {
+      // 数量本就对得上，说明没被去重影响，保持原有的按位配对
+      return (
+        List<String?>.generate(matches.length, (index) => urls[index]),
+        matches.length,
+      );
+    }
+    final urlByToken = <String, String>{};
+    for (final match in matches) {
+      final token = match.group(0)!;
+      if (urlByToken.containsKey(token)) {
+        continue;
+      }
+      if (urlByToken.length >= urls.length) {
+        break;
+      }
+      urlByToken[token] = urls[urlByToken.length];
+    }
+    return (
+      matches
+          .map((match) => urlByToken[match.group(0)!])
+          .toList(growable: false),
+      urlByToken.length,
+    );
   }
 
   WidgetSpan _buildImageSpan(String url, {String? fallbackText}) {
