@@ -13,13 +13,15 @@ permissions:
 
 env:
   FLUTTER_VERSION: "3.41.x"
-  XCODE_VERSION: "15.4"
+  # Modern 图标是 Icon Composer 的 .icon 包，主图标编译需要 Xcode 26。
+  XCODE_VERSION: "26.0"
   FASTFORGE_VERSION: "0.6.10"
 
 jobs:
   build:
     name: 构建 macOS DMG
-    runs-on: macos-14
+    # Xcode 26 只在 macos-15 及更新的镜像上提供。
+    runs-on: macos-15
     timeout-minutes: 75
     steps:
       - name: 检出源码
@@ -31,6 +33,13 @@ jobs:
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: 校验 Liquid Glass 图标资源
+        shell: bash
+        run: |
+          test -f simple_live_app/macos/Runner/AppIconModern.icon/icon.json
+          xcode_major="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
+          test "$xcode_major" -ge 26
 
       - name: 配置 Flutter
         uses: subosito/flutter-action@v2

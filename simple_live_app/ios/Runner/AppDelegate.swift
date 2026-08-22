@@ -69,15 +69,11 @@ import UserNotifications
         }
         let args = call.arguments as? [String: Any]
         let icon = args?["icon"] as? String
-        let modernIconName: String
-        if #available(iOS 26.0, *) {
-          modernIconName = "AppIconModern"
-        } else {
-          modernIconName = "AppIconSimpleLive"
-        }
-        let alternateIconName = (icon == "modern" || icon == "simplelive")
-          ? modernIconName
-          : nil
+        // AppIconModern.icon is the primary icon, so Modern means "no
+        // alternate". On iOS 26+ that is the Liquid Glass render; below 26 the
+        // asset catalog fallback Xcode generates from the same .icon is used.
+        let alternateIconName: String? =
+          (icon == "modern" || icon == "simplelive") ? nil : "AppIconSimpleLive"
         if UIApplication.shared.alternateIconName == alternateIconName {
           result(nil)
           return

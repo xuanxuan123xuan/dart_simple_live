@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>SimpleLive yellow live status dot and rays</title>
+  <g fill="none" stroke="#FFC230" stroke-width="25" stroke-linecap="round">
+    <path d="M758 190L742 132"/>
+    <path d="M820 184L826 123"/>
+    <path d="M875 208L918 165"/>
+  </g>
+  <circle cx="675" cy="448" r="33" fill="#FFC230"/>
+</svg>
+
