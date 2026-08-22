@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 
 void main() {
@@ -11,6 +13,32 @@ void main() {
   }
 
   group('配置包识别', () {
+    test('临时配置包写入后可以清理', () async {
+      Utils.packageInfo = PackageInfo(
+        appName: 'Simple Live',
+        packageName: 'com.simplelive.app',
+        version: '1.0.0',
+        buildNumber: '1',
+      );
+      final package = await service.createTemporaryProfilePackage(
+        options: const ProfileExportOptions(
+          settings: false,
+          accounts: false,
+          shields: false,
+          shieldPresets: false,
+          follows: false,
+          histories: false,
+        ),
+      );
+
+      expect(await package.file.exists(), isTrue);
+      expect(package.byteLength, greaterThan(0));
+
+      await package.delete();
+
+      expect(await package.directory.exists(), isFalse);
+    });
+
     test('只报告包内真实存在的分类，空分类不出现', () {
       final inspection = inspect({
         "schema": ProfileBackupService.schema,
@@ -185,7 +213,12 @@ void main() {
 
     test('顶层数组的历史与屏蔽词仍各归其类', () {
       final histories = service.inspectProfileJson(jsonEncode([
-        {"id": "bilibili_1", "roomId": "1", "siteId": "bilibili", "updateTime": 1},
+        {
+          "id": "bilibili_1",
+          "roomId": "1",
+          "siteId": "bilibili",
+          "updateTime": 1
+        },
       ]));
       expect(
         histories.categories[ProfileCategory.histories]!.detail,
@@ -193,7 +226,11 @@ void main() {
       );
 
       final tags = service.inspectProfileJson(jsonEncode([
-        {"id": "t1", "tag": "常看", "userId": ["bilibili_1"]},
+        {
+          "id": "t1",
+          "tag": "常看",
+          "userId": ["bilibili_1"]
+        },
       ]));
       expect(
         tags.categories[ProfileCategory.follows]!.detail,

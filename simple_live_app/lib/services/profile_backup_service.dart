@@ -72,10 +72,7 @@ class ProfileBackupService extends GetxService {
             .toList()
         : const [];
     final histories = options.histories
-        ? DBService.instance
-            .getHistores()
-            .map((item) => item.toJson())
-            .toList()
+        ? DBService.instance.getHistores().map((item) => item.toJson()).toList()
         : const [];
     return {
       "schema": schema,
@@ -93,6 +90,7 @@ class ProfileBackupService extends GetxService {
       if (options.histories) "histories": histories,
       "summary": {
         "settingCount": settingsPayload.length,
+        "rawShieldCount": (shieldPayload["raw"] as List).length,
         "keywordShieldCount": (shieldPayload["keywords"] as List).length,
         "userShieldCount": (shieldPayload["users"] as List).length,
         "followUserCount": followUsers.length,
@@ -109,6 +107,23 @@ class ProfileBackupService extends GetxService {
   }) {
     return const JsonEncoder.withIndent("  ")
         .convert(exportProfileMap(options: options));
+  }
+
+  Future<TemporaryProfilePackage> createTemporaryProfilePackage({
+    ProfileExportOptions options = const ProfileExportOptions(),
+  }) async {
+    final payload = exportProfileMap(options: options);
+    final content = const JsonEncoder.withIndent("  ").convert(payload);
+    final dir = await Directory.systemTemp.createTemp("simple_live_profile_");
+    final file = File("${dir.path}${Platform.pathSeparator}profile.json");
+    await file.writeAsString(content);
+    return TemporaryProfilePackage(
+      file: file,
+      directory: dir,
+      summary: Map<String, dynamic>.from(payload["summary"] as Map),
+      options: options,
+      byteLength: utf8.encode(content).length,
+    );
   }
 
   Future<ProfileImportSummary> importProfileJson(
@@ -1031,6 +1046,32 @@ class ProfileExportOptions {
       "follows": follows,
       "histories": histories,
     };
+  }
+}
+
+class TemporaryProfilePackage {
+  final File file;
+  final Directory directory;
+  final Map<String, dynamic> summary;
+  final ProfileExportOptions options;
+  final int byteLength;
+
+  const TemporaryProfilePackage({
+    required this.file,
+    required this.directory,
+    required this.summary,
+    required this.options,
+    required this.byteLength,
+  });
+
+  Future<String> readAsString() {
+    return file.readAsString();
+  }
+
+  Future<void> delete() async {
+    if (await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
   }
 }
 
