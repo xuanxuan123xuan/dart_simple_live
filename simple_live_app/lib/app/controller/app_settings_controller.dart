@@ -88,7 +88,7 @@ class AppSettingsController extends GetxController {
     appIconVariant.value = AppIconVariant.fromStorage(
       LocalStorageService.instance.getValue(
         LocalStorageService.kAppIconVariant,
-        AppIconVariant.classic.storageValue,
+        AppIconVariant.modern.storageValue,
       ),
     ).storageValue;
     firstRun = LocalStorageService.instance
@@ -616,7 +616,7 @@ class AppSettingsController extends GetxController {
     Get.changeThemeMode(mode);
   }
 
-  var appIconVariant = AppIconVariant.classic.storageValue.obs;
+  var appIconVariant = AppIconVariant.modern.storageValue.obs;
   var appIconChanging = false.obs;
 
   Future<String?> setAppIconVariant(String value) async {
