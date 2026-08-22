@@ -37,7 +37,10 @@ jobs:
       - name: 校验 Liquid Glass 图标资源
         shell: bash
         run: |
-          test -f simple_live_app/macos/Runner/AppIconModern.icon/icon.json
+          # .icon 与同名 AppIcon.appiconset 并存：macOS 26+ 用前者出液态玻璃，
+          # 更低版本回落到后者的扁平图。
+          test -f simple_live_app/macos/Runner/AppIcon.icon/icon.json
+          test -f simple_live_app/macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
           xcode_major="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
           test "$xcode_major" -ge 26
 

@@ -69,9 +69,10 @@ import UserNotifications
         }
         let args = call.arguments as? [String: Any]
         let icon = args?["icon"] as? String
-        // AppIconModern.icon is the primary icon, so Modern means "no
-        // alternate". On iOS 26+ that is the Liquid Glass render; below 26 the
-        // asset catalog fallback Xcode generates from the same .icon is used.
+        // The primary icon is AppIcon, which resolves to AppIcon.icon on
+        // iOS 26+ (Liquid Glass) and to AppIcon.appiconset below that. Modern
+        // therefore means "no alternate". actool requires the .icon bundle and
+        // the catalog's primary set to share a name, so both are AppIcon.
         let alternateIconName: String? =
           (icon == "modern" || icon == "simplelive") ? nil : "AppIconSimpleLive"
         if UIApplication.shared.alternateIconName == alternateIconName {
