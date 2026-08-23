@@ -3659,6 +3659,7 @@ class PlayerController extends BaseController
       title: "播放信息",
       maxHeightFactor: 0.5,
       child: ListView(
+        shrinkWrap: true,
         children:
             rows.map((row) => diagnosticTile(row.key, row.value)).toList(),
       ),

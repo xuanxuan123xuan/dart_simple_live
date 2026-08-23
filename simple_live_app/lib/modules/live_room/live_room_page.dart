@@ -1695,6 +1695,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     Utils.showBottomSheet(
       title: "播放调整",
       child: ListView(
+        shrinkWrap: true,
         children: [
           ListTile(
             leading: const Icon(Icons.play_circle_outline),
@@ -1731,6 +1732,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     Utils.showBottomSheet(
       title: "分享与链接",
       child: ListView(
+        shrinkWrap: true,
         children: [
           ListTile(
             leading: const Icon(Icons.share_outlined),

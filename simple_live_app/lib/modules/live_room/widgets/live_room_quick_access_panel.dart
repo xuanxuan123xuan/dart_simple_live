@@ -47,21 +47,21 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
     }
   }
 
+  /// 诊断页是否由快捷入口列表进入。直接以诊断页作为入口时（设置里的
+  /// “网络诊断与播放信息”），用户从未经过快捷入口，所以不提供返回快捷入口的路径。
+  bool get _canReturnToQuickAccess =>
+      _showDiagnostics && !widget.initialDiagnostics;
+
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: !_showDiagnostics,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && _showDiagnostics) {
-          setState(() => _showDiagnostics = false);
-        }
-      },
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
-        child: _showDiagnostics
-            ? _buildDiagnosticsPage()
-            : _buildQuickAccessPage(),
-      ),
+    // 这里不拦截 pop：点击遮罩走的是 Navigator.maybePop，与系统返回同一条路径，
+    // 一旦拦截就会被吞成“退回快捷入口”而关不掉容器。返回快捷入口只保留头部箭头
+    // 这一个显式入口，pop 一律直接关闭整个面板。
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: _showDiagnostics
+          ? _buildDiagnosticsPage()
+          : _buildQuickAccessPage(),
     );
   }
 
@@ -138,17 +138,20 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
 
   Widget _buildPanelHeader() {
     final diagnostics = _showDiagnostics;
+    final canReturn = _canReturnToQuickAccess;
     return Row(
       children: [
         IconButton(
-          tooltip: diagnostics ? "返回快捷入口" : "关闭快捷入口",
-          onPressed: diagnostics
+          tooltip: canReturn ? "返回快捷入口" : "关闭",
+          onPressed: canReturn
               ? () => setState(() => _showDiagnostics = false)
               : widget.onClose,
           icon: Icon(
-            !diagnostics && widget.isBottomSheet
-                ? Icons.close
-                : Icons.arrow_back,
+            canReturn
+                ? Icons.arrow_back
+                : (diagnostics || widget.isBottomSheet
+                    ? Icons.close
+                    : Icons.arrow_back),
           ),
         ),
         Expanded(
@@ -163,7 +166,7 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
             onPressed: _diagnosticsRunning ? null : _runDiagnostics,
             icon: const Icon(Icons.refresh),
           ),
-        if (diagnostics && widget.isBottomSheet)
+        if (canReturn && widget.isBottomSheet)
           IconButton(
             tooltip: "关闭",
             onPressed: widget.onClose,

@@ -1374,6 +1374,7 @@ class LiveRoomController extends PlayerController
     Utils.showBottomSheet(
       title: value,
       child: ListView(
+        shrinkWrap: true,
         children: [
           if (remark != null && remark.isNotEmpty)
             ListTile(
@@ -3792,7 +3793,10 @@ class LiveRoomController extends PlayerController
   void showDanmuSettingsSheet() {
     Utils.showBottomSheet(
       title: "弹幕设置",
+      // 内容注定超过一屏，除了按内容收敛还要留出遮罩可点区域。
+      maxHeightFactor: 0.85,
       child: ListView(
+        shrinkWrap: true,
         padding: AppStyle.edgeInsetsA12,
         children: [
           DanmuSettingsView(
@@ -3813,7 +3817,10 @@ class LiveRoomController extends PlayerController
     final settings = AppSettingsController.instance;
     Utils.showBottomSheet(
       title: "播放与网络",
+      // 开关很多，内容注定超过一屏，留出遮罩可点区域。
+      maxHeightFactor: 0.85,
       child: ListView(
+        shrinkWrap: true,
         padding: AppStyle.edgeInsetsA12,
         children: [
           SettingsCard(
@@ -3927,6 +3934,7 @@ class LiveRoomController extends PlayerController
           }
         },
         child: ListView.builder(
+          shrinkWrap: true,
           itemCount: qualites.length + 1,
           itemBuilder: (_, i) {
             if (i == 0) {
@@ -3957,6 +3965,7 @@ class LiveRoomController extends PlayerController
           changePlayLine(v ?? 0);
         },
         child: ListView.builder(
+          shrinkWrap: true,
           itemCount: playUrls.length,
           itemBuilder: (_, i) {
             return RadioListTile(
@@ -3977,6 +3986,7 @@ class LiveRoomController extends PlayerController
           groupValue: AppSettingsController.instance.scaleMode.value,
           onChanged: _onScaleModeChanged,
           child: ListView(
+            shrinkWrap: true,
             padding: AppStyle.edgeInsetsV12,
             children: const [
               RadioListTile(
@@ -4790,6 +4800,7 @@ class LiveRoomController extends PlayerController
     Utils.showBottomSheet(
       title: "定时关闭",
       child: ListView(
+        shrinkWrap: true,
         children: [
           Obx(
             () => SwitchListTile(

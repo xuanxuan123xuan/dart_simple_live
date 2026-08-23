@@ -612,6 +612,7 @@ class RemoteSyncRoomController extends BaseController {
     Utils.showBottomSheet(
       title: "房间信息",
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           QrImageView(
             data: currentRoomId.value,
