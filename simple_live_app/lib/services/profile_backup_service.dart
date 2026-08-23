@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/event_bus.dart';
+import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
@@ -40,6 +41,30 @@ class ProfileBackupService extends GetxService {
     LocalStorageService.kKuaishouSecondaryKww,
     LocalStorageService.kKuaishouSecondaryCookieExpiresAt,
     LocalStorageService.kKuaishouAccountPoolState,
+  };
+
+  /// 无论源平台是什么都不该跨设备恢复的设置。
+  ///
+  /// 与 [_excludedSettings] 的区别：那张表挡的是身份与凭证，这张表挡的是
+  /// "在别的机器上不可能成立"的值。导出和导入两侧都跳过。
+  static const Set<String> _deviceLocalSettings = {
+    // 本机绝对路径，换机后必然指向不存在的文件；parseConfFile 读不到会静默
+    // 返回空 map，用户看到设置里挂着一个路径却毫无效果。
+    LocalStorageService.kImportedMpvConfPath,
+  };
+
+  /// 只在源平台与当前平台相同时才恢复的设置。
+  ///
+  /// 这些键的值是platform-specific 的播放器调优：`ao=audiotrack` 这类安卓专属
+  /// 输出驱动落到 Windows 上会让 libmpv 音频初始化直接失败、全程无声。但同平台
+  /// 之间（安卓→安卓）迁移调优是正常需求，所以按源平台判断而不是一律排除。
+  static const Set<String> _platformSpecificSettings = {
+    LocalStorageService.kMpvAdvancedOptions,
+    LocalStorageService.kCustomPlayerOutput,
+    LocalStorageService.kAudioOutputDriver,
+    LocalStorageService.kVideoOutputDriver,
+    LocalStorageService.kVideoHardwareDecoder,
+    LocalStorageService.kPlayerCompatMode,
   };
 
   Map<String, dynamic> exportProfileMap({
@@ -579,7 +604,12 @@ class ProfileBackupService extends GetxService {
     final summary = ProfileImportSummary();
     if (options.settings) {
       onProgress?.call(const SyncProgress(stage: "导入设置"));
-      await _importSettings(payload["settings"], summary, overwrite);
+      await _importSettings(
+        payload["settings"],
+        summary,
+        overwrite,
+        sourcePlatform: payload["platform"],
+      );
     }
     if (options.shields) {
       await _importShields(
@@ -649,7 +679,8 @@ class ProfileBackupService extends GetxService {
     for (final entry
         in LocalStorageService.instance.settingsBox.toMap().entries) {
       final key = entry.key.toString();
-      if (_excludedSettings.contains(key)) {
+      if (_excludedSettings.contains(key) ||
+          _deviceLocalSettings.contains(key)) {
         continue;
       }
       result[key] = _safeJsonValue(entry.value);
@@ -716,27 +747,55 @@ class ProfileBackupService extends GetxService {
     return result;
   }
 
+  /// 判断配置包是否来自当前平台。
+  ///
+  /// 老包（schema 1-4 之前的导出）可能没有 `platform` 字段，一律按"来源未知"
+  /// 处理：保守起见视为跨平台，宁可丢掉调优也不要写进一个会导致无声的 ao。
+  static bool isSamePlatformPackage(dynamic rawPlatform) {
+    if (rawPlatform is! String || rawPlatform.trim().isEmpty) {
+      return false;
+    }
+    return rawPlatform.trim().toLowerCase() ==
+        Platform.operatingSystem.toLowerCase();
+  }
+
   Future<void> _importSettings(
     dynamic rawSettings,
     ProfileImportSummary summary,
-    bool overwrite,
-  ) async {
+    bool overwrite, {
+    dynamic sourcePlatform,
+  }) async {
     if (rawSettings is! Map) {
       return;
     }
     if (overwrite) {
       await _clearImportableSettings();
     }
+    final samePlatform = isSamePlatformPackage(sourcePlatform);
     final values = <dynamic, dynamic>{};
+    final droppedPlatformKeys = <String>[];
     for (final entry in rawSettings.entries) {
       final key = entry.key.toString();
-      if (_excludedSettings.contains(key)) {
+      if (_excludedSettings.contains(key) ||
+          _deviceLocalSettings.contains(key)) {
+        continue;
+      }
+      if (!samePlatform && _platformSpecificSettings.contains(key)) {
+        droppedPlatformKeys.add(key);
         continue;
       }
       values[key] = entry.value;
     }
     await LocalStorageService.instance.settingsBox.putAll(values);
     summary.settings = values.length;
+    summary.droppedPlatformSettings = droppedPlatformKeys.length;
+    if (droppedPlatformKeys.isNotEmpty) {
+      Log.d(
+        "配置导入：跳过 ${droppedPlatformKeys.length} 项平台专属设置"
+        "（来源=${sourcePlatform ?? '未知'} 当前=${Platform.operatingSystem}）"
+        "：${droppedPlatformKeys.join(', ')}",
+      );
+    }
   }
 
   Future<void> _clearImportableSettings() async {
@@ -1171,10 +1230,19 @@ class ProfileImportSummary {
   int histories = 0;
   int skipped = 0;
 
+  /// 因源平台与当前平台不同而跳过的播放器调优项数量。
+  int droppedPlatformSettings = 0;
+
   String get message {
     final base =
         "设置 $settings 项，账号 $accounts 个，屏蔽 $shields 项，预设 $shieldPresets 个，关注 $followUsers 个，标签 $followTags 个，历史 $histories 条";
-    return skipped > 0 ? "$base，跳过异常 $skipped 条" : base;
+    final parts = [
+      base,
+      if (skipped > 0) "跳过异常 $skipped 条",
+      if (droppedPlatformSettings > 0)
+        "跳过其他平台的播放器设置 $droppedPlatformSettings 项",
+    ];
+    return parts.join("，");
   }
 }
 
