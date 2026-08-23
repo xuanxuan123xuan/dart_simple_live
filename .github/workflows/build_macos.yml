@@ -13,15 +13,16 @@ permissions:
 
 env:
   FLUTTER_VERSION: "3.41.x"
-  # Modern 图标是 Icon Composer 的 .icon 包，主图标编译需要 Xcode 26。
-  XCODE_VERSION: "26.0"
+  # Icon Composer 资源使用与 macOS 26 主机匹配的 Xcode，避免 macOS 15
+  # runner 上 AssetCatalogAgent 的系统框架符号不兼容。
+  XCODE_VERSION: "26.6"
   FASTFORGE_VERSION: "0.6.10"
 
 jobs:
   build:
     name: 构建 macOS DMG
-    # Xcode 26 只在 macos-15 及更新的镜像上提供。
-    runs-on: macos-15
+    # Liquid Glass 的 .icon 包需要在 macOS 26 主机上编译。
+    runs-on: macos-26
     timeout-minutes: 75
     steps:
       - name: 检出源码
@@ -41,7 +42,9 @@ jobs:
           # 更低版本回落到后者的扁平图。
           test -f simple_live_app/macos/Runner/AppIcon.icon/icon.json
           test -f simple_live_app/macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
+          macos_major="$(sw_vers -productVersion | cut -d. -f1)"
           xcode_major="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
+          test "$macos_major" -ge 26
           test "$xcode_major" -ge 26
 
       - name: 配置 Flutter

@@ -42,9 +42,10 @@ concurrency:
 env:
   FLUTTER_VERSION: "3.41.x"
   TV_FLUTTER_VERSION: "3.41.x"
-  # iOS 与 macOS 共用：Modern 图标是 Icon Composer 的 .icon 包，主图标编译
-  # 需要 Xcode 26，该版本只在 macos-15 及更新的镜像上提供。
+  # iOS 当前构建已验证通过 Xcode 26.0；macOS 的 Icon Composer 资源使用
+  # 与 macOS 26 主机匹配的较新工具链，避免 AssetCatalogAgent 崩溃。
   APPLE_XCODE_VERSION: "26.0"
+  MACOS_XCODE_VERSION: "26.6"
   FASTFORGE_VERSION: "0.6.10"
 
 jobs:
@@ -518,9 +519,8 @@ jobs:
   macos:
     name: macOS DMG
     needs: prepare
-    # Modern 图标是 Icon Composer 的 .icon 包，主图标编译需要 Xcode 26，
-    # 而 Xcode 26 只在 macos-15 及更新的镜像上提供。
-    runs-on: macos-15
+    # Liquid Glass 的 .icon 包需要在 macOS 26 主机上编译。
+    runs-on: macos-26
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
@@ -529,7 +529,7 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: ${{ env.APPLE_XCODE_VERSION }}
+          xcode-version: ${{ env.MACOS_XCODE_VERSION }}
 
       - name: 校验 Liquid Glass 图标资源
         shell: bash
@@ -538,7 +538,9 @@ jobs:
           # 更低版本回落到后者的扁平图。
           test -f simple_live_app/macos/Runner/AppIcon.icon/icon.json
           test -f simple_live_app/macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
+          macos_major="$(sw_vers -productVersion | cut -d. -f1)"
           xcode_major="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
+          test "$macos_major" -ge 26
           test "$xcode_major" -ge 26
 
       - uses: subosito/flutter-action@v2
