@@ -1144,13 +1144,25 @@ class _SafeBottomSheetRoute<T> extends PopupRoute<T> {
     final maxHeight = isScrollControlled
         ? mediaQuery.size.height * 0.9
         : mediaQuery.size.height * 0.5;
+    // 与 _RightSideSheetRoute 同理：受 maxWidth 约束居中时两侧本就有留白，
+    // 够躲开安全区就不必再让，否则内容白缩一截（横屏导航条那侧尤其明显）。
+    final maxSheetWidth = constraints?.maxWidth ?? double.infinity;
+    final sheetWidth = maxSheetWidth < mediaQuery.size.width
+        ? maxSheetWidth
+        : mediaQuery.size.width;
+    final freeSide = (mediaQuery.size.width - sheetWidth) / 2;
+    final insets = _HorizontalInsets.forBox(
+      padding: mediaQuery.padding,
+      freeLeft: freeSide,
+      freeRight: freeSide,
+    );
     return Align(
       alignment: alignment,
       child: Container(
         // 不做键盘避让（不按 viewInsets 上移）：输入框在屏幕中间，
         // 键盘一般比它矮不会遮挡，保持位置稳定。
         constraints: BoxConstraints(
-          maxWidth: constraints?.maxWidth ?? double.infinity,
+          maxWidth: maxSheetWidth,
           maxHeight: maxHeight,
         ),
         decoration: ShapeDecoration(
@@ -1163,28 +1175,47 @@ class _SafeBottomSheetRoute<T> extends PopupRoute<T> {
                 ),
               ),
         ),
-        child: SafeArea(
-          top: useSafeArea,
-          bottom: useSafeArea,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (showDragHandle)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8, bottom: 4),
-                  child: Center(
-                    child: Container(
-                      width: 32,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey,
-                        borderRadius: BorderRadius.circular(2),
+        // 内容常是裸 ListTile / RadioListTile（settings_menu 等），缺
+        // Material 祖先时 debug 断言直接抛。transparency 不额外上色，
+        // 背景仍由上面的 ShapeDecoration 画。
+        child: Material(
+          type: MaterialType.transparency,
+          child: Padding(
+            padding: insets.asPadding,
+            // 水平 inset 由这里补一次，摘掉 MediaQuery 里的值：否则
+            // Utils.bottomSheetSafeArea 和 ListTile 内部的 SafeArea 会再让
+            // 一次。（这也是调用方注释"useSafeArea似乎无效"的由来。）
+            child: MediaQuery.removePadding(
+              context: context,
+              removeLeft: true,
+              removeRight: true,
+              child: SafeArea(
+                top: useSafeArea,
+                bottom: useSafeArea,
+                left: false,
+                right: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (showDragHandle)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8, bottom: 4),
+                        child: Center(
+                          child: Container(
+                            width: 32,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: Colors.grey,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    Flexible(child: Builder(builder: builder)),
+                  ],
                 ),
-              Flexible(child: Builder(builder: builder)),
-            ],
+              ),
+            ),
           ),
         ),
       ),

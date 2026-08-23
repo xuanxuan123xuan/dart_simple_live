@@ -58,6 +58,50 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('showModalBottomSheetSafe keeps its constrained width',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(873, 393);
+    tester.view.padding = const FakeViewPadding(right: 48);
+    addTearDown(() {
+      tester.view.resetPadding();
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(
+      GetMaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Utils.showModalBottomSheetSafe<void>(
+                context: context,
+                constraints: const BoxConstraints(maxWidth: 600),
+                useSafeArea: true,
+                // 调用方不带 Material：route 自己要提供，否则 debug 断言抛。
+                builder: (_) => Utils.bottomSheetSafeArea(
+                  child: const ListTile(
+                    title: Text('Item', key: ValueKey<String>('modal-title')),
+                  ),
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    // 弹窗 600 居中于 873 → 两侧各留 136.5dp，够躲开 48dp 导航条，
+    // 内容不该再缩：左缘 136.5 + ListTile 16dp gutter = 152.5。
+    final title = find.byKey(const ValueKey<String>('modal-title'));
+    expect(tester.getTopLeft(title).dx, closeTo(152.5, 0.01));
+    expect(tester.getSize(find.byType(ListTile)).width, closeTo(600, 0.01));
+  });
+
   testWidgets('a full-width sheet still clears the side nav inset',
       (tester) async {
     tester.view.devicePixelRatio = 1;
