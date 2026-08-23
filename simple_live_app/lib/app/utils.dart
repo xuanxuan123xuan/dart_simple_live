@@ -762,12 +762,14 @@ class _RightSideDialogRoute extends PopupRoute<void> {
     Animation<double> secondaryAnimation,
   ) {
     final mediaQuery = MediaQuery.of(context);
-    final panelWidth = (width + mediaQuery.padding.right)
-        .clamp(0.0, mediaQuery.size.width)
-        .toDouble();
+    // `width` is the panel's final visual width. Keep the system-safe inset
+    // inside that width; adding it here makes Android landscape panels wider
+    // whenever the navigation bar occupies the right edge.
+    final panelWidth = width.clamp(0.0, mediaQuery.size.width).toDouble();
     return Align(
       alignment: Alignment.centerRight,
       child: SizedBox(
+        key: const ValueKey<String>('right-side-dialog-panel'),
         width: panelWidth,
         height: mediaQuery.size.height,
         child: Material(

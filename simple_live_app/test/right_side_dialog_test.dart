@@ -29,6 +29,28 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('right-side panel keeps its width with an Android right safe inset',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(800, 400);
+    tester.view.padding = const FakeViewPadding(right: 48);
+    addTearDown(() {
+      tester.view.resetPadding();
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(_testApp());
+    await tester.tap(find.text('Open panel'));
+    await tester.pumpAndSettle();
+
+    final panel = find.byKey(
+      const ValueKey<String>('right-side-dialog-panel'),
+    );
+    expect(tester.getSize(panel).width, 320);
+    expect(tester.getTopRight(panel), const Offset(800, 0));
+  });
+
   testWidgets('tapping the route barrier dismisses the right-side panel',
       (tester) async {
     await tester.pumpWidget(_testApp());
