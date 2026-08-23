@@ -135,7 +135,9 @@ class _MinePageState extends State<MinePage> {
             AppStyle.vGap12,
             ListTile(
               leading: Image.asset(
-                'assets/images/logo.png',
+                Theme.of(context).brightness == Brightness.dark
+                    ? 'assets/images/logo_dark.png'
+                    : 'assets/images/logo.png',
                 width: 56,
                 height: 56,
               ),

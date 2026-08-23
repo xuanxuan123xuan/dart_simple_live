@@ -33,6 +33,15 @@ void main() {
     }
   });
 
+  test('mine page logo follows the active brightness', () {
+    final mine = File('lib/modules/mine/mine_page.dart').readAsStringSync();
+
+    expect(mine, contains('Theme.of(context).brightness == Brightness.dark'));
+    expect(mine, contains("'assets/images/logo_dark.png'"));
+    expect(mine, contains("'assets/images/logo.png'"));
+    expect(File('assets/images/logo_dark.png').existsSync(), isTrue);
+  });
+
   test('settings, support and sync destinations have dedicated routes', () {
     final paths = File('lib/routes/route_path.dart').readAsStringSync();
     final pages = File('lib/routes/app_pages.dart').readAsStringSync();

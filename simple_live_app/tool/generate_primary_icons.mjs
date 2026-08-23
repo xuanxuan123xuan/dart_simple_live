@@ -37,6 +37,18 @@ const [squareMaster, roundedMaster, foregroundMaster] = await Promise.all([
   readFile(resolve(masterDirectory, 'simplelive-android-foreground-1024.svg')),
 ]);
 
+// Match the dark appearance configured in the Apple Icon Composer bundle.
+// Keep this derived from the shared master so the in-app light and dark marks
+// cannot drift apart as the artwork evolves.
+const darkRoundedMaster = Buffer.from(
+  roundedMaster
+    .toString('utf8')
+    .replaceAll('#F8F5EF', '#211E2F')
+    .replaceAll('#725EF1', '#897AF5')
+    .replaceAll('#5D4BDD', '#7867F0')
+    .replaceAll('#FF806D', '#FF9A88'),
+);
+
 const written = [];
 
 function record(path) {
@@ -295,6 +307,11 @@ await writePng(
   roundedMaster,
   512,
   resolve(appDirectory, 'assets/images/logo.png'),
+);
+await writePng(
+  darkRoundedMaster,
+  512,
+  resolve(appDirectory, 'assets/images/logo_dark.png'),
 );
 
 // --- simple_live_tv_app : Android ---------------------------------------
