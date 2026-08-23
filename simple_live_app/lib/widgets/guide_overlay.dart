@@ -58,14 +58,6 @@ class GuideOverlay extends GetView<GuideService> {
                 ),
               ),
             ),
-            Positioned(
-              right: 12,
-              top: 12,
-              child: TextButton(
-                onPressed: controller.dismiss,
-                child: const Text('跳过'),
-              ),
-            ),
           ],
         ),
       );
