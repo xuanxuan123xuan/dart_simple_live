@@ -38,20 +38,24 @@ class GuideFlowState {
 }
 
 class GuideService extends GetxService {
+  final GlobalKey overlayKey = GlobalKey(debugLabel: 'guideOverlay');
   final Rxn<GuideFlowState> activeFlow = Rxn<GuideFlowState>();
   final RxBool overlayVisible = false.obs;
   final RxBool dimBackground = true.obs;
   final Rxn<Rect> focusRect = Rxn<Rect>();
+  int _focusTrackingId = 0;
 
   bool get isActive => activeFlow.value != null;
 
   void start(GuideFlowState flow) {
+    _stopFocusTracking();
     activeFlow.value = flow;
     overlayVisible.value = true;
     _applyCurrentStep();
   }
 
   void dismiss() {
+    _stopFocusTracking();
     activeFlow.value = null;
     overlayVisible.value = false;
     focusRect.value = null;
@@ -72,29 +76,60 @@ class GuideService extends GetxService {
   }
 
   void setFocusRect(Rect? rect) {
-    focusRect.value = rect;
+    if (focusRect.value != rect) {
+      focusRect.value = rect;
+    }
   }
 
-  void syncFocusRectFromKey(GlobalKey key, {double inflateBy = 6}) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+  void trackFocusRectFromKey(GlobalKey key, {double inflateBy = 0}) {
+    final trackingId = ++_focusTrackingId;
+
+    void syncAfterFrame(Duration _) {
+      if (trackingId != _focusTrackingId || !isActive) {
+        return;
+      }
       final rect = rectFromKey(key, inflateBy: inflateBy);
       if (rect != null) {
         setFocusRect(rect);
       }
-    });
+      WidgetsBinding.instance.addPostFrameCallback(syncAfterFrame);
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback(syncAfterFrame);
   }
 
-  Rect? rectFromKey(GlobalKey key, {double inflateBy = 6}) {
-    final context = key.currentContext;
-    if (context == null) {
+  Rect? rectFromKey(GlobalKey key, {double inflateBy = 0}) {
+    final targetContext = key.currentContext;
+    final overlayContext = overlayKey.currentContext;
+    if (targetContext == null || overlayContext == null) {
       return null;
     }
-    final renderObject = context.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.attached) {
+    final target = targetContext.findRenderObject();
+    final overlay = overlayContext.findRenderObject();
+    if (target is! RenderBox ||
+        overlay is! RenderBox ||
+        !target.attached ||
+        !overlay.attached) {
       return null;
     }
-    return (renderObject.localToGlobal(Offset.zero) & renderObject.size)
-        .inflate(inflateBy);
+
+    final globalTopLeft = target.localToGlobal(Offset.zero);
+    final globalBottomRight = target.localToGlobal(target.size.bottomRight(
+      Offset.zero,
+    ));
+    final topLeft = overlay.globalToLocal(globalTopLeft);
+    final bottomRight = overlay.globalToLocal(globalBottomRight);
+    if (!topLeft.dx.isFinite ||
+        !topLeft.dy.isFinite ||
+        !bottomRight.dx.isFinite ||
+        !bottomRight.dy.isFinite) {
+      return null;
+    }
+    return Rect.fromPoints(topLeft, bottomRight).inflate(inflateBy);
+  }
+
+  void _stopFocusTracking() {
+    _focusTrackingId += 1;
   }
 
   void startSearchGuide() {

@@ -49,7 +49,7 @@ class _SearchPageState extends State<SearchPage> {
           Get.isRegistered<GuideService>()) {
         final guide = Get.find<GuideService>();
         guide.startSearchGuide();
-        guide.syncFocusRectFromKey(guideKey, inflateBy: 8);
+        guide.trackFocusRectFromKey(guideKey);
       }
     });
   }

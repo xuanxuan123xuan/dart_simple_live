@@ -21,6 +21,7 @@ class GuideOverlay extends GetView<GuideService> {
       final bubblePosition = _resolveBubblePosition(size, rect);
       return Positioned.fill(
         child: Stack(
+          key: controller.overlayKey,
           children: [
             Positioned.fill(
               child: IgnorePointer(
@@ -77,6 +78,7 @@ class GuideOverlay extends GetView<GuideService> {
     }
     const bubbleWidth = 320.0;
     const estimatedBubbleHeight = 140.0;
+    final useFullWidth = size.width < bubbleWidth + 32;
     final left = math.max(
       16.0,
       math.min(rect.left - 4, size.width - bubbleWidth - 16),
@@ -84,10 +86,15 @@ class GuideOverlay extends GetView<GuideService> {
     final top = rect.top < estimatedBubbleHeight + 40
         ? math.max(
             16.0,
-            math.min(size.height - estimatedBubbleHeight - 16, rect.bottom + 12),
+            math.min(
+                size.height - estimatedBubbleHeight - 16, rect.bottom + 12),
           )
         : math.max(16.0, rect.top - 12);
-    return _GuideBubblePosition(left: left, top: top);
+    return _GuideBubblePosition(
+      left: useFullWidth ? 16 : left,
+      right: useFullWidth ? 16 : null,
+      top: top,
+    );
   }
 }
 
@@ -166,6 +173,9 @@ class _GuideBubble extends StatelessWidget {
 class _GuideMaskPainter extends CustomPainter {
   _GuideMaskPainter(this.rect);
 
+  static const _highlightPadding = 6.0;
+  static const _highlightRadius = Radius.circular(30);
+
   final Rect? rect;
 
   @override
@@ -174,7 +184,10 @@ class _GuideMaskPainter extends CustomPainter {
     final path = Path()..addRect(Offset.zero & size);
     if (rect != null) {
       path.addRRect(
-        RRect.fromRectAndRadius(rect!.inflate(6), const Radius.circular(16)),
+        RRect.fromRectAndRadius(
+          rect!.inflate(_highlightPadding),
+          _highlightRadius,
+        ),
       );
       path.fillType = PathFillType.evenOdd;
     }
@@ -185,7 +198,10 @@ class _GuideMaskPainter extends CustomPainter {
         ..color = Colors.white
         ..strokeWidth = 2;
       canvas.drawRRect(
-        RRect.fromRectAndRadius(rect!.inflate(6), const Radius.circular(16)),
+        RRect.fromRectAndRadius(
+          rect!.inflate(_highlightPadding),
+          _highlightRadius,
+        ),
         borderPaint,
       );
     }

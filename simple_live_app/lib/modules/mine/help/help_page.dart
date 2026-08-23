@@ -42,7 +42,7 @@ class HelpPage extends StatelessWidget {
                 ListTile(
                   leading: const Icon(Remix.route_line),
                   title: const Text("搜索与链接引导"),
-                  subtitle: const Text("直接进入搜索页，高亮搜索框并演示链接解析"),
+                  subtitle: const Text("查看直播间、主播搜索及直播链接解析的使用说明"),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () async {
                     await Get.toNamed(
