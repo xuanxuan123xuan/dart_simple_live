@@ -31,6 +31,16 @@ class MpvOptionsService {
     "audio-buffer": "0.2",
   };
 
+  /// Options applied on every platform before profile/user options.
+  ///
+  /// `audio-client-name` is what libmpv passes to
+  /// `IAudioSessionControl::SetDisplayName`, so it decides how the app is
+  /// labelled in the Windows volume mixer. Without it the entry falls back to
+  /// libmpv's own default and users can't find the app by name.
+  static const Map<String, String> _baseOptions = {
+    "audio-client-name": "SimpleLive",
+  };
+
   static const Map<String, Map<String, String>> desktopProfiles = {
     "performance": {
       "profile": "fast",
@@ -74,8 +84,12 @@ class MpvOptionsService {
     final settings = AppSettingsController.instance;
     final profile = settings.mpvProfile.value;
     final profileOptions = _profileOptionsForPlatform(profile);
-    final options = <String, String>{...profileOptions};
+    final options = <String, String>{
+      ..._baseOptions,
+      ...profileOptions,
+    };
     final source = <String, String>{
+      for (final key in _baseOptions.keys) key: "base",
       for (final key in profileOptions.keys) key: "profile:$profile",
     };
     if (settings.customPlayerOutput.value) {

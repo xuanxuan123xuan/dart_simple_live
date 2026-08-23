@@ -1770,7 +1770,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           lastAudibleVolume: _volumeBeforeMute,
           userIntentVolume: AppSettingsController.instance.playerVolume.value,
         );
-        await setSessionPlayerVolume(restoreVolume);
+        await setSessionPlayerVolume(restoreVolume, persist: true);
       } else {
         _volumeBeforeMute = ohosVolume.value * 100;
         await setSessionPlayerVolume(0);
@@ -1782,7 +1782,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         lastAudibleVolume: _volumeBeforeMute,
         userIntentVolume: AppSettingsController.instance.playerVolume.value,
       );
-      await setSessionPlayerVolume(restoreVolume);
+      await setSessionPlayerVolume(restoreVolume, persist: true);
       return;
     }
     _volumeBeforeMute = player.state.volume <= 0

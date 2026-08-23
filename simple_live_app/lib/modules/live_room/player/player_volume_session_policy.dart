@@ -30,6 +30,13 @@ class PlayerVolumeSessionPolicy {
     );
   }
 
+  /// Volume fallback for unmute when no audible volume is remembered.
+  ///
+  /// Desktop volume gestures and shortcuts persist the player volume, so a user
+  /// who drags to 0 relaunches with both the persisted intent and the remembered
+  /// audible volume at 0. Unmute has to land on something audible.
+  static const double fallbackUnmuteVolume = 100.0;
+
   static double volumeToRestoreAfterMute({
     required double lastAudibleVolume,
     required double userIntentVolume,
@@ -38,6 +45,7 @@ class PlayerVolumeSessionPolicy {
     if (previousAudible > 0) {
       return previousAudible;
     }
-    return normalize(userIntentVolume);
+    final intent = normalize(userIntentVolume);
+    return intent > 0 ? intent : fallbackUnmuteVolume;
   }
 }
