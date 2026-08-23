@@ -1114,7 +1114,8 @@ void main() {
           reason: 'cooldown must stop further follow-refresh network requests');
     });
 
-    test('follow refresh room requests observe the coordinator minimum interval',
+    test(
+        'follow refresh room requests observe the coordinator minimum interval',
         () async {
       final requestTimes = <DateTime>[];
       final dio = Dio()
@@ -1280,9 +1281,26 @@ void main() {
     });
   });
 
-  test('room detail requires an account Cookie', () async {
+  test('room detail reports unavailable anonymous playback without a Cookie',
+      () async {
     var authenticatedSessions = 0;
+    final anonymousDio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.resolve(
+              Response<String>(
+                requestOptions: options,
+                statusCode: 200,
+                data:
+                    '<script>window.__INITIAL_STATE__={"liveroom":{"playList":[{"author":{"id":"anonymous-room"},"liveStream":{"id":"","playUrls":{}}}]}};</script>',
+              ),
+            );
+          },
+        ),
+      );
     final site = KuaishouSite(
+      anonymousDio: anonymousDio,
       authenticatedDioFactory: () {
         authenticatedSessions += 1;
         return Dio();
@@ -1300,7 +1318,11 @@ void main() {
         () => site.getRoomDetail(roomId: 'anonymous-room'),
       ),
       throwsA(
-        isA<CoreError>().having((error) => error.statusCode, 'status', 401),
+        isA<CoreError>().having(
+          (error) => error.message,
+          'message',
+          contains('游客播放地址'),
+        ),
       ),
     );
 

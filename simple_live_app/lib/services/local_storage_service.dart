@@ -123,6 +123,8 @@ class LocalStorageService extends GetxService {
       "KuaishouSecondaryCookieExpiresAt";
   static const String kKuaishouAccountPoolState = "KuaishouAccountPoolState";
   static const String kKuaishouCategorySnapshot = "KuaishouCategorySnapshotV1";
+  static const String kKuaishouAnonymousLoginRecommendationShown =
+      "KuaishouAnonymousLoginRecommendationShownV1";
   static const String kStyleColor = "kStyleColor";
   static const String kIsDynamic = "kIsDynamic";
   static const String kBilibiliLoginTip = "BilibiliLoginTip";

@@ -11,8 +11,11 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/sync_client_info_model.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/routes/account_route_target.dart';
+import 'package:simple_live_app/routes/kuaishou_login_recommendation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
+import 'package:simple_live_app/services/kuaishou_account_service.dart';
+import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -23,6 +26,7 @@ typedef RoomSelectionCallback = void Function(Site site, String roomId);
 /// * 如不需要参数，可以使用Get.toNamed
 class AppNavigator {
   static final Map<String, DateTime> _lastLiveRoomOpenAt = {};
+  static bool _kuaishouLoginRecommendationShowing = false;
 
   /// 跳转至观看记录
   static Future<dynamic> toHistory({
@@ -97,6 +101,8 @@ class AppNavigator {
       }
     }
 
+    await _showKuaishouLoginRecommendationBeforeEntry(site);
+
     final arguments = {
       "site": site,
       "initialDesktopSidePanelCollapsed": initialDesktopSidePanelCollapsed,
@@ -114,6 +120,47 @@ class AppNavigator {
                 parameters: parameters,
               )) ??
         Future.value();
+  }
+
+  static Future<void> _showKuaishouLoginRecommendationBeforeEntry(
+    Site site,
+  ) async {
+    if (_kuaishouLoginRecommendationShowing ||
+        !Get.isRegistered<KuaishouAccountService>() ||
+        !Get.isRegistered<LocalStorageService>()) {
+      return;
+    }
+    final storage = LocalStorageService.instance;
+    final shouldShow = KuaishouLoginRecommendation.shouldShow(
+      isKuaishou: site.id == Constant.kKuaishou,
+      isAnonymous: KuaishouAccountService.instance.activeSession == null,
+      hasBeenShown: storage.getValue(
+        LocalStorageService.kKuaishouAnonymousLoginRecommendationShown,
+        false,
+      ),
+    );
+    if (!shouldShow) {
+      return;
+    }
+
+    _kuaishouLoginRecommendationShowing = true;
+    try {
+      await storage.setValue(
+        LocalStorageService.kKuaishouAnonymousLoginRecommendationShown,
+        true,
+      );
+      final goToLogin = await Utils.showAlertDialog(
+        KuaishouLoginRecommendation.message,
+        title: KuaishouLoginRecommendation.title,
+        confirm: "去登录",
+        cancel: "继续观看",
+      );
+      if (goToLogin) {
+        await Get.toNamed(RoutePath.kKuaishouAccount);
+      }
+    } finally {
+      _kuaishouLoginRecommendationShowing = false;
+    }
   }
 
   static Future<dynamic> toMultiRoom(
