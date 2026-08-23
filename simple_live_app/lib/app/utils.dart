@@ -128,6 +128,7 @@ class Utils {
     double width = 320,
     bool useSystem = false,
     bool clickMaskDismiss = true,
+    bool showHeader = true,
   }) {
     // `useSystem` is kept for source compatibility with existing callers.
     // Right-side panels are always Navigator routes now, so they cannot leak
@@ -145,6 +146,7 @@ class Utils {
           child: child,
           width: width,
           clickMaskDismiss: clickMaskDismiss,
+          showHeader: showHeader,
         ),
       );
     });
@@ -158,6 +160,7 @@ class Utils {
     required Widget child,
     required double width,
     required bool clickMaskDismiss,
+    required bool showHeader,
   }) async {
     await _dismissRightDialog();
     if (request != _rightDialogRequest) return;
@@ -169,6 +172,7 @@ class Utils {
       title: title,
       width: width,
       clickOutsideDismiss: clickMaskDismiss,
+      showHeader: showHeader,
       onHeaderBack: () async {
         Log.d('RightSideDialogRoute: onHeaderBack title=$title');
         await _dismissRightDialog();
@@ -179,7 +183,8 @@ class Utils {
     );
     _rightDialogRoute = route;
     _rightDialogNavigator = navigator;
-    Log.d('RightSideDialogRoute: opened title=$title request=$request\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: opened title=$title request=$request\n${StackTrace.current}');
     final routeFuture = navigator.push<void>(route);
     // 前 1000ms 禁用 barrier 点击（拦截触摸穿透，重复事件约 300-400ms 延迟），
     // 之后启用正常遮罩关闭。Timer 可取消，route dispose 时避免跨测试残留。
@@ -204,7 +209,8 @@ class Utils {
     _rightDialogNavigator = null;
     _rightDialogFuture = null;
     if (route == null || navigator == null) return;
-    Log.d('RightSideDialogRoute: dismiss called (isCurrent=${route.isCurrent}, isActive=${route.isActive})\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: dismiss called (isCurrent=${route.isCurrent}, isActive=${route.isActive})\n${StackTrace.current}');
     if (route.isCurrent) {
       navigator.pop<void>();
     } else if (route.isActive) {
@@ -217,7 +223,8 @@ class Utils {
 
   static void hideRightDialog() {
     _rightDialogRequest += 1;
-    Log.d('RightSideDialogRoute: hideRightDialog called\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: hideRightDialog called\n${StackTrace.current}');
     unawaited(_dismissRightDialog());
   }
 
@@ -236,7 +243,8 @@ class Utils {
     FutureOr<void> Function() openNext,
   ) async {
     _rightDialogRequest += 1;
-    Log.d('RightSideDialogRoute: switchRightDialog called\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: switchRightDialog called\n${StackTrace.current}');
     await _dismissRightDialog();
     await Future.delayed(const Duration(milliseconds: 220));
     await openNext();
@@ -247,6 +255,7 @@ class Utils {
     required Widget child,
     double maxWidth = 600,
     double? maxHeightFactor,
+    bool showHeader = true,
   }) async {
     final context = Get.context;
     if (context == null) return null;
@@ -256,6 +265,7 @@ class Utils {
       child: child,
       maxWidth: maxWidth,
       maxHeightFactor: maxHeightFactor,
+      showHeader: showHeader,
     );
     // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透），
     // 与右侧弹窗同一套防护。
@@ -654,6 +664,7 @@ class _RightSideDialogRoute extends PopupRoute<void> {
     required this.title,
     required this.width,
     required this.clickOutsideDismiss,
+    required this.showHeader,
     required this.onHeaderBack,
     required this.onCovered,
     required this.child,
@@ -662,6 +673,7 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   final String title;
   final double width;
   final bool clickOutsideDismiss;
+  final bool showHeader;
   final Future<void> Function() onHeaderBack;
   final Future<void> Function() onCovered;
   final Widget child;
@@ -698,33 +710,38 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   void dispose() {
     _barrierTimer?.cancel();
     _disposed = true;
-    Log.d('RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)\n${StackTrace.current}');
     super.dispose();
   }
 
   @override
   void didComplete(void result) {
-    Log.d('RightSideDialogRoute: didComplete title=$title (pop 完成)\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: didComplete title=$title (pop 完成)\n${StackTrace.current}');
     super.didComplete(result);
   }
 
   @override
   void onPopInvokedWithResult(bool didPop, dynamic result) {
-    Log.d('RightSideDialogRoute: onPopInvoked title=$title didPop=$didPop\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: onPopInvoked title=$title didPop=$didPop\n${StackTrace.current}');
     // PopupRoute<void> 的 result 是 void?，只能传 null。
     super.onPopInvokedWithResult(didPop, null);
   }
 
   @override
   void didPopNext(Route<dynamic> nextRoute) {
-    Log.d('RightSideDialogRoute: didPopNext title=$title next=${nextRoute.runtimeType}');
+    Log.d(
+        'RightSideDialogRoute: didPopNext title=$title next=${nextRoute.runtimeType}');
     super.didPopNext(nextRoute);
   }
 
   @override
   void didChangeNext(Route<dynamic>? nextRoute) {
     super.didChangeNext(nextRoute);
-    Log.d('RightSideDialogRoute: didChangeNext title=$title next=${nextRoute?.runtimeType} completed=${animation?.isCompleted} isCurrent=$isCurrent isActive=$isActive');
+    Log.d(
+        'RightSideDialogRoute: didChangeNext title=$title next=${nextRoute?.runtimeType} completed=${animation?.isCompleted} isCurrent=$isCurrent isActive=$isActive');
     if (nextRoute == null) return;
     // 只响应真正的页面导航（PageRoute）。SmartDialog toast、Get.bottomSheet
     // 等浮层（PopupRoute）覆盖时不应关闭右侧面板——否则弹窗打开瞬间若有
@@ -737,7 +754,8 @@ class _RightSideDialogRoute extends PopupRoute<void> {
     // settles so it cannot contaminate the destination or reappear on return.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (isActive && !isCurrent) {
-        Log.d('RightSideDialogRoute: covered by ${nextRoute.runtimeType}, dismissing');
+        Log.d(
+            'RightSideDialogRoute: covered by ${nextRoute.runtimeType}, dismissing');
         unawaited(onCovered());
       }
     });
@@ -788,22 +806,24 @@ class _RightSideDialogRoute extends PopupRoute<void> {
               right: false,
               child: Column(
                 children: [
-                  ListTile(
-                    visualDensity: VisualDensity.compact,
-                    contentPadding: EdgeInsets.zero,
-                    leading: IconButton(
-                      onPressed: () => unawaited(onHeaderBack()),
-                      icon: const Icon(Icons.arrow_back),
+                  if (showHeader) ...[
+                    ListTile(
+                      visualDensity: VisualDensity.compact,
+                      contentPadding: EdgeInsets.zero,
+                      leading: IconButton(
+                        onPressed: () => unawaited(onHeaderBack()),
+                        icon: const Icon(Icons.arrow_back),
+                      ),
+                      title: Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                     ),
-                    title: Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleMedium,
+                    Divider(
+                      height: 1,
+                      color: Colors.grey.withAlpha(25),
                     ),
-                  ),
-                  Divider(
-                    height: 1,
-                    color: Colors.grey.withAlpha(25),
-                  ),
+                  ],
                   Expanded(child: child),
                 ],
               ),
@@ -844,12 +864,14 @@ class _RightSideSheetRoute extends PopupRoute<void> {
     required this.child,
     required this.maxWidth,
     required this.maxHeightFactor,
+    required this.showHeader,
   });
 
   final String title;
   final Widget child;
   final double maxWidth;
   final double? maxHeightFactor;
+  final bool showHeader;
 
   bool _barrierEnabled = false;
   bool _disposed = false;
@@ -911,14 +933,15 @@ class _RightSideSheetRoute extends PopupRoute<void> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                ListTile(
-                  contentPadding: const EdgeInsets.only(left: 12),
-                  title: Text(title),
-                  trailing: IconButton(
-                    onPressed: Get.back,
-                    icon: const Icon(Remix.close_line),
+                if (showHeader)
+                  ListTile(
+                    contentPadding: const EdgeInsets.only(left: 12),
+                    title: Text(title),
+                    trailing: IconButton(
+                      onPressed: Get.back,
+                      icon: const Icon(Remix.close_line),
+                    ),
                   ),
-                ),
                 Flexible(child: child),
               ],
             ),

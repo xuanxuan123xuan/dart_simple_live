@@ -16,7 +16,6 @@ import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/routes/route_path.dart';
-import 'package:simple_live_app/services/live_link_health_presentation.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
@@ -34,19 +33,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   static const double _ohosFullscreenHorizontalInset = 28.0;
 
   const LiveRoomPage({Key? key}) : super(key: key);
-
-  /// 打开网络诊断弹窗：测试当前播放端点的 TCP 连接耗时与可达性。
-  void showNetworkDiagnose(LiveRoomController controller) {
-    Utils.showModalBottomSheetSafe(
-      context: Get.context!,
-      constraints: const BoxConstraints(
-        maxWidth: 600,
-      ),
-      builder: (context) => SingleChildScrollView(
-        child: _NetworkDiagnosePanel(controller: controller),
-      ),
-    );
-  }
 
   double _bottomSafeInset(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
@@ -1590,7 +1576,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             children: [
               SettingsAction(
                 title: "网络诊断与播放信息",
-                onTap: _showDiagnosticsMenu,
+                onTap: () => showQuickAccess(
+                  controller,
+                  openDiagnostics: true,
+                ),
               ),
               AppStyle.divider,
               SettingsAction(
@@ -1693,7 +1682,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
-                _showDiagnosticsMenu();
+                showQuickAccess(controller, openDiagnostics: true);
               },
             ),
           ],
@@ -1785,35 +1774,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     );
   }
 
-  void _showDiagnosticsMenu() {
-    Utils.showBottomSheet(
-      title: "网络诊断与播放信息",
-      maxHeightFactor: 0.5,
-      child: ListView(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.network_check_outlined),
-            title: const Text("网络诊断"),
-            subtitle: const Text("检查当前播放线路和公共 DNS 的连接"),
-            onTap: () {
-              Get.back();
-              showNetworkDiagnose(controller);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.info_outline_rounded),
-            title: const Text("播放信息"),
-            subtitle: const Text("查看当前清晰度、线路和播放器状态"),
-            onTap: () {
-              Get.back();
-              controller.showDebugInfo();
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
   String parseDuration(int sec) {
     // 转为时分秒
     var h = sec ~/ 3600;
@@ -1826,224 +1786,5 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       return "${m.toString().padLeft(2, '0')}分钟${s.toString().padLeft(2, '0')}秒";
     }
     return "${s.toString().padLeft(2, '0')}秒";
-  }
-}
-
-/// 网络诊断面板：测试当前播放端点的 TCP 连接耗时与可达性。
-class _NetworkDiagnosePanel extends StatefulWidget {
-  final LiveRoomController controller;
-
-  const _NetworkDiagnosePanel({required this.controller});
-
-  @override
-  State<_NetworkDiagnosePanel> createState() => _NetworkDiagnosePanelState();
-}
-
-class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
-  final List<NetworkDiagnosisResult> _results = [];
-  LiveLinkHealthPresentation? _healthPresentation;
-  bool _running = true;
-  String _summary = "";
-
-  @override
-  void initState() {
-    super.initState();
-    _run();
-  }
-
-  Future<void> _run() async {
-    setState(() {
-      _running = true;
-      _results.clear();
-      _summary = "";
-    });
-    final playbackResult = await NetworkDiagnoseService.diagnosePlaybackUrl(
-      widget.controller.currentNetworkDiagnosePlaybackUrl,
-    );
-    final results = [
-      if (playbackResult != null) playbackResult,
-    ];
-    if (!mounted) return;
-    final summary =
-        NetworkDiagnoseService.summarizePlaybackEndpoint(playbackResult);
-    final healthSnapshot = widget.controller.currentLiveLinkHealthSnapshot;
-    setState(() {
-      _results
-        ..clear()
-        ..addAll(results);
-      _healthPresentation = healthSnapshot == null
-          ? null
-          : presentLiveLinkHealthSnapshot(
-              healthSnapshot,
-              currentBuffering:
-                  widget.controller.currentLiveLinkHealthBuffering,
-            );
-      _summary = summary;
-      _running = false;
-    });
-  }
-
-  Widget _buildHealthSection() {
-    final presentation = _healthPresentation;
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.black.withAlpha(10),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  "直播链路健康度",
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-              ),
-              Text(
-                presentation?.levelLabel ?? liveLinkHealthDataUnavailableLabel,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                presentation?.scoreLabel ?? liveLinkHealthDataUnavailableLabel,
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            "主要原因：${presentation?.primaryCauseLabel ?? liveLinkHealthDataUnavailableLabel}",
-            style: const TextStyle(fontSize: 12),
-          ),
-          if (presentation != null) ...[
-            const SizedBox(height: 8),
-            for (final row in presentation.rows)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        row.label,
-                        style:
-                            const TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: Text(
-                        row.value,
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text("网络诊断",
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                ),
-                IconButton(
-                  tooltip: "重新测试",
-                  onPressed: _running ? null : _run,
-                  icon: const Icon(Icons.refresh),
-                ),
-                IconButton(
-                  onPressed: Get.back,
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-            if (_running)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              )
-            else ...[
-              _buildHealthSection(),
-              const SizedBox(height: 8),
-              for (final r in _results)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          r.host,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      Text(
-                        r.lost == r.samples
-                            ? "不可达"
-                            : "${r.avgMs.toStringAsFixed(0)}ms",
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: r.lost == r.samples
-                              ? Colors.red
-                              : r.lost > 0 || r.avgMs > 250
-                                  ? Colors.orange
-                                  : Colors.green,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        r.lost > 0 ? "连接失败 ${r.lost}/${r.samples}" : "连接正常",
-                        style:
-                            const TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        r.lost == r.samples ? "不可达" : r.latencyLabel,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.black.withAlpha(10),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _summary,
-                  style: const TextStyle(fontSize: 13),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
   }
 }

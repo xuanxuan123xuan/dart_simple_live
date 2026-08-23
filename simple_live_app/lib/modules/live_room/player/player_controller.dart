@@ -3600,10 +3600,9 @@ class PlayerController extends BaseController
     return result;
   }
 
-  Future<void> showDebugInfo() async {
+  Future<List<MapEntry<String, String>>> readPlaybackDiagnosticRows() async {
     if (Utils.isOhos) {
-      _showOhosDebugInfo();
-      return;
+      return _buildOhosDiagnosticRows();
     }
     final mpvProperties = await _readMpvDiagnosticProperties();
     final videoTrack = player.state.track.video;
@@ -3620,6 +3619,31 @@ class PlayerController extends BaseController
         videoTrack.bitrate?.toString() ??
         '未知';
 
+    Log.i(
+      '播放诊断：hwdec=$hwdec codec=$codec fps=$fps bitrate=$videoBitrate '
+      'source=$sourceResolution output=$outputResolution',
+    );
+    String textOf(Object? value) => value?.toString() ?? '未知';
+    return [
+      MapEntry('实际硬件解码', hwdec),
+      MapEntry('视频编码', codec),
+      MapEntry('视频 FPS', fps),
+      MapEntry('视频码率（bit/s）', videoBitrate),
+      MapEntry('源分辨率', sourceResolution),
+      MapEntry('输出纹理分辨率', outputResolution),
+      MapEntry('VideoParams', textOf(player.state.videoParams)),
+      MapEntry('AudioParams', textOf(player.state.audioParams)),
+      MapEntry('Media', textOf(player.state.playlist)),
+      MapEntry('AudioTrack', textOf(player.state.track.audio)),
+      MapEntry('VideoTrack', textOf(videoTrack)),
+      MapEntry('AudioBitrate', textOf(player.state.audioBitrate)),
+      MapEntry('Volume', textOf(player.state.volume)),
+    ];
+  }
+
+  Future<void> showDebugInfo() async {
+    final rows = await readPlaybackDiagnosticRows();
+
     Widget diagnosticTile(String title, Object? value) {
       final text = value?.toString() ?? '未知';
       return ListTile(
@@ -3631,29 +3655,12 @@ class PlayerController extends BaseController
       );
     }
 
-    Log.i(
-      '播放诊断：hwdec=$hwdec codec=$codec fps=$fps bitrate=$videoBitrate '
-      'source=$sourceResolution output=$outputResolution',
-    );
     Utils.showBottomSheet(
       title: "播放信息",
       maxHeightFactor: 0.5,
       child: ListView(
-        children: [
-          diagnosticTile('实际硬件解码', hwdec),
-          diagnosticTile('视频编码', codec),
-          diagnosticTile('视频 FPS', fps),
-          diagnosticTile('视频码率（bit/s）', videoBitrate),
-          diagnosticTile('源分辨率', sourceResolution),
-          diagnosticTile('输出纹理分辨率', outputResolution),
-          diagnosticTile('VideoParams', player.state.videoParams),
-          diagnosticTile('AudioParams', player.state.audioParams),
-          diagnosticTile('Media', player.state.playlist),
-          diagnosticTile('AudioTrack', player.state.track.audio),
-          diagnosticTile('VideoTrack', videoTrack),
-          diagnosticTile('AudioBitrate', player.state.audioBitrate),
-          diagnosticTile('Volume', player.state.volume),
-        ],
+        children:
+            rows.map((row) => diagnosticTile(row.key, row.value)).toList(),
       ),
     );
   }
@@ -3674,15 +3681,14 @@ class PlayerController extends BaseController
       return "未探测";
     }
     final age = DateTime.now().difference(observedAt);
-    final freshness =
-        age >= PlayerMixin.endpointReachabilityTtl
-            ? "已过期"
-            : "${age.inSeconds}s 前";
+    final freshness = age >= PlayerMixin.endpointReachabilityTtl
+        ? "已过期"
+        : "${age.inSeconds}s 前";
     // 这里是 TCP 建连结论，不是码流是否在流动。
     return "${reachable ? "可建连" : "不可建连"}（$freshness）";
   }
 
-  void _showOhosDebugInfo() {
+  List<MapEntry<String, String>> _buildOhosDiagnosticRows() {
     final controller = _ohosVideoController;
     final value = controller?.value;
     final size = value?.size ?? Size.zero;
@@ -3697,7 +3703,7 @@ class PlayerController extends BaseController
                     : value.isPlaying
                         ? "播放中"
                         : "已暂停";
-    final rows = <MapEntry<String, String>>[
+    return <MapEntry<String, String>>[
       const MapEntry("Backend", "HarmonyOS AVPlayer"),
       MapEntry("State", state),
       MapEntry(
@@ -3735,26 +3741,6 @@ class PlayerController extends BaseController
       if (value?.errorDescription != null)
         MapEntry("Error", value!.errorDescription!),
     ];
-
-    Utils.showBottomSheet(
-      title: "播放信息",
-      maxHeightFactor: 0.5,
-      child: ListView(
-        children: rows
-            .map(
-              (row) => ListTile(
-                title: Text(row.key),
-                subtitle: Text(row.value),
-                onTap: () {
-                  Clipboard.setData(
-                    ClipboardData(text: "${row.key}\n${row.value}"),
-                  );
-                },
-              ),
-            )
-            .toList(),
-      ),
-    );
   }
 
   Future<void> closePlayerResources() async {

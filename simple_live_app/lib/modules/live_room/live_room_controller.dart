@@ -3812,7 +3812,7 @@ class LiveRoomController extends PlayerController
   void showLiveSettingsSheet() {
     final settings = AppSettingsController.instance;
     Utils.showBottomSheet(
-      title: "直播设置",
+      title: "播放与网络",
       child: ListView(
         padding: AppStyle.edgeInsetsA12,
         children: [
@@ -4480,44 +4480,6 @@ class LiveRoomController extends PlayerController
       onRoomSelected: (selectedSite, selectedRoomId) {
         resetRoom(selectedSite, selectedRoomId);
       },
-    );
-  }
-
-  void showQuickAccessSheet() {
-    final keys = enabledQuickAccessKeys;
-    Utils.showBottomSheet(
-      title: "快捷入口",
-      child: ListView(
-        children: keys.map((key) {
-          final item = Constant.allLiveRoomQuickAccess[key]!;
-          final enabled = key != "recommendation" || hasCategoryRecommendation;
-          return ListTile(
-            leading: Icon(item.iconData),
-            title: Text(quickAccessTitle(key)),
-            subtitle: Text(quickAccessSubtitle(key)),
-            enabled: enabled,
-            onTap: !enabled
-                ? null
-                : () {
-                    Get.back();
-                    switch (key) {
-                      case "follow":
-                        showFollowUserSheet();
-                        break;
-                      case "history":
-                        openHistoryPage();
-                        break;
-                      case "recommendation":
-                        openCategoryRecommendation();
-                        break;
-                      case "contribution_rank":
-                        showContributionRankSheet();
-                        break;
-                    }
-                  },
-          );
-        }).toList(),
-      ),
     );
   }
 

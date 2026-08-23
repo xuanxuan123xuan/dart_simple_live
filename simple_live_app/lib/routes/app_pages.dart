@@ -262,7 +262,7 @@ class AppPages {
         BindingsBuilder.put(() => IndexedSettingsController()),
       ],
     ),
-    //播放页设置
+    //直播间界面与快捷键
     GetPage(
       name: RoutePath.kSettingsPlaybackPage,
       page: () => const PlaybackPageSettingsPage(),

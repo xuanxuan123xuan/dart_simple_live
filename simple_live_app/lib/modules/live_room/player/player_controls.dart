@@ -8,11 +8,11 @@ import 'package:get/get.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
-import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/modules/live_room/widgets/live_room_quick_access_panel.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
 import 'package:simple_live_app/widgets/superchat_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -1023,50 +1023,62 @@ void showPlayerSettings(LiveRoomController controller) {
   );
 }
 
-void showQuickAccess(LiveRoomController controller) {
+void showQuickAccess(
+  LiveRoomController controller, {
+  bool openDiagnostics = false,
+}) {
   final keys = controller.enabledQuickAccessKeys;
-  if (keys.isEmpty) {
+  if (!openDiagnostics && keys.isEmpty) {
     SmartDialog.showToast("没有东西可展示");
     return;
   }
-  if (keys.length == 1) {
+  if (!openDiagnostics &&
+      keys.length == 1 &&
+      keys.single != "network_diagnostics") {
     _openQuickAccessItem(controller, keys.single);
     return;
   }
+  final panel = LiveRoomQuickAccessPanel(
+    controller: controller,
+    initialDiagnostics: openDiagnostics,
+    onOpenItem: (key) => _openQuickAccessItemFromPanel(controller, key),
+    onClose: controller.useBottomSheetPlayerMenus
+        ? () => Get.back()
+        : Utils.hideRightDialog,
+    isBottomSheet: controller.useBottomSheetPlayerMenus,
+  );
   if (controller.useBottomSheetPlayerMenus) {
-    controller.showQuickAccessSheet();
+    Utils.showBottomSheet(
+      title: "快捷入口",
+      maxHeightFactor: 0.85,
+      showHeader: false,
+      child: panel,
+    );
     return;
   }
 
   Utils.showRightDialog(
     title: "快捷入口",
-    width: 320,
+    width: 420,
     useSystem: false,
-    child: ListView(
-      padding: AppStyle.edgeInsetsV12,
-      children:
-          keys.map((key) => _buildQuickAccessTile(controller, key)).toList(),
-    ),
+    showHeader: false,
+    child: panel,
   );
 }
 
-Widget _buildQuickAccessTile(LiveRoomController controller, String key) {
-  final item = Constant.allLiveRoomQuickAccess[key]!;
-  final enabled =
-      key != "recommendation" || controller.hasCategoryRecommendation;
-  return ListTile(
-    leading: Icon(item.iconData),
-    title: Text(controller.quickAccessTitle(key)),
-    subtitle: Text(controller.quickAccessSubtitle(key)),
-    enabled: enabled,
-    onTap: !enabled
-        ? null
-        : () async {
-            await Utils.switchRightDialog(() async {
-              _openQuickAccessItem(controller, key);
-            });
-          },
-  );
+Future<void> _openQuickAccessItemFromPanel(
+  LiveRoomController controller,
+  String key,
+) async {
+  if (controller.useBottomSheetPlayerMenus) {
+    Get.back();
+    await Future<void>.delayed(Duration.zero);
+    _openQuickAccessItem(controller, key);
+    return;
+  }
+  await Utils.switchRightDialog(() async {
+    _openQuickAccessItem(controller, key);
+  });
 }
 
 void _openQuickAccessItem(LiveRoomController controller, String key) {

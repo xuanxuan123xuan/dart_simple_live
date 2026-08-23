@@ -78,6 +78,11 @@ class Constant {
       title: "贡献榜/亲密榜",
       subtitle: "虎牙暂无贡献榜，直播间内会自动跳过",
     ),
+    "network_diagnostics": LiveRoomQuickAccessItem(
+      iconData: Remix.pulse_line,
+      title: "网络诊断与播放信息",
+      subtitle: "检查当前线路并查看播放器状态",
+    ),
   };
 
   static const String kBiliBili = "bilibili";

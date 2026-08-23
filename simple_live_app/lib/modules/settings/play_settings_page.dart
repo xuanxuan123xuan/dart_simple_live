@@ -19,7 +19,7 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("直播间设置"),
+        title: const Text("播放与网络"),
       ),
       body: ListView(
         padding: AppStyle.pagePadding(),

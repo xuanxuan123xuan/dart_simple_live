@@ -515,7 +515,7 @@ class AppSettingsController extends GetxController {
 
     final enabledRaw = LocalStorageService.instance.getValue(
       LocalStorageService.kLiveRoomQuickAccessEnabled,
-      keys.join(","),
+      keys.where((key) => key != "network_diagnostics").join(","),
     );
     final enabled =
         enabledRaw.split(",").where((item) => keys.contains(item)).toSet();

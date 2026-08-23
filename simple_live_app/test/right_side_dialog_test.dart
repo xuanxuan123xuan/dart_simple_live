@@ -29,7 +29,23 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('right-side panel keeps its width with an Android right safe inset',
+  testWidgets('a child-owned header can replace the route header',
+      (tester) async {
+    await tester.pumpWidget(_testApp());
+
+    Utils.showRightDialog(
+      title: 'Hidden route title',
+      showHeader: false,
+      child: const Center(child: Text('Child-owned header')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hidden route title'), findsNothing);
+    expect(find.text('Child-owned header'), findsOneWidget);
+  });
+
+  testWidgets(
+      'right-side panel keeps its width with an Android right safe inset',
       (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(800, 400);
