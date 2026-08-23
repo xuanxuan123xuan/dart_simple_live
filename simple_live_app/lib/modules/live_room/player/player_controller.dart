@@ -283,14 +283,14 @@ mixin PlayerMixin {
     _playerInitialized = true;
     await MpvOptionsService.applyToPlayer(player);
     final nativePlayer = player.platform as NativePlayer;
-    // 设置音频输出驱动
-    if (AppSettingsController.instance.customPlayerOutput.value) {
-      if (player.platform is NativePlayer) {
-        await (player.platform as dynamic).setProperty(
-          'ao',
-          AppSettingsController.instance.audioOutputDriver.value,
-        );
-      }
+    // 设置音频输出驱动。
+    //
+    // 取 effectiveOptions 而不是直接读设置项：前者已按平台过滤掉本平台
+    // libmpv 不存在的 ao（否则音频初始化直接失败、全程无声），并且遵循
+    // custom < advanced < conf 的覆盖顺序。
+    final effectiveAo = MpvOptionsService.effectiveOptions()["ao"];
+    if (effectiveAo != null && effectiveAo.isNotEmpty) {
+      await (player.platform as dynamic).setProperty('ao', effectiveAo);
     }
     // media_kit 仓库更新导致的问题，临时解决办法
     if (Platform.isAndroid) {
@@ -876,6 +876,12 @@ mixin PlayerStateMixin on PlayerMixin {
   RxBool showDanmakuState = false.obs;
 
   RxBool mutedState = false.obs;
+
+  /// libmpv 是否报过"打不开音频设备"。
+  ///
+  /// 这类错误不触发换线重试（画面是好的），但会导致全程无声，所以要留痕
+  /// 并在播放信息里显示，否则用户只能看到"没声音"而无从判断原因。
+  RxBool audioOutputFailed = false.obs;
   double _volumeBeforeMute = 0.0;
 
   void onPlayerWindowModeExited() {}
@@ -2909,9 +2915,11 @@ class PlayerController extends BaseController
     }
     _errorSubscription = player.stream.error.listen((event) {
       Log.d("播放器错误：$event");
-      // 跳过无音频输出的错误
+      // 无音频输出不走换线重试（画面是好的），但要留痕给播放信息，
+      // 否则这类永久性故障对用户完全不可见。
       // Could not open/initialize audio device -> no sound.
       if (event.contains('no sound.')) {
+        audioOutputFailed.value = true;
         return;
       }
 
@@ -3638,7 +3646,38 @@ class PlayerController extends BaseController
       MapEntry('VideoTrack', textOf(videoTrack)),
       MapEntry('AudioBitrate', textOf(player.state.audioBitrate)),
       MapEntry('Volume', textOf(player.state.volume)),
+      MapEntry('音频输出', _audioOutputDiagnostic()),
     ];
+  }
+
+  /// 音频输出状态。区分"设备打不开"和"选项被平台过滤"两种无声原因。
+  String _audioOutputDiagnostic() {
+    final effective = MpvOptionsService.effectiveOptionsWithSource();
+    final ignoredAo = effective.ignored['ao'];
+    final ao = effective.options['ao'];
+    final platform = MpvOptionsService.currentPlatform();
+
+    final parts = <String>[];
+    if (audioOutputFailed.value) {
+      parts.add('初始化失败，当前无声');
+    } else {
+      parts.add('正常');
+    }
+    parts.add('ao=${ao == null || ao.isEmpty ? "默认" : ao}');
+    if (ignoredAo != null) {
+      parts.add(
+        '已忽略 ao=$ignoredAo（$platform 不支持，'
+        '来源：${effective.source['ao'] ?? '未知'}）',
+      );
+    }
+    final otherIgnored = effective.ignored.entries
+        .where((e) => e.key != 'ao')
+        .map((e) => '${e.key}=${e.value}')
+        .join(', ');
+    if (otherIgnored.isNotEmpty) {
+      parts.add('其他已忽略：$otherIgnored');
+    }
+    return parts.join(' · ');
   }
 
   Future<void> showDebugInfo() async {

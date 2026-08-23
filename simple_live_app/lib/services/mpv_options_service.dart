@@ -41,6 +41,53 @@ class MpvOptionsService {
     "audio-client-name": "SimpleLive",
   };
 
+  /// Option keys whose accepted values depend on the platform's libmpv build.
+  static const Set<String> platformScopedKeys = {"ao", "vo", "hwdec"};
+
+  /// `ao`/`vo`/`hwdec` values that exist only in some platforms' libmpv builds,
+  /// mapped to the platforms that actually provide them.
+  ///
+  /// Options reach libmpv verbatim, and a config can arrive from another device
+  /// (imported profile, or values copied from a guide written for another
+  /// platform). A foreign `vo`/`hwdec` only degrades to software decoding, but a
+  /// foreign `ao` makes libmpv fail audio init outright and play with no sound:
+  /// `ao=audiotrack` (Android) on Windows yields
+  /// "Failed to initialize audio driver 'audiotrack'" and then "Audio: no audio".
+  ///
+  /// Values absent from this table are always kept. The table lists only what is
+  /// known to be platform-exclusive, so cross-platform and debugging values
+  /// (`auto`, `auto-safe`, `no`, `null`, `openal`, `sdl`, `gpu`, …) pass through.
+  static const Map<String, Set<String>> platformExclusiveValues = {
+    // --- ao ---
+    "audiotrack": {"android"},
+    "opensles": {"android"},
+    "wasapi": {"windows"},
+    "coreaudio": {"macos", "ios"},
+    "coreaudio_exclusive": {"macos"},
+    "pulse": {"linux"},
+    "pipewire": {"linux"},
+    "alsa": {"linux"},
+    "oss": {"linux"},
+    // --- vo ---
+    "mediacodec_embed": {"android"},
+    "x11": {"linux"},
+    "wayland": {"linux"},
+    // --- hwdec ---
+    "mediacodec": {"android"},
+    "mediacodec-copy": {"android"},
+    "mediacodec-dec": {"android"},
+    "d3d11va": {"windows"},
+    "d3d11va-copy": {"windows"},
+    "dxva2": {"windows"},
+    "dxva2-copy": {"windows"},
+    "videotoolbox": {"macos", "ios"},
+    "videotoolbox-copy": {"macos", "ios"},
+    "vaapi": {"linux"},
+    "vaapi-copy": {"linux"},
+    "vdpau": {"linux"},
+    "vdpau-copy": {"linux"},
+  };
+
   static const Map<String, Map<String, String>> desktopProfiles = {
     "performance": {
       "profile": "fast",
@@ -78,6 +125,47 @@ class MpvOptionsService {
 
   static Map<String, String> effectiveOptions() {
     return effectiveOptionsWithSource().options;
+  }
+
+  /// Platform token used to match [platformExclusiveValues].
+  ///
+  /// OHOS is not special-cased: it never reaches libmpv (playback uses
+  /// video_player there), and reporting it as Android keeps Android values,
+  /// which is the harmless direction.
+  static String currentPlatform() {
+    if (Platform.isWindows) return "windows";
+    if (Platform.isMacOS) return "macos";
+    if (Platform.isIOS) return "ios";
+    if (Platform.isLinux) return "linux";
+    if (Platform.isAndroid) return "android";
+    return "unknown";
+  }
+
+  static bool isValueSupportedOn(String value, String platform) {
+    final platforms = platformExclusiveValues[value.trim().toLowerCase()];
+    // Unlisted values are cross-platform or unknown to us: keep them.
+    return platforms == null || platforms.contains(platform);
+  }
+
+  /// Drops `ao`/`vo`/`hwdec` values that the platform's libmpv cannot provide.
+  ///
+  /// Returns the surviving options plus the dropped ones, so callers can show
+  /// what was ignored instead of leaving the user with silent breakage.
+  static MpvPlatformFilterResult filterForPlatform(
+    Map<String, String> options,
+    String platform,
+  ) {
+    final kept = Map<String, String>.from(options);
+    final ignored = <String, String>{};
+    for (final key in platformScopedKeys) {
+      final value = kept[key];
+      if (value == null || isValueSupportedOn(value, platform)) {
+        continue;
+      }
+      kept.remove(key);
+      ignored[key] = value;
+    }
+    return MpvPlatformFilterResult(kept, ignored);
   }
 
   static MpvEffectiveOptions effectiveOptionsWithSource() {
@@ -119,7 +207,20 @@ class MpvOptionsService {
     for (final key in confOptions.keys) {
       source[key] = "conf";
     }
-    return MpvEffectiveOptions(options, source);
+    // Applied last so it covers every source, including options imported from
+    // another platform's config.
+    final filtered = filterForPlatform(options, currentPlatform());
+    for (final entry in filtered.ignored.entries) {
+      Log.d(
+        "mpv option ignored (${currentPlatform()} 不支持): "
+        "${entry.key}=${entry.value} source=${source[entry.key]}",
+      );
+    }
+    return MpvEffectiveOptions(
+      filtered.options,
+      source,
+      ignored: filtered.ignored,
+    );
   }
 
   static VideoControllerConfiguration videoControllerConfiguration() {
@@ -293,11 +394,15 @@ class MpvOptionsService {
       return source == null ? optionValue : "$optionValue($source)";
     }
 
+    final ignored = effectiveOptions.ignored.entries
+        .map((e) => "${e.key}=${e.value}")
+        .join(" ");
     return "profile=${AppSettingsController.instance.mpvProfile.value}, "
         "hardwareDecode=${AppSettingsController.instance.hardwareDecode.value}, "
         "liveLatency=${AppSettingsController.instance.mpvLiveLatencyMode.value}, "
-        "vo=${value("vo")}, hwdec=${value("hwdec")}, "
-        "mpvOptions=${options.length}";
+        "vo=${value("vo")}, hwdec=${value("hwdec")}, ao=${value("ao")}, "
+        "mpvOptions=${options.length}"
+        "${ignored.isEmpty ? "" : ", ignored[$ignored]"}";
   }
 
   static Map<String, String> parseOptions(String raw) {
@@ -378,5 +483,20 @@ class MpvEffectiveOptions {
   final Map<String, String> options;
   final Map<String, String> source;
 
-  const MpvEffectiveOptions(this.options, this.source);
+  /// `ao`/`vo`/`hwdec` values dropped because this platform's libmpv lacks them.
+  /// Keys still resolve in [source], so callers can report where each came from.
+  final Map<String, String> ignored;
+
+  const MpvEffectiveOptions(
+    this.options,
+    this.source, {
+    this.ignored = const {},
+  });
+}
+
+class MpvPlatformFilterResult {
+  final Map<String, String> options;
+  final Map<String, String> ignored;
+
+  const MpvPlatformFilterResult(this.options, this.ignored);
 }

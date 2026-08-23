@@ -3204,6 +3204,8 @@ class LiveRoomController extends PlayerController
         return;
       }
 
+      // 每次真实开流都重新判定音频输出，避免切线路/改画质后残留上一次的失败标记。
+      audioOutputFailed.value = false;
       // Warmup 必须覆盖 player.open() 期间产生的起播 buffering 事件。
       markStreamOpening();
       await player.open(
