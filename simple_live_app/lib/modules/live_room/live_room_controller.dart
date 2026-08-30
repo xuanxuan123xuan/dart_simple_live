@@ -37,6 +37,7 @@ import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart'
@@ -129,6 +130,26 @@ int resolveOnlineRefreshFailureCount({
     return currentFailures + 1;
   }
   return currentFailures;
+}
+
+String formatKuaishouRecoveryCountdown(int totalSeconds) {
+  final seconds = totalSeconds < 0 ? 0 : totalSeconds;
+  final minutesPart = seconds ~/ 60;
+  final secondsPart = seconds % 60;
+  return '$minutesPart:${secondsPart.toString().padLeft(2, '0')}';
+}
+
+@visibleForTesting
+bool shouldAutoRetryKuaishouDeviceRecovery({
+  required bool roomDisposed,
+  required bool armed,
+  required String? recoveryRoomKey,
+  required String currentRoomKey,
+}) {
+  return !roomDisposed &&
+      armed &&
+      recoveryRoomKey != null &&
+      recoveryRoomKey == currentRoomKey;
 }
 
 /// Returns the minute-scale Kuaishou recheck interval while playback is
@@ -681,6 +702,36 @@ class LiveRoomController extends PlayerController
   var loadError = false.obs;
   Object? error;
   StackTrace? errorStackTrace;
+  final kuaishouRecoveryRemainingSeconds = 0.obs;
+  final kuaishouDeviceRecoveryAvailable = false.obs;
+  final kuaishouDeviceRecoveryArmed = false.obs;
+  Timer? _kuaishouDeviceRecoveryTimer;
+  String? _kuaishouDeviceRecoveryRoomKey;
+  KuaishouAccountSlot? _kuaishouDeviceRecoverySlot;
+
+  bool get showKuaishouDeviceRecovery =>
+      error is KuaishouRateLimitError &&
+      (kuaishouDeviceRecoveryAvailable.value ||
+          kuaishouDeviceRecoveryArmed.value);
+
+  bool get kuaishouRefreshBlocked =>
+      error is KuaishouRateLimitError &&
+      kuaishouRecoveryRemainingSeconds.value > 0;
+
+  String get kuaishouRecoveryHint {
+    final remaining = kuaishouRecoveryRemainingSeconds.value;
+    if (kuaishouDeviceRecoveryArmed.value && remaining > 0) {
+      return '设备会话已重建，${formatKuaishouRecoveryCountdown(remaining)} 后自动重试';
+    }
+    if (remaining > 0) {
+      return '请求冷却中，剩余 ${formatKuaishouRecoveryCountdown(remaining)}';
+    }
+    if (error is KuaishouRateLimitError &&
+        !kuaishouDeviceRecoveryAvailable.value) {
+      return '今天已重建过设备会话，请稍后再试或重新登录';
+    }
+    return '';
+  }
 
   // 开播时长展示状态
   var liveDuration = "00:00:00".obs;
@@ -2322,6 +2373,13 @@ class LiveRoomController extends PlayerController
   // 页面刷新与重载逻辑
 
   void refreshRoom() {
+    if (kuaishouRefreshBlocked) {
+      SmartDialog.showToast(
+        '请求冷却中，请等待 ${formatKuaishouRecoveryCountdown(kuaishouRecoveryRemainingSeconds.value)}',
+      );
+      return;
+    }
+    _cancelKuaishouDeviceRecoveryTimer();
     //messages.clear();
     _clearDanmuDedupeState();
     _clearSuperChatState();
@@ -2334,6 +2392,111 @@ class LiveRoomController extends PlayerController
 
     _resetPlaybackHealthSession();
     loadData();
+  }
+
+  Future<void> rebuildKuaishouDeviceSession() async {
+    final rateLimitError = error;
+    if (rateLimitError is! KuaishouRateLimitError ||
+        !Get.isRegistered<KuaishouAccountService>()) {
+      return;
+    }
+    final rebuilt = KuaishouAccountService.instance.rebuildDeviceSessions(
+      rateLimitError.rateLimitedSessionKeys,
+    );
+    if (rebuilt.isEmpty) {
+      kuaishouDeviceRecoveryAvailable.value = false;
+      SmartDialog.showToast('今天已重建过设备会话，请稍后再试或重新登录');
+      return;
+    }
+    kuaishouDeviceRecoveryAvailable.value = false;
+    kuaishouDeviceRecoveryArmed.value = true;
+    _kuaishouDeviceRecoveryRoomKey = '${site.id}:${rxRoomId.value}';
+    _kuaishouDeviceRecoverySlot = rebuilt.first;
+    _startKuaishouDeviceRecoveryCountdown(rateLimitError.cooldownUntil);
+  }
+
+  void _configureKuaishouDeviceRecovery(Object caughtError) {
+    _cancelKuaishouDeviceRecoveryTimer(clearState: true);
+    if (caughtError is! KuaishouRateLimitError ||
+        !Get.isRegistered<KuaishouAccountService>()) {
+      return;
+    }
+    final account = KuaishouAccountService.instance;
+    kuaishouDeviceRecoveryAvailable.value = caughtError.rateLimitedSessionKeys
+        .map(
+          (key) => KuaishouAccountSlot.values.firstWhereOrNull(
+            (slot) => slot.name == key,
+          ),
+        )
+        .whereType<KuaishouAccountSlot>()
+        .any((slot) => account.canRebuildDeviceSession(slot));
+    _startKuaishouDeviceRecoveryCountdown(caughtError.cooldownUntil);
+  }
+
+  void _startKuaishouDeviceRecoveryCountdown(DateTime? cooldownUntil) {
+    _kuaishouDeviceRecoveryTimer?.cancel();
+    _updateKuaishouRecoveryRemaining(cooldownUntil);
+    if (kuaishouRecoveryRemainingSeconds.value <= 0) {
+      _retryKuaishouAfterDeviceRecovery();
+      return;
+    }
+    _kuaishouDeviceRecoveryTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        _updateKuaishouRecoveryRemaining(cooldownUntil);
+        if (kuaishouRecoveryRemainingSeconds.value <= 0) {
+          _retryKuaishouAfterDeviceRecovery();
+        }
+      },
+    );
+  }
+
+  void _updateKuaishouRecoveryRemaining(DateTime? cooldownUntil) {
+    if (cooldownUntil == null) {
+      kuaishouRecoveryRemainingSeconds.value = 0;
+      return;
+    }
+    final remainingMilliseconds =
+        cooldownUntil.difference(DateTime.now()).inMilliseconds;
+    final remaining =
+        remainingMilliseconds <= 0 ? 0 : (remainingMilliseconds + 999) ~/ 1000;
+    kuaishouRecoveryRemainingSeconds.value = remaining > 0 ? remaining : 0;
+  }
+
+  void _retryKuaishouAfterDeviceRecovery() {
+    _kuaishouDeviceRecoveryTimer?.cancel();
+    _kuaishouDeviceRecoveryTimer = null;
+    final recoveryRoomKey = _kuaishouDeviceRecoveryRoomKey;
+    final recoverySlot = _kuaishouDeviceRecoverySlot;
+    final shouldRetry = shouldAutoRetryKuaishouDeviceRecovery(
+      roomDisposed: _roomDisposed,
+      armed: kuaishouDeviceRecoveryArmed.value,
+      recoveryRoomKey: recoveryRoomKey,
+      currentRoomKey: '${site.id}:${rxRoomId.value}',
+    );
+    kuaishouDeviceRecoveryArmed.value = false;
+    _kuaishouDeviceRecoveryRoomKey = null;
+    _kuaishouDeviceRecoverySlot = null;
+    kuaishouRecoveryRemainingSeconds.value = 0;
+    if (!shouldRetry) return;
+    if (recoverySlot != null && Get.isRegistered<KuaishouAccountService>()) {
+      final activated =
+          KuaishouAccountService.instance.activateRebuiltSession(recoverySlot);
+      if (!activated) return;
+    }
+    refreshRoom();
+  }
+
+  void _cancelKuaishouDeviceRecoveryTimer({bool clearState = false}) {
+    _kuaishouDeviceRecoveryTimer?.cancel();
+    _kuaishouDeviceRecoveryTimer = null;
+    kuaishouDeviceRecoveryArmed.value = false;
+    _kuaishouDeviceRecoveryRoomKey = null;
+    _kuaishouDeviceRecoverySlot = null;
+    if (clearState) {
+      kuaishouRecoveryRemainingSeconds.value = 0;
+      kuaishouDeviceRecoveryAvailable.value = false;
+    }
   }
 
   @override
@@ -2367,6 +2530,7 @@ class LiveRoomController extends PlayerController
     _superChatRefreshTimer?.cancel();
     _liveEventFlowTimer?.cancel();
     _onlineRefreshTimer?.cancel();
+    _cancelKuaishouDeviceRecoveryTimer(clearState: true);
     _stopLiveLatencyTelemetry();
     _chatBottomRestoreTimer?.cancel();
     _cancelPendingDanmakuTimers();
@@ -2645,6 +2809,7 @@ class LiveRoomController extends PlayerController
         error = e;
         errorStackTrace = stackTrace;
       }
+      _configureKuaishouDeviceRecovery(e);
     } finally {
       _dismissLiveRoomLoadingOverlay();
       loadStopwatch.stop();

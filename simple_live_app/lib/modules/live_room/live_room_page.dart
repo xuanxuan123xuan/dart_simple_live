@@ -276,18 +276,26 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 Text(
                   controller.error?.toString() ?? "未知错误",
                   textAlign: TextAlign.center,
-                  maxLines: 1,
+                  maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
+                if (controller.kuaishouRecoveryHint.isNotEmpty) ...[
+                  AppStyle.vGap4,
+                  Text(
+                    controller.kuaishouRecoveryHint,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
                 AppStyle.vGap4,
                 Text(
                   "${controller.rxSite.value.id} - ${controller.rxRoomId.value}",
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                Wrap(
+                  alignment: WrapAlignment.center,
                   children: [
                     TextButton.icon(
                       onPressed: controller.copyErrorDetail,
@@ -295,10 +303,30 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                       label: const Text("复制信息"),
                     ),
                     TextButton.icon(
-                      onPressed: controller.refreshRoom,
+                      onPressed: controller.kuaishouRefreshBlocked
+                          ? null
+                          : controller.refreshRoom,
                       icon: const Icon(Remix.refresh_line),
-                      label: const Text("刷新"),
+                      label: Text(
+                        controller.kuaishouRefreshBlocked
+                            ? "冷却中 ${formatKuaishouRecoveryCountdown(controller.kuaishouRecoveryRemainingSeconds.value)}"
+                            : "刷新",
+                      ),
                     ),
+                    if (controller.showKuaishouDeviceRecovery)
+                      TextButton.icon(
+                        onPressed: controller
+                                    .kuaishouDeviceRecoveryAvailable.value &&
+                                !controller.kuaishouDeviceRecoveryArmed.value
+                            ? controller.rebuildKuaishouDeviceSession
+                            : null,
+                        icon: const Icon(Remix.restart_line),
+                        label: Text(
+                          controller.kuaishouDeviceRecoveryArmed.value
+                              ? "等待自动重试"
+                              : "重建设备会话",
+                        ),
+                      ),
                   ],
                 ),
               ],

@@ -549,6 +549,10 @@ void main() {
       );
 
       coordinator.beginCooldown(const Duration(minutes: 5));
+      expect(
+        coordinator.cooldownUntil,
+        DateTime(2026, 1, 1, 0, 5),
+      );
       // 5 分钟后（仍处于 5min 冷却内）再来一个 2min 冷却：不应缩短。
       fakeNow = fakeNow.add(const Duration(minutes: 3));
       coordinator.beginCooldown(const Duration(minutes: 2));
@@ -558,6 +562,7 @@ void main() {
       // 5min 冷却到期后退出。
       fakeNow = fakeNow.add(const Duration(minutes: 2));
       expect(coordinator.inCooldown, isFalse);
+      expect(coordinator.cooldownUntil, isNull);
     });
 
     test('reset 时在途请求完成不污染新会话，等待者收到重置错误', () async {

@@ -118,6 +118,12 @@ class KuaishouRequestCoordinator {
     return _cooldownActive;
   }
 
+  /// 当前冷却截止时间。冷却已结束或未启用时返回 null。
+  DateTime? get cooldownUntil {
+    _refreshCooldownState();
+    return _cooldownActive ? _cooldownUntil : null;
+  }
+
   void _refreshCooldownState() {
     final until = _cooldownUntil;
     if (_cooldownActive && until != null && !until.isAfter(_now())) {

@@ -374,6 +374,19 @@ void main() {
   });
 
   group('KuaishouSite Cookie 会话重置', () {
+    test('portable credential strips every device-scoped cookie', () {
+      final sanitized = sanitizeKuaishouCredentialCookie(
+        'did=a; didv=b; clientid=c; client_key=d; kpn=e; '
+        'kuaishou.live.bfb1s=f; kuaishou.live.web_st=token; '
+        'userId=user; kwfv1=keep; extra=value',
+      );
+
+      expect(
+          sanitized,
+          'kuaishou.live.web_st=token; userId=user; '
+          'kwfv1=keep; extra=value');
+    });
+
     test('resetCookieSession 清空共享 Cookie 字段与 DID 去重状态', () {
       final site = KuaishouSite();
       site.customCookie = 'kuaishou.live.web_st=abc; did=d1';
@@ -388,6 +401,65 @@ void main() {
       // 注：_sessionDio 是私有字段，通过再次 reset 幂等性间接验证。
       site.resetCookieSession();
       expect(site.cookie, '');
+    });
+
+    test('device rebuild replaces Dio and CookieJar without losing login',
+        () async {
+      final requestCookies = <String>[];
+      Dio createAuthenticatedDio() {
+        return Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                requestCookies.add(options.headers['cookie']?.toString() ?? '');
+                handler.resolve(
+                  Response<String>(
+                    requestOptions: options,
+                    statusCode: 200,
+                    data: _kuaishouLivePage(
+                      roomId: options.uri.pathSegments.last,
+                      includePlayback: false,
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+      }
+
+      final site = KuaishouSite(
+        authenticatedDioFactory: createAuthenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie:
+              'did=old-device; clientid=old-client; kuaishou.live.web_st=login',
+          kww: '',
+        );
+
+      await site.getFollowLiveStatusState(roomId: 'before-rebuild');
+      final firstDio = site.authenticatedDioIdentityFor('primary');
+      final firstJar = site.cookieJarIdentityFor('primary');
+      expect(firstDio, isNotNull);
+      expect(firstJar, isNotNull);
+
+      expect(site.resetAccountDeviceSession('primary'), isTrue);
+      expect(site.authenticatedDioIdentityFor('primary'), isNull);
+      expect(site.cookieJarIdentityFor('primary'), isNull);
+      expect(site.resetAccountDeviceSession('missing'), isFalse);
+
+      await site.getFollowLiveStatusState(roomId: 'after-rebuild');
+      expect(site.authenticatedDioIdentityFor('primary'), isNot(firstDio));
+      expect(site.cookieJarIdentityFor('primary'), isNot(firstJar));
+      expect(requestCookies, hasLength(2));
+      for (final cookie in requestCookies) {
+        expect(cookie, contains('kuaishou.live.web_st=login'));
+        expect(cookie, isNot(contains('did=')));
+        expect(cookie, isNot(contains('clientid=')));
+      }
     });
   });
 
@@ -1015,23 +1087,23 @@ void main() {
           minInterval: Duration.zero,
           maxJitter: Duration.zero,
         ),
-      )
-        ..activateAccountSession(
+      )..activateAccountSession(
           sessionKey: 'primary',
           cookie: 'kuaishou.live.web_st=primary-token',
           kww: '',
-        )
-        ..accountFallbackProvider = (_) {
-          fallbackRequests += 1;
-          return const KuaishouAccountFallbackSession(
-            sessionKey: 'secondary',
-            cookie: 'kuaishou.live.web_st=secondary-token',
-            kww: '',
-          );
-        }
-        ..onAccountSessionHealthEvent = (_, event) {
-          accountEvents.add(event);
-        };
+        );
+      site.accountFallbackProvider = (_) {
+        fallbackRequests += 1;
+        return const KuaishouAccountFallbackSession(
+          sessionKey: 'secondary',
+          cookie: 'kuaishou.live.web_st=secondary-token',
+          kww: '',
+        );
+      };
+      site.accountFallbackAvailabilityProvider = (_) => true;
+      site.onAccountSessionHealthEvent = (_, event) {
+        accountEvents.add(event);
+      };
 
       final recovered = await KuaishouRequestTrace.run(
         KuaishouRequestSource.userEnter,
@@ -1043,7 +1115,115 @@ void main() {
       expect(site.activeAccountSessionKey, 'primary');
       expect(handshakeRequests, 2);
       expect(fallbackRequests, 1);
-      expect(accountEvents, isEmpty);
+      expect(accountEvents, [KuaishouAccountHealthEvent.rateLimited]);
+    });
+
+    test('starts cooldown when no fallback account is actually available',
+        () async {
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouRateLimitedPage(roomId: 'limited-room'),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        );
+      site.accountFallbackProvider = (_) => null;
+      site.accountFallbackAvailabilityProvider = (_) => false;
+
+      Object? caught;
+      try {
+        await KuaishouRequestTrace.run(
+          KuaishouRequestSource.userEnter,
+          () => site.getRoomDetail(roomId: 'limited-room'),
+        );
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught, isA<KuaishouRateLimitError>());
+      final rateLimit = caught! as KuaishouRateLimitError;
+      expect(rateLimit.attemptedSessionKeys, ['primary']);
+      expect(rateLimit.rateLimitedSessionKeys, ['primary']);
+      expect(rateLimit.cooldownUntil, isNotNull);
+      expect(site.coordinator.inCooldown, isTrue);
+    });
+
+    test('keeps primary 429 when the fallback account later fails to parse',
+        () async {
+      var transportIndex = 0;
+      Dio createAuthenticatedDio() {
+        final index = transportIndex++;
+        return Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                handler.resolve(
+                  Response<String>(
+                    requestOptions: options,
+                    statusCode: 200,
+                    data: index == 0
+                        ? _kuaishouRateLimitedPage(roomId: 'limited-room')
+                        : '<html><body>empty shell</body></html>',
+                  ),
+                );
+              },
+            ),
+          );
+      }
+
+      final site = KuaishouSite(
+        authenticatedDioFactory: createAuthenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        );
+      site.accountFallbackProvider =
+          (_) => const KuaishouAccountFallbackSession(
+                sessionKey: 'secondary',
+                cookie: 'kuaishou.live.web_st=secondary-token',
+                kww: '',
+              );
+      site.accountFallbackAvailabilityProvider = (_) => true;
+
+      Object? caught;
+      try {
+        await KuaishouRequestTrace.run(
+          KuaishouRequestSource.userEnter,
+          () => site.getRoomDetail(roomId: 'limited-room'),
+        );
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught, isA<KuaishouRateLimitError>());
+      final rateLimit = caught! as KuaishouRateLimitError;
+      expect(rateLimit.statusCode, 429);
+      expect(rateLimit.attemptedSessionKeys, ['primary', 'secondary']);
+      expect(rateLimit.rateLimitedSessionKeys, ['primary']);
+      expect(site.coordinator.inCooldown, isTrue);
     });
 
     test('follow refresh 429 arms global cooldown and pauses later refreshes',
@@ -1096,8 +1276,9 @@ void main() {
       // Follow refresh has no in-core account failover, so the throttle is
       // terminal for this attempt and must pause host-wide background traffic.
       expect(site.coordinator.inCooldown, isTrue);
-      // A transient device/IP limit must not suspend the account for the day.
-      expect(accountEvents, isEmpty);
+      // A transient device/IP limit is reported for a short account cooldown,
+      // but it is not treated as invalid credentials or a day suspension.
+      expect(accountEvents, [KuaishouAccountHealthEvent.rateLimited]);
 
       // A later refresh is served entirely from the cooldown gate: the state is
       // reported as unknown (not a false "offline") and no request is issued.
@@ -1203,17 +1384,18 @@ void main() {
           minInterval: Duration.zero,
           maxJitter: Duration.zero,
         ),
-      )
-        ..activateAccountSession(
+      )..activateAccountSession(
           sessionKey: 'primary',
           cookie: 'kuaishou.live.web_st=primary-token',
           kww: '',
-        )
-        ..accountFallbackProvider = (_) => const KuaishouAccountFallbackSession(
-              sessionKey: 'secondary',
-              cookie: 'kuaishou.live.web_st=secondary-token',
-              kww: '',
-            );
+        );
+      site.accountFallbackProvider =
+          (_) => const KuaishouAccountFallbackSession(
+                sessionKey: 'secondary',
+                cookie: 'kuaishou.live.web_st=secondary-token',
+                kww: '',
+              );
+      site.accountFallbackAvailabilityProvider = (_) => true;
 
       final detail = await KuaishouRequestTrace.run(
         KuaishouRequestSource.userEnter,
@@ -1257,17 +1439,18 @@ void main() {
           minInterval: Duration.zero,
           maxJitter: Duration.zero,
         ),
-      )
-        ..activateAccountSession(
+      )..activateAccountSession(
           sessionKey: 'primary',
           cookie: 'kuaishou.live.web_st=primary-token',
           kww: '',
-        )
-        ..accountFallbackProvider = (_) => const KuaishouAccountFallbackSession(
-              sessionKey: 'secondary',
-              cookie: 'kuaishou.live.web_st=secondary-token',
-              kww: '',
-            );
+        );
+      site.accountFallbackProvider =
+          (_) => const KuaishouAccountFallbackSession(
+                sessionKey: 'secondary',
+                cookie: 'kuaishou.live.web_st=secondary-token',
+                kww: '',
+              );
+      site.accountFallbackAvailabilityProvider = (_) => true;
 
       await expectLater(
         KuaishouRequestTrace.run(

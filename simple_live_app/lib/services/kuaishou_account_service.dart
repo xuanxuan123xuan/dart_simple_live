@@ -25,6 +25,7 @@ class KuaishouAccountSession {
   DateTime? cooldownUntil;
   DateTime? suspendedUntil;
   String? suspendedReason;
+  DateTime? lastDeviceSessionRebuiltAt;
 
   bool get isConfigured => cookie.trim().isNotEmpty;
 
@@ -46,14 +47,20 @@ class KuaishouAccountSession {
         'cooldownUntil': cooldownUntil?.millisecondsSinceEpoch,
         'suspendedUntil': suspendedUntil?.millisecondsSinceEpoch,
         'suspendedReason': suspendedReason,
+        'lastDeviceSessionRebuiltAt':
+            lastDeviceSessionRebuiltAt?.millisecondsSinceEpoch,
       };
 
-  Map<String, dynamic> toBackupJson() => {
-        'cookie': cookie,
-        'kww': kww,
-        'cookieExpiresAt': cookieExpiresAt?.millisecondsSinceEpoch ?? 0,
-        'state': toStateJson(),
-      };
+  Map<String, dynamic> toBackupJson() {
+    final portableState = Map<String, dynamic>.from(toStateJson())
+      ..remove('lastDeviceSessionRebuiltAt');
+    return {
+      'cookie': sanitizeKuaishouCredentialCookie(cookie),
+      'kww': kww,
+      'cookieExpiresAt': cookieExpiresAt?.millisecondsSinceEpoch ?? 0,
+      'state': portableState,
+    };
+  }
 
   void restoreState(dynamic raw) {
     if (raw is! Map) return;
@@ -74,6 +81,7 @@ class KuaishouAccountSession {
     cooldownUntil = readDate('cooldownUntil');
     suspendedUntil = readDate('suspendedUntil');
     suspendedReason = raw['suspendedReason']?.toString();
+    lastDeviceSessionRebuiltAt = readDate('lastDeviceSessionRebuiltAt');
   }
 
   void replaceCredential({
@@ -82,15 +90,16 @@ class KuaishouAccountSession {
     DateTime? expiresAt,
     DateTime? now,
   }) {
-    this.cookie = cookie;
+    this.cookie = sanitizeKuaishouCredentialCookie(cookie);
     this.kww = kww;
     cookieExpiresAt = expiresAt;
-    loggedInAt = cookie.isEmpty ? null : (now ?? DateTime.now());
+    loggedInAt = this.cookie.isEmpty ? null : (now ?? DateTime.now());
     lastValidatedAt = null;
     credentialState = KuaishouCredentialState.unknown;
     cooldownUntil = null;
     suspendedUntil = null;
     suspendedReason = null;
+    lastDeviceSessionRebuiltAt = null;
   }
 
   void restoreBackup(dynamic raw) {
@@ -102,7 +111,9 @@ class KuaishouAccountSession {
     final expiryMs = expiryValue is num
         ? expiryValue.toInt()
         : int.tryParse(expiryValue?.toString() ?? '') ?? 0;
-    cookie = raw['cookie']?.toString() ?? '';
+    cookie = sanitizeKuaishouCredentialCookie(
+      raw['cookie']?.toString() ?? '',
+    );
     kww = raw['kww']?.toString() ?? '';
     cookieExpiresAt = expiryMs > 0
         ? DateTime.fromMillisecondsSinceEpoch(expiryMs)
@@ -146,10 +157,11 @@ class KuaishouAccountService extends GetxService {
 
   @override
   void onInit() {
-    primary.cookie = LocalStorageService.instance.getValue(
+    final storedPrimaryCookie = LocalStorageService.instance.getValue(
       LocalStorageService.kKuaishouCookie,
       '',
     );
+    primary.cookie = sanitizeKuaishouCredentialCookie(storedPrimaryCookie);
     primary.kww = LocalStorageService.instance.getValue(
       LocalStorageService.kKuaishouKww,
       '',
@@ -161,10 +173,11 @@ class KuaishouAccountService extends GetxService {
     primary.cookieExpiresAt = primaryExpiry > 0
         ? DateTime.fromMillisecondsSinceEpoch(primaryExpiry)
         : null;
-    secondary.cookie = LocalStorageService.instance.getValue(
+    final storedSecondaryCookie = LocalStorageService.instance.getValue(
       LocalStorageService.kKuaishouSecondaryCookie,
       '',
     );
+    secondary.cookie = sanitizeKuaishouCredentialCookie(storedSecondaryCookie);
     secondary.kww = LocalStorageService.instance.getValue(
       LocalStorageService.kKuaishouSecondaryKww,
       '',
@@ -191,6 +204,10 @@ class KuaishouAccountService extends GetxService {
     refreshAvailability();
     _syncLegacyObservables();
     setSite();
+    if (primary.cookie != storedPrimaryCookie ||
+        secondary.cookie != storedSecondaryCookie) {
+      _persist();
+    }
     super.onInit();
   }
 
@@ -213,6 +230,7 @@ class KuaishouAccountService extends GetxService {
     site.onAccountHealthEvent = null;
     site.onAccountSessionHealthEvent = _handleSiteHealthEvent;
     site.accountFallbackProvider = _provideFallbackSession;
+    site.accountFallbackAvailabilityProvider = _hasFallbackSession;
     if (active == null) {
       site.activateAnonymousMode();
     } else {
@@ -248,6 +266,19 @@ class KuaishouAccountService extends GetxService {
     return null;
   }
 
+  bool _hasFallbackSession(String attemptedSessionKey) {
+    final attempted = KuaishouAccountSlot.values.firstWhereOrNull(
+      (slot) => slot.name == attemptedSessionKey,
+    );
+    final candidates = attempted == KuaishouAccountSlot.primary
+        ? [secondary]
+        : attempted == KuaishouAccountSlot.secondary
+            ? [primary]
+            : [primary, secondary];
+    final now = DateTime.now();
+    return candidates.any((candidate) => candidate.isAvailable(now));
+  }
+
   void setCookie(String cookie, {String? kww, DateTime? expiresAt}) {
     setCookieForSlot(
       KuaishouAccountSlot.primary,
@@ -264,24 +295,26 @@ class KuaishouAccountService extends GetxService {
     DateTime? expiresAt,
   }) {
     final target = sessionFor(slot);
+    final credentialCookie = sanitizeKuaishouCredentialCookie(cookie);
     final other = sessionFor(slot == KuaishouAccountSlot.primary
         ? KuaishouAccountSlot.secondary
         : KuaishouAccountSlot.primary);
-    if (cookie.trim().isNotEmpty && other.isConfigured) {
-      final normalizedCookie = normalizeKuaishouCookie(cookie);
+    if (credentialCookie.trim().isNotEmpty && other.isConfigured) {
+      final normalizedCookie = normalizeKuaishouCookie(credentialCookie);
       if (normalizedCookie == normalizeKuaishouCookie(other.cookie)) {
         return false;
       }
-      final uid = extractKuaishouAccountUid(cookie);
+      final uid = extractKuaishouAccountUid(credentialCookie);
       final otherUid = extractKuaishouAccountUid(other.cookie);
       if (uid != null && otherUid != null && uid == otherUid) {
         return false;
       }
     }
     target.replaceCredential(
-      cookie: cookie,
+      cookie: credentialCookie,
       kww: kww ?? target.kww,
-      expiresAt: expiresAt ?? resolveKuaishouEmbeddedTokenExpiry(cookie),
+      expiresAt:
+          expiresAt ?? resolveKuaishouEmbeddedTokenExpiry(credentialCookie),
     );
     mode.value = primary.isAvailable(DateTime.now())
         ? KuaishouAccountPoolMode.primary
@@ -405,6 +438,84 @@ class KuaishouAccountService extends GetxService {
     setSite();
   }
 
+  void markRateLimited(
+    KuaishouAccountSlot slot, {
+    DateTime? now,
+  }) {
+    final current = now ?? DateTime.now();
+    final session = sessionFor(slot);
+    final nextCooldown =
+        current.add(KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration);
+    if (session.cooldownUntil?.isAfter(nextCooldown) != true) {
+      session.cooldownUntil = nextCooldown;
+    }
+    session.suspendedReason = 'rateLimited';
+    if (_isSlotActive(slot)) {
+      _degradeFrom(slot);
+    }
+    _persist();
+    _syncLegacyObservables();
+    setSite();
+  }
+
+  bool canRebuildDeviceSession(
+    KuaishouAccountSlot slot, {
+    DateTime? now,
+  }) {
+    final session = sessionFor(slot);
+    if (!session.isConfigured) return false;
+    final rebuiltAt = session.lastDeviceSessionRebuiltAt;
+    return rebuiltAt == null ||
+        !_isSameShanghaiDay(rebuiltAt, now ?? DateTime.now());
+  }
+
+  List<KuaishouAccountSlot> rebuildDeviceSessions(
+    Iterable<String> sessionKeys, {
+    DateTime? now,
+  }) {
+    final current = now ?? DateTime.now();
+    final rebuilt = <KuaishouAccountSlot>[];
+    final site = _site;
+    if (site == null) return rebuilt;
+    for (final sessionKey in sessionKeys.toSet()) {
+      final slot = KuaishouAccountSlot.values.firstWhereOrNull(
+        (value) => value.name == sessionKey,
+      );
+      if (slot == null || !canRebuildDeviceSession(slot, now: current)) {
+        continue;
+      }
+      final session = sessionFor(slot);
+      session.cookie = sanitizeKuaishouCredentialCookie(session.cookie);
+      if (!site.resetAccountDeviceSession(sessionKey)) continue;
+      session.lastDeviceSessionRebuiltAt = current;
+      rebuilt.add(slot);
+    }
+    if (rebuilt.isNotEmpty) {
+      _persist();
+      _syncLegacyObservables();
+    }
+    return rebuilt;
+  }
+
+  /// Selects a rebuilt slot only for the single post-cooldown recovery probe.
+  /// Normal cooldown expiry keeps the currently healthy fallback selected.
+  bool activateRebuiltSession(
+    KuaishouAccountSlot slot, {
+    DateTime? now,
+  }) {
+    final current = now ?? DateTime.now();
+    refreshAvailability(current);
+    final session = sessionFor(slot);
+    if (!session.isAvailable(current)) return false;
+    mode.value = slot == KuaishouAccountSlot.primary
+        ? KuaishouAccountPoolMode.primary
+        : KuaishouAccountPoolMode.secondary;
+    _persist();
+    _syncLegacyObservables();
+    _applyActiveSessionToSite();
+    return true;
+  }
+
   /// Suspend the account rejected during follow refresh and move the remaining
   /// batch to the other account. False means no healthy fallback remains.
   bool failoverFollowBatch({
@@ -462,11 +573,13 @@ class KuaishouAccountService extends GetxService {
       }
     }
     if (recovered) {
-      mode.value = primary.isAvailable(current)
-          ? KuaishouAccountPoolMode.primary
-          : secondary.isAvailable(current)
-              ? KuaishouAccountPoolMode.secondary
-              : KuaishouAccountPoolMode.anonymous;
+      if (activeSession?.isAvailable(current) != true) {
+        mode.value = primary.isAvailable(current)
+            ? KuaishouAccountPoolMode.primary
+            : secondary.isAvailable(current)
+                ? KuaishouAccountPoolMode.secondary
+                : KuaishouAccountPoolMode.anonymous;
+      }
       _persist();
     } else if (activeSession?.isAvailable(current) != true) {
       if (mode.value == KuaishouAccountPoolMode.primary) {
@@ -500,6 +613,8 @@ class KuaishouAccountService extends GetxService {
     if (slot == null) return;
     switch (event) {
       case KuaishouAccountHealthEvent.rateLimited:
+        markRateLimited(slot);
+        return;
       case KuaishouAccountHealthEvent.securityChallenge:
         suspendForDay(slot, reason: event.name);
         return;
@@ -532,6 +647,8 @@ class KuaishouAccountService extends GetxService {
   }
 
   void _persist() {
+    primary.cookie = sanitizeKuaishouCredentialCookie(primary.cookie);
+    secondary.cookie = sanitizeKuaishouCredentialCookie(secondary.cookie);
     final storage = LocalStorageService.instance;
     storage.setValue(LocalStorageService.kKuaishouCookie, primary.cookie);
     storage.setValue(LocalStorageService.kKuaishouKww, primary.kww);
@@ -554,6 +671,14 @@ class KuaishouAccountService extends GetxService {
       'secondary': secondary.toStateJson(),
     });
   }
+}
+
+bool _isSameShanghaiDay(DateTime first, DateTime second) {
+  final firstShanghai = first.toUtc().add(const Duration(hours: 8));
+  final secondShanghai = second.toUtc().add(const Duration(hours: 8));
+  return firstShanghai.year == secondShanghai.year &&
+      firstShanghai.month == secondShanghai.month &&
+      firstShanghai.day == secondShanghai.day;
 }
 
 DateTime nextShanghaiMidnight(DateTime now) {

@@ -9,6 +9,7 @@ import 'package:simple_live_core/src/common/core_error.dart';
 import 'package:simple_live_core/src/common/core_log.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:simple_live_core/src/common/kuaishou_cooldown_evidence_tracker.dart';
+import 'package:simple_live_core/src/common/kuaishou_cookie.dart';
 import 'package:simple_live_core/src/common/kuaishou_live_link.dart';
 import 'package:simple_live_core/src/common/kuaishou_request_coordinator.dart';
 import 'package:simple_live_core/src/danmaku/kuaishou_danmaku.dart';
@@ -92,8 +93,35 @@ class KuaishouAccountFallbackSession {
   final String kww;
 }
 
+/// 用户进入快手直播间时，所有可用账号尝试结束后仍存在明确限流。
+///
+/// 只携带账号槽位名和冷却时间，不包含 Cookie、UID、DID 或播放地址。
+class KuaishouRateLimitError extends CoreError {
+  KuaishouRateLimitError({
+    required this.attemptedSessionKeys,
+    required this.rateLimitedSessionKeys,
+    required this.cooldownUntil,
+    Object? cause,
+  }) : super(
+          '快手请求过快，已暂停请求，请稍后重试',
+          statusCode: 429,
+          kind: CoreErrorKind.http,
+          cause: cause,
+        );
+
+  final List<String> attemptedSessionKeys;
+  final List<String> rateLimitedSessionKeys;
+  final DateTime? cooldownUntil;
+
+  @override
+  String toString() => message;
+}
+
 typedef KuaishouAccountFallbackProvider = KuaishouAccountFallbackSession?
     Function(String attemptedSessionKey);
+typedef KuaishouAccountFallbackAvailabilityProvider = bool Function(
+  String attemptedSessionKey,
+);
 
 abstract class KuaishouCategorySnapshotStore {
   Future<Map<String, dynamic>?> read();
@@ -197,6 +225,11 @@ class KuaishouSite extends LiveSite {
   /// The provider does not change the globally selected account.
   KuaishouAccountFallbackProvider? accountFallbackProvider;
 
+  /// Side-effect-free fallback availability check. The provider itself may
+  /// return null, so its mere presence must never suppress host cooldown.
+  KuaishouAccountFallbackAvailabilityProvider?
+      accountFallbackAvailabilityProvider;
+
   /// 快手敏感请求的进程级协调器：全局最小间隔、优先级、同房合并与短缓存。
   final KuaishouRequestCoordinator coordinator;
 
@@ -249,8 +282,10 @@ class KuaishouSite extends LiveSite {
     required String kww,
   }) {
     final transport = _transportFor(sessionKey);
-    if (transport.customCookie != cookie || transport.customKww != kww) {
-      transport.resetCredential(cookie: cookie, kww: kww);
+    final credentialCookie = sanitizeKuaishouCredentialCookie(cookie);
+    if (transport.customCookie != credentialCookie ||
+        transport.customKww != kww) {
+      transport.resetCredential(cookie: credentialCookie, kww: kww);
     }
     transport.hardBlocked = false;
     transport.cooldownUntil = null;
@@ -293,9 +328,27 @@ class KuaishouSite extends LiveSite {
   /// 避免旧账号 Cookie 污染新账号（冷启动方案 11 风险登记）。
   void resetCookieSession() {
     _activeTransport.resetCredential(
-      cookie: _activeTransport.customCookie,
+      cookie: sanitizeKuaishouCredentialCookie(
+        _activeTransport.customCookie,
+      ),
       kww: _activeTransport.customKww,
     );
+  }
+
+  /// Rebuild one account's device-scoped web session while preserving its
+  /// configured authentication credential. Global cooldown is intentionally
+  /// retained, so this cannot be used to bypass a rate-limit window.
+  bool resetAccountDeviceSession(String sessionKey) {
+    final transport = _accountTransports[sessionKey];
+    if (transport == null || transport.customCookie.trim().isEmpty) {
+      return false;
+    }
+    transport.resetCredential(
+      cookie: sanitizeKuaishouCredentialCookie(transport.customCookie),
+      kww: transport.customKww,
+    );
+    CoreLog.i('[ks-session] rebuilt account_slot=$sessionKey');
+    return true;
   }
 
   static const List<String> _imageExtensions = [
@@ -1530,12 +1583,29 @@ class KuaishouSite extends LiveSite {
     if (firstTransport == null) {
       return _getAnonymousPlaybackRoomDetail(roomId, source: source);
     }
+    final attemptedSessionKeys = <String>[];
+    final rateLimitedSessionKeys = <String>[];
+
+    Future<LiveRoomDetail> requestWith(
+      _KuaishouAccountTransport transport,
+    ) async {
+      attemptedSessionKeys.add(transport.sessionKey);
+      try {
+        return await _getRoomDetailForTransport(
+          roomId,
+          source: source,
+          transport: transport,
+        );
+      } catch (error) {
+        if (_isExplicitRateLimitError(error)) {
+          rateLimitedSessionKeys.add(transport.sessionKey);
+        }
+        rethrow;
+      }
+    }
+
     try {
-      return await _getRoomDetailForTransport(
-        roomId,
-        source: source,
-        transport: firstTransport,
-      );
+      return await requestWith(firstTransport);
     } catch (firstError, firstStackTrace) {
       // Follow refresh owns account failover at the batch level. Retrying the
       // secondary account here would make every failed room issue twice.
@@ -1545,15 +1615,40 @@ class KuaishouSite extends LiveSite {
       final fallbackTransport =
           _preferredCookieTransport(excluding: firstTransport);
       if (fallbackTransport != null) {
-        return _getRoomDetailForTransport(
-          roomId,
-          source: source,
-          transport: fallbackTransport,
+        try {
+          return await requestWith(fallbackTransport);
+        } catch (secondError, secondStackTrace) {
+          if (rateLimitedSessionKeys.isNotEmpty) {
+            coordinator.beginCooldown(
+              KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
+            );
+            throw KuaishouRateLimitError(
+              attemptedSessionKeys: List.unmodifiable(attemptedSessionKeys),
+              rateLimitedSessionKeys: List.unmodifiable(rateLimitedSessionKeys),
+              cooldownUntil: coordinator.cooldownUntil,
+              cause: secondError,
+            );
+          }
+          Error.throwWithStackTrace(secondError, secondStackTrace);
+        }
+      }
+      if (rateLimitedSessionKeys.isNotEmpty) {
+        coordinator.beginCooldown(
+          KuaishouCooldownEvidenceTracker.rateLimitCooldownDuration,
+        );
+        throw KuaishouRateLimitError(
+          attemptedSessionKeys: List.unmodifiable(attemptedSessionKeys),
+          rateLimitedSessionKeys: List.unmodifiable(rateLimitedSessionKeys),
+          cooldownUntil: coordinator.cooldownUntil,
+          cause: firstError,
         );
       }
       Error.throwWithStackTrace(firstError, firstStackTrace);
     }
   }
+
+  static bool _isExplicitRateLimitError(Object error) =>
+      error is CoreError && error.statusCode == 429;
 
   Future<LiveRoomDetail> _getAnonymousPlaybackRoomDetail(
     String roomId, {
@@ -1599,7 +1694,8 @@ class KuaishouSite extends LiveSite {
         _currentCookieHeaderFor(active).isNotEmpty) {
       return true;
     }
-    return accountFallbackProvider != null;
+    return accountFallbackAvailabilityProvider?.call(attempted.sessionKey) ??
+        false;
   }
 
   _KuaishouAccountTransport? _resolveFallbackTransport(
@@ -1619,10 +1715,11 @@ class KuaishouSite extends LiveSite {
       return null;
     }
     final transport = _transportFor(fallback.sessionKey);
-    if (transport.customCookie != fallback.cookie ||
+    final credentialCookie = sanitizeKuaishouCredentialCookie(fallback.cookie);
+    if (transport.customCookie != credentialCookie ||
         transport.customKww != fallback.kww) {
       transport.resetCredential(
-        cookie: fallback.cookie,
+        cookie: credentialCookie,
         kww: fallback.kww,
       );
     }
@@ -2103,10 +2200,13 @@ class KuaishouSite extends LiveSite {
     if (immediateCooldown != null) {
       transport.lastErrorClassification =
           KuaishouErrorClassification.rateLimited;
-      // Deliberately not a health event: 429 is device/IP throttling, not
-      // evidence that this account is bad. Reporting it would suspend the slot
-      // until Shanghai midnight for what is usually a transient limit.
-      transport.lastHealthEvent = null;
+      // 429 is device/session-level evidence, not credential invalidation.
+      // The app uses this event for a short slot cooldown and one-way fallback.
+      transport.lastHealthEvent = KuaishouAccountHealthEvent.rateLimited;
+      _emitAccountHealthEvent(
+        transport,
+        KuaishouAccountHealthEvent.rateLimited,
+      );
       // Arm the global cooldown only when this attempt is terminal. Without it
       // the coordinator's cooldown gate is never entered, so background follow
       // refresh, status polling and credential retries resume on the next tick

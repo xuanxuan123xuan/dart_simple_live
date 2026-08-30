@@ -15,6 +15,8 @@ export 'src/common/douyin_cookie_helper.dart';
 export 'src/common/douyin_follow_refresh_limiter.dart';
 export 'src/common/kuaishou_live_link.dart';
 export 'src/common/kuaishou_request_coordinator.dart';
+export 'src/common/kuaishou_cooldown_evidence_tracker.dart';
+export 'src/common/kuaishou_cookie.dart';
 export 'src/common/live_stream_protocol.dart';
 export 'src/common/network_diagnose_service.dart';
 export 'src/model/live_message.dart';
