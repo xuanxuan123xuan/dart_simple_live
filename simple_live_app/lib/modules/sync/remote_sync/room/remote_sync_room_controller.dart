@@ -554,6 +554,7 @@ class RemoteSyncRoomController extends BaseController {
         action: "SendDouyinAccount",
         overlay: true,
         content: json.encode({
+          "accountType": "douyin",
           "cookie": DouyinAccountService.instance.cookie,
         }),
       );
@@ -589,7 +590,10 @@ class RemoteSyncRoomController extends BaseController {
         roomName: currentRoomId.value,
         action: "SendKuaishouAccount",
         overlay: true,
-        content: json.encode(KuaishouAccountService.instance.exportBackupMap()),
+        content: json.encode({
+          ...KuaishouAccountService.instance.exportBackupMap(),
+          "accountType": "kuaishou",
+        }),
       );
       if (resp.isSuccess) {
         SmartDialog.showToast("已发送快手账号");

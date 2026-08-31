@@ -206,6 +206,8 @@ class SignalRService {
       payload: {
         "overlay": overlay,
         "content": content,
+        if (action == "SendDouyinAccount") "accountType": "douyin",
+        if (action == "SendKuaishouAccount") "accountType": "kuaishou",
         ...extraPayload,
       },
       successTypes: const {"ack"},
@@ -315,7 +317,7 @@ class SignalRService {
           _emitBoolString(data, _onShieldWordStreamController);
           break;
         case "biliAccountReceived":
-          _emitBoolString(data, _onBiliAccountStreamController);
+          _emitAccountPayload(data);
           break;
         case "douyinAccountReceived":
           _emitBoolString(data, _onDouyinAccountStreamController);
@@ -355,6 +357,35 @@ class SignalRService {
       return;
     }
     controller.add(RoomSyncPayload.fromMap(Map<String, dynamic>.from(payload)));
+  }
+
+  // The deployed sync service historically exposed only the Bili account
+  // message type. Account payloads carry their provider so newer account
+  // types can use that stable transport without breaking older servers.
+  void _emitAccountPayload(Map<String, dynamic> message) {
+    final payload = message["payload"];
+    var accountType = payload is Map
+        ? payload["accountType"]?.toString().toLowerCase()
+        : null;
+    if (accountType == null || accountType.isEmpty) {
+      final content = payload is Map ? payload["content"] : null;
+      if (content is String) {
+        try {
+          final decoded = jsonDecode(content);
+          if (decoded is Map) {
+            accountType = decoded["accountType"]?.toString().toLowerCase();
+          }
+        } catch (_) {
+          // The normal account handlers report malformed content.
+        }
+      }
+    }
+    final target = switch (accountType) {
+      "douyin" => _onDouyinAccountStreamController,
+      "kuaishou" => _onKuaishouAccountStreamController,
+      _ => _onBiliAccountStreamController,
+    };
+    _emitBoolString(message, target);
   }
 
   void _handleSocketError(Object error, StackTrace stackTrace) {
@@ -484,9 +515,11 @@ class SignalRService {
       case "SendBiliAccount":
         return "sendBiliAccount";
       case "SendDouyinAccount":
-        return "sendDouyinAccount";
+        // Keep compatibility with sync servers deployed before the
+        // Douyin/Kuaishou message types were added.
+        return "sendBiliAccount";
       case "SendKuaishouAccount":
-        return "sendKuaishouAccount";
+        return "sendBiliAccount";
       default:
         return action;
     }
@@ -530,6 +563,7 @@ class Resp<T> {
 class RoomSyncPayload {
   final bool overlay;
   final String content;
+  final String accountType;
   final int chunkIndex;
   final int chunkTotal;
   final int itemStart;
@@ -539,6 +573,7 @@ class RoomSyncPayload {
   const RoomSyncPayload({
     required this.overlay,
     required this.content,
+    this.accountType = "",
     this.chunkIndex = 1,
     this.chunkTotal = 1,
     this.itemStart = 0,
@@ -547,9 +582,22 @@ class RoomSyncPayload {
   });
 
   factory RoomSyncPayload.fromMap(Map<String, dynamic> payload) {
+    var accountType = payload["accountType"]?.toString().toLowerCase() ?? "";
+    if (accountType.isEmpty) {
+      final content = payload["content"];
+      if (content is String) {
+        try {
+          final decoded = jsonDecode(content);
+          if (decoded is Map) {
+            accountType = decoded["accountType"]?.toString().toLowerCase() ?? "";
+          }
+        } catch (_) {}
+      }
+    }
     return RoomSyncPayload(
       overlay: payload["overlay"] == true,
       content: payload["content"]?.toString() ?? "",
+      accountType: accountType,
       chunkIndex: _readInt(payload["chunkIndex"], fallback: 1),
       chunkTotal: _readInt(payload["chunkTotal"], fallback: 1),
       itemStart: _readInt(payload["itemStart"], fallback: 0),

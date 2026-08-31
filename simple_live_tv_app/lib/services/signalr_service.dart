@@ -47,6 +47,16 @@ class SignalRService {
   Stream<RoomSyncPayload> get onBiliAccountStream =>
       _onBiliAccountStreamController.stream;
 
+  final _onDouyinAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onDouyinAccountStream =>
+      _onDouyinAccountStreamController.stream;
+
+  final _onKuaishouAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onKuaishouAccountStream =>
+      _onKuaishouAccountStreamController.stream;
+
   final _onRoomDestroyedStreamController = StreamController<String>.broadcast();
   Stream<String> get onRoomDestroyedStream =>
       _onRoomDestroyedStreamController.stream;
@@ -196,6 +206,8 @@ class SignalRService {
       payload: {
         "overlay": overlay,
         "content": content,
+        if (action == "SendDouyinAccount") "accountType": "douyin",
+        if (action == "SendKuaishouAccount") "accountType": "kuaishou",
         ...extraPayload,
       },
       successTypes: const {"ack"},
@@ -214,6 +226,8 @@ class SignalRService {
     _onHistoryStreamController.close();
     _onShieldWordStreamController.close();
     _onBiliAccountStreamController.close();
+    _onDouyinAccountStreamController.close();
+    _onKuaishouAccountStreamController.close();
     _onRoomDestroyedStreamController.close();
     _onRoomUserUpdatedStreamController.close();
     _stopHeartbeat();
@@ -303,7 +317,13 @@ class SignalRService {
           _emitBoolString(data, _onShieldWordStreamController);
           break;
         case "biliAccountReceived":
-          _emitBoolString(data, _onBiliAccountStreamController);
+          _emitAccountPayload(data);
+          break;
+        case "douyinAccountReceived":
+          _emitBoolString(data, _onDouyinAccountStreamController);
+          break;
+        case "kuaishouAccountReceived":
+          _emitBoolString(data, _onKuaishouAccountStreamController);
           break;
         case "roomDestroyed":
           _onRoomDestroyedStreamController
@@ -337,6 +357,32 @@ class SignalRService {
       return;
     }
     controller.add(RoomSyncPayload.fromMap(Map<String, dynamic>.from(payload)));
+  }
+
+  void _emitAccountPayload(Map<String, dynamic> message) {
+    final payload = message["payload"];
+    var accountType = payload is Map
+        ? payload["accountType"]?.toString().toLowerCase()
+        : null;
+    if (accountType == null || accountType.isEmpty) {
+      final content = payload is Map ? payload["content"] : null;
+      if (content is String) {
+        try {
+          final decoded = jsonDecode(content);
+          if (decoded is Map) {
+            accountType = decoded["accountType"]?.toString().toLowerCase();
+          }
+        } catch (_) {
+          // The normal account handlers report malformed content.
+        }
+      }
+    }
+    final target = switch (accountType) {
+      "douyin" => _onDouyinAccountStreamController,
+      "kuaishou" => _onKuaishouAccountStreamController,
+      _ => _onBiliAccountStreamController,
+    };
+    _emitBoolString(message, target);
   }
 
   void _handleSocketError(Object error, StackTrace stackTrace) {
@@ -464,6 +510,9 @@ class SignalRService {
         return "sendShieldWord";
       case "SendBiliAccount":
         return "sendBiliAccount";
+      case "SendDouyinAccount":
+      case "SendKuaishouAccount":
+        return "sendBiliAccount";
       default:
         return action;
     }
@@ -507,6 +556,7 @@ class Resp<T> {
 class RoomSyncPayload {
   final bool overlay;
   final String content;
+  final String accountType;
   final int chunkIndex;
   final int chunkTotal;
   final int itemStart;
@@ -516,6 +566,7 @@ class RoomSyncPayload {
   const RoomSyncPayload({
     required this.overlay,
     required this.content,
+    this.accountType = "",
     this.chunkIndex = 1,
     this.chunkTotal = 1,
     this.itemStart = 0,
@@ -524,9 +575,22 @@ class RoomSyncPayload {
   });
 
   factory RoomSyncPayload.fromMap(Map<String, dynamic> payload) {
+    var accountType = payload["accountType"]?.toString().toLowerCase() ?? "";
+    if (accountType.isEmpty) {
+      final content = payload["content"];
+      if (content is String) {
+        try {
+          final decoded = jsonDecode(content);
+          if (decoded is Map) {
+            accountType = decoded["accountType"]?.toString().toLowerCase() ?? "";
+          }
+        } catch (_) {}
+      }
+    }
     return RoomSyncPayload(
       overlay: payload["overlay"] == true,
       content: payload["content"]?.toString() ?? "",
+      accountType: accountType,
       chunkIndex: _readInt(payload["chunkIndex"], fallback: 1),
       chunkTotal: _readInt(payload["chunkTotal"], fallback: 1),
       itemStart: _readInt(payload["itemStart"], fallback: 0),
