@@ -1443,22 +1443,31 @@ class FollowUserService extends BasePageController<FollowUser> {
     Log.w("抖音访问受限，已自动降速并继续刷新当前任务");
   }
 
-  void removeItem(FollowUser item, {bool refresh = true}) async {
+  Future<bool> removeItem(FollowUser item, {bool refresh = true}) async {
     final result = await Utils.showAlertDialog(
       "确定要取消关注 ${item.userName} 吗?",
       title: "取消关注",
     );
     if (!result) {
-      return;
+      return false;
     }
     await DBService.instance.followBox.delete(item.id);
     if (refresh) {
-      refreshData(forceStatus: false);
+      await refreshData(forceStatus: false);
     } else {
       allList.remove(item);
-      list.remove(item);
-      livingList.remove(item);
+      sortList();
     }
+    return true;
+  }
+
+  Future<void> toggleSpecialFollow(FollowUser item) async {
+    item.isSpecialFollow = !item.isSpecialFollow;
+    await DBService.instance.addFollow(item);
+    sortList();
+    SmartDialog.showToast(
+      item.isSpecialFollow ? "已设为特别关注" : "已取消特别关注",
+    );
   }
 
   @override

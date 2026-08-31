@@ -221,6 +221,76 @@ class SettingsPage extends GetView<SettingsController> {
           ),
         ),
         AppStyle.vGap24,
+        Text(
+          "以下高级输出设置默认关闭；修改后需退出并重新进入直播间。兼容模式开启时会优先使用 mediacodec_embed/mediacodec。",
+          style: AppStyle.subTextStyleWhite,
+        ),
+        AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
+            foucsNode: controller.customPlayerOutputFocusNode,
+            title: "自定义输出驱动与硬件加速",
+            items: const {0: "关", 1: "开"},
+            value:
+                AppSettingsController.instance.customPlayerOutput.value ? 1 : 0,
+            onChanged: (e) {
+              AppSettingsController.instance.setCustomPlayerOutput(e == 1);
+            },
+          ),
+        ),
+        AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
+            foucsNode: controller.videoOutputFocusNode,
+            title: "视频输出驱动 (--vo)",
+            items: MpvOptionsService.videoOutputDrivers,
+            value: AppSettingsController.instance.videoOutputDriver.value,
+            onChanged: (value) => AppSettingsController.instance
+                .setVideoOutputDriver(value as String),
+          ),
+        ),
+        AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
+            foucsNode: controller.hardwareDecoderFocusNode,
+            title: "硬件解码器 (--hwdec)",
+            items: MpvOptionsService.hardwareDecoders,
+            value: AppSettingsController.instance.videoHardwareDecoder.value,
+            onChanged: (value) => AppSettingsController.instance
+                .setVideoHardwareDecoder(value as String),
+          ),
+        ),
+        AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
+            foucsNode: controller.audioOutputFocusNode,
+            title: "音频输出驱动 (--ao)",
+            items: MpvOptionsService.audioOutputDrivers,
+            value: AppSettingsController.instance.audioOutputDriver.value,
+            onChanged: (value) => AppSettingsController.instance
+                .setAudioOutputDriver(value as String),
+          ),
+        ),
+        AppStyle.vGap24,
+        Obx(
+          () => HighlightListTile(
+            focusNode: controller.advancedMpvFocusNode,
+            title: "高级 mpv options",
+            subtitle:
+                AppSettingsController.instance.mpvAdvancedOptions.value.isEmpty
+                    ? "未设置；每行一个 key=value"
+                    : "已设置，优先于内置档位和可视化选项",
+            onTap: controller.editMpvAdvancedOptions,
+          ),
+        ),
+        AppStyle.vGap24,
+        HighlightListTile(
+          focusNode: controller.resetMpvFocusNode,
+          title: "恢复播放器默认配置",
+          subtitle: "关闭自定义输出并清空高级参数",
+          onTap: controller.resetMpvOptions,
+        ),
+        AppStyle.vGap24,
         Obx(
           () => SettingsItemWidget(
             foucsNode: AppFocusNode(),

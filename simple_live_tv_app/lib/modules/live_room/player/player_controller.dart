@@ -4,12 +4,13 @@ import 'dart:io';
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:simple_live_tv_app/app/controller/base_controller.dart';
 import 'package:get/get.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_tv_app/app/controller/base_controller.dart';
 import 'package:simple_live_tv_app/app/log.dart';
+import 'package:simple_live_tv_app/modules/live_room/player/playback_stall_tracker.dart';
 import 'package:simple_live_tv_app/services/mpv_options_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -221,6 +222,9 @@ class PlayerController extends BaseController
   StreamSubscription? _widthSubscription;
   StreamSubscription? _heightSubscription;
   StreamSubscription? _logSubscription;
+  Timer? _playbackStallWatchdogTimer;
+  final PlaybackStallTracker _playbackStallTracker = PlaybackStallTracker();
+  int playbackGeneration = 0;
 
   void initStream() {
     _errorSubscription = player.stream.error.listen((event) {
@@ -254,7 +258,56 @@ class PlayerController extends BaseController
       // isVertical.value =
       //     (player.state.height ?? 9) > (player.state.width ?? 16);
     });
+    _playbackStallWatchdogTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _checkPlaybackStall(),
+    );
   }
+
+  void _checkPlaybackStall() {
+    if (playbackRecoveryInFlight) return;
+    final state = player.state;
+    final playlist = state.playlist;
+    final media = playlist.medias.isNotEmpty &&
+            playlist.index >= 0 &&
+            playlist.index < playlist.medias.length
+        ? playlist.medias[playlist.index]
+        : null;
+    final activeUri = media?.uri.toString() ?? "";
+    final source = activeUri.isEmpty
+        ? ""
+        : playbackStallSourceIdentity(activeUri);
+    final previousAttempts = _playbackStallTracker.recoveryAttempts;
+    final shouldRecover = _playbackStallTracker.observe(
+      now: DateTime.now(),
+      generation: playbackGeneration,
+      source: source,
+      position: state.position,
+      playing: state.playing,
+      buffering: state.buffering,
+      completed: state.completed,
+    );
+    if (previousAttempts > 0 &&
+        _playbackStallTracker.recoveryAttempts == 0) {
+      playbackStable();
+    }
+    if (!shouldRecover) return;
+    Log.w(
+      "检测到直播画面长时间无进度，自动恢复 "
+      "(${_playbackStallTracker.recoveryAttempts}/3)",
+    );
+    mediaError("直播流停滞，自动刷新");
+  }
+
+  void beginPlaybackGeneration() {
+    playbackGeneration += 1;
+  }
+
+  String playbackStallSourceIdentity(String activeUri) => activeUri;
+
+  bool get playbackRecoveryInFlight => false;
+
+  void playbackStable() {}
 
   void disposeStream() {
     _errorSubscription?.cancel();
@@ -262,6 +315,9 @@ class PlayerController extends BaseController
     _widthSubscription?.cancel();
     _heightSubscription?.cancel();
     _logSubscription?.cancel();
+    _playbackStallWatchdogTimer?.cancel();
+    _playbackStallWatchdogTimer = null;
+    _playbackStallTracker.reset();
   }
 
   void mediaEnd() {}

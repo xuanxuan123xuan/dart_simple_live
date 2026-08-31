@@ -52,6 +52,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   var playbackLoadError = "".obs;
   var muted = false.obs;
   bool _autoSwitchingRoom = false;
+  Completer<void>? _playerReopenCompleter;
+  bool _mediaRecoveryInFlight = false;
+  int _roomGeneration = 0;
   String _lastShortcutKey = "";
   String _lastShortcutSource = "";
   DateTime? _lastShortcutHandledAt;
@@ -725,7 +728,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     currentLineInfo.value = "线路${currentLineIndex + 1}";
     //重置错误次数
     mediaErrorRetryCount = 0;
-    setPlayer();
+    await setPlayer();
   }
 
   Future<bool> _reloadPlayUrls({bool silent = false}) async {
@@ -754,32 +757,62 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     return true;
   }
 
-  void changePlayLine(int index) {
+  Future<void> changePlayLine(int index) async {
     currentLineIndex = index;
     //重置错误次数
     mediaErrorRetryCount = 0;
-    setPlayer();
+    await setPlayer();
   }
 
-  void setPlayer({bool refreshUrls = false}) async {
-    if (refreshUrls) {
-      var reloaded = await _reloadPlayUrls(silent: true);
-      if (!reloaded) {
+  Future<void> setPlayer({bool refreshUrls = false}) async {
+    final expectedRoomGeneration = _roomGeneration;
+    while (_playerReopenCompleter != null) {
+      await _playerReopenCompleter!.future;
+      if (expectedRoomGeneration != _roomGeneration) return;
+    }
+    final completer = Completer<void>();
+    _playerReopenCompleter = completer;
+    try {
+      if (refreshUrls) {
+        var reloaded = false;
+        try {
+          reloaded = await _reloadPlayUrls(silent: true);
+        } catch (e, stackTrace) {
+          Log.e("刷新播放地址失败，将重开旧地址: $e", stackTrace);
+        }
+        if (expectedRoomGeneration != _roomGeneration) return;
+        if (!reloaded) {
+          Log.w("刷新播放地址失败，回退为重新打开当前线路");
+        }
+      }
+      if (expectedRoomGeneration != _roomGeneration ||
+          currentLineIndex < 0 ||
+          currentLineIndex >= playUrls.length) {
         return;
       }
-    }
-    currentLineInfo.value = "线路${currentLineIndex + 1}";
-    errorMsg.value = "";
-    await initializePlayer();
-    player.open(
-      Media(
-        playUrls[currentLineIndex],
-        httpHeaders: playHeaders,
-      ),
-    );
-    await player.setVolume(muted.value ? 0 : 100);
+      currentLineInfo.value = "线路${currentLineIndex + 1}";
+      errorMsg.value = "";
+      await initializePlayer();
+      if (expectedRoomGeneration != _roomGeneration) return;
+      beginPlaybackGeneration();
+      await player.open(
+        Media(
+          playUrls[currentLineIndex],
+          httpHeaders: playHeaders,
+        ),
+      );
+      if (expectedRoomGeneration != _roomGeneration) return;
+      await player.setVolume(muted.value ? 0 : 100);
 
-    Log.d("播放链接\r\n：${playUrls[currentLineIndex]}");
+      Log.d("播放链接\r\n：${playUrls[currentLineIndex]}");
+    } catch (e, stackTrace) {
+      Log.e("重新打开播放器失败: $e", stackTrace);
+    } finally {
+      if (identical(_playerReopenCompleter, completer)) {
+        _playerReopenCompleter = null;
+      }
+      if (!completer.isCompleted) completer.complete();
+    }
   }
 
   bool get _shouldRefreshUrlsOnPlaybackRetry =>
@@ -787,55 +820,87 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   @override
   void mediaEnd() async {
-    if (mediaErrorRetryCount < 2) {
-      Log.d("播放结束，尝试第${mediaErrorRetryCount + 1}次刷新");
-      if (mediaErrorRetryCount == 1) {
-        //延迟一秒再刷新
-        await Future.delayed(const Duration(seconds: 1));
+    if (_mediaRecoveryInFlight) return;
+    final expectedRoomGeneration = _roomGeneration;
+    _mediaRecoveryInFlight = true;
+    try {
+      if (mediaErrorRetryCount < 2) {
+        Log.d("播放结束，尝试第${mediaErrorRetryCount + 1}次刷新");
+        if (mediaErrorRetryCount == 1) {
+          //延迟一秒再刷新
+          await Future.delayed(const Duration(seconds: 1));
+        }
+        if (expectedRoomGeneration != _roomGeneration) return;
+        mediaErrorRetryCount += 1;
+        //刷新一次
+        await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+        return;
       }
-      mediaErrorRetryCount += 1;
-      //刷新一次
-      setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
-      return;
-    }
 
-    Log.d("播放结束");
-    // 遍历线路，如果全部链接都断开就是直播结束了
-    if (playUrls.length - 1 == currentLineIndex) {
-      liveStatus.value = false;
-      await _tryAutoSwitchToNextLiveRoom(reason: "live_end");
-    } else {
-      changePlayLine(currentLineIndex + 1);
+      Log.d("播放结束");
+      if (expectedRoomGeneration != _roomGeneration) return;
+      // 遍历线路，如果全部链接都断开就是直播结束了
+      if (playUrls.length - 1 == currentLineIndex) {
+        liveStatus.value = false;
+        await _tryAutoSwitchToNextLiveRoom(reason: "live_end");
+      } else {
+        await changePlayLine(currentLineIndex + 1);
 
-      //setPlayer();
+        //setPlayer();
+      }
+    } finally {
+      _mediaRecoveryInFlight = false;
     }
   }
 
   int mediaErrorRetryCount = 0;
   @override
   void mediaError(String error) async {
-    if (mediaErrorRetryCount < 2) {
-      Log.d("播放失败，尝试第${mediaErrorRetryCount + 1}次刷新");
-      if (mediaErrorRetryCount == 1) {
-        //延迟一秒再刷新
-        await Future.delayed(const Duration(seconds: 1));
+    if (_mediaRecoveryInFlight) return;
+    final expectedRoomGeneration = _roomGeneration;
+    _mediaRecoveryInFlight = true;
+    try {
+      if (mediaErrorRetryCount < 2) {
+        Log.d("播放失败，尝试第${mediaErrorRetryCount + 1}次刷新");
+        if (mediaErrorRetryCount == 1) {
+          //延迟一秒再刷新
+          await Future.delayed(const Duration(seconds: 1));
+        }
+        if (expectedRoomGeneration != _roomGeneration) return;
+        mediaErrorRetryCount += 1;
+        //刷新一次
+        await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+        return;
       }
-      mediaErrorRetryCount += 1;
-      //刷新一次
-      setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
-      return;
-    }
 
-    if (playUrls.length - 1 == currentLineIndex) {
-      errorMsg.value = "播放失败";
-      SmartDialog.showToast("播放失败:$error");
-      await _tryAutoSwitchToNextLiveRoom(reason: "playback_failure");
-    } else {
-      //currentLineIndex += 1;
-      //setPlayer();
-      changePlayLine(currentLineIndex + 1);
+      if (expectedRoomGeneration != _roomGeneration) return;
+      if (playUrls.length - 1 == currentLineIndex) {
+        errorMsg.value = "播放失败";
+        SmartDialog.showToast("播放失败:$error");
+        await _tryAutoSwitchToNextLiveRoom(reason: "playback_failure");
+      } else {
+        //currentLineIndex += 1;
+        //setPlayer();
+        await changePlayLine(currentLineIndex + 1);
+      }
+    } finally {
+      _mediaRecoveryInFlight = false;
     }
   }
+
+  @override
+  void playbackStable() {
+    mediaErrorRetryCount = 0;
+    Log.d("播放已连续稳定 30 秒，重置自动恢复次数");
+  }
+
+  @override
+  String playbackStallSourceIdentity(String activeUri) {
+    return "${site.id}|$roomId|$currentQuality|$currentLineIndex";
+  }
+
+  @override
+  bool get playbackRecoveryInFlight => _mediaRecoveryInFlight;
 
   Future<void> _tryAutoSwitchToNextLiveRoom({required String reason}) async {
     final settings = AppSettingsController.instance;
@@ -969,6 +1034,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       return;
     }
 
+    _roomGeneration += 1;
+    beginPlaybackGeneration();
     rxSite.value = site;
     rxRoomId.value = roomId;
     CurrentRoomService.instance.setRoom(site, roomId);
@@ -1059,6 +1126,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   @override
   void onClose() {
+    _roomGeneration += 1;
+    beginPlaybackGeneration();
     autoExitTimer?.cancel();
     liveDanmaku.stop();
     _liveEventFlowTimer?.cancel();

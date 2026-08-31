@@ -125,6 +125,11 @@ class LocalStorageService extends GetxService {
   static const String kPlayerVolume = "PlayerVolume";
   static const String kLogEnable = "LogEnable";
   static const String kMpvProfile = "MpvProfile";
+  static const String kCustomPlayerOutput = "CustomPlayerOutput";
+  static const String kVideoOutputDriver = "VideoOutputDriver";
+  static const String kVideoHardwareDecoder = "VideoHardwareDecoder";
+  static const String kAudioOutputDriver = "AudioOutputDriver";
+  static const String kMpvAdvancedOptions = "MpvAdvancedOptions";
 
   /// 自动全屏
   static const String kAutoFullScreen = "AutoFullScreen";
@@ -171,6 +176,7 @@ class LocalStorageService extends GetxService {
   static const String kFollowOnlyLive = "FollowOnlyLive";
   static const String kFollowRefreshOnEnter = "FollowRefreshOnEnter";
   static const String kFollowShowLiveCover = "FollowShowLiveCover";
+  static const String kFollowCardDensity = "FollowCardDensity";
   static const String kFollowRefreshTaskState = "FollowRefreshTaskState";
   static const String kFollowRefreshTaskTargets = "FollowRefreshTaskTargets";
 

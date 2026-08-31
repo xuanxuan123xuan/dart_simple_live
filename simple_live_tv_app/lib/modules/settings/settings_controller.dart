@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
 import 'package:simple_live_tv_app/app/controller/base_controller.dart';
+import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
@@ -48,6 +49,12 @@ class SettingsController extends BaseController
   var hardwareDecodeFocusNode = AppFocusNode()..isFoucsed.value = true;
   var compatibleModeFocusNode = AppFocusNode();
   var mpvProfileFocusNode = AppFocusNode();
+  var customPlayerOutputFocusNode = AppFocusNode();
+  var videoOutputFocusNode = AppFocusNode();
+  var hardwareDecoderFocusNode = AppFocusNode();
+  var audioOutputFocusNode = AppFocusNode();
+  var advancedMpvFocusNode = AppFocusNode();
+  var resetMpvFocusNode = AppFocusNode();
   var scaleFoucsNode = AppFocusNode();
   var defaultQualityFocusNode = AppFocusNode();
   var danmakuFoucsNode = AppFocusNode();
@@ -76,6 +83,32 @@ class SettingsController extends BaseController
   var bilibiliFoucsNode = AppFocusNode();
   var kuaishouFocusNode = AppFocusNode();
   var versionFocusNode = AppFocusNode();
+
+  Future<void> editMpvAdvancedOptions() async {
+    final settings = AppSettingsController.instance;
+    final value = await Utils.showEditTextDialog(
+      settings.mpvAdvancedOptions.value,
+      title: "高级 mpv options",
+      hintText: "每行一个 key=value，例如 cache=yes",
+      maxLines: 10,
+      confirm: "保存",
+      validate: (_) => true,
+    );
+    if (value == null) return;
+    settings.setMpvAdvancedOptions(value);
+    SmartDialog.showToast("已保存，重开直播间后生效");
+  }
+
+  Future<void> resetMpvOptions() async {
+    final confirmed = await Utils.showAlertDialog(
+      "将关闭自定义输出并清空高级 mpv 参数。",
+      title: "恢复播放器默认配置",
+      confirm: "恢复默认",
+    );
+    if (!confirmed) return;
+    AppSettingsController.instance.resetCustomPlayerOutput();
+    SmartDialog.showToast("已恢复默认，重开直播间后生效");
+  }
 
   void editSyncServerUrl() async {
     var value = await Utils.showEditTextDialog(

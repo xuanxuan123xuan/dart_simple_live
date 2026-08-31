@@ -9,6 +9,8 @@ import 'package:simple_live_tv_app/app/app_style.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
+import 'package:simple_live_tv_app/models/db/follow_user.dart';
+import 'package:simple_live_tv_app/modules/follow_user/tv_follow_grid_layout.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
@@ -27,6 +29,14 @@ class _FollowUserPageState extends State<FollowUserPage> {
   final ScrollController _scrollController = ScrollController();
   final Map<String, AppFocusNode> _focusNodes = <String, AppFocusNode>{};
   final AppFocusNode _pageFocusNode = AppFocusNode();
+  final AppFocusNode _backFocusNode = AppFocusNode();
+  final AppFocusNode _searchFocusNode = AppFocusNode();
+  final AppFocusNode _displayFocusNode = AppFocusNode();
+  final AppFocusNode _refreshAllFocusNode = AppFocusNode();
+  final AppFocusNode _previousPageFocusNode = AppFocusNode();
+  final AppFocusNode _nextPageFocusNode = AppFocusNode();
+  final AppFocusNode _refreshPageFocusNode = AppFocusNode();
+  _TvFollowLayoutSpec? _currentLayout;
 
   @override
   void initState() {
@@ -41,6 +51,13 @@ class _FollowUserPageState extends State<FollowUserPage> {
     FollowUserService.instance.onFollowPageExited();
     _scrollController.dispose();
     _pageFocusNode.dispose();
+    _backFocusNode.dispose();
+    _searchFocusNode.dispose();
+    _displayFocusNode.dispose();
+    _refreshAllFocusNode.dispose();
+    _previousPageFocusNode.dispose();
+    _nextPageFocusNode.dispose();
+    _refreshPageFocusNode.dispose();
     for (final node in _focusNodes.values) {
       node.dispose();
     }
@@ -50,14 +67,17 @@ class _FollowUserPageState extends State<FollowUserPage> {
 
   Future<void> _enterPage() async {
     await FollowUserService.instance.onFollowPageEntered();
-    _focusCurrentRoom();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focusInitialItem());
   }
 
   AppFocusNode _focusNodeFor(String key) {
     return _focusNodes.putIfAbsent(key, AppFocusNode.new);
   }
 
-  _TvFollowLayoutSpec _layoutSpec() {
+  _TvFollowLayoutSpec _layoutSpec({
+    required double availableWidth,
+    required double availableHeight,
+  }) {
     final style = AppSettingsController.instance.followDisplayStyle.value;
     final showLiveCover =
         AppSettingsController.instance.followShowLiveCover.value;
@@ -71,12 +91,27 @@ class _FollowUserPageState extends State<FollowUserPage> {
       );
     }
     if (style == "card") {
+      final spacing = 24.w;
+      final resolved = TvFollowGridLayout.resolve(
+        availableWidth: availableWidth - 96.w,
+        availableHeight: availableHeight -
+            (FollowUserService.instance.paginationEnabled.value
+                ? 120.w
+                : 24.w),
+        density: AppSettingsController.instance.followCardDensity.value,
+        showLiveCover: showLiveCover,
+        crossAxisSpacing: spacing,
+        mainAxisSpacing: 20.w,
+        detailsExtent: TvFollowGridLayout.cardDetailsExtent.w,
+        avatarMinimumExtent: 168.w,
+        avatarMaximumExtent: 230.w,
+      );
       return _TvFollowLayoutSpec(
         displayStyle: AnchorCardDisplayStyle.card,
-        crossAxisCount: 2,
-        mainAxisExtent: showLiveCover ? 300.w : 250.w,
-        mainAxisSpacing: 24.w,
-        crossAxisSpacing: 28.w,
+        crossAxisCount: resolved.crossAxisCount,
+        mainAxisExtent: resolved.mainAxisExtent,
+        mainAxisSpacing: 20.w,
+        crossAxisSpacing: spacing,
       );
     }
     return _TvFollowLayoutSpec(
@@ -88,26 +123,85 @@ class _FollowUserPageState extends State<FollowUserPage> {
     );
   }
 
-  void _focusCurrentRoom() {
+  void _focusInitialItem() {
+    final items = FollowUserService.instance.list;
+    if (items.isEmpty) {
+      _backFocusNode.requestFocus();
+      return;
+    }
     final currentKey = CurrentRoomService.instance.currentKey;
-    if (currentKey.isEmpty) {
-      return;
-    }
-    final layout = _layoutSpec();
-    final index = FollowUserService.instance.list
-        .indexWhere((item) => "${item.siteId}_${item.roomId}" == currentKey);
-    if (index < 0) {
-      return;
-    }
-    final row = index ~/ layout.crossAxisCount;
-    final targetOffset = row * (layout.mainAxisExtent + layout.mainAxisSpacing);
-    if (_scrollController.hasClients) {
-      _scrollController.jumpTo(
-        targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+    final index = currentKey.isEmpty
+        ? 0
+        : items.indexWhere(
+            (item) => "${item.siteId}_${item.roomId}" == currentKey,
+          );
+    _focusItemAt(index < 0 ? 0 : index, animated: false);
+  }
+
+  void _focusItemAt(int index, {bool animated = true}) {
+    final items = FollowUserService.instance.list;
+    if (index < 0 || index >= items.length) return;
+    final node = _focusNodeFor(items[index].id);
+    node.requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = node.context;
+      if (!mounted || context == null) return;
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0.5,
+        duration: animated ? const Duration(milliseconds: 180) : Duration.zero,
+        curve: Curves.easeOut,
       );
+    });
+  }
+
+  KeyEventResult _moveGridFocus(int index, int rowDelta, int columnDelta) {
+    final layout = _currentLayout;
+    final items = FollowUserService.instance.list;
+    if (layout == null || index < 0 || index >= items.length) {
+      return KeyEventResult.ignored;
     }
-    final item = FollowUserService.instance.list[index];
-    _focusNodeFor(item.id).requestFocus();
+    final columns = layout.crossAxisCount;
+    final row = index ~/ columns;
+    final column = index % columns;
+    if (rowDelta < 0 && row == 0) {
+      final ratio = columns <= 1 ? 0.0 : column / (columns - 1);
+      if (ratio < 0.2) {
+        _backFocusNode.requestFocus();
+      } else if (ratio < 0.45) {
+        _searchFocusNode.requestFocus();
+      } else if (ratio < 0.75) {
+        _displayFocusNode.requestFocus();
+      } else {
+        _refreshAllFocusNode.requestFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    if (columnDelta < 0 && column == 0 ||
+        columnDelta > 0 && column == columns - 1) {
+      return KeyEventResult.ignored;
+    }
+    final target = index + rowDelta * columns + columnDelta;
+    if (target < 0 || target >= items.length) {
+      if (rowDelta > 0 &&
+          FollowUserService.instance.paginationEnabled.value) {
+        _nextPageFocusNode.requestFocus();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    _focusItemAt(target);
+    return KeyEventResult.handled;
+  }
+
+  void _pruneFocusNodes(Iterable<FollowUser> items) {
+    final activeKeys = items.map((item) => item.id).toSet();
+    final staleKeys = _focusNodes.keys
+        .where((key) => !activeKeys.contains(key))
+        .toList(growable: false);
+    for (final key in staleKeys) {
+      _focusNodes.remove(key)?.dispose();
+    }
   }
 
   KeyEventResult _handleShortcutKey(FocusNode node, KeyEvent event) {
@@ -119,12 +213,12 @@ class _FollowUserPageState extends State<FollowUserPage> {
     final altPressed = HardwareKeyboard.instance.isAltPressed;
     if (key == LogicalKeyboardKey.pageDown ||
         (altPressed && key == LogicalKeyboardKey.arrowRight)) {
-      FollowUserService.instance.goToNextPage();
+      _changePage(FollowUserService.instance.goToNextPage);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.pageUp ||
         (altPressed && key == LogicalKeyboardKey.arrowLeft)) {
-      FollowUserService.instance.goToPreviousPage();
+      _changePage(FollowUserService.instance.goToPreviousPage);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -145,10 +239,9 @@ class _FollowUserPageState extends State<FollowUserPage> {
               children: [
                 AppStyle.hGap48,
                 HighlightButton(
-                  focusNode: AppFocusNode(),
+                  focusNode: _backFocusNode,
                   iconData: Icons.arrow_back,
                   text: "返回",
-                  autofocus: true,
                   onTap: Get.back,
                 ),
                 AppStyle.hGap24,
@@ -161,21 +254,21 @@ class _FollowUserPageState extends State<FollowUserPage> {
                 ),
                 AppStyle.hGap24,
                 HighlightButton(
-                  focusNode: AppFocusNode(),
+                  focusNode: _searchFocusNode,
                   iconData: Icons.search,
                   text: "搜索",
                   onTap: _showSearchDialog,
                 ),
                 AppStyle.hGap16,
                 HighlightButton(
-                  focusNode: AppFocusNode(),
+                  focusNode: _displayFocusNode,
                   iconData: Icons.tune,
                   text: "显示/筛选",
                   onTap: _showDisplayDialog,
                 ),
                 const Spacer(),
                 HighlightButton(
-                  focusNode: AppFocusNode(),
+                  focusNode: _refreshAllFocusNode,
                   iconData: Icons.sync,
                   text: "刷新全部",
                   onTap: FollowUserService.instance.refreshAllStatus,
@@ -188,81 +281,64 @@ class _FollowUserPageState extends State<FollowUserPage> {
             Obx(() => _buildRefreshProgress()),
             AppStyle.vGap24,
             Expanded(
-              child: Stack(
-                children: [
-                  Obx(() {
-                    final layout = _layoutSpec();
-                    final items = FollowUserService.instance.list;
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      unawaited(
-                        FollowUserService.instance
-                            .refreshVisiblePreviews(items),
+              child: LayoutBuilder(
+                builder: (context, constraints) => Stack(
+                  children: [
+                    Obx(() {
+                      final layout = _layoutSpec(
+                        availableWidth: constraints.maxWidth,
+                        availableHeight: constraints.maxHeight,
                       );
-                    });
-                    return GridView.builder(
-                      controller: _scrollController,
-                      primary: false,
-                      cacheExtent: 1200.w,
-                      padding: EdgeInsets.only(
-                        left: 48.w,
-                        right: 48.w,
-                        bottom:
-                            FollowUserService.instance.paginationEnabled.value
-                                ? 120.w
-                                : 24.w,
-                      ),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: layout.crossAxisCount,
-                        crossAxisSpacing: layout.crossAxisSpacing,
-                        mainAxisSpacing: layout.mainAxisSpacing,
-                        mainAxisExtent: layout.mainAxisExtent,
-                      ),
-                      itemCount: items.length,
-                      itemBuilder: (_, i) {
-                        final item = items[i];
-                        final isCurrent = "${item.siteId}_${item.roomId}" ==
-                            CurrentRoomService.instance.currentKey;
-                        return AnchorCard(
-                          face: item.face,
-                          name: item.userName,
-                          roomTitle: item.roomTitle,
-                          roomCover: item.roomCover,
-                          siteId: item.siteId,
-                          liveStatus: item.liveStatus.value,
-                          roomId: item.roomId,
-                          playing: isCurrent,
-                          showLiveCover: AppSettingsController
-                              .instance.followShowLiveCover.value,
-                          displayStyle: layout.displayStyle,
-                          autofocus: isCurrent,
-                          focusNode: _focusNodeFor(item.id),
-                          onTap: () async {
-                            final resolved = await FollowUserService.instance
-                                .resolveFollowBeforeEnter(item);
-                            final site = Sites.allSites[resolved.siteId];
-                            if (site == null) {
-                              return;
-                            }
-                            AppNavigator.toLiveRoomDetail(
-                              site: site,
-                              roomId: resolved.roomId,
-                            );
-                          },
+                      _currentLayout = layout;
+                      final items = FollowUserService.instance.list.toList();
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _pruneFocusNodes(items);
+                        unawaited(
+                          FollowUserService.instance
+                              .refreshVisiblePreviews(items),
                         );
-                      },
-                    );
-                  }),
-                  Obx(
-                    () => FollowUserService.instance.paginationEnabled.value
-                        ? Positioned(
+                      });
+                      return FocusTraversalGroup(
+                        child: GridView.builder(
+                          controller: _scrollController,
+                          primary: false,
+                          cacheExtent: 1200.w,
+                          padding: EdgeInsets.only(
                             left: 48.w,
                             right: 48.w,
-                            bottom: 24.w,
-                            child: _buildFloatingPaginationBar(),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                ],
+                            bottom: FollowUserService
+                                    .instance.paginationEnabled.value
+                                ? 120.w
+                                : 24.w,
+                          ),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: layout.crossAxisCount,
+                            crossAxisSpacing: layout.crossAxisSpacing,
+                            mainAxisSpacing: layout.mainAxisSpacing,
+                            mainAxisExtent: layout.mainAxisExtent,
+                          ),
+                          itemCount: items.length,
+                          itemBuilder: (_, i) => _buildFollowCard(
+                            items[i],
+                            i,
+                            layout,
+                          ),
+                        ),
+                      );
+                    }),
+                    Obx(
+                      () => FollowUserService.instance.paginationEnabled.value
+                          ? Positioned(
+                              left: 48.w,
+                              right: 48.w,
+                              bottom: 24.w,
+                              child: _buildFloatingPaginationBar(),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -271,10 +347,120 @@ class _FollowUserPageState extends State<FollowUserPage> {
     );
   }
 
+  Widget _buildFollowCard(
+    FollowUser item,
+    int index,
+    _TvFollowLayoutSpec layout,
+  ) {
+    final isCurrent = "${item.siteId}_${item.roomId}" ==
+        CurrentRoomService.instance.currentKey;
+    return AnchorCard(
+      face: item.face,
+      name: item.userName,
+      roomTitle: item.roomTitle,
+      roomCover: item.roomCover,
+      siteId: item.siteId,
+      liveStatus: item.liveStatus.value,
+      roomId: item.roomId,
+      playing: isCurrent,
+      showLiveCover: AppSettingsController.instance.followShowLiveCover.value,
+      displayStyle: layout.displayStyle,
+      focusNode: _focusNodeFor(item.id),
+      onLeftKey: () => _moveGridFocus(index, 0, -1),
+      onRightKey: () => _moveGridFocus(index, 0, 1),
+      onUpKey: () => _moveGridFocus(index, -1, 0),
+      onDownKey: () => _moveGridFocus(index, 1, 0),
+      onLongPress: () => unawaited(_showCardActions(item, index)),
+      onTap: () async {
+        final resolved =
+            await FollowUserService.instance.resolveFollowBeforeEnter(item);
+        final site = Sites.allSites[resolved.siteId];
+        if (site == null) return;
+        AppNavigator.toLiveRoomDetail(site: site, roomId: resolved.roomId);
+      },
+    );
+  }
+
+  Future<void> _showCardActions(FollowUser item, int originalIndex) async {
+    final specialFocusNode = AppFocusNode();
+    final removeFocusNode = AppFocusNode();
+    try {
+      await Utils.showSystemRightDialog(
+        width: 620.w,
+        child: Padding(
+          padding: AppStyle.edgeInsetsA24,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(item.userName, style: AppStyle.titleStyleWhite),
+              AppStyle.vGap24,
+              HighlightButton(
+                focusNode: specialFocusNode,
+                autofocus: true,
+                iconData:
+                    item.isSpecialFollow ? Icons.star : Icons.star_border,
+                text: item.isSpecialFollow ? "取消特别关注" : "设为特别关注",
+                onTap: () async {
+                  await FollowUserService.instance.toggleSpecialFollow(item);
+                  Get.back();
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    final index = FollowUserService.instance.list
+                        .indexWhere((candidate) => candidate.id == item.id);
+                    _focusItemAt(index < 0 ? originalIndex : index);
+                  });
+                },
+              ),
+              AppStyle.vGap16,
+              HighlightButton(
+                focusNode: removeFocusNode,
+                iconData: Icons.person_remove_outlined,
+                text: "取消关注",
+                onTap: () {
+                  Get.back();
+                  unawaited(_removeFollowAndRestoreFocus(item, originalIndex));
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      specialFocusNode.dispose();
+      removeFocusNode.dispose();
+    }
+  }
+
+  Future<void> _removeFollowAndRestoreFocus(
+    FollowUser item,
+    int originalIndex,
+  ) async {
+    final removed = await FollowUserService.instance.removeItem(
+      item,
+      refresh: false,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!removed) {
+        final index = FollowUserService.instance.list
+            .indexWhere((candidate) => candidate.id == item.id);
+        if (index >= 0) _focusItemAt(index);
+        return;
+      }
+      final length = FollowUserService.instance.list.length;
+      if (length == 0) {
+        _backFocusNode.requestFocus();
+      } else {
+        _focusItemAt(originalIndex.clamp(0, length - 1).toInt());
+      }
+    });
+  }
+
   Widget _buildActiveFilterBar() {
     final settings = AppSettingsController.instance;
     final labels = <String>[
       "样式：${_displayStyleLabel(settings.followDisplayStyle.value)}",
+      if (settings.followDisplayStyle.value == "card")
+        "密度：${_densityLabel(settings.followCardDensity.value)}",
       if (settings.followOnlyLive.value) "仅显示开播",
       if (settings.followRefreshOnEnter.value) "进页自动刷新",
       if (FollowUserService.instance.searchKeyword.value.isNotEmpty)
@@ -331,6 +517,14 @@ class _FollowUserPageState extends State<FollowUserPage> {
     }
   }
 
+  String _densityLabel(TvFollowCardDensity value) {
+    return switch (value) {
+      TvFollowCardDensity.auto => "自动三排",
+      TvFollowCardDensity.comfortable => "舒适",
+      TvFollowCardDensity.dense => "高密",
+    };
+  }
+
   Future<void> _showSearchDialog() async {
     final result = await Utils.showEditTextDialog(
       FollowUserService.instance.searchKeyword.value,
@@ -368,6 +562,24 @@ class _FollowUserPageState extends State<FollowUserPage> {
                 _buildStyleButton("card", "卡片"),
               ],
             ),
+            if (AppSettingsController.instance.followDisplayStyle.value ==
+                "card") ...[
+              AppStyle.vGap32,
+              Text(
+                "卡片密度",
+                style: AppStyle.titleStyleWhite.copyWith(fontSize: 26.w),
+              ),
+              AppStyle.vGap16,
+              Wrap(
+                spacing: 16.w,
+                runSpacing: 16.w,
+                children: [
+                  _buildDensityButton(TvFollowCardDensity.auto),
+                  _buildDensityButton(TvFollowCardDensity.comfortable),
+                  _buildDensityButton(TvFollowCardDensity.dense),
+                ],
+              ),
+            ],
             AppStyle.vGap32,
             Text(
               "直播封面",
@@ -468,6 +680,16 @@ class _FollowUserPageState extends State<FollowUserPage> {
     );
   }
 
+  Widget _buildDensityButton(TvFollowCardDensity density) {
+    final settings = AppSettingsController.instance;
+    return HighlightButton(
+      focusNode: AppFocusNode(),
+      text: _densityLabel(density),
+      selected: settings.followCardDensity.value == density,
+      onTap: () => settings.setFollowCardDensity(density),
+    );
+  }
+
   Widget _buildFloatingPaginationBar() {
     return Center(
       child: Container(
@@ -482,11 +704,13 @@ class _FollowUserPageState extends State<FollowUserPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               HighlightButton(
-                focusNode: AppFocusNode(),
+                focusNode: _previousPageFocusNode,
                 iconData: Icons.chevron_left,
                 text: "上一页",
                 onTap: FollowUserService.instance.currentDisplayPage.value > 1
-                    ? FollowUserService.instance.goToPreviousPage
+                    ? () => _changePage(
+                          FollowUserService.instance.goToPreviousPage,
+                        )
                     : null,
               ),
               AppStyle.hGap16,
@@ -496,17 +720,19 @@ class _FollowUserPageState extends State<FollowUserPage> {
               ),
               AppStyle.hGap16,
               HighlightButton(
-                focusNode: AppFocusNode(),
+                focusNode: _nextPageFocusNode,
                 iconData: Icons.chevron_right,
                 text: "下一页",
                 onTap: FollowUserService.instance.currentDisplayPage.value <
                         FollowUserService.instance.totalDisplayPages.value
-                    ? FollowUserService.instance.goToNextPage
+                    ? () => _changePage(
+                          FollowUserService.instance.goToNextPage,
+                        )
                     : null,
               ),
               AppStyle.hGap16,
               HighlightButton(
-                focusNode: AppFocusNode(),
+                focusNode: _refreshPageFocusNode,
                 iconData: Icons.refresh,
                 text: "刷新当前页",
                 onTap: FollowUserService.instance.refreshCurrentPageStatus,
@@ -516,6 +742,11 @@ class _FollowUserPageState extends State<FollowUserPage> {
         ),
       ),
     );
+  }
+
+  void _changePage(VoidCallback changePage) {
+    changePage();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focusInitialItem());
   }
 
   Widget _buildRefreshProgress() {
