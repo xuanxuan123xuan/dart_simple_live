@@ -462,7 +462,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
       if (settings.followDisplayStyle.value == "card")
         "密度：${_densityLabel(settings.followCardDensity.value)}",
       if (settings.followOnlyLive.value) "仅显示开播",
-      if (settings.followRefreshOnEnter.value) "进页自动刷新",
+      if (settings.followRefreshOnEnter.value) "进入关注页自动刷新（首页始终刷新）",
       if (FollowUserService.instance.searchKeyword.value.isNotEmpty)
         "搜索：${FollowUserService.instance.searchKeyword.value}",
     ];
@@ -626,7 +626,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
             ),
             AppStyle.vGap16,
             Text(
-              "开启后，进入关注页会先显示本地列表，再异步发起一次全量刷新。关注过多时，极其容易触发抖音限制。",
+              "开启后，进入关注页会先显示本地列表，再异步发起一次全量刷新；首页关注区始终会后台刷新。关注过多时，极其容易触发抖音限制。",
               style: AppStyle.subTextStyleWhite,
             ),
             AppStyle.vGap16,
@@ -639,7 +639,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
                     AppSettingsController.instance.followRefreshOnEnter.value;
                 if (!current) {
                   final confirmed = await Utils.showAlertDialog(
-                    "开启后，每次进入关注页都会先显示本地列表，再异步发起一次全量刷新。关注过多时，极其容易触发抖音限制。",
+                    "开启后，每次进入关注页都会先显示本地列表，再异步发起一次全量刷新；首页关注区始终会后台刷新。关注过多时，极其容易触发抖音限制。",
                     title: "风险提示",
                     confirm: "继续开启",
                   );

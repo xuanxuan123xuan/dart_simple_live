@@ -72,6 +72,7 @@ bool applyFollowPreviewDetail(
 
 class FollowUserService extends BasePageController<FollowUser> {
   static const Duration updateStatusCooldown = Duration(seconds: 10);
+  static const Duration enterRefreshReuseWindow = Duration(minutes: 2);
   static const Duration refreshProgressCompletionHold = Duration(seconds: 2);
   static const int paginationThreshold = 400;
   static const String _refreshTaskStateStorageKey =
@@ -98,6 +99,7 @@ class FollowUserService extends BasePageController<FollowUser> {
   int _updateGeneration = 0;
   DateTime? _lastUpdateStatusStartedAt;
   DateTime? _lastEnterRefreshAt;
+  DateTime? _lastRefreshCompletedAt;
   bool _enterRefreshInFlight = false;
   bool _forceNextStatusRefresh = false;
 
@@ -169,10 +171,34 @@ class FollowUserService extends BasePageController<FollowUser> {
   }
 
   Future<void> onFollowPageEntered() async {
+    await _refreshOnEnterIfNeeded(reuseRecentResult: true);
+  }
+
+  Future<void> onHomePageEntered() async {
+    // 首页关注区始终尝试后台刷新；关注页仍由设置项控制。
+    await _refreshOnEnterIfNeeded(
+      respectSetting: false,
+      reuseRecentResult: false,
+    );
+  }
+
+  Future<void> _refreshOnEnterIfNeeded({
+    bool respectSetting = true,
+    bool reuseRecentResult = false,
+  }) async {
     loadLocalList();
+    final lastCompletedAt = _lastRefreshCompletedAt;
+    if (reuseRecentResult &&
+        lastCompletedAt != null &&
+        DateTime.now().difference(lastCompletedAt) <
+            enterRefreshReuseWindow) {
+      Log.logPrint("关注页复用首页最近一次刷新结果");
+      return;
+    }
     final now = DateTime.now();
     final shouldRefresh =
-        AppSettingsController.instance.followRefreshOnEnter.value &&
+        (!respectSetting ||
+            AppSettingsController.instance.followRefreshOnEnter.value) &&
         allList.isNotEmpty &&
         !updating.value &&
         !_enterRefreshInFlight &&
@@ -1071,6 +1097,7 @@ class FollowUserService extends BasePageController<FollowUser> {
       }
     } finally {
       if (generation == _updateGeneration) {
+        _lastRefreshCompletedAt = DateTime.now();
         updating.value = false;
         _finishRefreshProgressLifecycle(generation);
       }

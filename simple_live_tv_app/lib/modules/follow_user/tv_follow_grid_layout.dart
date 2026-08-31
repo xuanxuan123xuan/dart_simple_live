@@ -47,8 +47,8 @@ class TvFollowGridLayout {
     double avatarMinimumExtent = 168,
     double avatarMaximumExtent = 230,
   }) {
-    final safeWidth = math.max(0, availableWidth);
-    final safeHeight = math.max(0, availableHeight);
+    final safeWidth = math.max(0.0, availableWidth);
+    final safeHeight = math.max(0.0, availableHeight);
 
     int columns;
     switch (density) {
@@ -99,7 +99,7 @@ class TvFollowGridLayout {
     int columns,
     double spacing,
   ) {
-    return math.max(0, availableWidth - spacing * (columns - 1)) / columns;
+    return math.max(0.0, availableWidth - spacing * (columns - 1)) / columns;
   }
 
   static double _itemExtent(

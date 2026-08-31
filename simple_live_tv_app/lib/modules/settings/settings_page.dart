@@ -948,8 +948,8 @@ class SettingsPage extends GetView<SettingsController> {
           HighlightListTile(
             focusNode: controller.versionFocusNode,
             title: "版本",
-            subtitle: "v${Utils.packageInfo.version}",
-            onTap: () => {},
+            subtitle: "v${Utils.packageInfo.version}（点击检查更新）",
+            onTap: controller.checkTvUpdate,
           ),
           AppStyle.vGap24,
           HighlightListTile(

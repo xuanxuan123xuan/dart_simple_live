@@ -42,6 +42,7 @@ dependencies:
   #系统交互
   package_info_plus: ^9.0.0 #包信息
   url_launcher: ^6.3.2 #打开链接
+  open_filex: ^4.7.0 #打开下载的安装包
   path: any
   path_provider: ^2.1.5 #常用路径
   window_manager: ^0.5.1 #窗口管理

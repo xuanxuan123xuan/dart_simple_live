@@ -64,6 +64,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.2"
+  code_assets:
+    dependency: transitive
+    description:
+      name: code_assets
+      sha256: "83ccdaa064c980b5596c35dd64a8d3ecc68620174ab9b90b6343b753aa721687"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.0"
   collection:
     dependency: transitive
     description:
@@ -105,11 +113,13 @@ packages:
     source: hosted
     version: "1.0.9"
   dart_quickjs:
-    dependency: "direct overridden"
+    dependency: transitive
     description:
-      path: "../third_party/dart_quickjs_compat"
-      relative: true
-    source: path
+      path: "."
+      ref: HEAD
+      resolved-ref: "5d56e52de900180b4a198397b4af902272247e3b"
+      url: "https://github.com/xiaoyaocz/dart_quickjs"
+    source: git
     version: "1.0.0"
   dbus:
     dependency: transitive
@@ -228,13 +238,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.2"
-  flutter_js:
-    dependency: transitive
-    description:
-      path: "../simple_live_app/third_party/flutter_js"
-      relative: true
-    source: path
-    version: "0.8.7"
   flutter_lints:
     dependency: "direct dev"
     description:
@@ -285,6 +288,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.7.3"
+  glob:
+    dependency: transitive
+    description:
+      name: glob
+      sha256: "218aeb56050c714f62a3182775320dfa04602b55074873e24e31bbd39bda96fb"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.2.0"
   hive:
     dependency: "direct main"
     description:
@@ -301,6 +312,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.0"
+  hooks:
+    dependency: transitive
+    description:
+      name: hooks
+      sha256: "025f060e86d2d4c3c47b56e33caf7f93bf9283340f26d23424ebcfccf34f621e"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.3"
   html_unescape:
     dependency: transitive
     description:
@@ -437,6 +456,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.7.0"
+  logging:
+    dependency: transitive
+    description:
+      name: logging
+      sha256: c8245ada5f1717ed44271ed1c26b8ce85ca3228fd2ffdb75468ab01979309d61
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.3.0"
   lottie:
     dependency: "direct main"
     description:
@@ -457,10 +484,10 @@ packages:
     dependency: transitive
     description:
       name: matcher
-      sha256: "12956d0ad8390bbcc63ca2e1469c0619946ccb52809807067a7020d57e647aa6"
+      sha256: dc0b7dc7651697ea4ff3e69ef44b0407ea32c487a39fff6a4004fa585e901861
       url: "https://pub.dev"
     source: hosted
-    version: "0.12.18"
+    version: "0.12.19"
   material_color_utilities:
     dependency: transitive
     description:
@@ -557,6 +584,15 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.0"
+  native_toolchain_c:
+    dependency: transitive
+    description:
+      path: "packages/native_toolchain_c"
+      ref: "5d56e52de900180b4a198397b4af902272247e3b"
+      resolved-ref: "5d56e52de900180b4a198397b4af902272247e3b"
+      url: "https://github.com/xiaoyaocz/dart_quickjs"
+    source: git
+    version: "0.17.4"
   network_info_plus:
     dependency: "direct main"
     description:
@@ -581,6 +617,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.5.0"
+  open_filex:
+    dependency: "direct main"
+    description:
+      name: open_filex
+      sha256: "9976da61b6a72302cf3b1efbce259200cd40232643a467aac7370addf94d6900"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.7.0"
   package_config:
     dependency: transitive
     description:
@@ -709,6 +753,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.1.0"
+  pub_semver:
+    dependency: transitive
+    description:
+      name: pub_semver
+      sha256: "261236774e8b1d69cfc6b9eabbc96c40f25e7a2d6b171f3385d4f65d5734fb24"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.2.1"
   qr:
     dependency: transitive
     description:
@@ -725,6 +777,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.0"
+  record_use:
+    dependency: transitive
+    description:
+      name: record_use
+      sha256: "2551bd8eecfe95d14ae75f6021ad0248be5c27f138c2ec12fcb52b500b3ba1ed"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.6.0"
   remixicon:
     dependency: "direct main"
     description:
@@ -897,14 +957,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.1"
-  sync_http:
-    dependency: transitive
-    description:
-      name: sync_http
-      sha256: "7f0cd72eca000d2e026bcd6f990b81d0ca06022ef4e32fb257b30d3d1014a961"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.3.1"
   synchronized:
     dependency: transitive
     description:
@@ -932,10 +984,10 @@ packages:
     dependency: transitive
     description:
       name: test_api
-      sha256: "19a78f63e83d3a61f00826d09bc2f60e191bf3504183c001262be6ac75589fb8"
+      sha256: "8161c84903fd860b26bfdefb7963b3f0b68fee7adea0f59ef805ecca346f0c7a"
       url: "https://pub.dev"
     source: hosted
-    version: "0.7.8"
+    version: "0.7.10"
   typed_data:
     dependency: transitive
     description:
@@ -1160,6 +1212,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "6.6.1"
+  yaml:
+    dependency: transitive
+    description:
+      name: yaml
+      sha256: f67cdd8e07d3c6329146aaef1ba043542b3134c12489f553ca9a7435d1068aea
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.1.4"
 sdks:
   dart: ">=3.11.0 <4.0.0"
   flutter: ">=3.41.0"

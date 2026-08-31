@@ -13,19 +13,22 @@ class VersionModel {
     required this.versionNum,
     required this.versionDesc,
     required this.downloadUrl,
+    this.prerelease = false,
   });
 
   factory VersionModel.fromJson(Map<String, dynamic> json) => VersionModel(
-        version: asT<String>(json['version'])!,
-        versionNum: asT<int>(json['version_num'])!,
-        versionDesc: asT<String>(json['version_desc'])!,
-        downloadUrl: asT<String>(json['download_url'])!,
+        version: json['version']?.toString() ?? '',
+        versionNum: int.tryParse(json['version_num']?.toString() ?? '') ?? 0,
+        versionDesc: json['version_desc']?.toString() ?? '',
+        downloadUrl: json['download_url']?.toString() ?? '',
+        prerelease: json['prerelease'] == true,
       );
 
   String version;
   int versionNum;
   String versionDesc;
   String downloadUrl;
+  bool prerelease;
 
   @override
   String toString() {
@@ -37,5 +40,6 @@ class VersionModel {
         'version_num': versionNum,
         'version_desc': versionDesc,
         'download_url': downloadUrl,
+        'prerelease': prerelease,
       };
 }

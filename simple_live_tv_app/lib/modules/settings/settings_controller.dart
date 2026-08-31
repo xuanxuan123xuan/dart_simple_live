@@ -12,6 +12,8 @@ import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
 import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/signalr_service.dart';
+import 'package:simple_live_tv_app/services/tv_app_update_service.dart';
+import 'package:simple_live_tv_app/modules/settings/tv_update_dialog.dart';
 
 class SettingsController extends BaseController
     with GetTickerProviderStateMixin {
@@ -409,6 +411,20 @@ class SettingsController extends BaseController
     return session.credentialState == KuaishouCredentialState.valid
         ? "有效"
         : "已配置，待验证";
+  }
+
+  Future<void> checkTvUpdate() async {
+    final service = TvAppUpdateService.instance;
+    try {
+      final version = await service.checkForUpdates();
+      if (service.isNewer(version)) {
+        await Get.dialog(const TvUpdateDialog());
+      } else {
+        SmartDialog.showToast('已是最新版本');
+      }
+    } catch (_) {
+      SmartDialog.showToast('检查更新失败');
+    }
   }
 
   String _kuaishouSlotName(KuaishouAccountSlot slot) =>
