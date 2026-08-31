@@ -1,0 +1,10 @@
+app_id: 6F8B0F9E-2C3A-4C75-A8F5-7F6E8C1D4B20
+publisher: SimpleLive
+publisher_url: https://github.com/xuanxuan123xuan/dart_simple_live
+display_name: Simple Live TV
+create_desktop_icon: true
+setup_icon_file: windows\runner\resources\app_icon.ico
+locales:
+  - zh
+architectures_allowed: x64compatible
+architectures_install_in_64_bit_mode: x64compatible
