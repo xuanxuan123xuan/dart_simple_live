@@ -1,0 +1,459 @@
+name: TV 端构建并发布 Release
+
+run-name: >-
+  Simple Live TV ${{ inputs.version || 'version from pubspec' }}
+  (${{ github.event_name }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "可选版本号（如 1.7.8 或 1.7）；留空使用 TV pubspec 当前版本"
+        required: false
+        type: string
+      publish_release:
+        description: "构建完成后创建或更新 GitHub Release"
+        required: true
+        type: boolean
+        default: true
+      prerelease:
+        description: "标记为预发布版本"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tv-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TV_FLUTTER_VERSION: "3.41.x"
+  FASTFORGE_VERSION: "0.6.10"
+
+jobs:
+  prepare:
+    name: 校验并解析 TV 发布版本
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      build_number: ${{ steps.release.outputs.build_number }}
+      full_version: ${{ steps.release.outputs.full_version }}
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+      prerelease: ${{ steps.settings.outputs.prerelease }}
+      publish_release: ${{ steps.settings.outputs.publish_release }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 校验工作流设置
+        id: settings
+        shell: bash
+        env:
+          INPUT_PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_NAME" != "dev" && "$GITHUB_REF_NAME" != "stable" ]]; then
+            echo "::error::TV 发布构建只允许从 dev 或 stable 分支运行（当前：$GITHUB_REF_NAME）。"
+            exit 1
+          fi
+          {
+            echo "publish_release=${INPUT_PUBLISH_RELEASE:-true}"
+            echo "prerelease=${INPUT_PRERELEASE:-false}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 解析 TV 版本
+        id: release
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ steps.settings.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          current_line="$(grep -E '^version:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+[[:space:]]*$' simple_live_tv_app/pubspec.yaml)"
+          current="${current_line#version: }"
+          current="${current//[[:space:]]/}"
+          current_version="${current%%+*}"
+          current_build="${current##*+}"
+
+          requested="${REQUESTED_VERSION#v}"
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            if [[ ! "$requested" =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]]; then
+              echo "::error::版本号必须是 major.minor 或 major.minor.patch。"
+              exit 1
+            fi
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            patch="${BASH_REMATCH[4]:-0}"
+            version="$major.$minor.$patch"
+            build_number=$((major * 1000 + minor * 100 + patch))
+          else
+            version="$current_version"
+            build_number="$current_build"
+          fi
+
+          sha="$(git rev-parse HEAD)"
+          if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
+            tag="tv_v${version}-dev"
+          elif [[ "$PRERELEASE" == "true" ]]; then
+            tag="tv_v${version}-pre"
+          else
+            tag="tv_v${version}"
+          fi
+
+          git fetch --force --tags origin
+          if [[ "$GITHUB_REF_NAME" != "dev" ]] && \
+             git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            tagged_sha="$(git rev-list -n 1 "$tag")"
+            if [[ "$tagged_sha" != "$sha" ]]; then
+              echo "::error::标签 $tag 已指向 $tagged_sha，不能改指到 $sha。"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "version=$version"
+            echo "build_number=$build_number"
+            echo "full_version=$version+$build_number"
+            echo "tag=$tag"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+
+  android:
+    name: Android TV Universal APK
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: 准备 Android TV 分支签名
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+          DEV_KEYSTORE_BASE64: ${{ secrets.DEV_KEYSTORE_BASE64 }}
+          DEV_STORE_PASSWORD: ${{ secrets.DEV_STORE_PASSWORD }}
+          DEV_KEY_PASSWORD: ${{ secrets.DEV_KEY_PASSWORD }}
+          DEV_KEY_ALIAS: ${{ secrets.DEV_KEY_ALIAS }}
+          STABLE_KEYSTORE_BASE64: ${{ secrets.STABLE_KEYSTORE_BASE64 }}
+          STABLE_STORE_PASSWORD: ${{ secrets.STABLE_STORE_PASSWORD }}
+          STABLE_KEY_PASSWORD: ${{ secrets.STABLE_KEY_PASSWORD }}
+          STABLE_KEY_ALIAS: ${{ secrets.STABLE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          case "$BRANCH_NAME" in
+            dev)
+              KEYSTORE_BASE64="$DEV_KEYSTORE_BASE64"
+              STORE_PASSWORD="$DEV_STORE_PASSWORD"
+              KEY_PASSWORD="$DEV_KEY_PASSWORD"
+              KEY_ALIAS="$DEV_KEY_ALIAS"
+              ;;
+            stable)
+              KEYSTORE_BASE64="$STABLE_KEYSTORE_BASE64"
+              STORE_PASSWORD="$STABLE_STORE_PASSWORD"
+              KEY_PASSWORD="$STABLE_KEY_PASSWORD"
+              KEY_ALIAS="$STABLE_KEY_ALIAS"
+              ;;
+            *)
+              echo "::error::Android TV 发布构建只允许从 dev 或 stable 分支运行。"
+              exit 1
+              ;;
+          esac
+          if [[ -z "$KEYSTORE_BASE64" || -z "$STORE_PASSWORD" || \
+                -z "$KEY_PASSWORD" || -z "$KEY_ALIAS" ]]; then
+            echo "::error::$BRANCH_NAME 分支的 Android 签名 secrets 不完整。"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | openssl base64 -d -A \
+            > simple_live_tv_app/android/release-keystore.jks
+          printf 'storeFile=../release-keystore.jks\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\n' \
+            "$STORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" \
+            > simple_live_tv_app/android/key.properties
+          keytool -list -v -keystore simple_live_tv_app/android/release-keystore.jks \
+            -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" | grep 'SHA256:'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.TV_FLUTTER_VERSION }}
+          cache: true
+
+      - name: 恢复 TV 依赖包
+        working-directory: simple_live_tv_app
+        run: flutter pub get
+
+      - name: 构建 TV 通用 APK
+        working-directory: simple_live_tv_app
+        run: >-
+          flutter build apk --release --no-pub
+          --build-name=${{ needs.prepare.outputs.version }}
+          --build-number=${{ needs.prepare.outputs.build_number }}
+
+      - name: 暂存 Android TV 产物
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/release-tv-android"
+          mkdir -p "$out"
+          cp simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk \
+            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-universal.apk"
+          (cd "$out" && sha256sum -- * > SHA256SUMS-tv-android.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-tv-android
+          path: ${{ runner.temp }}/release-tv-android/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 清理 Android TV 签名材料
+        if: always()
+        shell: bash
+        run: rm -f simple_live_tv_app/android/release-keystore.jks simple_live_tv_app/android/key.properties
+
+  windows:
+    name: Windows TV EXE
+    needs: prepare
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.TV_FLUTTER_VERSION }}
+          cache: true
+
+      - name: 应用临时发布版本
+        shell: pwsh
+        env:
+          TV_VERSION: ${{ needs.prepare.outputs.version }}
+          TV_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+        run: |
+          $path = Join-Path $env:GITHUB_WORKSPACE "simple_live_tv_app\pubspec.yaml"
+          $text = Get-Content -Raw -LiteralPath $path
+          $text = [regex]::Replace($text, '(?m)^version:\s*[^\r\n]+$', "version: $env:TV_VERSION+$env:TV_BUILD_NUMBER")
+          Set-Content -LiteralPath $path -Value $text -Encoding utf8NoBOM
+
+      - name: 启用 Windows 桌面并恢复依赖
+        working-directory: simple_live_tv_app
+        shell: pwsh
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+
+      - name: 安装 Inno Setup 与 Fastforge
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          dart pub global activate fastforge $env:FASTFORGE_VERSION
+          $pubBin = Join-Path $env:LOCALAPPDATA "Pub\Cache\bin"
+          $pubBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      - name: 构建 Windows TV 安装包
+        working-directory: simple_live_tv_app
+        shell: pwsh
+        run: fastforge package --platform windows --targets exe --skip-clean
+
+      - name: 暂存 Windows TV 产物
+        shell: pwsh
+        env:
+          TV_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "release-tv-windows"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $files = @(Get-ChildItem -LiteralPath "simple_live_tv_app\build\dist" -Recurse -File |
+            Where-Object { $_.Extension -ieq ".exe" } |
+            Sort-Object Length -Descending)
+          if ($files.Count -lt 1) { throw "Expected a Windows TV EXE output." }
+          $target = Join-Path $out ("simple-live-{0}-windows.exe" -f $env:TV_VERSION)
+          Copy-Item -LiteralPath $files[0].FullName -Destination $target -Force
+          $file = Get-Item -LiteralPath $target
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
+          "$hash  $($file.Name)" | Out-File -LiteralPath (Join-Path $out "SHA256SUMS-tv-windows.txt") -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-tv-windows
+          path: ${{ runner.temp }}/release-tv-windows/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: 发布 TV GitHub Release
+    needs: [prepare, android, windows]
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: 校验构建任务
+        shell: bash
+        env:
+          ANDROID_RESULT: ${{ needs.android.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+        run: |
+          set -euo pipefail
+          for pair in "Android TV:$ANDROID_RESULT" "Windows TV:$WINDOWS_RESULT"; do
+            name="${pair%%:*}"
+            result="${pair#*:}"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::$name build result: $result" >&2
+              exit 1
+            fi
+          done
+
+      - name: 检出源码（生成变更说明）
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+
+      - name: 下载 TV 发布产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-tv-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: 生成 Release 简介
+        shell: bash
+        env:
+          FULL_VERSION: ${{ needs.prepare.outputs.full_version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          mapfile -t files < <(find . -maxdepth 1 -type f ! -name 'SHA256SUMS-*' -printf '%f\n' | sort)
+          ((${#files[@]} > 0))
+          sha256sum -- "${files[@]}" > "$RUNNER_TEMP/sha256.txt"
+          rm -f SHA256SUMS-*.txt
+          body="$RUNNER_TEMP/release_body.md"
+
+          commits=""
+          if [[ -n "$TAG" ]]; then
+            # 只在同一发布渠道内寻找上一版本，stable 不被 dev/pre 截断。
+            if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
+              previous_tag="$(git -C "$GITHUB_WORKSPACE" tag --list 'tv_v[0-9]*-dev' \
+                --sort=-v:refname | grep -Fxv "$TAG" | head -1 || true)"
+            elif [[ "$PRERELEASE" == "true" ]]; then
+              previous_tag="$(git -C "$GITHUB_WORKSPACE" tag --list 'tv_v[0-9]*-pre' \
+                --sort=-v:refname | grep -Fxv "$TAG" | head -1 || true)"
+            else
+              previous_tag="$(git -C "$GITHUB_WORKSPACE" tag --list 'tv_v[0-9]*' \
+                --sort=-v:refname | grep -Ev -- '-(dev|pre)$' \
+                | grep -Fxv "$TAG" | head -1 || true)"
+            fi
+            if [[ -n "$previous_tag" ]]; then
+              commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges \
+                --max-count=80 "$previous_tag..HEAD")"
+            fi
+          fi
+          if [[ -z "$commits" ]]; then
+            commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges -30 HEAD)"
+          fi
+
+          ai_summary=""
+          ai_commits="$({
+            printf '%s\n' "$commits" \
+              | grep -Eiv '^[0-9a-f]+ (ci|docs|test|chore|build)(\([^)]*\))?!?:|workflow|readme|version number|release v?[0-9]|发布流程|发布产物|版本号'
+          } || true)"
+          if [[ -n "$DEEPSEEK_API_KEY" && -n "$ai_commits" ]]; then
+            ai_response="$({
+              jq -n --arg commits "$ai_commits" \
+                '{model:"deepseek-v4-flash",temperature:0.1,
+                  response_format:{type:"json_object"},
+                  messages:[
+                    {role:"system",content:"你是 Simple Live TV 的发布说明编辑。请把 git commit 列表归纳成只面向 TV 用户的简体中文更新说明。只写用户能在 TV App 中直接看到、使用或感受到的功能、界面、播放体验、遥控器交互、平台兼容性和问题修复。彻底忽略 GitHub Actions/workflow、CI、README、文档、源码文件、测试、重构、格式化、纯依赖升级、版本号、签名配置、内部打包步骤和发布流程。你必须只输出一个合法 JSON 对象，不得输出 Markdown、代码围栏、前言或结语。JSON 必须且只能包含 highlights、improvements、fixes、engineering 四个数组字段。每项是一句不超过 36 个汉字的字符串，每个数组最多 4 项，无内容时使用空数组。合并同类提交，不逐条翻译，不写 commit hash，不编造提交信息无法确认的效果。每条必须点明具体功能、页面、平台或问题；禁止空泛套话和链接。文案统一使用简体中文和中文标点，Android TV、Windows、TV 等正式名称保留原文。"},
+                    {role:"user",content:("请严格按约定 JSON 格式总结以下提交：\n\n" + $commits)}
+                  ]}' \
+              | curl -sS https://api.deepseek.com/chat/completions \
+                  -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+                  -H "Content-Type: application/json" -d @- \
+              | jq -r '.choices[0].message.content // empty' 2>/dev/null || true
+            })"
+            if jq -e '
+              type == "object" and
+              ([keys[]] | sort == ["engineering", "fixes", "highlights", "improvements"]) and
+              ([.highlights, .improvements, .fixes, .engineering] |
+                all(type == "array" and length <= 4 and
+                  all(type == "string" and length > 0 and length <= 36 and
+                    (test("[*_`#~]|https?://|\\[[^]]*\\]\\(") | not))))
+            ' <<< "$ai_response" >/dev/null 2>&1; then
+              ai_summary="$(jq -r '
+                def section($title; $items):
+                  if ($items | length) > 0 then
+                    "### " + $title + "\n" +
+                    ($items | map("- " + .) | join("\n")) + "\n"
+                  else "" end;
+                section("更新亮点"; .highlights) +
+                section("体验优化"; .improvements) +
+                section("问题修复"; .fixes) +
+                section("构建与适配"; .engineering)
+              ' <<< "$ai_response")"
+            fi
+          fi
+
+          {
+            echo "版本：\`$FULL_VERSION\`"
+            echo "提交：\`$SHA\`"
+            echo ""
+            echo "### SHA-256 校验"
+            echo '```'
+            cat "$RUNNER_TEMP/sha256.txt"
+            echo '```'
+            echo ""
+            echo "## What's Changed"
+            echo ""
+            if [[ -n "$ai_summary" ]]; then
+              echo "$ai_summary"
+            elif [[ -n "$ai_commits" ]]; then
+              printf '%s\n' "$ai_commits" \
+                | sed -E 's/^[0-9a-f]+[[:space:]]+//; s/^(feat|fix|style|perf)(\([^)]*\))?!?:[[:space:]]*//; s/^/- /'
+            else
+              echo "- 本次没有可归纳的用户可见变更"
+            fi
+          } > "$body"
+
+      - name: 上传汇总产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: simple-live-tv-${{ needs.prepare.outputs.version }}-release
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 发布 Release
+        if: ${{ needs.prepare.outputs.publish_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Simple Live TV ${{ needs.prepare.outputs.version }}
+          target_commitish: ${{ needs.prepare.outputs.sha }}
+          fail_on_unmatched_files: true
+          allowUpdates: true
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          body_path: ${{ runner.temp }}/release_body.md
+          files: release-assets/*

@@ -41,9 +41,10 @@ concurrency:
 
 env:
   FLUTTER_VERSION: "3.41.x"
-  TV_FLUTTER_VERSION: "3.41.x"
-  XCODE_VERSION: "15.4"
-  IOS_XCODE_VERSION: "26.0"
+  # iOS 当前构建已验证通过 Xcode 26.0；macOS 的 Icon Composer 资源使用
+  # 与 macOS 26 主机匹配的较新工具链，避免 AssetCatalogAgent 崩溃。
+  APPLE_XCODE_VERSION: "26.0"
+  MACOS_XCODE_VERSION: "26.6"
   FASTFORGE_VERSION: "0.6.10"
 
 jobs:
@@ -269,100 +270,6 @@ jobs:
         with:
           name: release-android
           path: ${{ runner.temp }}/release-android/*
-          if-no-files-found: error
-          retention-days: 14
-
-  android_tv:
-    name: Android TV APK
-    needs: prepare
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.sha }}
-
-      - name: 准备 Android TV 分支签名
-        shell: bash
-        env:
-          BRANCH_NAME: ${{ github.ref_name }}
-          DEV_KEYSTORE_BASE64: ${{ secrets.DEV_KEYSTORE_BASE64 }}
-          DEV_STORE_PASSWORD: ${{ secrets.DEV_STORE_PASSWORD }}
-          DEV_KEY_PASSWORD: ${{ secrets.DEV_KEY_PASSWORD }}
-          DEV_KEY_ALIAS: ${{ secrets.DEV_KEY_ALIAS }}
-          STABLE_KEYSTORE_BASE64: ${{ secrets.STABLE_KEYSTORE_BASE64 }}
-          STABLE_STORE_PASSWORD: ${{ secrets.STABLE_STORE_PASSWORD }}
-          STABLE_KEY_PASSWORD: ${{ secrets.STABLE_KEY_PASSWORD }}
-          STABLE_KEY_ALIAS: ${{ secrets.STABLE_KEY_ALIAS }}
-        run: |
-          set -euo pipefail
-          case "$BRANCH_NAME" in
-            dev)
-              KEYSTORE_BASE64="$DEV_KEYSTORE_BASE64"
-              STORE_PASSWORD="$DEV_STORE_PASSWORD"
-              KEY_PASSWORD="$DEV_KEY_PASSWORD"
-              KEY_ALIAS="$DEV_KEY_ALIAS"
-              ;;
-            stable)
-              KEYSTORE_BASE64="$STABLE_KEYSTORE_BASE64"
-              STORE_PASSWORD="$STABLE_STORE_PASSWORD"
-              KEY_PASSWORD="$STABLE_KEY_PASSWORD"
-              KEY_ALIAS="$STABLE_KEY_ALIAS"
-              ;;
-            *)
-              echo "::error::Android TV 发布构建只允许从 dev 或 stable 分支运行（当前：$BRANCH_NAME）。"
-              exit 1
-              ;;
-          esac
-          if [[ -z "$KEYSTORE_BASE64" || -z "$STORE_PASSWORD" || \
-                -z "$KEY_PASSWORD" || -z "$KEY_ALIAS" ]]; then
-            echo "::error::$BRANCH_NAME 分支的 Android 签名 secrets 不完整。"
-            exit 1
-          fi
-          printf '%s' "$KEYSTORE_BASE64" | openssl base64 -d -A \
-            > simple_live_tv_app/android/release-keystore.jks
-          printf 'storeFile=../release-keystore.jks\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\n' \
-            "$STORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" \
-            > simple_live_tv_app/android/key.properties
-          keytool -list -v -keystore simple_live_tv_app/android/release-keystore.jks \
-            -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" | grep 'SHA256:'
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: zulu
-          java-version: "17"
-          cache: gradle
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.TV_FLUTTER_VERSION }}
-          cache: true
-
-      - name: 恢复 TV 依赖包
-        working-directory: simple_live_tv_app
-        run: flutter pub get
-
-      - name: 构建 TV 通用 APK
-        working-directory: simple_live_tv_app
-        run: >-
-          flutter build apk --release --no-pub
-          --build-name=${{ needs.prepare.outputs.version }}
-          --build-number=${{ needs.prepare.outputs.build_number }}
-
-      - name: 暂存 Android TV 产物
-        shell: bash
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/release-android-tv"
-          mkdir -p "$out"
-          cp simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk \
-            "$out/simple-live-tv-${{ needs.prepare.outputs.version }}-android-universal.apk"
-          (cd "$out" && sha256sum -- * > SHA256SUMS-android-tv.txt)
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-android-tv
-          path: ${{ runner.temp }}/release-android-tv/*
           if-no-files-found: error
           retention-days: 14
 
@@ -856,7 +763,7 @@ jobs:
 
   release:
     name: 发布 GitHub Release
-    needs: [prepare, android, android_tv, ios, macos, windows, linux, ohos]
+    needs: [prepare, android, ios, macos, windows, linux, ohos]
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -869,7 +776,6 @@ jobs:
         shell: bash
         env:
           ANDROID_RESULT: ${{ needs.android.result }}
-          ANDROID_TV_RESULT: ${{ needs.android_tv.result }}
           IOS_RESULT: ${{ needs.ios.result }}
           MACOS_RESULT: ${{ needs.macos.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
@@ -879,7 +785,6 @@ jobs:
         run: |
           for pair in \
             "Android:$ANDROID_RESULT" \
-            "Android TV:$ANDROID_TV_RESULT" \
             "iOS:$IOS_RESULT" \
             "macOS:$MACOS_RESULT" \
             "Windows:$WINDOWS_RESULT" \
@@ -915,6 +820,7 @@ jobs:
           FULL_VERSION: ${{ needs.prepare.outputs.full_version }}
           SHA: ${{ needs.prepare.outputs.sha }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           # 诊断：确认下载到 release-assets 的产物（应含各平台文件与分架构 APK）
@@ -932,7 +838,18 @@ jobs:
           # 已 cd release-assets（无 .git），git 命令用 -C 指向 workspace
           commits=""
           if [[ -n "$TAG" ]]; then
-            prev_tag="$(git -C "$GITHUB_WORKSPACE" tag --sort=-v:refname | grep -v "^$TAG\$" | head -1 || true)"
+            # 只在同一发布渠道内寻找上一版本，stable 不被 dev/pre 截断。
+            if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
+              prev_tag="$(git -C "$GITHUB_WORKSPACE" tag --list 'v[0-9]*-dev' \
+                --sort=-v:refname | grep -Fxv "$TAG" | head -1 || true)"
+            elif [[ "$PRERELEASE" == "true" ]]; then
+              prev_tag="$(git -C "$GITHUB_WORKSPACE" tag --list 'v[0-9]*-pre' \
+                --sort=-v:refname | grep -Fxv "$TAG" | head -1 || true)"
+            else
+              prev_tag="$(git -C "$GITHUB_WORKSPACE" tag --list 'v[0-9]*' \
+                --sort=-v:refname | grep -Ev -- '-(dev|pre)$' \
+                | grep -Fxv "$TAG" | head -1 || true)"
+            fi
             if [[ -n "$prev_tag" ]]; then
               commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges --max-count=80 "$prev_tag..HEAD")"
             fi
