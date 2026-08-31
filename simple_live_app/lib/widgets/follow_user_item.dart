@@ -18,6 +18,8 @@ class FollowUserItem extends StatelessWidget {
   final Function()? onSpecialTap;
   final Function()? onTap;
   final Function()? onLongPress;
+  final GestureLongPressEndCallback? onLongPressEnd;
+  final VoidCallback? onLongPressCancel;
   final bool playing;
   final bool showSpecialMark;
   final bool showLiveCover;
@@ -29,6 +31,8 @@ class FollowUserItem extends StatelessWidget {
     this.onSpecialTap,
     this.onTap,
     this.onLongPress,
+    this.onLongPressEnd,
+    this.onLongPressCancel,
     this.playing = false,
     this.showSpecialMark = false,
     this.showLiveCover = false,
@@ -38,21 +42,45 @@ class FollowUserItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Obx(() {
-      switch (style) {
-        case FollowUserItemStyle.compactList:
-          return _buildListCard(context, compact: true);
-        case FollowUserItemStyle.card:
-          return _buildPreviewCard(context);
-        case FollowUserItemStyle.defaultList:
-          return _buildListCard(context, compact: false);
-      }
-    });
+    return _FollowUserLongPressSurface(
+      onLongPress: onLongPress,
+      onLongPressEnd: onLongPressEnd,
+      onLongPressCancel: onLongPressCancel,
+      builder: (handleLongPress) => Obx(() {
+        switch (style) {
+          case FollowUserItemStyle.compactList:
+            return _buildListCard(
+              context,
+              compact: true,
+              handleLongPress: handleLongPress,
+            );
+          case FollowUserItemStyle.card:
+            return _buildPreviewCard(
+              context,
+              handleLongPress: handleLongPress,
+            );
+          case FollowUserItemStyle.defaultList:
+            return _buildListCard(
+              context,
+              compact: false,
+              handleLongPress: handleLongPress,
+            );
+        }
+      }),
+    );
   }
 
-  Widget _buildListCard(BuildContext context, {required bool compact}) {
+  Widget _buildListCard(
+    BuildContext context, {
+    required bool compact,
+    required VoidCallback? handleLongPress,
+  }) {
     if (!showLiveCover) {
-      return _buildAvatarListCard(context, compact: compact);
+      return _buildAvatarListCard(
+        context,
+        compact: compact,
+        handleLongPress: handleLongPress,
+      );
     }
     final theme = Theme.of(context);
     final coverWidth = compact ? 122.0 : 152.0;
@@ -136,7 +164,7 @@ class FollowUserItem extends StatelessWidget {
       child: InkWell(
         borderRadius: radius,
         onTap: onTap,
-        onLongPress: onLongPress,
+        onLongPress: handleLongPress,
         child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -241,7 +269,11 @@ class FollowUserItem extends StatelessWidget {
     );
   }
 
-  Widget _buildAvatarListCard(BuildContext context, {required bool compact}) {
+  Widget _buildAvatarListCard(
+    BuildContext context, {
+    required bool compact,
+    required VoidCallback? handleLongPress,
+  }) {
     final theme = Theme.of(context);
     final avatarSize = compact ? 48.0 : 58.0;
     final radius = BorderRadius.circular(compact ? 12 : 14);
@@ -258,7 +290,7 @@ class FollowUserItem extends StatelessWidget {
       child: InkWell(
         borderRadius: radius,
         onTap: onTap,
-        onLongPress: onLongPress,
+        onLongPress: handleLongPress,
         child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: EdgeInsets.symmetric(
@@ -354,9 +386,15 @@ class FollowUserItem extends StatelessWidget {
     );
   }
 
-  Widget _buildPreviewCard(BuildContext context) {
+  Widget _buildPreviewCard(
+    BuildContext context, {
+    required VoidCallback? handleLongPress,
+  }) {
     if (!showLiveCover) {
-      return _buildAvatarCard(context);
+      return _buildAvatarCard(
+        context,
+        handleLongPress: handleLongPress,
+      );
     }
     final theme = Theme.of(context);
     final radius = BorderRadius.circular(16);
@@ -377,7 +415,7 @@ class FollowUserItem extends StatelessWidget {
       child: InkWell(
         borderRadius: radius,
         onTap: onTap,
-        onLongPress: onLongPress,
+        onLongPress: handleLongPress,
         child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           child: Column(
@@ -594,7 +632,10 @@ class FollowUserItem extends StatelessWidget {
     );
   }
 
-  Widget _buildAvatarCard(BuildContext context) {
+  Widget _buildAvatarCard(
+    BuildContext context, {
+    required VoidCallback? handleLongPress,
+  }) {
     final theme = Theme.of(context);
     final radius = BorderRadius.circular(16);
     return Material(
@@ -604,7 +645,7 @@ class FollowUserItem extends StatelessWidget {
       child: InkWell(
         borderRadius: radius,
         onTap: onTap,
-        onLongPress: onLongPress,
+        onLongPress: handleLongPress,
         child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: const EdgeInsets.all(12),
@@ -945,5 +986,68 @@ class FollowUserItem extends StatelessWidget {
       Log.logPrint('格式化开播时长出错: $e');
       return "";
     }
+  }
+}
+
+typedef _FollowUserLongPressBuilder = Widget Function(
+  VoidCallback? handleLongPress,
+);
+
+/// `InkWell` only exposes the moment a long press is recognized. This wrapper
+/// keeps that visual/tap behavior while observing the raw pointer end/cancel
+/// events needed by the temporary live preview.
+class _FollowUserLongPressSurface extends StatefulWidget {
+  const _FollowUserLongPressSurface({
+    required this.builder,
+    this.onLongPress,
+    this.onLongPressEnd,
+    this.onLongPressCancel,
+  });
+
+  final _FollowUserLongPressBuilder builder;
+  final VoidCallback? onLongPress;
+  final GestureLongPressEndCallback? onLongPressEnd;
+  final VoidCallback? onLongPressCancel;
+
+  @override
+  State<_FollowUserLongPressSurface> createState() =>
+      _FollowUserLongPressSurfaceState();
+}
+
+class _FollowUserLongPressSurfaceState
+    extends State<_FollowUserLongPressSurface> {
+  bool _longPressActive = false;
+
+  void _handleLongPress() {
+    _longPressActive = true;
+    widget.onLongPress?.call();
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    if (!_longPressActive) return;
+    _longPressActive = false;
+    widget.onLongPressEnd?.call(
+      LongPressEndDetails(
+        globalPosition: event.position,
+        localPosition: event.localPosition,
+      ),
+    );
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (!_longPressActive) return;
+    _longPressActive = false;
+    widget.onLongPressCancel?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerUp: _handlePointerUp,
+      onPointerCancel: _handlePointerCancel,
+      child: widget.builder(
+        widget.onLongPress == null ? null : _handleLongPress,
+      ),
+    );
   }
 }

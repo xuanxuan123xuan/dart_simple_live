@@ -28,8 +28,12 @@ import 'package:simple_live_app/modules/live_room/player/ohos_playback_signal_ad
 import 'package:simple_live_app/modules/live_room/player/ohos_line_failover_policy.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
+import 'package:simple_live_app/modules/live_room/live_room_hold_preview.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_playback_recovery.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
+import 'package:simple_live_app/modules/multi_room/player_mutation_queue.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
@@ -449,6 +453,16 @@ bool isCurrentLiveRoomPlaybackRequest({
       requestRevision == latestRequestRevision;
 }
 
+class _HoldPreviewAudioSnapshot {
+  const _HoldPreviewAudioSnapshot({
+    required this.volume,
+    required this.muted,
+  });
+
+  final double volume;
+  final bool muted;
+}
+
 class LiveRoomController extends PlayerController
     with WidgetsBindingObserver, WindowListener {
   @override
@@ -526,6 +540,29 @@ class LiveRoomController extends PlayerController
   /// 直播间弹窗同类推荐列表滚动控制器
   final ScrollController liveRoomRecommendationScrollController =
       ScrollController();
+
+  static const Duration _holdPreviewLingerDuration = Duration(seconds: 3);
+  static const Duration _holdPreviewLoadTimeout = Duration(seconds: 10);
+  static const bool _holdPreviewEnabledOnIos = bool.fromEnvironment(
+    "SL_ENABLE_IOS_HOLD_PREVIEW",
+    defaultValue: true,
+  );
+  final PlayerMutationQueue _holdPreviewMutations = PlayerMutationQueue();
+  final MultiRoomPlaybackRecoveryCoordinator _holdPreviewRecovery =
+      const MultiRoomPlaybackRecoveryCoordinator();
+  MultiRoomPlayerController? _holdPreviewPlayer;
+  String? _holdPreviewPlayerTag;
+  MultiRoomItem? _holdPreviewItem;
+  OverlayEntry? _holdPreviewOverlay;
+  Timer? _holdPreviewLingerTimer;
+  DateTime? _holdPreviewLingerDeadline;
+  LiveRoomHoldPreviewPhase _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+  _HoldPreviewAudioSnapshot? _holdPreviewAudioSnapshot;
+  bool _holdPreviewOwnsAudio = false;
+  bool _holdPreviewMainWasPlaying = false;
+  bool _holdPreviewPromotingMain = false;
+  bool _holdPreviewClosing = false;
+  int _holdPreviewRevision = 0;
 
   /// 聊天消息列表
   RxList<LiveMessage> messages = RxList<LiveMessage>();
@@ -2505,8 +2542,36 @@ class LiveRoomController extends PlayerController
   }
 
   @override
+  Future<void> enterSmallWindow() async {
+    await closeFollowHoldPreview();
+    await super.enterSmallWindow();
+  }
+
+  @override
+  Future<bool> prepareAutoPipOnLeave() async {
+    await closeFollowHoldPreview();
+    return super.prepareAutoPipOnLeave();
+  }
+
+  @override
+  Future<dynamic> enablePIP() async {
+    await closeFollowHoldPreview();
+    return super.enablePIP();
+  }
+
+  @override
+  Future<void> closePlayerResources() async {
+    if (!_roomDisposed) {
+      await closeFollowHoldPreview();
+    }
+    await super.closePlayerResources();
+  }
+
+  @override
   void onClose() async {
     _roomDisposed = true;
+    await closeFollowHoldPreview();
+    await _holdPreviewMutations.close();
     _hasActivePlaybackSession = false;
     waitingForPlaybackUrl.value = false;
     _loadGeneration += 1;
@@ -3516,6 +3581,10 @@ class LiveRoomController extends PlayerController
     LiveReconnectReason? reconnectReason,
     bool? reconnectHostChanged,
   }) async {
+    if (!_holdPreviewPromotingMain &&
+        _holdPreviewPhase != LiveRoomHoldPreviewPhase.closed) {
+      await closeFollowHoldPreview();
+    }
     final previousSource = _selectedPlaybackSource;
     final reconnectStartedAt =
         reconnectReason == null && !refreshUrls ? null : DateTime.now();
@@ -4660,6 +4729,655 @@ class LiveRoomController extends PlayerController
     );
   }
 
+  void startFollowHoldPreview(FollowUser follow) {
+    if (Utils.isOhos) {
+      SmartDialog.showToast("鸿蒙版暂不支持长按预览");
+      return;
+    }
+    if (Platform.isIOS && !_holdPreviewEnabledOnIos) {
+      SmartDialog.showToast("当前 iOS 版本暂未开放长按预览");
+      return;
+    }
+    if (follow.liveStatus.value != 2) {
+      SmartDialog.showToast("主播未开播，无法预览");
+      return;
+    }
+    final targetSite = Sites.allSites[follow.siteId];
+    if (targetSite == null) {
+      SmartDialog.showToast("当前平台暂不支持预览");
+      return;
+    }
+    final target = MultiRoomItem.fromFollow(follow);
+    if (target.key == "${site.id}_$roomId" || _roomDisposed) {
+      return;
+    }
+    final mainShouldPlay = player.state.playing || player.state.buffering;
+    _holdPreviewMainWasPlaying = mainShouldPlay;
+
+    final revision = ++_holdPreviewRevision;
+    _holdPreviewLingerTimer?.cancel();
+    _holdPreviewLingerTimer = null;
+    _holdPreviewLingerDeadline = null;
+    _holdPreviewPhase = LiveRoomHoldPreviewPhase.holding;
+    _holdPreviewItem = target;
+    _removeHoldPreviewOverlay();
+    _insertHoldPreviewOverlay();
+    _markHoldPreviewOverlayNeedsBuild();
+
+    unawaited(
+      _holdPreviewMutations.run(() async {
+        await _restoreHoldPreviewMainAudioLocked();
+        await _disposeHoldPreviewPlayerLocked();
+        if (!_isCurrentHoldPreview(revision, target.key)) return;
+        await _createHoldPreviewPlayerLocked(
+          item: target,
+          revision: revision,
+          allowAudio: true,
+          mainShouldPlay: mainShouldPlay,
+        );
+      }).catchError((Object error, StackTrace stackTrace) {
+        Log.e("创建长按预览失败: $error", stackTrace);
+        if (_isCurrentHoldPreview(revision, target.key)) {
+          unawaited(closeFollowHoldPreview());
+        }
+      }),
+    );
+  }
+
+  void endFollowHoldPreview() {
+    if (_holdPreviewPhase != LiveRoomHoldPreviewPhase.holding) return;
+    _holdPreviewPhase = LiveRoomHoldPreviewPhase.lingering;
+    _startHoldPreviewLingerTimer(_holdPreviewRevision);
+    _markHoldPreviewOverlayNeedsBuild();
+  }
+
+  void cancelFollowHoldPreview() {
+    if (_holdPreviewPhase == LiveRoomHoldPreviewPhase.closed) return;
+    unawaited(closeFollowHoldPreview());
+  }
+
+  Future<void> closeFollowHoldPreview() async {
+    if (_holdPreviewClosing &&
+        _holdPreviewPhase == LiveRoomHoldPreviewPhase.closed) {
+      await _holdPreviewMutations.idle;
+      return;
+    }
+    _holdPreviewClosing = true;
+    _holdPreviewRevision += 1;
+    _holdPreviewLingerTimer?.cancel();
+    _holdPreviewLingerTimer = null;
+    _holdPreviewLingerDeadline = null;
+    _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+    _holdPreviewItem = null;
+    _removeHoldPreviewOverlay();
+    try {
+      await _holdPreviewMutations.run(() async {
+        await _restoreHoldPreviewMainAudioLocked();
+        await _disposeHoldPreviewPlayerLocked();
+      });
+    } catch (error, stackTrace) {
+      Log.e("关闭长按预览失败: $error", stackTrace);
+    } finally {
+      _holdPreviewClosing = false;
+    }
+  }
+
+  bool _isCurrentHoldPreview(int revision, String roomKey) {
+    return !_roomDisposed &&
+        revision == _holdPreviewRevision &&
+        _holdPreviewPhase != LiveRoomHoldPreviewPhase.closed &&
+        _holdPreviewItem?.key == roomKey;
+  }
+
+  void _insertHoldPreviewOverlay() {
+    final item = _holdPreviewItem;
+    if (item == null || _holdPreviewOverlay != null) return;
+    final context = Get.context;
+    if (context == null) return;
+    final overlay = Overlay.of(context, rootOverlay: true);
+    _holdPreviewOverlay = OverlayEntry(
+      builder: (overlayContext) {
+        final activeItem = _holdPreviewItem;
+        if (activeItem == null ||
+            _holdPreviewPhase == LiveRoomHoldPreviewPhase.closed) {
+          return const SizedBox.shrink();
+        }
+        final mediaQuery = MediaQuery.of(overlayContext);
+        final renderObject = globalPlayerKey.currentContext?.findRenderObject();
+        Rect playerRect;
+        if (renderObject is RenderBox && renderObject.hasSize) {
+          playerRect =
+              renderObject.localToGlobal(Offset.zero) & renderObject.size;
+        } else {
+          playerRect = Offset.zero & mediaQuery.size;
+        }
+        final portrait = mediaQuery.orientation == Orientation.portrait &&
+            !fullScreenState.value;
+        final obscuredRight = !useBottomSheetPlayerMenus
+            ? Utils.activeRightDialogPanelWidth(mediaQuery.size)
+            : 0.0;
+        final rect = resolveLiveRoomHoldPreviewRect(
+          screenSize: mediaQuery.size,
+          safePadding: mediaQuery.viewPadding,
+          playerRect: playerRect,
+          portrait: portrait,
+          obscuredRight: obscuredRight,
+        );
+        return LiveRoomHoldPreviewOverlay(
+          rect: rect,
+          item: activeItem,
+          phase: _holdPreviewPhase,
+          playerController: _holdPreviewPlayer?.item.key == activeItem.key
+              ? _holdPreviewPlayer
+              : null,
+          lingerDeadline: _holdPreviewLingerDeadline,
+          onTap: _promoteHoldPreview,
+          onPhysicalSizeChanged: (width, height) {
+            if (_holdPreviewPhase == LiveRoomHoldPreviewPhase.switching ||
+                _holdPreviewPhase == LiveRoomHoldPreviewPhase.closed) {
+              return;
+            }
+            final preview = _holdPreviewPlayer;
+            if (preview == null || preview.item.key != activeItem.key) return;
+            // The preview controller applies this only on iOS. Keeping the
+            // call here lets rotation and split-view resize the texture to the
+            // actual overlay instead of allocating an original-quality frame.
+            preview.updatePreviewOutputSize(width, height);
+          },
+        );
+      },
+    );
+    overlay.insert(_holdPreviewOverlay!);
+  }
+
+  void _removeHoldPreviewOverlay() {
+    final overlay = _holdPreviewOverlay;
+    _holdPreviewOverlay = null;
+    overlay?.remove();
+    overlay?.dispose();
+  }
+
+  void _markHoldPreviewOverlayNeedsBuild() {
+    _holdPreviewOverlay?.markNeedsBuild();
+  }
+
+  void _startHoldPreviewLingerTimer(int revision) {
+    _holdPreviewLingerTimer?.cancel();
+    final deadline = DateTime.now().add(_holdPreviewLingerDuration);
+    _holdPreviewLingerDeadline = deadline;
+    _holdPreviewLingerTimer = Timer(_holdPreviewLingerDuration, () {
+      if (revision != _holdPreviewRevision ||
+          _holdPreviewPhase != LiveRoomHoldPreviewPhase.lingering) {
+        return;
+      }
+      unawaited(closeFollowHoldPreview());
+    });
+  }
+
+  Future<void> _createHoldPreviewPlayerLocked({
+    required MultiRoomItem item,
+    required int revision,
+    required bool allowAudio,
+    required bool mainShouldPlay,
+  }) async {
+    if (!_isCurrentHoldPreview(revision, item.key)) return;
+    final expectedMainMuted = mutedState.value;
+    final expectedMainVolume = player.state.volume.clamp(0, 100).toDouble();
+    final tag = "live-room-hold-preview-${identityHashCode(this)}-$revision";
+    var loadCancelled = false;
+    final preview = Get.put(
+      MultiRoomPlayerController(
+        item,
+        initialShowDanmaku: false,
+        lightweightPreview: true,
+        externalCancellation: () =>
+            loadCancelled || !_isCurrentHoldPreview(revision, item.key),
+      ),
+      tag: tag,
+    );
+    _holdPreviewPlayer = preview;
+    _holdPreviewPlayerTag = tag;
+    _markHoldPreviewOverlayNeedsBuild();
+
+    final loadTimeoutTimer = Timer(_holdPreviewLoadTimeout, () {
+      loadCancelled = true;
+      if (!_isCurrentHoldPreview(revision, item.key)) return;
+      preview.errorText.value = "预览加载超时";
+      _markHoldPreviewOverlayNeedsBuild();
+      if (_holdPreviewPhase == LiveRoomHoldPreviewPhase.loadingPrevious) {
+        _holdPreviewRevision += 1;
+        _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+        _holdPreviewItem = null;
+        _removeHoldPreviewOverlay();
+      }
+    });
+    try {
+      await preview.load();
+    } finally {
+      loadTimeoutTimer.cancel();
+    }
+    if (loadCancelled) return;
+    if (!_isCurrentHoldPreview(revision, item.key) ||
+        preview.errorText.value.isNotEmpty ||
+        !preview.liveStatus.value) {
+      if (_isCurrentHoldPreview(revision, item.key)) {
+        await _stabilizeMainAfterMutedPreviewOpenLocked(
+          preview: preview,
+          revision: revision,
+          mainShouldPlay: mainShouldPlay,
+          expectedMainMuted: expectedMainMuted,
+          expectedMainVolume: expectedMainVolume,
+        );
+      }
+      return;
+    }
+    final advancing = await preview.waitUntilActuallyPlaying(
+      const Duration(seconds: 3),
+    );
+    if (!advancing || !_isCurrentHoldPreview(revision, item.key)) {
+      if (_isCurrentHoldPreview(revision, item.key)) {
+        preview.errorText.value = "预览起播超时";
+        _markHoldPreviewOverlayNeedsBuild();
+        await _stabilizeMainAfterMutedPreviewOpenLocked(
+          preview: preview,
+          revision: revision,
+          mainShouldPlay: mainShouldPlay,
+          expectedMainMuted: expectedMainMuted,
+          expectedMainVolume: expectedMainVolume,
+        );
+      }
+      return;
+    }
+
+    if (Platform.isIOS) {
+      await _recoverHoldPreviewPlayers(
+        preview: preview,
+        revision: revision,
+        mainShouldPlay: mainShouldPlay,
+      );
+    }
+    if (allowAudio &&
+        AppSettingsController.instance.liveRoomHoldPreviewAudio.value &&
+        _isCurrentHoldPreview(revision, item.key)) {
+      await _giveAudioToHoldPreviewLocked(
+        preview,
+        revision: revision,
+        roomKey: item.key,
+      );
+    } else if (_isCurrentHoldPreview(revision, item.key)) {
+      await _stabilizeMainAfterMutedPreviewOpenLocked(
+        preview: preview,
+        revision: revision,
+        mainShouldPlay: mainShouldPlay,
+        expectedMainMuted: expectedMainMuted,
+        expectedMainVolume: expectedMainVolume,
+      );
+    }
+  }
+
+  Future<void> _stabilizeMainAfterMutedPreviewOpenLocked({
+    required MultiRoomPlayerController preview,
+    required int revision,
+    required bool mainShouldPlay,
+    required bool expectedMainMuted,
+    required double expectedMainVolume,
+  }) async {
+    // A muted Player.open may still take iOS' shared audio session. Reapply
+    // the main room's exact session state, then verify both timelines once
+    // more because that audio-session activation can interrupt the preview.
+    await setSessionPlayerVolume(
+      expectedMainMuted ? 0 : expectedMainVolume,
+    );
+    if (Platform.isIOS) {
+      await _recoverHoldPreviewPlayers(
+        preview: preview,
+        revision: revision,
+        mainShouldPlay: mainShouldPlay,
+      );
+    }
+  }
+
+  Future<bool> _recoverHoldPreviewPlayers({
+    required MultiRoomPlayerController preview,
+    required int revision,
+    required bool mainShouldPlay,
+  }) async {
+    await preview.playerMutationsIdle;
+    final targetKey = _holdPreviewItem?.key;
+    return _holdPreviewRecovery.recover(
+      targets: [
+        MultiRoomPlaybackRecoveryTarget(
+          roomKey: "main:${site.id}/$roomId",
+          shouldPlay: () =>
+              mainShouldPlay &&
+              !_roomDisposed &&
+              !isBackground &&
+              revision == _holdPreviewRevision,
+          requestPlay: (forceRestart) async {
+            if (forceRestart) {
+              await player.pause();
+            }
+            await player.play();
+          },
+          waitUntilPlaying: _waitUntilMainPlayerAdvances,
+        ),
+        MultiRoomPlaybackRecoveryTarget(
+          roomKey: "preview:${preview.item.key}",
+          shouldPlay: () =>
+              revision == _holdPreviewRevision &&
+              targetKey == _holdPreviewItem?.key &&
+              preview.shouldRecoverPlayback,
+          requestPlay: preview.ensurePlaying,
+          waitUntilPlaying: preview.waitUntilActuallyPlaying,
+        ),
+      ],
+      isCancelled: () =>
+          _roomDisposed ||
+          isBackground ||
+          revision != _holdPreviewRevision ||
+          targetKey != _holdPreviewItem?.key,
+    );
+  }
+
+  Future<bool> _waitUntilMainPlayerAdvances(Duration timeout) async {
+    if (_roomDisposed || isBackground) return false;
+    final initial = player.state.position;
+    StreamSubscription<Duration>? subscription;
+    final completer = Completer<bool>();
+    try {
+      subscription = player.stream.position.listen(
+        (position) {
+          if (_roomDisposed || isBackground) {
+            if (!completer.isCompleted) completer.complete(false);
+            return;
+          }
+          if ((position - initial).inMilliseconds.abs() >= 20 &&
+              !completer.isCompleted) {
+            completer.complete(true);
+          }
+        },
+        onError: (Object _, StackTrace __) {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+      );
+      return await completer.future.timeout(
+        timeout,
+        onTimeout: () => false,
+      );
+    } finally {
+      await subscription?.cancel();
+    }
+  }
+
+  Future<void> _giveAudioToHoldPreviewLocked(
+    MultiRoomPlayerController preview, {
+    required int revision,
+    required String roomKey,
+  }) async {
+    if (_holdPreviewOwnsAudio || !_isCurrentHoldPreview(revision, roomKey)) {
+      return;
+    }
+    _holdPreviewAudioSnapshot = _HoldPreviewAudioSnapshot(
+      volume: player.state.volume.clamp(0, 100).toDouble(),
+      muted: mutedState.value,
+    );
+    _holdPreviewOwnsAudio = true;
+    await setSessionPlayerVolume(0);
+    if (!_isCurrentHoldPreview(revision, roomKey)) {
+      await _restoreHoldPreviewMainAudioLocked();
+      return;
+    }
+    final snapshot = _holdPreviewAudioSnapshot!;
+    final desired = snapshot.muted
+        ? AppSettingsController.instance.playerVolume.value
+        : snapshot.volume;
+    await preview.setVolume(desired);
+    if (!_isCurrentHoldPreview(revision, roomKey)) {
+      await _restoreHoldPreviewMainAudioLocked();
+      return;
+    }
+    await preview.setMuted(false);
+    if (!_isCurrentHoldPreview(revision, roomKey)) {
+      await _restoreHoldPreviewMainAudioLocked();
+      return;
+    }
+    if (Platform.isIOS &&
+        !await preview.waitUntilActuallyPlaying(
+          const Duration(milliseconds: 700),
+        )) {
+      await _restoreHoldPreviewMainAudioLocked();
+      throw StateError("预览播放器接管声音后停止推进");
+    }
+  }
+
+  Future<void> _restoreHoldPreviewMainAudioLocked() async {
+    if (!_holdPreviewOwnsAudio) {
+      _holdPreviewAudioSnapshot = null;
+      return;
+    }
+    final preview = _holdPreviewPlayer;
+    if (preview != null) {
+      await preview.setMuted(true);
+    }
+    final snapshot = _holdPreviewAudioSnapshot;
+    _holdPreviewOwnsAudio = false;
+    _holdPreviewAudioSnapshot = null;
+    if (snapshot != null && !_roomDisposed && !isPlayerClosing) {
+      await setSessionPlayerVolume(snapshot.muted ? 0 : snapshot.volume);
+    }
+  }
+
+  Future<void> _disposeHoldPreviewPlayerLocked() async {
+    final preview = _holdPreviewPlayer;
+    final tag = _holdPreviewPlayerTag;
+    _holdPreviewPlayer = null;
+    _holdPreviewPlayerTag = null;
+    if (preview == null) return;
+    final expectedMainMuted = mutedState.value;
+    final expectedMainVolume = player.state.volume.clamp(0, 100).toDouble();
+    await WidgetsBinding.instance.endOfFrame;
+    try {
+      await preview.disposePreviewPlayer();
+    } finally {
+      if (tag != null &&
+          Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
+        await Get.delete<MultiRoomPlayerController>(tag: tag, force: true);
+      }
+    }
+    if (!_roomDisposed && !isPlayerClosing) {
+      await setSessionPlayerVolume(
+        expectedMainMuted ? 0 : expectedMainVolume,
+      );
+    }
+    await _recoverMainAfterHoldPreviewMutationLocked();
+  }
+
+  Future<void> _recoverMainAfterHoldPreviewMutationLocked() async {
+    if (!Platform.isIOS ||
+        !_holdPreviewMainWasPlaying ||
+        _roomDisposed ||
+        isBackground ||
+        isPlayerClosing) {
+      return;
+    }
+    await _holdPreviewRecovery.recover(
+      targets: [
+        MultiRoomPlaybackRecoveryTarget(
+          roomKey: "main:${site.id}/$roomId",
+          shouldPlay: () =>
+              !_roomDisposed &&
+              !isBackground &&
+              !isPlayerClosing &&
+              _holdPreviewMainWasPlaying,
+          requestPlay: (forceRestart) async {
+            if (forceRestart) {
+              await player.pause();
+            }
+            await player.play();
+          },
+          waitUntilPlaying: _waitUntilMainPlayerAdvances,
+        ),
+      ],
+      isCancelled: () => _roomDisposed || isBackground || isPlayerClosing,
+    );
+  }
+
+  void _promoteHoldPreview() {
+    if (_holdPreviewPhase != LiveRoomHoldPreviewPhase.lingering ||
+        _holdPreviewPlayer == null ||
+        _holdPreviewItem == null) {
+      return;
+    }
+    final revision = ++_holdPreviewRevision;
+    final target = _holdPreviewItem!;
+    final previous = MultiRoomItem(
+      site: site,
+      roomId: roomId,
+      userName: detail.value?.userName ?? "",
+      face: detail.value?.userAvatar ?? "",
+    );
+    _holdPreviewLingerTimer?.cancel();
+    _holdPreviewLingerTimer = null;
+    _holdPreviewLingerDeadline = null;
+    _holdPreviewPhase = LiveRoomHoldPreviewPhase.switching;
+    _markHoldPreviewOverlayNeedsBuild();
+
+    unawaited(
+      _holdPreviewMutations.run(() async {
+        final targetPreview = _holdPreviewPlayer;
+        if (targetPreview == null ||
+            !_isCurrentHoldPreview(revision, target.key)) {
+          return;
+        }
+        await targetPreview.playerMutationsIdle;
+        if (!_isCurrentHoldPreview(revision, target.key)) return;
+        bool switched;
+        _holdPreviewPromotingMain = true;
+        try {
+          await resetRoom(
+            target.site,
+            target.roomId,
+            fromHoldPreview: true,
+          );
+          if (_holdPreviewOwnsAudio) {
+            // resetRoom restores persisted intent before the target stream opens.
+            // Keep the main player silent until the preview-to-main handoff is
+            // verified, preventing a short double-audio window.
+            await setSessionPlayerVolume(0);
+          }
+          switched = await _waitForTargetRoomPlayback(
+            target,
+            revision: revision,
+          );
+        } finally {
+          _holdPreviewPromotingMain = false;
+        }
+        if (!switched || !_isCurrentHoldPreview(revision, target.key)) {
+          await _restoreHoldPreviewMainAudioLocked();
+          await _disposeHoldPreviewPlayerLocked();
+          _removeHoldPreviewOverlay();
+          _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+          _holdPreviewItem = null;
+          if (!_roomDisposed && "${site.id}_$roomId" != previous.key) {
+            await resetRoom(
+              previous.site,
+              previous.roomId,
+              fromHoldPreview: true,
+            );
+          }
+          SmartDialog.showToast("切换直播间失败，已返回原直播间");
+          return;
+        }
+
+        _holdPreviewMainWasPlaying = true;
+        await _restoreHoldPreviewMainAudioLocked();
+        _holdPreviewPhase = LiveRoomHoldPreviewPhase.loadingPrevious;
+        _holdPreviewItem = previous;
+        _removeHoldPreviewOverlay();
+        _insertHoldPreviewOverlay();
+        _markHoldPreviewOverlayNeedsBuild();
+        await _disposeHoldPreviewPlayerLocked();
+        if (!_isCurrentHoldPreview(revision, previous.key)) return;
+
+        await _createHoldPreviewPlayerLocked(
+          item: previous,
+          revision: revision,
+          allowAudio: false,
+          mainShouldPlay: true,
+        );
+        final previousPreview = _holdPreviewPlayer;
+        if (!_isCurrentHoldPreview(revision, previous.key) ||
+            previousPreview == null ||
+            previousPreview.errorText.value.isNotEmpty ||
+            !previousPreview.liveStatus.value) {
+          _removeHoldPreviewOverlay();
+          _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+          _holdPreviewItem = null;
+          await _disposeHoldPreviewPlayerLocked();
+          return;
+        }
+        _holdPreviewPhase = LiveRoomHoldPreviewPhase.lingering;
+        _startHoldPreviewLingerTimer(revision);
+        _markHoldPreviewOverlayNeedsBuild();
+      }).catchError((Object error, StackTrace stackTrace) {
+        Log.e("预览切台失败: $error", stackTrace);
+        unawaited(closeFollowHoldPreview());
+      }),
+    );
+  }
+
+  Future<bool> _waitForTargetRoomPlayback(
+    MultiRoomItem target, {
+    required int revision,
+  }) async {
+    Duration? baseline;
+    StreamSubscription<Duration>? subscription;
+    Timer? stateTimer;
+    final completer = Completer<bool>();
+    bool stillCurrent() =>
+        !_roomDisposed &&
+        revision == _holdPreviewRevision &&
+        "${site.id}_$roomId" == target.key;
+    try {
+      subscription = player.stream.position.listen(
+        (position) {
+          if (!stillCurrent()) {
+            if (!completer.isCompleted) completer.complete(false);
+            return;
+          }
+          if (!player.state.playing || !liveStatus.value) return;
+          final first = baseline;
+          if (first == null) {
+            baseline = position;
+            return;
+          }
+          if ((position - first).inMilliseconds.abs() >= 20 &&
+              !completer.isCompleted) {
+            completer.complete(true);
+          }
+        },
+        onError: (Object _, StackTrace __) {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+      );
+      stateTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+        if (!stillCurrent() || loadError.value) {
+          if (!completer.isCompleted) completer.complete(false);
+        } else if (detail.value != null &&
+            roomLiveState.value == LiveStatusState.offline) {
+          if (!completer.isCompleted) completer.complete(false);
+        }
+      });
+      return await completer.future.timeout(
+        const Duration(seconds: 12),
+        onTimeout: () => false,
+      );
+    } finally {
+      stateTimer?.cancel();
+      await subscription?.cancel();
+    }
+  }
+
   List<FollowUser> _followUsersByFilterMode(int filterMode) {
     switch (filterMode) {
       case 1:
@@ -4682,6 +5400,7 @@ class LiveRoomController extends PlayerController
     ScrollController? scrollController,
     ValueChanged<FollowUser>? onSelected,
     bool liveOnly = false,
+    bool enableHoldPreview = false,
   }) {
     const options = ["全部", "直播中", "未开播"];
     return Obx(() {
@@ -4736,6 +5455,7 @@ class LiveRoomController extends PlayerController
                         item: item,
                         onClose: onClose,
                         onSelected: onSelected,
+                        enableHoldPreview: enableHoldPreview,
                       );
                     },
                   ),
@@ -4763,6 +5483,7 @@ class LiveRoomController extends PlayerController
     required FollowUser item,
     required VoidCallback onClose,
     ValueChanged<FollowUser>? onSelected,
+    required bool enableHoldPreview,
   }) {
     return Obx(
       () => FollowUserItem(
@@ -4785,6 +5506,17 @@ class LiveRoomController extends PlayerController
                   );
                 }
               },
+        onLongPress: !enableHoldPreview
+            ? null
+            : () {
+                startFollowHoldPreview(item);
+              },
+        onLongPressEnd: !enableHoldPreview
+            ? null
+            : (_) {
+                endFollowHoldPreview();
+              },
+        onLongPressCancel: !enableHoldPreview ? null : cancelFollowHoldPreview,
       ),
     );
   }
@@ -4959,6 +5691,7 @@ class LiveRoomController extends PlayerController
       title: "关注列表",
       child: buildFollowUserSelection(
         onClose: Get.back,
+        enableHoldPreview: true,
       ),
     );
   }
@@ -5063,7 +5796,14 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  Future<void> resetRoom(Site site, String roomId) async {
+  Future<void> resetRoom(
+    Site site,
+    String roomId, {
+    bool fromHoldPreview = false,
+  }) async {
+    if (!fromHoldPreview) {
+      await closeFollowHoldPreview();
+    }
     if (this.site == site && this.roomId == roomId) {
       return;
     }
@@ -5150,6 +5890,7 @@ ${errorStackTrace ?? ""}''');
   void didChangeMetrics() {
     super.didChangeMetrics();
     refreshIosVideoOutputLimit(force: true);
+    _markHoldPreviewOverlayNeedsBuild();
   }
 
   @override
@@ -5158,6 +5899,7 @@ ${errorStackTrace ?? ""}''');
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
+      unawaited(closeFollowHoldPreview());
       Log.d("进入后台:$state");
       unawaited(
         suspendLiveLatencyChase(
@@ -5218,7 +5960,10 @@ ${errorStackTrace ?? ""}''');
       );
     } else if (state == AppLifecycleState.inactive) {
       Log.d("应用短暂失焦:$state");
-      unawaited(syncAutoPipOnLeave());
+      unawaited(() async {
+        await closeFollowHoldPreview();
+        await syncAutoPipOnLeave();
+      }());
     }
   }
 

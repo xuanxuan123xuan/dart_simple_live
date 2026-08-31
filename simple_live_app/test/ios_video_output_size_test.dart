@@ -56,4 +56,26 @@ void main() {
       isNull,
     );
   });
+
+  test('limits a 4K source to a small preview physical boundary', () {
+    final size = calculateIosVideoOutputSizeWithinBounds(
+      sourceWidth: 3840,
+      sourceHeight: 2160,
+      maxPhysicalWidth: 640,
+      maxPhysicalHeight: 360,
+    );
+
+    expect(size, const IosVideoOutputSize(640, 360));
+  });
+
+  test('arbitrary bounds preserve portrait aspect and even dimensions', () {
+    final size = calculateIosVideoOutputSizeWithinBounds(
+      sourceWidth: 1080,
+      sourceHeight: 1920,
+      maxPhysicalWidth: 501,
+      maxPhysicalHeight: 701,
+    );
+
+    expect(size, const IosVideoOutputSize(394, 700));
+  });
 }

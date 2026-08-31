@@ -148,6 +148,16 @@ class Utils {
         .toDouble();
   }
 
+  /// 当前可见右侧面板实际占用的宽度；没有活动面板时返回 0。
+  static double activeRightDialogPanelWidth(Size screenSize) {
+    final route = _rightDialogRoute;
+    if (route is! _RightSideDialogRoute || !route.isActive) return 0;
+    return rightDialogPanelWidth(
+      requestedWidth: route.width,
+      screenSize: screenSize,
+    );
+  }
+
   static void showRightDialog({
     required String title,
     Function()? onDismiss,

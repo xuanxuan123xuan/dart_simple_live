@@ -1111,6 +1111,7 @@ void showFollowUser(LiveRoomController controller) {
     child: controller.buildFollowUserSelection(
       onClose: Utils.hideRightDialog,
       scrollController: controller.liveRoomFollowDialogScrollController,
+      enableHoldPreview: true,
     ),
   );
 }

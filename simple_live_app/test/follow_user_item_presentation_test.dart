@@ -8,6 +8,102 @@ import 'package:simple_live_app/widgets/follow_user_item.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 
 void main() {
+  testWidgets('follow item forwards long-press lifecycle callbacks', (
+    tester,
+  ) async {
+    var longPressCount = 0;
+    var longPressEndCount = 0;
+    var longPressCancelCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 320,
+            height: 100,
+            child: FollowUserItem(
+              item: _followUser(),
+              onLongPress: () => longPressCount++,
+              onLongPressEnd: (_) => longPressEndCount++,
+              onLongPressCancel: () => longPressCancelCount++,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final inkWell = tester.widget<InkWell>(find.byType(InkWell));
+    expect(inkWell.onLongPress, isNotNull);
+
+    await tester.longPress(find.byType(FollowUserItem));
+    await tester.pump();
+
+    expect(longPressCount, 1);
+    expect(longPressEndCount, 1);
+    expect(longPressCancelCount, 0);
+  });
+
+  testWidgets('all follow item styles report long-press end', (
+    tester,
+  ) async {
+    for (final style in FollowUserItemStyle.values) {
+      var started = 0;
+      var ended = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: style == FollowUserItemStyle.card ? 260 : 100,
+              child: FollowUserItem(
+                item: _followUser(),
+                style: style,
+                onLongPress: () => started++,
+                onLongPressEnd: (_) => ended++,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.longPress(find.byType(FollowUserItem));
+      await tester.pump();
+      expect(started, 1, reason: '$style');
+      expect(ended, 1, reason: '$style');
+    }
+  });
+
+  testWidgets('cancelled long press reports cancellation without an end', (
+    tester,
+  ) async {
+    var started = 0;
+    var ended = 0;
+    var cancelled = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FollowUserItem(
+            item: _followUser(),
+            onLongPress: () => started++,
+            onLongPressEnd: (_) => ended++,
+            onLongPressCancel: () => cancelled++,
+          ),
+        ),
+      ),
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(FollowUserItem)),
+    );
+    await tester.pump(const Duration(milliseconds: 520));
+    await gesture.cancel();
+    await tester.pump();
+
+    expect(started, 1);
+    expect(ended, 0);
+    expect(cancelled, 1);
+  });
+
   testWidgets('dark follow card uses a visible themed surface and frame', (
     tester,
   ) async {

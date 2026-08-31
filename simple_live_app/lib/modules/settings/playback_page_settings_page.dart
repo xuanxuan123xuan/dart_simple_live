@@ -96,6 +96,25 @@ class PlaybackPageSettingsPage extends GetView<IndexedSettingsController> {
               ),
             ),
           ),
+          Padding(
+            padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
+            child: Text(
+              "关注列表长按预览",
+              style: Get.textTheme.titleSmall,
+            ),
+          ),
+          SettingsCard(
+            child: Obx(
+              () => SwitchListTile(
+                title: const Text("长按预览时播放声音"),
+                subtitle: const Text("关闭时预览小窗保持静音，不影响正在观看的直播"),
+                value: AppSettingsController
+                    .instance.liveRoomHoldPreviewAudio.value,
+                onChanged:
+                    AppSettingsController.instance.setLiveRoomHoldPreviewAudio,
+              ),
+            ),
+          ),
           if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) ...[
             Padding(
               padding: AppStyle.edgeInsetsA12.copyWith(top: 24),

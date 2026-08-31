@@ -1636,6 +1636,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       child: controller.buildFollowUserSelection(
         onClose: () {},
         scrollController: controller.liveRoomFollowScrollController,
+        enableHoldPreview: true,
       ),
     );
   }

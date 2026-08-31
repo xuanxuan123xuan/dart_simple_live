@@ -185,6 +185,8 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kAutoFullScreen, false);
     autoPipOnExit.value = LocalStorageService.instance
         .getValue(LocalStorageService.kAutoPipOnExit, false);
+    liveRoomHoldPreviewAudio.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kLiveRoomHoldPreviewAudio, false);
     playershowSuperChat.value = LocalStorageService.instance
         .getValue(LocalStorageService.kPlayerShowSuperChat, false);
     playerShowPlayUrl.value = LocalStorageService.instance
@@ -1084,6 +1086,16 @@ class AppSettingsController extends GetxController {
     autoPipOnExit.value = e;
     LocalStorageService.instance
         .setValue(LocalStorageService.kAutoPipOnExit, e);
+  }
+
+  /// 长按关注项预览时是否允许预览播放器临时接管声音。
+  var liveRoomHoldPreviewAudio = false.obs;
+  void setLiveRoomHoldPreviewAudio(bool value) {
+    liveRoomHoldPreviewAudio.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kLiveRoomHoldPreviewAudio,
+      value,
+    );
   }
 
   var playershowSuperChat = false.obs;
