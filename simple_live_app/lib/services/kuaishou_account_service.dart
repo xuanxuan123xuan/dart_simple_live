@@ -69,7 +69,9 @@ class KuaishouAccountSession {
       final millis = value is num ? value.toInt() : int.tryParse('$value');
       return millis == null || millis <= 0
           ? null
-          : DateTime.fromMillisecondsSinceEpoch(millis);
+          // Persisted timestamps are absolute instants; restore them in UTC so
+          // their representation does not depend on the runner/device locale.
+          : DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
     }
 
     credentialState = KuaishouCredentialState.values.firstWhere(
