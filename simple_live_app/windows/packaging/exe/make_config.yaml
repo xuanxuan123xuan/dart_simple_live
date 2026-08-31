@@ -5,7 +5,6 @@ display_name: Simple Live
 create_desktop_icon: true
 setup_icon_file: windows\runner\resources\app_icon.ico
 locales:
-  - en
   - zh
 architectures_allowed: x64compatible
 architectures_install_in_64_bit_mode: x64compatible
