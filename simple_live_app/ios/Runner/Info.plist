@@ -5,7 +5,11 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<string>zh-Hans</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh-Hans</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>Simple Live</string>
 	<key>CFBundleExecutable</key>
@@ -68,8 +72,6 @@
 	<string>保存图片至相册</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>保存直播截图至相册</string>
-	<key>UISupportsDocumentBrowser</key>
-	<true/>
 	<key>io.flutter.embedded_views_preview</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>

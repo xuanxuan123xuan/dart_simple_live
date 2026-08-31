@@ -4,6 +4,8 @@ import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
+  private var iosMenuChannel: FlutterMethodChannel?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -16,6 +18,10 @@ import UserNotifications
     if let controller = window?.rootViewController as? FlutterViewController {
       let channel = FlutterMethodChannel(
         name: "simple_live/live_notifications",
+        binaryMessenger: controller.binaryMessenger
+      )
+      iosMenuChannel = FlutterMethodChannel(
+        name: "simple_live/ios_menu",
         binaryMessenger: controller.binaryMessenger
       )
       channel.setMethodCallHandler { call, result in
@@ -96,6 +102,53 @@ import UserNotifications
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
+
+  override func buildMenu(with builder: UIMenuBuilder) {
+    super.buildMenu(with: builder)
+    guard builder.system == .main else { return }
+    builder.remove(menu: .file)
+    builder.insertSibling(makeFileMenu(), beforeMenu: .edit)
+    builder.insertSibling(makeNavigationMenu(), afterMenu: .window)
+    builder.insertSibling(makeHelpMenu(), afterMenu: .window)
+  }
+
+  private func makeFileMenu() -> UIMenu {
+    UIMenu(title: "文件", image: UIImage(systemName: "folder"), identifier: .file, options: [], children: [
+      UIKeyCommand(title: "配置包导入/导出", action: #selector(openProfileBackup), input: "p", modifierFlags: .command),
+    ])
+  }
+
+  private func makeNavigationMenu() -> UIMenu {
+    UIMenu(title: "导航", image: UIImage(systemName: "sidebar.left"), identifier: UIMenu.Identifier("simple_live.navigation"), options: .displayInline, children: [
+      UIKeyCommand(title: "首页", action: #selector(openHome), input: "1", modifierFlags: .command),
+      UIKeyCommand(title: "关注", action: #selector(openFollow), input: "2", modifierFlags: .command),
+      UIKeyCommand(title: "搜索", action: #selector(openSearch), input: "f", modifierFlags: [.command, .shift]),
+      UIKeyCommand(title: "观看历史", action: #selector(openHistory), input: "h", modifierFlags: [.command, .shift]),
+    ])
+  }
+
+  private func makeHelpMenu() -> UIMenu {
+    UIMenu(title: "帮助", image: UIImage(systemName: "questionmark.circle"), identifier: UIMenu.Identifier("simple_live.help"), options: .displayInline, children: [
+      UIKeyCommand(title: "设置", action: #selector(openSettings), input: ",", modifierFlags: .command),
+      UIKeyCommand(title: "使用帮助", action: #selector(openHelp), input: "?", modifierFlags: .command),
+      UIKeyCommand(title: "关于 Simple Live", action: #selector(openAbout), input: "a", modifierFlags: [.command, .shift]),
+      UIKeyCommand(title: "检查更新", action: #selector(openUpdate), input: "u", modifierFlags: [.command, .shift]),
+    ])
+  }
+
+  private func invokeMenu(_ name: String) {
+    iosMenuChannel?.invokeMethod(name, arguments: nil)
+  }
+
+  @objc private func openHome(_ sender: Any?) { invokeMenu("openHome") }
+  @objc private func openFollow(_ sender: Any?) { invokeMenu("openFollow") }
+  @objc private func openSearch(_ sender: Any?) { invokeMenu("openSearch") }
+  @objc private func openHistory(_ sender: Any?) { invokeMenu("openHistory") }
+  @objc private func openSettings(_ sender: Any?) { invokeMenu("openSettings") }
+  @objc private func openHelp(_ sender: Any?) { invokeMenu("openHelp") }
+  @objc private func openAbout(_ sender: Any?) { invokeMenu("openAbout") }
+  @objc private func openUpdate(_ sender: Any?) { invokeMenu("openUpdate") }
+  @objc private func openProfileBackup(_ sender: Any?) { invokeMenu("openProfileBackup") }
 
   /// 强制状态栏隐藏/显示。iOS 26 上 setStatusBarHidden 可能被系统忽略，
   /// 周期重试 5 次对抗系统恢复；同时刷新所有窗口 VC 外观（兼容 VC-based 路径）。

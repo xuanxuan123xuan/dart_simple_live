@@ -1,0 +1,3 @@
+/* UIKit uses the system translations for standard edit commands. This
+   resource makes Simplified Chinese an explicit application localization. */
+"CFBundleDisplayName" = "Simple Live";

@@ -654,7 +654,10 @@ void initCoreLog() {
 class MyApp extends StatelessWidget {
   static const MethodChannel _desktopShortcutChannel =
       MethodChannel("simple_live/desktop_shortcuts");
+  static const MethodChannel _iosMenuChannel =
+      MethodChannel("simple_live/ios_menu");
   static bool _desktopShortcutHandlerBound = false;
+  static bool _iosMenuHandlerBound = false;
   static bool? _desktopShortcutCaptureEnabled;
   static bool _ohosNotificationNavigationBound = false;
   static bool _appUpdateAutoCheckStarted = false;
@@ -678,6 +681,10 @@ class MyApp extends StatelessWidget {
       );
       FocusManager.instance.addListener(_syncDesktopShortcutCaptureState);
       _desktopShortcutHandlerBound = true;
+    }
+    if (Platform.isIOS && !_iosMenuHandlerBound) {
+      _iosMenuChannel.setMethodCallHandler(_handleIosMenuMethod);
+      _iosMenuHandlerBound = true;
     }
     if (!_appUpdateAutoCheckStarted) {
       _appUpdateAutoCheckStarted = true;
@@ -831,6 +838,38 @@ class MyApp extends StatelessWidget {
         ),
       );
     }));
+  }
+
+  static Future<void> _handleIosMenuMethod(MethodCall call) async {
+    switch (call.method) {
+      case "openHome":
+        Get.offAllNamed(RoutePath.kIndex);
+        break;
+      case "openFollow":
+        Get.toNamed(RoutePath.kFollowUser);
+        break;
+      case "openSearch":
+        Get.toNamed(RoutePath.kSearch);
+        break;
+      case "openHistory":
+        Get.toNamed(RoutePath.kHistory);
+        break;
+      case "openSettings":
+        Get.toNamed(RoutePath.kSettings);
+        break;
+      case "openHelp":
+        Get.toNamed(RoutePath.kHelp);
+        break;
+      case "openAbout":
+        Get.toNamed(RoutePath.kAbout);
+        break;
+      case "openUpdate":
+        Get.toNamed(RoutePath.kAppUpdate);
+        break;
+      case "openProfileBackup":
+        Get.toNamed(RoutePath.kProfileBackup);
+        break;
+    }
   }
 
   static Future<void> _openOhosNotificationTarget(
