@@ -14,6 +14,11 @@ import 'package:webview_flutter/webview_flutter.dart' as ohos_webview;
 
 class KuaishouWebLoginController extends BaseController {
   static const _loginUrl = "https://live.kuaishou.com/";
+  static const _cookieUrls = [
+    "https://live.kuaishou.com",
+    "https://kuaishou.com",
+    "https://www.kuaishou.com",
+  ];
   static const _desktopSafariUserAgent =
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
       "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15";
@@ -35,16 +40,22 @@ class KuaishouWebLoginController extends BaseController {
   bool _ohosLoginRequestLoaded = false;
   bool _freshOhosSessionPrepared = false;
   bool _freshOhosStorageResetPending = false;
+  bool _closing = false;
+  final _freshSession = KuaishouFreshLoginSessionCoordinator();
 
-  KuaishouAccountSlot get targetSlot => Get.arguments is KuaishouAccountSlot
-      ? Get.arguments as KuaishouAccountSlot
-      : KuaishouAccountSlot.primary;
+  late final KuaishouAccountSlot targetSlot =
+      Get.arguments is KuaishouAccountSlot
+          ? Get.arguments as KuaishouAccountSlot
+          : KuaishouAccountSlot.primary;
 
   String get targetSlotName =>
       targetSlot == KuaishouAccountSlot.primary ? "主账号" : "备用账号";
 
   bool get requiresFreshSession =>
       requiresFreshKuaishouLoginSession(targetSlot);
+
+  bool get _usesManagedFreshSession =>
+      requiresFreshSession && !Utils.isOhos;
 
   @override
   void onInit() {
@@ -64,8 +75,20 @@ class KuaishouWebLoginController extends BaseController {
 
   @override
   void onClose() {
+    _closing = true;
     _sessionPollTimer?.cancel();
+    if (_usesManagedFreshSession && !_freshSession.cleaned) {
+      unawaited(_clearKuaishouCookiesAfterClose());
+    }
     super.onClose();
+  }
+
+  Future<void> _clearKuaishouCookiesAfterClose() async {
+    try {
+      await _clearKuaishouCookies();
+    } catch (e) {
+      Log.d("关闭快手备用账号登录页时清理 Cookie 失败：$e");
+    }
   }
 
   void _initializeOhosWebView() {
@@ -144,7 +167,33 @@ class KuaishouWebLoginController extends BaseController {
 
   void onWebViewCreated(InAppWebViewController controller) {
     webViewController = controller;
-    controller.loadUrl(urlRequest: URLRequest(url: WebUri(_loginUrl)));
+    unawaited(_openLoginPage());
+  }
+
+  Future<void> _openLoginPage() async {
+    final controller = webViewController;
+    if (controller == null) {
+      return;
+    }
+    try {
+      if (_usesManagedFreshSession) {
+        await _freshSession.prepare(clearCookies: _clearKuaishouCookies);
+        if (_closing) {
+          return;
+        }
+      }
+      errorMessage.value = "";
+      await controller.loadUrl(
+        urlRequest: URLRequest(url: WebUri(_loginUrl)),
+      );
+    } catch (e) {
+      _loginPageReady = false;
+      progress.value = 1;
+      errorMessage.value = requiresFreshSession
+          ? "无法创建备用账号独立登录会话"
+          : "无法打开快手登录页面";
+      Log.e("准备快手登录会话失败：$e", StackTrace.current);
+    }
   }
 
   void onProgressChanged(InAppWebViewController controller, int value) {
@@ -158,9 +207,31 @@ class KuaishouWebLoginController extends BaseController {
   }
 
   void onLoadStop(InAppWebViewController controller, Uri? uri) {
-    _loginPageReady = true;
+    unawaited(_handlePageFinished(controller));
+  }
+
+  Future<void> _handlePageFinished(
+    InAppWebViewController controller,
+  ) async {
     progress.value = 1;
-    unawaited(_tryAutoCompleteLogin());
+    if (_usesManagedFreshSession && _freshSession.storageResetPending) {
+      _loginPageReady = false;
+      try {
+        await _freshSession.finishBootstrap(
+          clearPageStorage: () => _clearPageStorage(controller),
+          clearCookies: _clearKuaishouCookies,
+          reload: () => controller.loadUrl(
+            urlRequest: URLRequest(url: WebUri(_loginUrl)),
+          ),
+        );
+      } catch (e) {
+        errorMessage.value = "无法清理主账号网页登录状态";
+        Log.e("清理快手主账号网页登录状态失败：$e", StackTrace.current);
+      }
+      return;
+    }
+    _loginPageReady = true;
+    await _tryAutoCompleteLogin();
   }
 
   void onReceivedError(
@@ -186,6 +257,9 @@ class KuaishouWebLoginController extends BaseController {
   }
 
   Future<void> reload() async {
+    if (_closing) {
+      return;
+    }
     errorMessage.value = "";
     if (Utils.isOhos) {
       if (_ohosLoginRequestLoaded) {
@@ -194,7 +268,11 @@ class KuaishouWebLoginController extends BaseController {
         await _openOhosLoginPage();
       }
     } else {
-      await webViewController?.reload();
+      if (_usesManagedFreshSession && !_freshSession.prepared) {
+        await _openLoginPage();
+      } else {
+        await webViewController?.reload();
+      }
     }
   }
 
@@ -202,6 +280,13 @@ class KuaishouWebLoginController extends BaseController {
     bool silent = false,
     bool autoClose = true,
   }) async {
+    if (_closing ||
+        (_usesManagedFreshSession && _freshSession.blocksAutoCheck)) {
+      if (!silent && !_closing) {
+        SmartDialog.showToast("备用账号登录会话正在准备，请稍后重试");
+      }
+      return;
+    }
     if (checking.value) {
       return;
     }
@@ -249,6 +334,11 @@ class KuaishouWebLoginController extends BaseController {
         }
         return;
       }
+      if (autoClose) {
+        if (!await prepareToClose()) {
+          return;
+        }
+      }
       if (!silent || autoClose) {
         SmartDialog.showToast("快手$targetSlotName Cookie 已保存，可用于搜索和弹幕");
       }
@@ -272,11 +362,7 @@ class KuaishouWebLoginController extends BaseController {
     final manager = cookieManager ??= CookieManager.instance();
     final values = <String, String>{};
     final expiryDatesByName = <String, List<int>>{};
-    for (final url in const [
-      "https://live.kuaishou.com",
-      "https://kuaishou.com",
-      "https://www.kuaishou.com",
-    ]) {
+    for (final url in _cookieUrls) {
       final cookies = await manager.getCookies(
         url: WebUri(url),
         webViewController: webViewController,
@@ -302,7 +388,11 @@ class KuaishouWebLoginController extends BaseController {
   }
 
   Future<void> _tryAutoCompleteLogin() async {
-    if (checking.value || _autoChecking || _freshOhosStorageResetPending) {
+    if (checking.value ||
+        _autoChecking ||
+        _freshOhosStorageResetPending ||
+        _closing ||
+        (_usesManagedFreshSession && _freshSession.blocksAutoCheck)) {
       return;
     }
     _autoChecking = true;
@@ -348,11 +438,7 @@ class KuaishouWebLoginController extends BaseController {
 
   Future<_KuaishouCookieSnapshot> _readOhosCookie() async {
     final values = <String, String>{};
-    for (final url in const [
-      "https://live.kuaishou.com",
-      "https://kuaishou.com",
-      "https://www.kuaishou.com",
-    ]) {
+    for (final url in _cookieUrls) {
       final cookie = await _ohosWebCookieChannel.invokeMethod<String>(
             'getCookie',
             {'url': url},
@@ -390,6 +476,67 @@ class KuaishouWebLoginController extends BaseController {
     return _normalizeJavascriptResult(value);
   }
 
+  Future<void> _clearPageStorage(InAppWebViewController controller) async {
+    await controller.evaluateJavascript(
+      source: "window.localStorage.clear(); window.sessionStorage.clear();",
+    );
+  }
+
+  Future<void> _clearKuaishouCookies() async {
+    final manager = cookieManager ??= CookieManager.instance();
+    final deleted = <String>{};
+    for (final url in _cookieUrls) {
+      final webUri = WebUri(url);
+      final cookies = await manager.getCookies(url: webUri);
+      for (final cookie in cookies) {
+        final domain = cookie.domain;
+        final path = cookie.path ?? "/";
+        final key = "${cookie.name}\u0000${domain ?? url}\u0000$path";
+        if (!deleted.add(key)) {
+          continue;
+        }
+        final removed = await manager.deleteCookie(
+          url: webUri,
+          name: cookie.name,
+          domain: domain,
+          path: path,
+        );
+        if (!removed) {
+          throw StateError("无法清理快手网页登录 Cookie");
+        }
+      }
+    }
+  }
+
+  Future<bool> prepareToClose() async {
+    if (_closing && _freshSession.cleaned) {
+      return true;
+    }
+    _closing = true;
+    _loginPageReady = false;
+    if (!_usesManagedFreshSession) {
+      return true;
+    }
+    final controller = webViewController;
+    try {
+      await _freshSession.cleanup(
+        clearPageStorage: () async {
+          if (controller != null) {
+            await _clearPageStorage(controller);
+          }
+        },
+        clearCookies: _clearKuaishouCookies,
+      );
+      return true;
+    } catch (e) {
+      errorMessage.value = "无法清理备用账号网页登录状态，请重试返回";
+      SmartDialog.showToast(errorMessage.value);
+      Log.e("退出快手备用账号登录页时清理会话失败：$e", StackTrace.current);
+      _closing = false;
+      return false;
+    }
+  }
+
   String _normalizeJavascriptResult(Object? value) {
     final text = value?.toString().trim() ?? '';
     if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
@@ -416,6 +563,110 @@ class KuaishouWebLoginController extends BaseController {
 
 bool requiresFreshKuaishouLoginSession(KuaishouAccountSlot slot) {
   return slot == KuaishouAccountSlot.secondary;
+}
+
+class KuaishouFreshLoginSessionCoordinator {
+  bool _prepared = false;
+  bool _storageResetPending = false;
+  bool _cleaned = false;
+  Future<void>? _prepareFuture;
+  Future<void>? _bootstrapFuture;
+  Future<void>? _cleanupFuture;
+
+  bool get prepared => _prepared;
+  bool get storageResetPending => _storageResetPending;
+  bool get cleaned => _cleaned;
+  bool get blocksAutoCheck => !_prepared || _storageResetPending || _cleaned;
+
+  Future<void> prepare({
+    required Future<void> Function() clearCookies,
+  }) {
+    if (_prepared) {
+      return Future<void>.value();
+    }
+    return _prepareFuture ??= _runPrepare(clearCookies);
+  }
+
+  Future<void> _runPrepare(Future<void> Function() clearCookies) async {
+    try {
+      await clearCookies();
+      _prepared = true;
+      _storageResetPending = true;
+    } finally {
+      _prepareFuture = null;
+    }
+  }
+
+  Future<void> finishBootstrap({
+    required Future<void> Function() clearPageStorage,
+    required Future<void> Function() clearCookies,
+    required Future<void> Function() reload,
+  }) {
+    if (!_storageResetPending) {
+      return Future<void>.value();
+    }
+    return _bootstrapFuture ??= _runBootstrap(
+      clearPageStorage: clearPageStorage,
+      clearCookies: clearCookies,
+      reload: reload,
+    );
+  }
+
+  Future<void> _runBootstrap({
+    required Future<void> Function() clearPageStorage,
+    required Future<void> Function() clearCookies,
+    required Future<void> Function() reload,
+  }) async {
+    try {
+      await clearPageStorage();
+      await clearCookies();
+      await reload();
+      _storageResetPending = false;
+    } finally {
+      _bootstrapFuture = null;
+    }
+  }
+
+  Future<void> cleanup({
+    required Future<void> Function() clearPageStorage,
+    required Future<void> Function() clearCookies,
+  }) {
+    if (_cleaned) {
+      return Future<void>.value();
+    }
+    return _cleanupFuture ??= _runCleanup(
+      clearPageStorage: clearPageStorage,
+      clearCookies: clearCookies,
+    );
+  }
+
+  Future<void> _runCleanup({
+    required Future<void> Function() clearPageStorage,
+    required Future<void> Function() clearCookies,
+  }) async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    try {
+      await clearPageStorage();
+    } catch (e, stackTrace) {
+      firstError = e;
+      firstStackTrace = stackTrace;
+    }
+    try {
+      await clearCookies();
+    } catch (e, stackTrace) {
+      firstError ??= e;
+      firstStackTrace ??= stackTrace;
+    }
+    try {
+      if (firstError != null) {
+        Error.throwWithStackTrace(firstError, firstStackTrace!);
+      }
+      _cleaned = true;
+    } finally {
+      _cleanupFuture = null;
+    }
+  }
 }
 
 const List<String> _kuaishouAuthCookiePriority = [
