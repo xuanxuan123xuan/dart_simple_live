@@ -22,6 +22,7 @@ class ProfileBackupController extends BaseController {
   final exportShields = true.obs;
   final exportShieldPresets = true.obs;
   final exportAccounts = false.obs;
+  final exportUpstreamMode = UpstreamExportMode.none.obs;
 
   /// 从关注页进入时只预勾选关注数据，其余分类仍按包内实际内容展示。
   Set<ProfileCategory>? importPreselection;
@@ -46,13 +47,40 @@ class ProfileBackupController extends BaseController {
   }
 
   ProfileExportOptions get exportOptions => ProfileExportOptions(
-        settings: exportSettings.value,
-        follows: exportFollows.value,
-        histories: exportHistories.value,
-        shields: exportShields.value,
-        shieldPresets: exportShieldPresets.value,
-        accounts: exportAccounts.value,
-      );
+    settings: exportSettings.value,
+    follows: exportFollows.value,
+    histories: exportHistories.value,
+    shields: exportShields.value,
+    shieldPresets: exportShieldPresets.value,
+    accounts: exportAccounts.value,
+    upstreamMode: exportUpstreamMode.value,
+  );
+
+  void setUpstreamMode(UpstreamExportMode mode) {
+    exportUpstreamMode.value = mode;
+    switch (mode) {
+      case UpstreamExportMode.none:
+        break;
+      case UpstreamExportMode.dataAndSync:
+        // 上游旧配置包只定义设置和关键词屏蔽词两个字段。
+        exportSettings.value = true;
+        exportShields.value = true;
+        exportFollows.value = false;
+        exportHistories.value = false;
+        exportShieldPresets.value = false;
+        exportAccounts.value = false;
+        break;
+      case UpstreamExportMode.followList:
+        // 上游关注页导出要求顶层数组，只包含关注项。
+        exportSettings.value = false;
+        exportFollows.value = true;
+        exportHistories.value = false;
+        exportShields.value = false;
+        exportShieldPresets.value = false;
+        exportAccounts.value = false;
+        break;
+    }
+  }
 
   Future<void> exportProfile() async {
     try {
@@ -66,10 +94,10 @@ class ProfileBackupController extends BaseController {
         SmartDialog.showToast("没有存储权限");
         return;
       }
-      final content =
-          ProfileBackupService.instance.exportProfileJson(options: options);
-      final fileName =
-          "SimpleLive_Profile_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json";
+      final content = ProfileBackupService.instance.exportProfileJson(
+        options: options,
+      );
+      final fileName = _exportFileName(options);
       if (Utils.isOhos) {
         final saved = await OhosDocumentService.saveText(
           fileName: fileName,
@@ -98,6 +126,17 @@ class ProfileBackupController extends BaseController {
     } catch (e) {
       Log.logPrint(e);
       SmartDialog.showToast("导出失败：$e");
+    }
+  }
+
+  String _exportFileName(ProfileExportOptions options) {
+    switch (options.upstreamMode) {
+      case UpstreamExportMode.dataAndSync:
+        return "simple_live_config.json";
+      case UpstreamExportMode.followList:
+        return "SimpleLive_Follow_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json";
+      case UpstreamExportMode.none:
+        return "SimpleLive_Profile_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json";
     }
   }
 
@@ -135,13 +174,13 @@ class ProfileBackupController extends BaseController {
       }
 
       SyncProgressDialog.show(const SyncProgress(stage: "正在导入配置包"));
-      final summary =
-          await ProfileBackupService.instance.importInspectedProfile(
-        inspection,
-        overwrite: decision.overwrite,
-        options: decision.options,
-        onProgress: SyncProgressDialog.update,
-      );
+      final summary = await ProfileBackupService.instance
+          .importInspectedProfile(
+            inspection,
+            overwrite: decision.overwrite,
+            options: decision.options,
+            onProgress: SyncProgressDialog.update,
+          );
       SyncProgressDialog.dismiss();
       SmartDialog.showToast("导入完成：${summary.message}");
     } catch (e) {

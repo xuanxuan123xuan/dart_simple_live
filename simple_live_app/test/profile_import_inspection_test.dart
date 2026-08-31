@@ -58,10 +58,10 @@ void main() {
 
       expect(inspection.kind, ProfilePackageKind.profile);
       expect(inspection.appVersion, "1.2.3");
-      expect(
-        inspection.availableCategories,
-        [ProfileCategory.settings, ProfileCategory.follows],
-      );
+      expect(inspection.availableCategories, [
+        ProfileCategory.settings,
+        ProfileCategory.follows,
+      ]);
       expect(inspection.categories[ProfileCategory.histories], isNull);
       expect(
         inspection.categories[ProfileCategory.follows]!.detail,
@@ -98,10 +98,7 @@ void main() {
           "raw": ["a", "b", "c"],
         },
       });
-      expect(
-        rawInspection.categories[ProfileCategory.shields]!.detail,
-        "3 项",
-      );
+      expect(rawInspection.categories[ProfileCategory.shields]!.detail, "3 项");
 
       final structured = inspect({
         "schema": ProfileBackupService.schema,
@@ -169,10 +166,7 @@ void main() {
           ],
         },
       });
-      expect(
-        withCookies.categories[ProfileCategory.accounts]!.detail,
-        "2 个平台",
-      );
+      expect(withCookies.categories[ProfileCategory.accounts]!.detail, "2 个平台");
     });
 
     test('识别上游关注页导出的顶层数组', () {
@@ -205,43 +199,35 @@ void main() {
       expect(inspection.kind, ProfilePackageKind.legacyDataFile);
       // 关注项同时带 roomId/siteId 和 tag，必须判为关注而不是标签。
       expect(inspection.availableCategories, [ProfileCategory.follows]);
-      expect(
-        inspection.categories[ProfileCategory.follows]!.detail,
-        "2 个关注",
-      );
+      expect(inspection.categories[ProfileCategory.follows]!.detail, "2 个关注");
     });
 
     test('顶层数组的历史与屏蔽词仍各归其类', () {
-      final histories = service.inspectProfileJson(jsonEncode([
-        {
-          "id": "bilibili_1",
-          "roomId": "1",
-          "siteId": "bilibili",
-          "updateTime": 1
-        },
-      ]));
-      expect(
-        histories.categories[ProfileCategory.histories]!.detail,
-        "1 条",
+      final histories = service.inspectProfileJson(
+        jsonEncode([
+          {
+            "id": "bilibili_1",
+            "roomId": "1",
+            "siteId": "bilibili",
+            "updateTime": 1,
+          },
+        ]),
       );
+      expect(histories.categories[ProfileCategory.histories]!.detail, "1 条");
 
-      final tags = service.inspectProfileJson(jsonEncode([
-        {
-          "id": "t1",
-          "tag": "常看",
-          "userId": ["bilibili_1"]
-        },
-      ]));
-      expect(
-        tags.categories[ProfileCategory.follows]!.detail,
-        "1 个标签",
+      final tags = service.inspectProfileJson(
+        jsonEncode([
+          {
+            "id": "t1",
+            "tag": "常看",
+            "userId": ["bilibili_1"],
+          },
+        ]),
       );
+      expect(tags.categories[ProfileCategory.follows]!.detail, "1 个标签");
 
       final shields = service.inspectProfileJson(jsonEncode(["广告", "刷屏"]));
-      expect(
-        shields.categories[ProfileCategory.shields]!.detail,
-        "2 项",
-      );
+      expect(shields.categories[ProfileCategory.shields]!.detail, "2 项");
     });
 
     test('空顶层数组不产生可导入分类', () {
@@ -283,6 +269,35 @@ void main() {
       );
     });
 
+    test('兼容模式导出上游数据与同步的旧配置包格式', () {
+      final payload =
+          jsonDecode(
+                service.exportProfileJson(
+                  options: const ProfileExportOptions(
+                    settings: false,
+                    accounts: false,
+                    shields: false,
+                    shieldPresets: false,
+                    follows: false,
+                    histories: false,
+                    upstreamMode: UpstreamExportMode.dataAndSync,
+                  ),
+                ),
+              )
+              as Map<String, dynamic>;
+
+      expect(payload['type'], 'simple_live');
+      expect(payload['version'], 1);
+      expect(payload['config'], isEmpty);
+      expect(payload['shield'], isEmpty);
+      expect(payload.containsKey('schema'), isFalse);
+      expect(payload.containsKey('followUsers'), isFalse);
+      expect(
+        service.inspectProfileJson(jsonEncode(payload)).kind,
+        ProfilePackageKind.legacyProfile,
+      );
+    });
+
     test('不是配置包或版本过新时抛出可读异常', () {
       // 顶层数组是上游关注导出的合法形态，不再直接判为非法；
       // 空数组由 isEmpty 分支给出「没有可导入内容」的提示。
@@ -291,10 +306,7 @@ void main() {
         () => service.inspectProfileJson('"just a string"'),
         throwsA(isA<FormatException>()),
       );
-      expect(
-        () => inspect({"foo": "bar"}),
-        throwsA(isA<FormatException>()),
-      );
+      expect(() => inspect({"foo": "bar"}), throwsA(isA<FormatException>()));
       expect(
         () => inspect({
           "schema": ProfileBackupService.schema,
@@ -331,6 +343,21 @@ void main() {
       expect(
         ProfileImportOptions.fromCategories(const {}).hasSelection,
         isFalse,
+      );
+    });
+
+    test('上游关注列表模式本身构成有效导出选择', () {
+      expect(
+        const ProfileExportOptions(
+          settings: false,
+          accounts: false,
+          shields: false,
+          shieldPresets: false,
+          follows: false,
+          histories: false,
+          upstreamMode: UpstreamExportMode.followList,
+        ).hasSelection,
+        isTrue,
       );
     });
   });

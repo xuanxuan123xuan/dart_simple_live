@@ -70,6 +70,12 @@ class ProfileBackupService extends GetxService {
   Map<String, dynamic> exportProfileMap({
     ProfileExportOptions options = const ProfileExportOptions(),
   }) {
+    if (options.upstreamMode == UpstreamExportMode.dataAndSync) {
+      return _exportUpstreamProfileMap(options);
+    }
+    if (options.upstreamMode == UpstreamExportMode.followList) {
+      throw StateError("上游关注列表格式是顶层数组，不能作为 Map 导出");
+    }
     final shieldPayload = options.shields
         ? _exportShieldValues()
         : {
@@ -78,23 +84,26 @@ class ProfileBackupService extends GetxService {
             "users": const [],
             "userGroups": const <String, List<String>>{},
           };
-    final settingsPayload =
-        options.settings ? _exportSettings() : <String, dynamic>{};
-    final accountsPayload =
-        options.accounts ? _exportAccounts() : {"items": const []};
-    final shieldPresetsPayload =
-        options.shieldPresets ? _exportShieldPresets() : const [];
+    final settingsPayload = options.settings
+        ? _exportSettings()
+        : <String, dynamic>{};
+    final accountsPayload = options.accounts
+        ? _exportAccounts()
+        : {"items": const []};
+    final shieldPresetsPayload = options.shieldPresets
+        ? _exportShieldPresets()
+        : const [];
     final followUsers = options.follows
         ? DBService.instance
-            .getFollowList()
-            .map((item) => item.toJson())
-            .toList()
+              .getFollowList()
+              .map((item) => item.toJson())
+              .toList()
         : const [];
     final followUserTags = options.follows
         ? DBService.instance
-            .getFollowTagList()
-            .map((item) => item.toJson())
-            .toList()
+              .getFollowTagList()
+              .map((item) => item.toJson())
+              .toList()
         : const [];
     final histories = options.histories
         ? DBService.instance.getHistores().map((item) => item.toJson()).toList()
@@ -127,17 +136,64 @@ class ProfileBackupService extends GetxService {
     };
   }
 
+  /// 返回配置包的实际 JSON 根对象。上游关注列表格式是顶层数组，
+  /// 因此不能复用只返回 Map 的 [exportProfileMap]。
+  Object exportProfilePayload({
+    ProfileExportOptions options = const ProfileExportOptions(),
+  }) {
+    if (options.upstreamMode == UpstreamExportMode.followList) {
+      return _exportUpstreamFollowList();
+    }
+    return exportProfileMap(options: options);
+  }
+
+  List<Map<String, dynamic>> _exportUpstreamFollowList() {
+    return DBService.instance.getFollowList().map((item) {
+      // 保持与上游关注页导出字段一致，避免新字段导致老版本解析差异。
+      return <String, dynamic>{
+        "siteId": item.siteId,
+        "id": item.id,
+        "roomId": item.roomId,
+        "userName": item.userName,
+        "face": item.face,
+        "addTime": item.addTime.toString(),
+        "tag": item.tag,
+        "isSpecialFollow": item.isSpecialFollow,
+      };
+    }).toList();
+  }
+
+  /// 上游「我的 - 数据与同步」的旧配置包格式。
+  ///
+  /// 该格式只支持设置和关键词屏蔽词；关注列表由上游关注页单独导出为顶层数组，
+  /// 导入时由 [inspectProfileJson] 自动识别。
+  Map<String, dynamic> _exportUpstreamProfileMap(ProfileExportOptions options) {
+    final settings = options.settings ? _exportSettings() : <String, dynamic>{};
+    final shieldValues = options.shields
+        ? (AppSettingsControllerSafe.keywordValues()..sort())
+        : <String>[];
+    return {
+      "type": "simple_live",
+      "platform": Platform.operatingSystem,
+      "version": 1,
+      "time": DateTime.now().millisecondsSinceEpoch,
+      "config": settings,
+      "shield": {for (final value in shieldValues) value: value},
+    };
+  }
+
   String exportProfileJson({
     ProfileExportOptions options = const ProfileExportOptions(),
   }) {
-    return const JsonEncoder.withIndent("  ")
-        .convert(exportProfileMap(options: options));
+    return const JsonEncoder.withIndent(
+      "  ",
+    ).convert(exportProfilePayload(options: options));
   }
 
   Future<TemporaryProfilePackage> createTemporaryProfilePackage({
     ProfileExportOptions options = const ProfileExportOptions(),
   }) async {
-    final payload = exportProfileMap(options: options);
+    final payload = exportProfilePayload(options: options);
     final content = const JsonEncoder.withIndent("  ").convert(payload);
     final dir = await Directory.systemTemp.createTemp("simple_live_profile_");
     final file = File("${dir.path}${Platform.pathSeparator}profile.json");
@@ -145,10 +201,46 @@ class ProfileBackupService extends GetxService {
     return TemporaryProfilePackage(
       file: file,
       directory: dir,
-      summary: Map<String, dynamic>.from(payload["summary"] as Map),
+      summary: _exportSummary(payload),
       options: options,
       byteLength: utf8.encode(content).length,
     );
+  }
+
+  Map<String, dynamic> _exportSummary(Object payload) {
+    if (payload is List) {
+      return {
+        "settingCount": 0,
+        "rawShieldCount": 0,
+        "keywordShieldCount": 0,
+        "userShieldCount": 0,
+        "followUserCount": payload.length,
+        "followTagCount": 0,
+        "historyCount": 0,
+        "shieldPresetCount": 0,
+        "accountCount": 0,
+      };
+    }
+    if (payload is! Map) {
+      return const {};
+    }
+    final summary = payload["summary"];
+    if (summary is Map) {
+      return Map<String, dynamic>.from(summary);
+    }
+    final settings = payload["config"];
+    final shields = _legacyShieldValues(payload["shield"]);
+    return {
+      "settingCount": settings is Map ? settings.length : 0,
+      "rawShieldCount": shields.length,
+      "keywordShieldCount": shields.length,
+      "userShieldCount": 0,
+      "followUserCount": 0,
+      "followTagCount": 0,
+      "historyCount": 0,
+      "shieldPresetCount": 0,
+      "accountCount": 0,
+    };
   }
 
   Future<ProfileImportSummary> importProfileJson(
@@ -256,7 +348,12 @@ class ProfileBackupService extends GetxService {
     final summary = ProfileImportSummary();
     if (options.settings) {
       onProgress?.call(const SyncProgress(stage: "导入设置"));
-      await _importSettings(payload["config"], summary, overwrite);
+      await _importSettings(
+        payload["config"],
+        summary,
+        overwrite,
+        sourcePlatform: payload["platform"],
+      );
     }
     if (options.shields) {
       await _importShields(
@@ -319,8 +416,10 @@ class ProfileBackupService extends GetxService {
           .where((key) => !_excludedSettings.contains(key.toString()))
           .length;
       if (count > 0) {
-        result[ProfileCategory.settings] =
-            ProfileCategoryInfo(count: count, detail: "$count 项");
+        result[ProfileCategory.settings] = ProfileCategoryInfo(
+          count: count,
+          detail: "$count 项",
+        );
       }
     }
 
@@ -370,8 +469,10 @@ class ProfileBackupService extends GetxService {
           .where((key) => !_excludedSettings.contains(key.toString()))
           .length;
       if (count > 0) {
-        result[ProfileCategory.settings] =
-            ProfileCategoryInfo(count: count, detail: "$count 项");
+        result[ProfileCategory.settings] = ProfileCategoryInfo(
+          count: count,
+          detail: "$count 项",
+        );
       }
     }
     final shields = _legacyShieldValues(payload["shield"]);
@@ -447,10 +548,7 @@ class ProfileBackupService extends GetxService {
       "follows",
       "favorites",
     ]);
-    final tags = _readPayloadList(payload, [
-      "followUserTags",
-      "tags",
-    ]);
+    final tags = _readPayloadList(payload, ["followUserTags", "tags"]);
     final userCount = users is List ? users.length : 0;
     final tagCount = tags is List ? tags.length : 0;
     if (userCount == 0 && tagCount == 0) {
@@ -472,10 +570,7 @@ class ProfileBackupService extends GetxService {
     }
     final raw = rawShield["raw"];
     if (raw is List && raw.isNotEmpty) {
-      return ProfileCategoryInfo(
-        count: raw.length,
-        detail: "${raw.length} 项",
-      );
+      return ProfileCategoryInfo(count: raw.length, detail: "${raw.length} 项");
     }
     final keywords = rawShield["keywords"];
     final keywordCount = keywords is List ? keywords.length : 0;
@@ -519,9 +614,11 @@ class ProfileBackupService extends GetxService {
       // 快手把 Cookie 放在 slots 里，需要单独看槽位。
       final slots = item["slots"];
       if (slots is Map &&
-          slots.values.any((slot) =>
-              slot is Map &&
-              (slot["cookie"]?.toString().trim() ?? "").isNotEmpty)) {
+          slots.values.any(
+            (slot) =>
+                slot is Map &&
+                (slot["cookie"]?.toString().trim() ?? "").isNotEmpty,
+          )) {
         count++;
       }
     }
@@ -545,16 +642,9 @@ class ProfileBackupService extends GetxService {
       );
     } else {
       if (options.follows) {
-        final rawTags = _readPayloadList(payload, [
-          "followUserTags",
-          "tags",
-        ]);
+        final rawTags = _readPayloadList(payload, ["followUserTags", "tags"]);
         await _importFollowUsers(
-          _readPayloadList(payload, [
-            "followUsers",
-            "follows",
-            "favorites",
-          ]),
+          _readPayloadList(payload, ["followUsers", "follows", "favorites"]),
           summary,
           overwrite,
           onProgress,
@@ -565,13 +655,11 @@ class ProfileBackupService extends GetxService {
       }
       if (options.histories) {
         await _importHistories(
-            _readPayloadList(payload, [
-              "histories",
-              "history",
-            ]),
-            summary,
-            overwrite,
-            onProgress);
+          _readPayloadList(payload, ["histories", "history"]),
+          summary,
+          overwrite,
+          onProgress,
+        );
       }
     }
 
@@ -627,40 +715,29 @@ class ProfileBackupService extends GetxService {
     }
     if (options.shieldPresets) {
       onProgress?.call(const SyncProgress(stage: "导入屏蔽预设"));
-      await _importShieldPresets(
-        payload["shieldPresets"],
-        summary,
-        overwrite,
-      );
+      await _importShieldPresets(payload["shieldPresets"], summary, overwrite);
     }
     if (options.follows) {
       await _importFollowUsers(
-          _readPayloadList(payload, [
-            "followUsers",
-            "follows",
-            "favorites",
-          ]),
-          summary,
-          overwrite,
-          onProgress);
+        _readPayloadList(payload, ["followUsers", "follows", "favorites"]),
+        summary,
+        overwrite,
+        onProgress,
+      );
       await _importFollowTags(
-          _readPayloadList(payload, [
-            "followUserTags",
-            "tags",
-          ]),
-          summary,
-          overwrite,
-          onProgress);
+        _readPayloadList(payload, ["followUserTags", "tags"]),
+        summary,
+        overwrite,
+        onProgress,
+      );
     }
     if (options.histories) {
       await _importHistories(
-          _readPayloadList(payload, [
-            "histories",
-            "history",
-          ]),
-          summary,
-          overwrite,
-          onProgress);
+        _readPayloadList(payload, ["histories", "history"]),
+        summary,
+        overwrite,
+        onProgress,
+      );
     }
 
     if (options.settings || options.shields || options.shieldPresets) {
@@ -714,11 +791,12 @@ class ProfileBackupService extends GetxService {
   }
 
   Map<String, dynamic> _exportShieldValues() {
-    final raw = LocalStorageService.instance.shieldBox.values
-        .map((e) => e.toString().trim())
-        .where((e) => e.isNotEmpty)
-        .toList()
-      ..sort();
+    final raw =
+        LocalStorageService.instance.shieldBox.values
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList()
+          ..sort();
     final keywords = AppSettingsControllerSafe.keywordValues()..sort();
     final userGroups = AppSettingsControllerSafe.userGroups();
     final users = userGroups.values.expand((e) => e).toSet().toList()..sort();
@@ -932,15 +1010,12 @@ class ProfileBackupService extends GetxService {
         LocalStorageService.kKuaishouAccountPoolState,
       }.any(legacySettings.containsKey);
       if (hasLegacyKuaishou) {
-        KuaishouAccountService.instance.importBackupMap(
-          {
-            'cookie': legacySettings[LocalStorageService.kKuaishouCookie],
-            'kww': legacySettings[LocalStorageService.kKuaishouKww],
-            'cookieExpiresAt':
-                legacySettings[LocalStorageService.kKuaishouCookieExpiresAt],
-          },
-          legacySettings: legacySettings,
-        );
+        KuaishouAccountService.instance.importBackupMap({
+          'cookie': legacySettings[LocalStorageService.kKuaishouCookie],
+          'kww': legacySettings[LocalStorageService.kKuaishouKww],
+          'cookieExpiresAt':
+              legacySettings[LocalStorageService.kKuaishouCookieExpiresAt],
+        }, legacySettings: legacySettings);
         importedCount++;
       }
     }
@@ -1076,6 +1151,8 @@ class ProfileBackupService extends GetxService {
   }
 }
 
+enum UpstreamExportMode { none, dataAndSync, followList }
+
 class ProfileExportOptions {
   final bool settings;
   final bool accounts;
@@ -1083,6 +1160,7 @@ class ProfileExportOptions {
   final bool shieldPresets;
   final bool follows;
   final bool histories;
+  final UpstreamExportMode upstreamMode;
 
   const ProfileExportOptions({
     this.settings = true,
@@ -1091,12 +1169,19 @@ class ProfileExportOptions {
     this.shieldPresets = true,
     this.follows = true,
     this.histories = true,
+    this.upstreamMode = UpstreamExportMode.none,
   });
 
   bool get hasSelection =>
-      settings || accounts || shields || shieldPresets || follows || histories;
+      upstreamMode == UpstreamExportMode.followList ||
+      settings ||
+      accounts ||
+      shields ||
+      shieldPresets ||
+      follows ||
+      histories;
 
-  Map<String, bool> toJson() {
+  Map<String, dynamic> toJson() {
     return {
       "settings": settings,
       "accounts": accounts,
@@ -1104,6 +1189,7 @@ class ProfileExportOptions {
       "shieldPresets": shieldPresets,
       "follows": follows,
       "histories": histories,
+      "upstreamMode": upstreamMode.name,
     };
   }
 }
