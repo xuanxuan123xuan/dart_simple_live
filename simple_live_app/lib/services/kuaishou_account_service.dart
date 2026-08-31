@@ -64,14 +64,12 @@ class KuaishouAccountSession {
 
   void restoreState(dynamic raw) {
     if (raw is! Map) return;
-    DateTime? readDate(String key) {
+    DateTime? readDate(String key, {bool isUtc = false}) {
       final value = raw[key];
       final millis = value is num ? value.toInt() : int.tryParse('$value');
       return millis == null || millis <= 0
           ? null
-          // Persisted timestamps are absolute instants; restore them in UTC so
-          // their representation does not depend on the runner/device locale.
-          : DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+          : DateTime.fromMillisecondsSinceEpoch(millis, isUtc: isUtc);
     }
 
     credentialState = KuaishouCredentialState.values.firstWhere(
@@ -83,7 +81,10 @@ class KuaishouAccountSession {
     cooldownUntil = readDate('cooldownUntil');
     suspendedUntil = readDate('suspendedUntil');
     suspendedReason = raw['suspendedReason']?.toString();
-    lastDeviceSessionRebuiltAt = readDate('lastDeviceSessionRebuiltAt');
+    // This marker is compared across runners/devices, so keep its canonical
+    // UTC representation independent of the local timezone.
+    lastDeviceSessionRebuiltAt =
+        readDate('lastDeviceSessionRebuiltAt', isUtc: true);
   }
 
   void replaceCredential({
