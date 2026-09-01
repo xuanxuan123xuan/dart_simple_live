@@ -59,14 +59,139 @@ void main() {
       nativePlayer,
       contains('player.setMediaSource(mediaSource, playbackStrategy)'),
     );
-    expect(
-      nativePlayer,
-      contains('let playbackStrategy: media.PlaybackStrategy = {};'),
-    );
-    expect(nativePlayer, isNot(contains('preferredBufferDuration')));
     expect(nativePlayer, contains('Events.START_RENDER_FRAME'));
     expect(nativePlayer, contains('this.sendFirstFrame();'));
     expect(nativePlayer, contains('event.set("event", "firstFrame")'));
+  });
+
+  test('OHOS build keeps API 12 compatibility and targets API 18', () {
+    final buildProfile = File(
+      'ohos/build-profile.json5',
+    ).readAsStringSync();
+
+    expect(
+      buildProfile,
+      contains('"compatibleSdkVersion": "5.0.0(12)"'),
+    );
+    expect(
+      buildProfile,
+      contains('"targetSdkVersion": "5.1.0(18)"'),
+    );
+  });
+
+  test('OHOS live buffering policy changes at the API 18 boundary', () {
+    final nativePlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
+    final policyBuilder = RegExp(
+      r'buildLivePlaybackStrategy\(\): media\.PlaybackStrategy \{([\s\S]*?)\n  \}',
+    ).firstMatch(nativePlayer)!.group(1)!;
+
+    expect(
+      nativePlayer,
+      contains('OHOS_SMART_CATCHUP_API_VERSION: number = 18'),
+    );
+    expect(
+      nativePlayer,
+      contains('LIVE_PREFERRED_BUFFER_DURATION_SECONDS: number = 20'),
+    );
+    expect(
+      nativePlayer,
+      contains(
+        'LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS: number = 5',
+      ),
+    );
+    expect(
+      nativePlayer,
+      contains('LIVE_SMART_CATCHUP_THRESHOLD_SECONDS: number = 60'),
+    );
+    expect(
+      policyBuilder,
+      contains(
+        'deviceInfo.sdkApiVersion >= OHOS_SMART_CATCHUP_API_VERSION',
+      ),
+    );
+    expect(policyBuilder, contains('preferredBufferDuration:'));
+    expect(policyBuilder, contains('preferredBufferDurationForPlaying'));
+    expect(policyBuilder, contains('thresholdForAutoQuickPlay'));
+
+    bool usesApi18Policy(int sdkApiVersion) => sdkApiVersion >= 18;
+    expect(usesApi18Policy(12), isFalse);
+    expect(usesApi18Policy(17), isFalse);
+    expect(usesApi18Policy(18), isTrue);
+  });
+
+  test('OHOS applies policy and prepare once per current generation', () {
+    final nativePlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
+    final prepareCurrent = RegExp(
+      r'prepareCurrentGeneration\([\s\S]*?\n  \}',
+    ).firstMatch(nativePlayer)!.group(0)!;
+
+    expect(nativePlayer, contains('playbackStrategyGeneration: number = -1'));
+    expect(nativePlayer, contains('playbackStrategyTask: Promise<void> | null'));
+    expect(nativePlayer, contains('prepareGeneration: number = -1'));
+    expect(
+      nativePlayer,
+      contains('this.playbackStrategyGeneration = -1;'),
+    );
+    expect(nativePlayer, contains('this.prepareGeneration = -1;'));
+    expect(
+      nativePlayer,
+      contains('this.playbackStrategyGeneration === generation'),
+    );
+    expect(prepareCurrent, contains('this.prepareGeneration === generation'));
+    expect(prepareCurrent, contains('await this.applyPlaybackStrategyIfNeeded'));
+    expect(
+      prepareCurrent.indexOf('await this.applyPlaybackStrategyIfNeeded'),
+      lessThan(prepareCurrent.indexOf('await player.prepare()')),
+    );
+    expect(nativePlayer, contains('await this.prepareCurrentGeneration('));
+    expect(nativePlayer, contains('this.disposed = true;'));
+    expect(nativePlayer, contains('this.playerGeneration += 1;'));
+  });
+
+  test('OHOS policy failures fall back without exposing source secrets', () {
+    final nativePlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
+    final strategyLogging = RegExp(
+      r'logPlaybackStrategy\([\s\S]*?\n  \}',
+    ).firstMatch(nativePlayer)!.group(0)!;
+
+    expect(nativePlayer, contains('await player.setPlaybackStrategy('));
+    expect(
+      nativePlayer,
+      contains("this.logPlaybackStrategy('fallback-system-default'"),
+    );
+    expect(
+      nativePlayer,
+      contains('await player.setMediaSource(mediaSource, {});'),
+    );
+    expect(strategyLogging, contains('sdkApi='));
+    expect(strategyLogging, contains('sourceKind='));
+    expect(strategyLogging, isNot(contains('this.url')));
+    expect(strategyLogging, isNot(contains('this.headers')));
+  });
+
+  test('OHOS app-owned latency chase remains disabled', () {
+    final player = File(
+      'lib/modules/live_room/player/player_controller.dart',
+    ).readAsStringSync();
+
+    expect(player, contains('if (!Utils.isOhos) {'));
+    expect(player, contains('await _liveLatencyChaser.start('));
+    expect(player, contains('if (Utils.isOhos) return;'));
+    expect(
+      player,
+      contains(
+        'Utils.isOhos ? null : _liveLatencyChaser.recommendedSampleInterval',
+      ),
+    );
   });
 
   test('OHOS waits for a real native first frame and times it out', () {

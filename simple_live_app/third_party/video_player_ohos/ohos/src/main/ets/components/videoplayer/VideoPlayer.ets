@@ -5,6 +5,7 @@
 // Copyright 2013 The Flutter Authors.
 
 import media from '@ohos.multimedia.media';
+import deviceInfo from '@ohos.deviceInfo';
 import prompt from '@ohos.promptAction';
 import resourceManager from '@ohos.resourceManager';
 import window from '@ohos.window';
@@ -41,6 +42,18 @@ const SOURCE_KIND_RAW_FILE: string = 'rawFile';
 const OPERATE_ERROR: number = 801;
 const AVPLAYER_STATE_ERROR: number = 5400102;
 
+const PLAYBACK_STRATEGY_IDLE: string = 'idle';
+const PLAYBACK_STRATEGY_APPLYING: string = 'applying';
+const PLAYBACK_STRATEGY_APPLIED: string = 'applied';
+const PLAYBACK_STRATEGY_FALLBACK: string = 'fallback';
+const OHOS_SMART_CATCHUP_API_VERSION: number = 18;
+const LIVE_PREFERRED_BUFFER_DURATION_SECONDS: number = 20;
+const LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS: number = 5;
+// AVPlayer's smart catch-up multiplier is fixed at 1.2x. A 60-second trigger
+// keeps it effectively disabled during ordinary viewing while retaining a
+// bounded escape hatch for an exceptionally stale FLV live stream.
+const LIVE_SMART_CATCHUP_THRESHOLD_SECONDS: number = 60;
+
 const TAG = 'VideoPlayer'
 export class VideoPlayer {
   private avPlayer: media.AVPlayer | null = null;
@@ -64,6 +77,10 @@ export class VideoPlayer {
   private playerGeneration: number = 0;
   private sourceAssignmentState: string = SOURCE_ASSIGNMENT_IDLE;
   private sourceKind: string = SOURCE_KIND_RAW_FILE;
+  private playbackStrategyGeneration: number = -1;
+  private playbackStrategyState: string = PLAYBACK_STRATEGY_IDLE;
+  private playbackStrategyTask: Promise<void> | null = null;
+  private prepareGeneration: number = -1;
   private prepared: boolean = false;
   private firstFrameRendered: boolean = false;
   private disposed: boolean = false;
@@ -136,11 +153,113 @@ export class VideoPlayer {
     this.playerGeneration += 1;
     this.sourceAssignmentState = SOURCE_ASSIGNMENT_IDLE;
     this.sourceKind = this.resolveSourceKind();
+    this.playbackStrategyGeneration = -1;
+    this.playbackStrategyState = PLAYBACK_STRATEGY_IDLE;
+    this.playbackStrategyTask = null;
+    this.prepareGeneration = -1;
     this.prepared = false;
     this.firstFrameRendered = false;
     // The next source owns a fresh timeline; a stale fallback would otherwise
     // read as progress and mask a source that never starts.
     this.lastKnownTimeMs = -1;
+  }
+
+  private buildLivePlaybackStrategy(): media.PlaybackStrategy {
+    let strategy: media.PlaybackStrategy = {
+      preferredBufferDuration: LIVE_PREFERRED_BUFFER_DURATION_SECONDS,
+    };
+    if (deviceInfo.sdkApiVersion >= OHOS_SMART_CATCHUP_API_VERSION) {
+      strategy.preferredBufferDurationForPlaying =
+        LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS;
+      strategy.thresholdForAutoQuickPlay =
+        LIVE_SMART_CATCHUP_THRESHOLD_SECONDS;
+    }
+    return strategy;
+  }
+
+  private logPlaybackStrategy(
+    result: string,
+    generation: number,
+    usesConfiguredStrategy: boolean = true,
+  ): void {
+    const supportsApi18Strategy =
+      deviceInfo.sdkApiVersion >= OHOS_SMART_CATCHUP_API_VERSION;
+    const usesPlayingWaterline =
+      usesConfiguredStrategy && supportsApi18Strategy;
+    const unavailableApi18Value = supportsApi18Strategy ?
+      'system-default' : 'unsupported';
+    Log.i(TAG,
+      `playback strategy ${result} generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
+      `sourceKind=${this.sourceKind} ` +
+      `preferredBuffer=${usesConfiguredStrategy ? LIVE_PREFERRED_BUFFER_DURATION_SECONDS + 's' : 'system-default'} ` +
+      `playingWaterline=${usesPlayingWaterline ? LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS + 's' : unavailableApi18Value} ` +
+      `smartCatchup=${usesPlayingWaterline ? LIVE_SMART_CATCHUP_THRESHOLD_SECONDS + 's' : unavailableApi18Value}`);
+  }
+
+  private async applyPlaybackStrategyIfNeeded(
+    generation: number,
+    player: media.AVPlayer,
+  ): Promise<void> {
+    if (!this.isCurrentGeneration(generation, player)) {
+      return;
+    }
+    if (this.playbackStrategyGeneration === generation &&
+      this.playbackStrategyTask != null) {
+      await this.playbackStrategyTask;
+      return;
+    }
+
+    this.playbackStrategyGeneration = generation;
+    this.playbackStrategyState = PLAYBACK_STRATEGY_APPLYING;
+    const task = (async () => {
+      try {
+        await player.setPlaybackStrategy(this.buildLivePlaybackStrategy());
+        if (!this.isCurrentGeneration(generation, player)) {
+          return;
+        }
+        this.playbackStrategyState = PLAYBACK_STRATEGY_APPLIED;
+        this.logPlaybackStrategy('applied', generation);
+      } catch (error) {
+        if (!this.isCurrentGeneration(generation, player)) {
+          return;
+        }
+        this.playbackStrategyState = PLAYBACK_STRATEGY_FALLBACK;
+        const nativeError = error as BusinessError;
+        Log.w(TAG,
+          `playback strategy fallback generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
+          `sourceKind=${this.sourceKind} code=${nativeError.code} state=${player.state}`);
+        this.logPlaybackStrategy('fallback-system-default', generation, false);
+      }
+    })();
+    this.playbackStrategyTask = task;
+    await task;
+  }
+
+  private async prepareCurrentGeneration(
+    generation: number,
+    player: media.AVPlayer,
+  ): Promise<void> {
+    if (!this.isCurrentGeneration(generation, player) ||
+      this.prepareGeneration === generation) {
+      return;
+    }
+    this.prepareGeneration = generation;
+    await this.applyPlaybackStrategyIfNeeded(generation, player);
+    if (!this.isCurrentGeneration(generation, player)) {
+      return;
+    }
+    try {
+      await player.prepare();
+    } catch (error) {
+      if (!this.isCurrentGeneration(generation, player)) {
+        return;
+      }
+      const nativeError = error as BusinessError;
+      Log.e(TAG,
+        `prepare failed generation=${generation} sourceKind=${this.sourceKind} ` +
+        `strategyState=${this.playbackStrategyState} code=${nativeError.code} state=${player.state}`);
+      this.sendError(nativeError);
+    }
   }
 
   private async assignMediaSourceIfNeeded(generation: number): Promise<void> {
@@ -163,8 +282,33 @@ export class VideoPlayer {
       } else {
         let mediaSource: media.MediaSource = media.createMediaSourceWithUrl(
           this.getIUri(), this.headers ?? {});
-        let playbackStrategy: media.PlaybackStrategy = {};
-        await player.setMediaSource(mediaSource, playbackStrategy);
+        let playbackStrategy: media.PlaybackStrategy =
+          this.buildLivePlaybackStrategy();
+        this.playbackStrategyGeneration = generation;
+        this.playbackStrategyState = PLAYBACK_STRATEGY_APPLYING;
+        this.playbackStrategyTask = Promise.resolve();
+        try {
+          await player.setMediaSource(mediaSource, playbackStrategy);
+          if (this.isCurrentGeneration(generation, player)) {
+            this.playbackStrategyState = PLAYBACK_STRATEGY_APPLIED;
+            this.logPlaybackStrategy('applied-with-media-source', generation);
+          }
+        } catch (strategyError) {
+          if (!this.isCurrentGeneration(generation, player)) {
+            return;
+          }
+          const nativeError = strategyError as BusinessError;
+          this.playbackStrategyState = PLAYBACK_STRATEGY_FALLBACK;
+          Log.w(TAG,
+            `media source strategy fallback generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
+            `sourceKind=${this.sourceKind} code=${nativeError.code} state=${player.state}`);
+          mediaSource = media.createMediaSourceWithUrl(
+            this.getIUri(), this.headers ?? {});
+          await player.setMediaSource(mediaSource, {});
+          if (this.isCurrentGeneration(generation, player)) {
+            this.logPlaybackStrategy('fallback-system-default', generation, false);
+          }
+        }
       }
       if (!this.isCurrentGeneration(generation, player)) {
         return;
@@ -207,7 +351,7 @@ export class VideoPlayer {
           break;
         case AvplayerStatus.INITIALIZED:
           this.avPlayer.surfaceId = this.surfaceId;
-          this.avPlayer.prepare();
+          await this.prepareCurrentGeneration(this.playerGeneration, boundPlayer);
           break;
         case AvplayerStatus.PREPARED:
           this.prepared = true;
