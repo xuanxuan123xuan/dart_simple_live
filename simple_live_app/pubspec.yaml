@@ -89,7 +89,7 @@ dependencies:
   # 视频播放
   media_kit: ^1.2.2
   media_kit_video:
-    path: third_party/media_kit_video
+    path: ../third_party/media_kit_video
   media_kit_libs_video: ^1.0.7
   video_player:
     git:

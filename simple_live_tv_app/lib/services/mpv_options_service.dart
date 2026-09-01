@@ -14,7 +14,7 @@ class MpvEffectiveOptions {
 
 class MpvOptionsService {
   static const Map<String, String> profileLabels = {
-    "performance": "兼容",
+    "performance": "流畅",
     "balanced": "均衡",
     "quality": "高画质",
   };
@@ -153,7 +153,6 @@ class MpvOptionsService {
       hwdec: options["hwdec"],
       enableHardwareAcceleration:
           settings.hardwareDecode.value || settings.playerCompatMode.value,
-      androidAttachSurfaceAfterVideoParameters: true,
     );
   }
 

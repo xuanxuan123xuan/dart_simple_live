@@ -225,6 +225,7 @@ class PlayerController extends BaseController
   Timer? _playbackStallWatchdogTimer;
   final PlaybackStallTracker _playbackStallTracker = PlaybackStallTracker();
   int playbackGeneration = 0;
+  int _playbackDiagnosticsLoggedGeneration = -1;
 
   void initStream() {
     _errorSubscription = player.stream.error.listen((event) {
@@ -248,6 +249,7 @@ class PlayerController extends BaseController
       Log.w(
           'width:$event  W:${(player.state.width)}  H:${(player.state.height)}');
       width.value = event ?? 0;
+      _maybeLogPlaybackDiagnostics();
       // isVertical.value =
       //     (player.state.height ?? 9) > (player.state.width ?? 16);
     });
@@ -255,6 +257,7 @@ class PlayerController extends BaseController
       Log.w(
           'height:$event  W:${(player.state.width)}  H:${(player.state.height)}');
       height.value = event ?? 0;
+      _maybeLogPlaybackDiagnostics();
       // isVertical.value =
       //     (player.state.height ?? 9) > (player.state.width ?? 16);
     });
@@ -274,9 +277,8 @@ class PlayerController extends BaseController
         ? playlist.medias[playlist.index]
         : null;
     final activeUri = media?.uri.toString() ?? "";
-    final source = activeUri.isEmpty
-        ? ""
-        : playbackStallSourceIdentity(activeUri);
+    final source =
+        activeUri.isEmpty ? "" : playbackStallSourceIdentity(activeUri);
     final previousAttempts = _playbackStallTracker.recoveryAttempts;
     final shouldRecover = _playbackStallTracker.observe(
       now: DateTime.now(),
@@ -287,8 +289,7 @@ class PlayerController extends BaseController
       buffering: state.buffering,
       completed: state.completed,
     );
-    if (previousAttempts > 0 &&
-        _playbackStallTracker.recoveryAttempts == 0) {
+    if (previousAttempts > 0 && _playbackStallTracker.recoveryAttempts == 0) {
       playbackStable();
     }
     if (!shouldRecover) return;
@@ -301,6 +302,58 @@ class PlayerController extends BaseController
 
   void beginPlaybackGeneration() {
     playbackGeneration += 1;
+  }
+
+  void _maybeLogPlaybackDiagnostics() {
+    final generation = playbackGeneration;
+    if (generation <= 0 ||
+        _playbackDiagnosticsLoggedGeneration == generation ||
+        (player.state.width ?? 0) <= 0 ||
+        (player.state.height ?? 0) <= 0) {
+      return;
+    }
+    _playbackDiagnosticsLoggedGeneration = generation;
+    unawaited(_logPlaybackDiagnostics(generation));
+  }
+
+  Future<void> _logPlaybackDiagnostics(int generation) async {
+    // Let mpv finish selecting tracks & the hardware decoder before sampling.
+    await Future<void>.delayed(const Duration(seconds: 1));
+    if (generation != playbackGeneration || player.platform is! NativePlayer) {
+      return;
+    }
+
+    final nativePlayer = player.platform as NativePlayer;
+    final properties = <String, String>{};
+    for (final name in const [
+      'hwdec-current',
+      'video-codec',
+      'video-bitrate',
+      'estimated-vf-fps',
+      'avsync',
+    ]) {
+      try {
+        final value = (await nativePlayer.getProperty(name)).trim();
+        if (value.isNotEmpty) {
+          properties[name] = value;
+        }
+      } catch (e) {
+        Log.d("读取 mpv 播放属性 $name 失败: $e");
+      }
+    }
+
+    if (generation != playbackGeneration) return;
+    final sourceResolution =
+        '${player.state.width ?? 0}x${player.state.height ?? 0}';
+    Log.i(
+      '播放诊断：${MpvOptionsService.diagnosticsSummary()}, '
+      'actualHwdec=${properties['hwdec-current'] ?? 'none'}, '
+      'codec=${properties['video-codec'] ?? 'unknown'}, '
+      'bitrate=${properties['video-bitrate'] ?? 'unknown'}, '
+      'fps=${properties['estimated-vf-fps'] ?? 'unknown'}, '
+      'resolution=$sourceResolution, '
+      'avsync=${properties['avsync'] ?? 'unknown'}',
+    );
   }
 
   String playbackStallSourceIdentity(String activeUri) => activeUri;

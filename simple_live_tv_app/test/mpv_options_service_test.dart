@@ -3,6 +3,12 @@ import 'package:simple_live_tv_app/services/mpv_options_service.dart';
 
 void main() {
   group('MpvOptionsService', () {
+    test('performance profile is labelled as smooth, not compatibility mode',
+        () {
+      expect(MpvOptionsService.profileLabels['performance'], '流畅');
+      expect(MpvOptionsService.profileLabels.values, isNot(contains('兼容')));
+    });
+
     test('safe defaults retain balanced gpu hardware decoding', () {
       final effective = MpvOptionsService.mergeOptions(
         profile: 'balanced',
@@ -61,6 +67,26 @@ void main() {
         hardwareDecoder: 'no',
         audioOutput: 'audiotrack',
         advancedOptions: 'vo=libmpv\nhwdec=auto',
+        hardwareDecodeEnabled: false,
+        compatMode: true,
+        isAndroid: true,
+      );
+
+      expect(effective.options['vo'], 'mediacodec_embed');
+      expect(effective.options['hwdec'], 'mediacodec');
+      expect(effective.source['vo'], 'compat-mode');
+      expect(effective.source['hwdec'], 'compat-mode');
+    });
+
+    test('Android compatibility mode also overrides hardware decode switch',
+        () {
+      final effective = MpvOptionsService.mergeOptions(
+        profile: 'performance',
+        customOutput: true,
+        videoOutput: 'gpu-next',
+        hardwareDecoder: 'no',
+        audioOutput: 'audiotrack',
+        advancedOptions: 'vo=libmpv\nhwdec=no',
         hardwareDecodeEnabled: false,
         compatMode: true,
         isAndroid: true,
