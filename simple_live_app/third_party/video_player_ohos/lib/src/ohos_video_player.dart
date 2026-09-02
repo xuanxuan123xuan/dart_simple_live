@@ -10,6 +10,53 @@ import 'package:video_player_platform_interface/video_player_platform_interface.
 
 import 'messages.g.dart';
 
+/// Playback policy selected for the next HarmonyOS AVPlayer creation.
+///
+/// The stable policy is the default and remains the only policy used when no
+/// configuration is supplied. The experimental policy is intentionally
+/// opt-in; callers should only select it after checking the native capability
+/// and source protocol.
+enum OhosPlaybackProfile {
+  stable,
+  lowLatencyExperimental,
+}
+
+/// Status reported after the native player applies its requested profile.
+enum OhosPlaybackProfileStatus {
+  applied,
+  fallbackSystemDefault,
+}
+
+/// Native playback-profile status for one texture.
+class OhosPlaybackProfileEvent {
+  const OhosPlaybackProfileEvent({
+    required this.textureId,
+    required this.profile,
+    required this.status,
+    this.lowLatencyExperimentalSupported = false,
+  });
+
+  final int textureId;
+  final OhosPlaybackProfile profile;
+  final OhosPlaybackProfileStatus status;
+
+  /// Whether the native runtime can honor the experimental policy.
+  ///
+  /// This is included with the status event so consumers can fail closed when
+  /// the native side cannot report capability information separately.
+  final bool lowLatencyExperimentalSupported;
+}
+
+class _OhosCreationConfiguration {
+  const _OhosCreationConfiguration({
+    required this.profile,
+    required this.generation,
+  });
+
+  final OhosPlaybackProfile profile;
+  final int generation;
+}
+
 /// A native HarmonyOS AVPlayer video frame has reached its texture surface.
 class OhosFirstFrameEvent {
   const OhosFirstFrameEvent({required this.textureId});
@@ -65,6 +112,32 @@ class OhosPlaybackTelemetryEvent {
 /// An Android implementation of [VideoPlayerPlatform] that uses the
 /// Pigeon-generated [VideoPlayerApi].
 class OhosVideoPlayer extends VideoPlayerPlatform {
+  static _OhosCreationConfiguration? _nextCreationConfiguration;
+
+  /// Configures the profile and app-owned generation for the next player.
+  ///
+  /// The configuration is consumed synchronously by [create] exactly once.
+  /// Calling this before the corresponding `VideoPlayerController.initialize`
+  /// avoids a second state machine in the plugin and keeps stale async creates
+  /// attributable to the app generation that requested them.
+  static void configureNextCreation({
+    required OhosPlaybackProfile profile,
+    required int generation,
+  }) {
+    _nextCreationConfiguration = _OhosCreationConfiguration(
+      profile: profile,
+      generation: generation,
+    );
+  }
+
+  static _OhosCreationConfiguration? _consumeNextCreationConfiguration() {
+    final configuration = _nextCreationConfiguration;
+    // Keep the read and clear together: an async native create must never be
+    // able to observe the same one-shot configuration twice.
+    _nextCreationConfiguration = null;
+    return configuration;
+  }
+
   static final StreamController<OhosFirstFrameEvent>
       _firstFrameEventController =
       StreamController<OhosFirstFrameEvent>.broadcast(sync: true);
@@ -80,6 +153,14 @@ class OhosVideoPlayer extends VideoPlayerPlatform {
   /// Native playback heartbeat and cache telemetry for HarmonyOS players.
   static Stream<OhosPlaybackTelemetryEvent> get playbackTelemetryEvents =>
       _playbackTelemetryController.stream;
+
+  static final StreamController<OhosPlaybackProfileEvent>
+      _playbackProfileController =
+      StreamController<OhosPlaybackProfileEvent>.broadcast(sync: true);
+
+  /// Native profile application and fallback events for HarmonyOS players.
+  static Stream<OhosPlaybackProfileEvent> get playbackProfileEvents =>
+      _playbackProfileController.stream;
 
   final OhosVideoPlayerApi _api = OhosVideoPlayerApi();
 
@@ -100,6 +181,9 @@ class OhosVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<int?> create(DataSource dataSource) async {
+    // This must happen before the first await (and before any native work) so
+    // each call atomically owns at most one pending configuration.
+    final configuration = _consumeNextCreationConfiguration();
     String? asset;
     String? packageName;
     String? uri;
@@ -129,6 +213,8 @@ class OhosVideoPlayer extends VideoPlayerPlatform {
       uri: uri,
       httpHeaders: httpHeaders,
       formatHint: formatHint,
+      playbackProfile: configuration?.profile.name,
+      appPlayerGeneration: configuration?.generation,
     );
 
     final TextureMessage response = await _api.create(message);
@@ -258,6 +344,23 @@ class OhosVideoPlayer extends VideoPlayerPlatform {
             ),
           );
           return VideoEvent(eventType: VideoEventType.unknown);
+        case 'playbackProfile':
+          final profile = _playbackProfileFromWire(
+            map['profile'] as String?,
+          );
+          final status = _playbackProfileStatusFromWire(
+            map['status'] as String?,
+          );
+          _playbackProfileController.add(
+            OhosPlaybackProfileEvent(
+              textureId: map['textureId'] as int,
+              profile: profile,
+              status: status,
+              lowLatencyExperimentalSupported:
+                  map['lowLatencyExperimentalSupported'] == true,
+            ),
+          );
+          return VideoEvent(eventType: VideoEventType.unknown);
         default:
           return VideoEvent(eventType: VideoEventType.unknown);
       }
@@ -293,5 +396,19 @@ class OhosVideoPlayer extends VideoPlayerPlatform {
       Duration(milliseconds: pair[0] as int),
       Duration(milliseconds: pair[1] as int),
     );
+  }
+
+  OhosPlaybackProfile _playbackProfileFromWire(String? value) {
+    if (value == OhosPlaybackProfile.lowLatencyExperimental.name) {
+      return OhosPlaybackProfile.lowLatencyExperimental;
+    }
+    return OhosPlaybackProfile.stable;
+  }
+
+  OhosPlaybackProfileStatus _playbackProfileStatusFromWire(String? value) {
+    if (value == OhosPlaybackProfileStatus.fallbackSystemDefault.name) {
+      return OhosPlaybackProfileStatus.fallbackSystemDefault;
+    }
+    return OhosPlaybackProfileStatus.applied;
   }
 }

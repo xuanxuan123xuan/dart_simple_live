@@ -139,6 +139,8 @@ class CreateMessage {
     this.uri,
     this.packageName,
     this.formatHint,
+    this.playbackProfile,
+    this.appPlayerGeneration,
     required this.httpHeaders,
   });
 
@@ -150,6 +152,13 @@ class CreateMessage {
 
   String? formatHint;
 
+  /// Optional native playback policy. Missing values are treated as `stable`
+  /// by the HarmonyOS implementation for backwards compatibility.
+  String? playbackProfile;
+
+  /// App-owned player generation used to discard stale native work.
+  int? appPlayerGeneration;
+
   Map<String?, String?> httpHeaders;
 
   Object encode() {
@@ -159,6 +168,8 @@ class CreateMessage {
       packageName,
       formatHint,
       httpHeaders,
+      playbackProfile,
+      appPlayerGeneration,
     ];
   }
 
@@ -171,6 +182,10 @@ class CreateMessage {
       formatHint: result[3] as String?,
       httpHeaders:
           (result[4] as Map<Object?, Object?>?)!.cast<String?, String?>(),
+      playbackProfile:
+          result.length > 5 ? result[5] as String? : null,
+      appPlayerGeneration:
+          result.length > 6 ? result[6] as int? : null,
     );
   }
 }

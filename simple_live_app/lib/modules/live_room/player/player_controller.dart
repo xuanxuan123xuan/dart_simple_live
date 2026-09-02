@@ -3777,11 +3777,17 @@ class PlayerController extends BaseController
         "EndpointReachable",
         _endpointReachableLabel(),
       ),
+      if (Utils.isOhos)
+        MapEntry("PlaybackProfile", ohosPlaybackProfileDiagnostic),
       MapEntry("Media", controller?.dataSource ?? "未创建"),
       if (value?.errorDescription != null)
         MapEntry("Error", value!.errorDescription!),
     ];
   }
+
+  /// Current OHOS playback profile for diagnostics. Room controllers override
+  /// this with the profile actually selected for the active generation.
+  String get ohosPlaybackProfileDiagnostic => 'stable';
 
   Future<void> closePlayerResources() async {
     if (_playerClosing) {

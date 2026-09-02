@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
+import 'package:simple_live_app/services/ohos_playback_capabilities_service.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_player_ohos/video_player_ohos.dart' as ohos_plugin;
 
@@ -25,6 +27,12 @@ typedef OhosVideoValueChanged = void Function(
 typedef OhosVideoTelemetryChanged = void Function(
   int playerGeneration,
   OhosPlaybackTelemetry telemetry,
+);
+
+typedef OhosPlaybackProfileChanged = void Function(
+  int sessionGeneration,
+  int playerGeneration,
+  OhosPlaybackProfileDecision decision,
 );
 
 /// Liveness and cache evidence gathered from the native AVPlayer.
@@ -171,10 +179,13 @@ class OhosVideoPlayer extends StatefulWidget {
     this.onGenerationValueChanged,
     this.onTelemetry,
     this.onFirstFrame,
+    this.onPlaybackProfileChanged,
     this.onCompleted,
     this.fit = BoxFit.contain,
     this.forcedAspectRatio,
     required this.initialVolume,
+    required this.sessionGeneration,
+    required this.requestedPlaybackProfile,
   });
 
   final String url;
@@ -187,6 +198,7 @@ class OhosVideoPlayer extends StatefulWidget {
   final OhosVideoValueChanged? onGenerationValueChanged;
   final OhosVideoTelemetryChanged? onTelemetry;
   final ValueChanged<int>? onFirstFrame;
+  final OhosPlaybackProfileChanged? onPlaybackProfileChanged;
   final VoidCallback? onCompleted;
   final BoxFit fit;
   final double? forcedAspectRatio;
@@ -196,6 +208,13 @@ class OhosVideoPlayer extends StatefulWidget {
   /// The owning controller keeps the persisted user intent on a 0..100 scale;
   /// every native controller reconstruction must receive its current value.
   final double initialVolume;
+
+  /// Room-level generation. Unlike [revision], this remains unchanged while
+  /// the current room rebuilds its player or switches CDN lines.
+  final int sessionGeneration;
+
+  /// Persisted app setting (`stable` or `lowLatencyExperimental`).
+  final String requestedPlaybackProfile;
 
   @override
   State<OhosVideoPlayer> createState() => _OhosVideoPlayerState();
@@ -216,6 +235,8 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   StreamSubscription<ohos_plugin.OhosFirstFrameEvent>? _firstFrameSubscription;
   StreamSubscription<ohos_plugin.OhosPlaybackTelemetryEvent>?
       _telemetrySubscription;
+  StreamSubscription<ohos_plugin.OhosPlaybackProfileEvent>?
+      _profileSubscription;
   DateTime? _bufferingSince;
   DateTime _lastProgressAt = DateTime.now();
   Duration _lastPosition = Duration.zero;
@@ -228,6 +249,13 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
   bool _completionReported = false;
   bool _firstFrameRendered = false;
   VideoPlayerValue? _previousValue;
+  int? _lowLatencyDisabledSessionGeneration;
+  bool _profileFallbackInProgress = false;
+  OhosPlaybackProfileDecision _activePlaybackProfileDecision =
+      const OhosPlaybackProfileDecision(
+    profile: ohos_plugin.OhosPlaybackProfile.stable,
+    reason: OhosPlaybackProfileDecisionReason.stableRequested,
+  );
 
   @override
   void initState() {
@@ -240,21 +268,42 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
         ohos_plugin.OhosVideoPlayer.playbackTelemetryEvents.listen((event) {
       _handleNativeTelemetry(event);
     });
+    _profileSubscription =
+        ohos_plugin.OhosVideoPlayer.playbackProfileEvents.listen((event) {
+      _handleNativePlaybackProfile(event);
+    });
     _initialize();
   }
 
   @override
   void didUpdateWidget(covariant OhosVideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.sessionGeneration != widget.sessionGeneration) {
+      _lowLatencyDisabledSessionGeneration = null;
+      _profileFallbackInProgress = false;
+    }
     if (oldWidget.revision != widget.revision ||
         oldWidget.url != widget.url ||
-        !mapEquals(oldWidget.headers, widget.headers)) {
+        !mapEquals(oldWidget.headers, widget.headers) ||
+        oldWidget.sessionGeneration != widget.sessionGeneration ||
+        oldWidget.requestedPlaybackProfile != widget.requestedPlaybackProfile) {
       _initialize();
     }
   }
 
   Future<void> _initialize() async {
     final generation = ++_initializationGeneration;
+    final profileDecision = await _resolvePlaybackProfileDecision();
+    if (!mounted || generation != _initializationGeneration) {
+      return;
+    }
+    _activePlaybackProfileDecision = profileDecision;
+    _profileFallbackInProgress = false;
+    widget.onPlaybackProfileChanged?.call(
+      widget.sessionGeneration,
+      widget.revision,
+      profileDecision,
+    );
     final previousController = _controller;
     final previousListener = _controllerListener;
     if (previousController != null) {
@@ -287,6 +336,10 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     controller.addListener(_controllerListener!);
     widget.onControllerReady?.call(controller);
     try {
+      ohos_plugin.OhosVideoPlayer.configureNextCreation(
+        profile: profileDecision.profile,
+        generation: widget.revision,
+      );
       await controller.initialize().timeout(_initializationTimeout);
       if (!_isCurrent(generation, controller)) {
         return;
@@ -319,6 +372,25 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
         e is TimeoutException ? '播放器初始化超时，请检查网络或切换线路' : e.toString(),
       );
     }
+  }
+
+  Future<OhosPlaybackProfileDecision> _resolvePlaybackProfileDecision() async {
+    final disabledForSession =
+        _lowLatencyDisabledSessionGeneration == widget.sessionGeneration;
+    var supported = false;
+    if (!disabledForSession &&
+        widget.requestedPlaybackProfile ==
+            ohosLowLatencyExperimentalProfileValue) {
+      supported =
+          (await OhosPlaybackCapabilitiesService.instance.getCapabilities())
+              .lowLatencyExperimentalSupported;
+    }
+    return resolveOhosPlaybackProfile(
+      requestedProfile: widget.requestedPlaybackProfile,
+      source: widget.url,
+      lowLatencyExperimentalSupported: supported,
+      disabledForSession: disabledForSession,
+    );
   }
 
   bool _isCurrent(int generation, VideoPlayerController controller) {
@@ -517,11 +589,55 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     if (_errorReported) {
       return;
     }
+    if (_fallbackExperimentalProfile(message)) {
+      return;
+    }
     _errorReported = true;
     if (mounted) {
       setState(() => _error = message);
     }
     widget.onError?.call(message);
+  }
+
+  void _handleNativePlaybackProfile(
+    ohos_plugin.OhosPlaybackProfileEvent event,
+  ) {
+    final controller = _controller;
+    if (!mounted ||
+        controller == null ||
+        // ignore: invalid_use_of_visible_for_testing_member
+        event.textureId != controller.textureId) {
+      return;
+    }
+    if (event.status ==
+        ohos_plugin.OhosPlaybackProfileStatus.fallbackSystemDefault) {
+      _fallbackExperimentalProfile('native playback strategy fallback');
+    }
+  }
+
+  bool _fallbackExperimentalProfile(String message) {
+    if (!_activePlaybackProfileDecision.isExperimental ||
+        _profileFallbackInProgress ||
+        _lowLatencyDisabledSessionGeneration == widget.sessionGeneration) {
+      return false;
+    }
+    _profileFallbackInProgress = true;
+    _lowLatencyDisabledSessionGeneration = widget.sessionGeneration;
+    Log.w(
+      '[ohos-player] 实验低延迟回退稳定档 '
+      'session=${widget.sessionGeneration} player=${widget.revision} '
+      'reason=${message.replaceAll(RegExp(r'https?://\S+'), '<redacted>')}',
+    );
+    widget.onPlaybackProfileChanged?.call(
+      widget.sessionGeneration,
+      widget.revision,
+      const OhosPlaybackProfileDecision(
+        profile: ohos_plugin.OhosPlaybackProfile.stable,
+        reason: OhosPlaybackProfileDecisionReason.sessionFallback,
+      ),
+    );
+    unawaited(_initialize());
+    return true;
   }
 
   @override
@@ -531,6 +647,7 @@ class _OhosVideoPlayerState extends State<OhosVideoPlayer> {
     _firstFrameTimer?.cancel();
     _firstFrameSubscription?.cancel();
     _telemetrySubscription?.cancel();
+    _profileSubscription?.cancel();
     final controller = _controller;
     final listener = _controllerListener;
     if (controller != null) {

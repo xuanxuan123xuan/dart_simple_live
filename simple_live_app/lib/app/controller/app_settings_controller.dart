@@ -149,6 +149,12 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kOhosAutoQualityDegrade, true);
     ohosNetworkFluctuationNotice.value = LocalStorageService.instance
         .getValue(LocalStorageService.kOhosNetworkFluctuationNotice, true);
+    ohosPlaybackProfile.value = _normalizeOhosPlaybackProfile(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kOhosPlaybackProfile,
+        kOhosPlaybackProfileStable,
+      ),
+    );
 
     autoExitEnable.value = LocalStorageService.instance
         .getValue(LocalStorageService.kAutoExitEnable, false);
@@ -979,6 +985,27 @@ class AppSettingsController extends GetxController {
     ohosNetworkFluctuationNotice.value = value;
     LocalStorageService.instance
         .setValue(LocalStorageService.kOhosNetworkFluctuationNotice, value);
+  }
+
+  static const String kOhosPlaybackProfileStable = "stable";
+  static const String kOhosPlaybackProfileLowLatencyExperimental =
+      "lowLatencyExperimental";
+
+  String _normalizeOhosPlaybackProfile(String value) {
+    if (value == kOhosPlaybackProfileLowLatencyExperimental) {
+      return value;
+    }
+    return kOhosPlaybackProfileStable;
+  }
+
+  var ohosPlaybackProfile = kOhosPlaybackProfileStable.obs;
+  void setOhosPlaybackProfile(String value) {
+    final normalized = _normalizeOhosPlaybackProfile(value);
+    ohosPlaybackProfile.value = normalized;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kOhosPlaybackProfile,
+      normalized,
+    );
   }
 
   var autoExitEnable = false.obs;

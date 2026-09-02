@@ -6,6 +6,13 @@
 
 import media from '@ohos.multimedia.media';
 
+// Keep the wire values in sync with the public Dart enum. Older Flutter
+// callers omit both optional fields; the native side intentionally defaults
+// those calls to the stable policy.
+const PLAYBACK_PROFILE_STABLE: String = 'stable';
+const PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL: String =
+  'lowLatencyExperimental';
+
 class FlutterError extends Error {
   /** The error code. */
   public code: string;
@@ -92,14 +99,42 @@ export class CreateMessage {
     this.httpHeaders = setterArg;
   }
 
+  private playbackProfile: String = PLAYBACK_PROFILE_STABLE;
+
+  public getPlaybackProfile(): String {
+    return this.playbackProfile;
+  }
+
+  public setPlaybackProfile(setterArg: String): void {
+    // Unknown values fail closed to stable so a newer Dart caller cannot
+    // accidentally enable an unsupported native policy.
+    this.playbackProfile = setterArg == PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL
+      ? PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL
+      : PLAYBACK_PROFILE_STABLE;
+  }
+
+  private appPlayerGeneration: Number | null = null;
+
+  public getAppPlayerGeneration(): Number | null {
+    return this.appPlayerGeneration;
+  }
+
+  public setAppPlayerGeneration(setterArg: Number): void {
+    this.appPlayerGeneration = setterArg;
+  }
+
 
   toList(): Array<Object>  {
-    let toListResult: Array<Object> = new Array<Object>(5);
+    let toListResult: Array<Object> = new Array<Object>(7);
     toListResult[0] = this.asset;
     toListResult[1] = this.uri;
     toListResult[2] = this.packageName;
     toListResult[3] = this.formatHint;
     toListResult[4] = this.httpHeaders;
+    toListResult[5] = this.playbackProfile;
+    // `toList` is only used for native-to-Dart codec symmetry. Preserve the
+    // optional slot without ever putting an undefined value on the wire.
+    toListResult[6] = this.appPlayerGeneration ?? -1;
     return toListResult;
   }
 
@@ -111,6 +146,12 @@ export class CreateMessage {
     pigeonResult.setPackageName(list[2] as String);
     pigeonResult.setFormatHint(list[3] as String);
     pigeonResult.setHttpHeaders(list[4] as Map<String, String>);
+    if (list.length > 5 && list[5] != null) {
+      pigeonResult.setPlaybackProfile(list[5] as String);
+    }
+    if (list.length > 6 && list[6] != null) {
+      pigeonResult.setAppPlayerGeneration(list[6] as Number);
+    }
     return pigeonResult;
   }
 }

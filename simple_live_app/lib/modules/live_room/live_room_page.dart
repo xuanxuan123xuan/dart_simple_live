@@ -727,6 +727,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   key: controller.ohosPlayerWidgetKey,
                   url: url,
                   revision: revision,
+                  sessionGeneration: controller.ohosPlaybackSessionGeneration,
+                  requestedPlaybackProfile:
+                      AppSettingsController.instance.ohosPlaybackProfile.value,
                   headers: controller.playHeaders,
                   onError: controller.mediaError,
                   onControllerReady: controller.attachOhosVideoController,
@@ -735,6 +738,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                       controller.updateOhosVideoStateForGeneration,
                   onTelemetry: controller.updateOhosTelemetryForGeneration,
                   onFirstFrame: controller.updateOhosFirstFrameForGeneration,
+                  onPlaybackProfileChanged:
+                      controller.updateOhosPlaybackProfileDecision,
                   onCompleted: controller.mediaEnd,
                   initialVolume: controller.ohosVolume.value,
                   fit: fit,

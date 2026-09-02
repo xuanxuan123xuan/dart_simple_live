@@ -53,6 +53,13 @@ const LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS: number = 5;
 // keeps it effectively disabled during ordinary viewing while retaining a
 // bounded escape hatch for an exceptionally stale FLV live stream.
 const LIVE_SMART_CATCHUP_THRESHOLD_SECONDS: number = 60;
+const PLAYBACK_PROFILE_STABLE: string = 'stable';
+const PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL: string =
+  'lowLatencyExperimental';
+// `preferredBufferDuration` and the media-source strategy overload are
+// available from the API 12 baseline. API 18-only catch-up fields remain
+// restricted to the stable profile below.
+const LOW_LATENCY_EXPERIMENTAL_MIN_API_VERSION: number = 12;
 
 const TAG = 'VideoPlayer'
 export class VideoPlayer {
@@ -77,6 +84,10 @@ export class VideoPlayer {
   private playerGeneration: number = 0;
   private sourceAssignmentState: string = SOURCE_ASSIGNMENT_IDLE;
   private sourceKind: string = SOURCE_KIND_RAW_FILE;
+  // The profile is normalized at construction time. Unknown values and
+  // runtimes without the required native API fail closed to stable.
+  private playbackProfile: string = PLAYBACK_PROFILE_STABLE;
+  private appPlayerGeneration: number | null = null;
   private playbackStrategyGeneration: number = -1;
   private playbackStrategyState: string = PLAYBACK_STRATEGY_IDLE;
   private playbackStrategyTask: Promise<void> | null = null;
@@ -89,7 +100,7 @@ export class VideoPlayer {
   // usable clock there, so keep its last value as the position fallback.
   private lastKnownTimeMs: number = -1;
 
-  constructor(playerModel: PlayerModel, textureEntry: SurfaceTextureEntry, rawFile: resourceManager.RawFileDescriptor | null, url: string | null, eventChannel: EventChannel, AudioFocus: Boolean, headers: Record<string, string> | null) {
+  constructor(playerModel: PlayerModel, textureEntry: SurfaceTextureEntry, rawFile: resourceManager.RawFileDescriptor | null, url: string | null, eventChannel: EventChannel, AudioFocus: Boolean, headers: Record<string, string> | null, playbackProfile: string = PLAYBACK_PROFILE_STABLE, appPlayerGeneration: number | null = null) {
     this.playerModel = playerModel;
     this.textureEntry = textureEntry;
     this.playerGeneration = textureEntry.getTextureId();
@@ -98,6 +109,8 @@ export class VideoPlayer {
     this.url = url;
     this.eventChannel = eventChannel;
     this.headers = headers;
+    this.playbackProfile = this.normalizePlaybackProfile(playbackProfile);
+    this.appPlayerGeneration = appPlayerGeneration;
     this.sourceKind = this.resolveSourceKind();
     if (AudioFocus == true) {
       this.interruptMode = audio.InterruptMode.SHARE_MODE;
@@ -149,6 +162,18 @@ export class VideoPlayer {
     return !this.disposed && generation === this.playerGeneration && this.avPlayer === player;
   }
 
+  private supportsLowLatencyExperimental(): boolean {
+    return deviceInfo.sdkApiVersion >= LOW_LATENCY_EXPERIMENTAL_MIN_API_VERSION;
+  }
+
+  private normalizePlaybackProfile(profile: string): string {
+    if (profile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL &&
+      this.supportsLowLatencyExperimental()) {
+      return PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL;
+    }
+    return PLAYBACK_PROFILE_STABLE;
+  }
+
   private beginNewSourceGeneration(): void {
     this.playerGeneration += 1;
     this.sourceAssignmentState = SOURCE_ASSIGNMENT_IDLE;
@@ -165,6 +190,15 @@ export class VideoPlayer {
   }
 
   private buildLivePlaybackStrategy(): media.PlaybackStrategy {
+    if (this.playbackProfile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL) {
+      // Experimental low latency deliberately omits the API 18 smart
+      // catch-up fields. That leaves app-controlled speed untouched and keeps
+      // AVPlayer from applying an aggressive catch-up speed behind the app's
+      // back; setSpeed remains the user-facing control below.
+      return {
+        preferredBufferDuration: 1,
+      };
+    }
     let strategy: media.PlaybackStrategy = {
       preferredBufferDuration: LIVE_PREFERRED_BUFFER_DURATION_SECONDS,
     };
@@ -185,15 +219,36 @@ export class VideoPlayer {
     const supportsApi18Strategy =
       deviceInfo.sdkApiVersion >= OHOS_SMART_CATCHUP_API_VERSION;
     const usesPlayingWaterline =
-      usesConfiguredStrategy && supportsApi18Strategy;
+      usesConfiguredStrategy &&
+      this.playbackProfile === PLAYBACK_PROFILE_STABLE &&
+      supportsApi18Strategy;
     const unavailableApi18Value = supportsApi18Strategy ?
       'system-default' : 'unsupported';
+    const preferredBuffer = usesConfiguredStrategy
+      ? (this.playbackProfile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL
+        ? '1s' : LIVE_PREFERRED_BUFFER_DURATION_SECONDS + 's')
+      : 'system-default';
     Log.i(TAG,
       `playback strategy ${result} generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
+      `profile=${this.playbackProfile} appGeneration=${this.appPlayerGeneration ?? 'none'} ` +
       `sourceKind=${this.sourceKind} ` +
-      `preferredBuffer=${usesConfiguredStrategy ? LIVE_PREFERRED_BUFFER_DURATION_SECONDS + 's' : 'system-default'} ` +
+      `preferredBuffer=${preferredBuffer} ` +
       `playingWaterline=${usesPlayingWaterline ? LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS + 's' : unavailableApi18Value} ` +
       `smartCatchup=${usesPlayingWaterline ? LIVE_SMART_CATCHUP_THRESHOLD_SECONDS + 's' : unavailableApi18Value}`);
+  }
+
+  private sendPlaybackProfile(status: string): void {
+    if (this.eventSink?.hasDelegate() !== true) {
+      return;
+    }
+    let event: HashMap<string, Object> = new HashMap<string, Object>();
+    event.set("event", "playbackProfile");
+    event.set("textureId", this.textureEntry.getTextureId());
+    event.set("profile", this.playbackProfile);
+    event.set("status", status);
+    event.set("lowLatencyExperimentalSupported",
+      this.supportsLowLatencyExperimental());
+    this.eventSink?.success(event);
   }
 
   private async applyPlaybackStrategyIfNeeded(
@@ -219,6 +274,7 @@ export class VideoPlayer {
         }
         this.playbackStrategyState = PLAYBACK_STRATEGY_APPLIED;
         this.logPlaybackStrategy('applied', generation);
+        this.sendPlaybackProfile('applied');
       } catch (error) {
         if (!this.isCurrentGeneration(generation, player)) {
           return;
@@ -227,8 +283,10 @@ export class VideoPlayer {
         const nativeError = error as BusinessError;
         Log.w(TAG,
           `playback strategy fallback generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
+          `profile=${this.playbackProfile} appGeneration=${this.appPlayerGeneration ?? 'none'} ` +
           `sourceKind=${this.sourceKind} code=${nativeError.code} state=${player.state}`);
         this.logPlaybackStrategy('fallback-system-default', generation, false);
+        this.sendPlaybackProfile('fallbackSystemDefault');
       }
     })();
     this.playbackStrategyTask = task;
@@ -292,6 +350,7 @@ export class VideoPlayer {
           if (this.isCurrentGeneration(generation, player)) {
             this.playbackStrategyState = PLAYBACK_STRATEGY_APPLIED;
             this.logPlaybackStrategy('applied-with-media-source', generation);
+            this.sendPlaybackProfile('applied');
           }
         } catch (strategyError) {
           if (!this.isCurrentGeneration(generation, player)) {
@@ -301,12 +360,14 @@ export class VideoPlayer {
           this.playbackStrategyState = PLAYBACK_STRATEGY_FALLBACK;
           Log.w(TAG,
             `media source strategy fallback generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
+            `profile=${this.playbackProfile} appGeneration=${this.appPlayerGeneration ?? 'none'} ` +
             `sourceKind=${this.sourceKind} code=${nativeError.code} state=${player.state}`);
           mediaSource = media.createMediaSourceWithUrl(
             this.getIUri(), this.headers ?? {});
           await player.setMediaSource(mediaSource, {});
           if (this.isCurrentGeneration(generation, player)) {
             this.logPlaybackStrategy('fallback-system-default', generation, false);
+            this.sendPlaybackProfile('fallbackSystemDefault');
           }
         }
       }

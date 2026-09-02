@@ -26,6 +26,7 @@ import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_signal_adapter.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_line_failover_policy.dart';
+import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/live_room_hold_preview.dart';
@@ -453,6 +454,99 @@ bool isCurrentLiveRoomPlaybackRequest({
       requestRevision == latestRequestRevision;
 }
 
+/// The small state machine used by OHOS' post-first-frame line selection.
+///
+/// This is deliberately separate from the playback state machine.  It only
+/// decides whether a result from a background TCP probe may still be applied;
+/// source assignment, recovery and native player lifecycle remain owned by the
+/// playback controller.
+enum OhosAutoLineSelectionStatus {
+  idle,
+  measuring,
+  switched,
+  skipped,
+  stale,
+  failed,
+}
+
+@immutable
+class OhosAutoLineSelectionDiagnostic {
+  const OhosAutoLineSelectionDiagnostic({
+    required this.status,
+    required this.reason,
+    required this.roomGeneration,
+    required this.playbackRequestRevision,
+    required this.playerGeneration,
+    required this.manualLineSelectionRevision,
+    required this.candidateCount,
+    this.initialLineIndex,
+    this.selectedLineIndex,
+    this.measuredLineIndex,
+  });
+
+  final OhosAutoLineSelectionStatus status;
+  final String reason;
+  final int roomGeneration;
+  final int playbackRequestRevision;
+  final int playerGeneration;
+  final int manualLineSelectionRevision;
+  final int candidateCount;
+  final int? initialLineIndex;
+  final int? selectedLineIndex;
+  /// Candidate-relative result returned by the TCP probe. This is deliberately
+  /// an index, never a URL or host name.
+  final int? measuredLineIndex;
+}
+
+/// Returns lines in the same protocol latency tier as the active line.
+///
+/// The URL values stay in the caller's private list; this helper only returns
+/// indexes so diagnostics can remain URL-free.  Matching the active tier also
+/// prevents a background probe from changing the user's explicitly selected
+/// protocol family.
+@visibleForTesting
+List<int> resolveOhosAutoLineCandidateIndices({
+  required List<String> urls,
+  required int currentLineIndex,
+}) {
+  if (currentLineIndex < 0 || currentLineIndex >= urls.length) {
+    return const [];
+  }
+  final activePriority =
+      classifyLiveStreamProtocol(urls[currentLineIndex]).latencyPriority;
+  return [
+    for (var index = 0; index < urls.length; index += 1)
+      if (classifyLiveStreamProtocol(urls[index]).latencyPriority ==
+          activePriority)
+        index,
+  ];
+}
+
+/// Accepts a completed OHOS line probe only while every captured playback
+/// identity still points at the same room and native player.
+@visibleForTesting
+bool shouldAcceptOhosAutoLineSelection({
+  required int roomGeneration,
+  required int expectedRoomGeneration,
+  required int playbackRequestRevision,
+  required int latestPlaybackRequestRevision,
+  required int playerGeneration,
+  required int currentPlayerGeneration,
+  required int manualLineSelectionRevision,
+  required int latestManualLineSelectionRevision,
+  required bool hasActivePlaybackSession,
+  required bool playerRecovering,
+  required bool autoLineSwitchAlreadyCompleted,
+}) {
+  return roomGeneration == expectedRoomGeneration &&
+      playbackRequestRevision == latestPlaybackRequestRevision &&
+      playerGeneration == currentPlayerGeneration &&
+      manualLineSelectionRevision == latestManualLineSelectionRevision &&
+      hasActivePlaybackSession &&
+      !playerRecovering &&
+      !autoLineSwitchAlreadyCompleted;
+}
+
 class _HoldPreviewAudioSnapshot {
   const _HoldPreviewAudioSnapshot({
     required this.volume,
@@ -580,11 +674,19 @@ class LiveRoomController extends PlayerController
 
   void markQualitySelectionAsManual() {
     _qualitySelectionRevision += 1;
+    // Invalidate a probe immediately, before the asynchronous quality request
+    // starts.  The request revision is still advanced again by getPlayUrl.
+    if (Utils.isOhos) {
+      _playbackRequestRevision += 1;
+    }
   }
 
   /// 选"自动"：解锁画质，回到按 qualityLevel 设置的自动档。
   Future<void> useAutomaticQuality() async {
     final selectionRevision = ++_qualitySelectionRevision;
+    if (Utils.isOhos) {
+      _playbackRequestRevision += 1;
+    }
     qualityLocked.value = false;
     saveQualityMemory();
     _autoQualityBufferTracker.reset();
@@ -685,6 +787,32 @@ class LiveRoomController extends PlayerController
 
   /// Rebuilds the native HarmonyOS player when the URL or line changes.
   final RxInt ohosPlayerRevision = 0.obs;
+
+  /// Room generation passed to the OHOS player profile and line-selection
+  /// callbacks. It changes only when the room changes.
+  int get ohosPlaybackSessionGeneration => _loadGeneration;
+
+  final RxString ohosPlaybackProfileStatus = 'stable'.obs;
+  final RxString ohosPlaybackProfileReason = 'stableRequested'.obs;
+
+  void updateOhosPlaybackProfileDecision(
+    int sessionGeneration,
+    int playerGeneration,
+    OhosPlaybackProfileDecision decision,
+  ) {
+    if (!Utils.isOhos ||
+        _roomDisposed ||
+        sessionGeneration != _loadGeneration ||
+        playerGeneration != ohosPlayerRevision.value) {
+      return;
+    }
+    ohosPlaybackProfileStatus.value = decision.profile.name;
+    ohosPlaybackProfileReason.value = decision.reason.name;
+  }
+
+  @override
+  String get ohosPlaybackProfileDiagnostic =>
+      '${ohosPlaybackProfileStatus.value} (${ohosPlaybackProfileReason.value})';
 
   /// 当前播放线路索引
   var currentLineIndex = -1;
@@ -787,6 +915,24 @@ class LiveRoomController extends PlayerController
   int _loadGeneration = 0;
   int _playbackRequestRevision = 0;
   int _manualLineSelectionRevision = 0;
+  int? _ohosPlayerLoadGeneration;
+  int? _ohosPlayerRequestRevision;
+  bool _ohosPlayerStartedDuringRecovery = false;
+  bool _ohosAutoLineSelectionConsumed = false;
+  bool _ohosAutoLineSwitchCompleted = false;
+  int? _ohosAutoLineSelectionScheduledPlayerGeneration;
+  final Rx<OhosAutoLineSelectionDiagnostic> ohosAutoLineSelectionDiagnostic =
+      Rx<OhosAutoLineSelectionDiagnostic>(
+    const OhosAutoLineSelectionDiagnostic(
+      status: OhosAutoLineSelectionStatus.idle,
+      reason: 'not_started',
+      roomGeneration: -1,
+      playbackRequestRevision: -1,
+      playerGeneration: -1,
+      manualLineSelectionRevision: -1,
+      candidateCount: 0,
+    ),
+  );
   final Set<String> _superChatFingerprints = <String>{};
   LiveRepeatedDanmuAggregator _liveEventFlowAggregator =
       LiveRepeatedDanmuAggregator();
@@ -1009,6 +1155,65 @@ class LiveRoomController extends PlayerController
     _kuaishouContinuousBufferingTimer?.cancel();
     _kuaishouContinuousBufferingTimer = null;
     _kuaishouPlaybackRecoveryTracker.reset();
+  }
+
+  void _resetOhosAutoLineSelectionSession() {
+    _ohosPlayerLoadGeneration = null;
+    _ohosPlayerRequestRevision = null;
+    _ohosPlayerStartedDuringRecovery = false;
+    _ohosAutoLineSelectionConsumed = false;
+    _ohosAutoLineSwitchCompleted = false;
+    _ohosAutoLineSelectionScheduledPlayerGeneration = null;
+    ohosAutoLineSelectionDiagnostic.value = OhosAutoLineSelectionDiagnostic(
+      status: OhosAutoLineSelectionStatus.idle,
+      reason: 'room_session_started',
+      roomGeneration: _loadGeneration,
+      playbackRequestRevision: _playbackRequestRevision,
+      playerGeneration: ohosPlayerRevision.value,
+      manualLineSelectionRevision: _manualLineSelectionRevision,
+      candidateCount: 0,
+    );
+  }
+
+  void _updateOhosAutoLineSelectionDiagnostic({
+    required OhosAutoLineSelectionStatus status,
+    required String reason,
+    int? roomGeneration,
+    int? playbackRequestRevision,
+    int? playerGeneration,
+    int? manualLineSelectionRevision,
+    int candidateCount = 0,
+    int? initialLineIndex,
+    int? selectedLineIndex,
+    int? measuredLineIndex,
+  }) {
+    final diagnostic = OhosAutoLineSelectionDiagnostic(
+      status: status,
+      reason: reason,
+      roomGeneration: roomGeneration ?? _loadGeneration,
+      playbackRequestRevision:
+          playbackRequestRevision ?? _playbackRequestRevision,
+      playerGeneration: playerGeneration ?? ohosPlayerRevision.value,
+      manualLineSelectionRevision:
+          manualLineSelectionRevision ?? _manualLineSelectionRevision,
+      candidateCount: candidateCount,
+      initialLineIndex: initialLineIndex,
+      selectedLineIndex: selectedLineIndex,
+      measuredLineIndex: measuredLineIndex,
+    );
+    ohosAutoLineSelectionDiagnostic.value = diagnostic;
+    Log.d(
+      '[ohos-auto-line] status=${diagnostic.status.name} '
+      'reason=${diagnostic.reason} '
+      'roomGeneration=${diagnostic.roomGeneration} '
+      'playbackRequestRevision=${diagnostic.playbackRequestRevision} '
+      'playerGeneration=${diagnostic.playerGeneration} '
+      'manualLineRevision=${diagnostic.manualLineSelectionRevision} '
+      'candidateCount=${diagnostic.candidateCount} '
+      'initialLine=${diagnostic.initialLineIndex ?? "none"} '
+      'selectedLine=${diagnostic.selectedLineIndex ?? "none"}',
+      'measuredLine=${diagnostic.measuredLineIndex ?? "none"}',
+    );
   }
 
   void _resetPlaybackHealthSession() {
@@ -2162,9 +2367,307 @@ class LiveRoomController extends PlayerController
       playerGeneration: playerGeneration,
     );
     if (signal == null) {
+      // The value callback may already have de-duplicated the signal.  This
+      // method is still the real native first-frame callback and is therefore
+      // the only place where post-first-frame line selection is scheduled.
+    } else {
+      _logOhosPlaybackSignal(signal);
+    }
+    _scheduleOhosAutoSelectFastestLineAfterFirstFrame(playerGeneration);
+  }
+
+  bool get _ohosPlayerRecoveryInFlight {
+    return _roomSwitching ||
+        _playerReopenCompleter != null ||
+        _ohosPlayerStartedDuringRecovery ||
+        _ohosReconnectConfirmation.pending != null;
+  }
+
+  void _scheduleOhosAutoSelectFastestLineAfterFirstFrame(
+    int playerGeneration,
+  ) {
+    final loadGeneration = _ohosPlayerLoadGeneration;
+    final requestRevision = _ohosPlayerRequestRevision;
+    if (loadGeneration == null || requestRevision == null) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'missing_player_snapshot',
+        playerGeneration: playerGeneration,
+      );
       return;
     }
-    _logOhosPlaybackSignal(signal);
+    if (_ohosAutoLineSelectionScheduledPlayerGeneration == playerGeneration) {
+      return;
+    }
+    // Native callbacks may be delivered more than once.  Reserve this player
+    // generation before any await so duplicate first-frame callbacks cannot
+    // start another probe.
+    _ohosAutoLineSelectionScheduledPlayerGeneration = playerGeneration;
+
+    final manualLineSelectionRevision = _manualLineSelectionRevision;
+    final candidateIndices = resolveOhosAutoLineCandidateIndices(
+      urls: playUrls,
+      currentLineIndex: currentLineIndex,
+    );
+    final initialLineIndex = currentLineIndex;
+    if (!AppSettingsController.instance.autoSelectFastestLine.value) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'setting_disabled',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (!_ohosCurrentPlayerSnapshotIsCurrent(
+      loadGeneration: loadGeneration,
+      requestRevision: requestRevision,
+      playerGeneration: playerGeneration,
+    )) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.stale,
+        reason: 'snapshot_changed_before_measurement',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (!_ohosPlayerAutoLineSelectionAllowed) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'user_playback_operation',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (_ohosPlayerStartedDuringRecovery || _ohosPlayerRecoveryInFlight) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'player_recovery_in_flight',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (_ohosAutoLineSelectionConsumed) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'session_already_evaluated',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (candidateIndices.length <= 1) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'single_protocol_tier_line',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+
+    final candidates = [
+      for (final index in candidateIndices) playUrls[index],
+    ];
+    // One room playback session gets one background decision.  Mark the
+    // decision consumed before yielding to the network so a later recovery
+    // cannot launch a second probe or switch twice.
+    _ohosAutoLineSelectionConsumed = true;
+    _updateOhosAutoLineSelectionDiagnostic(
+      status: OhosAutoLineSelectionStatus.measuring,
+      reason: 'first_frame_received',
+      roomGeneration: loadGeneration,
+      playbackRequestRevision: requestRevision,
+      playerGeneration: playerGeneration,
+      manualLineSelectionRevision: manualLineSelectionRevision,
+      candidateCount: candidates.length,
+      initialLineIndex: initialLineIndex,
+    );
+    unawaited(
+      _selectFastestOhosLineAfterFirstFrame(
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        initialLineIndex: initialLineIndex,
+        candidateIndices: candidateIndices,
+        candidates: candidates,
+      ),
+    );
+  }
+
+  bool _ohosCurrentPlayerSnapshotIsCurrent({
+    required int loadGeneration,
+    required int requestRevision,
+    required int playerGeneration,
+  }) {
+    return !_roomDisposed &&
+        playerGeneration == ohosPlayerRevision.value &&
+        loadGeneration == _loadGeneration &&
+        requestRevision == _playbackRequestRevision;
+  }
+
+  bool get _ohosPlayerAutoLineSelectionAllowed =>
+      _ohosPlayerStartedDuringRecovery == false &&
+      _ohosCurrentPlayerAllowsAutoLineSelection;
+
+  bool _ohosCurrentPlayerAllowsAutoLineSelection = true;
+
+  Future<void> _selectFastestOhosLineAfterFirstFrame({
+    required int roomGeneration,
+    required int playbackRequestRevision,
+    required int playerGeneration,
+    required int manualLineSelectionRevision,
+    required int initialLineIndex,
+    required List<int> candidateIndices,
+    required List<String> candidates,
+  }) async {
+    int fastest;
+    try {
+      fastest = await NetworkDiagnoseService.findFastestLine(candidates);
+    } catch (e) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.failed,
+        reason: 'measurement_error_${e.runtimeType}',
+        roomGeneration: roomGeneration,
+        playbackRequestRevision: playbackRequestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidates.length,
+        initialLineIndex: initialLineIndex,
+      );
+      // Do not include exception text: network errors may contain a source
+      // URL on some platform implementations.
+      Log.d(
+        '[ohos-auto-line] measurement failed '
+        'errorType=${e.runtimeType} roomGeneration=$roomGeneration '
+        'playbackRequestRevision=$playbackRequestRevision '
+        'playerGeneration=$playerGeneration',
+      );
+      return;
+    }
+
+    final candidateIndex = fastest.clamp(0, candidates.length - 1).toInt();
+
+    final isCurrent = shouldAcceptOhosAutoLineSelection(
+      roomGeneration: roomGeneration,
+      expectedRoomGeneration: _loadGeneration,
+      playbackRequestRevision: playbackRequestRevision,
+      latestPlaybackRequestRevision: _playbackRequestRevision,
+      playerGeneration: playerGeneration,
+      currentPlayerGeneration: ohosPlayerRevision.value,
+      manualLineSelectionRevision: manualLineSelectionRevision,
+      latestManualLineSelectionRevision: _manualLineSelectionRevision,
+      hasActivePlaybackSession: _hasActivePlaybackSession,
+      playerRecovering: _ohosPlayerRecoveryInFlight,
+      autoLineSwitchAlreadyCompleted: _ohosAutoLineSwitchCompleted,
+    );
+    if (!isCurrent) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.stale,
+        reason: 'snapshot_changed_after_measurement',
+        roomGeneration: roomGeneration,
+        playbackRequestRevision: playbackRequestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidates.length,
+        initialLineIndex: initialLineIndex,
+        measuredLineIndex: candidateIndex,
+      );
+      return;
+    }
+
+    final selectedLineIndex = candidateIndices[candidateIndex];
+    if (selectedLineIndex == currentLineIndex) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'current_line_is_fastest',
+        roomGeneration: roomGeneration,
+        playbackRequestRevision: playbackRequestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidates.length,
+        initialLineIndex: initialLineIndex,
+        selectedLineIndex: selectedLineIndex,
+        measuredLineIndex: candidateIndex,
+      );
+      return;
+    }
+
+    // Re-check the active index immediately before changing it.  This closes
+    // the small synchronous gap between the acceptance guard and the call into
+    // the playback state machine.
+    if (currentLineIndex != initialLineIndex ||
+        !_ohosCurrentPlayerSnapshotIsCurrent(
+          loadGeneration: roomGeneration,
+          requestRevision: playbackRequestRevision,
+          playerGeneration: playerGeneration,
+        ) ||
+        _ohosPlayerRecoveryInFlight ||
+        _manualLineSelectionRevision != manualLineSelectionRevision) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.stale,
+        reason: 'selection_changed_before_switch',
+        roomGeneration: roomGeneration,
+        playbackRequestRevision: playbackRequestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidates.length,
+        initialLineIndex: initialLineIndex,
+        selectedLineIndex: selectedLineIndex,
+        measuredLineIndex: candidateIndex,
+      );
+      return;
+    }
+
+    _ohosAutoLineSwitchCompleted = true;
+    _updateOhosAutoLineSelectionDiagnostic(
+      status: OhosAutoLineSelectionStatus.switched,
+      reason: 'fastest_line_selected',
+      roomGeneration: roomGeneration,
+      playbackRequestRevision: playbackRequestRevision,
+      playerGeneration: playerGeneration,
+      manualLineSelectionRevision: manualLineSelectionRevision,
+      candidateCount: candidates.length,
+      initialLineIndex: initialLineIndex,
+      selectedLineIndex: selectedLineIndex,
+      measuredLineIndex: candidateIndex,
+    );
+    Log.i(
+      '[ohos-auto-line] switch requested '
+      'fromLine=${initialLineIndex + 1} toLine=${selectedLineIndex + 1} '
+      'roomGeneration=$roomGeneration '
+      'playbackRequestRevision=$playbackRequestRevision '
+      'playerGeneration=$playerGeneration',
+    );
+    await changePlayLine(selectedLineIndex, persist: false);
   }
 
   void _refreshDanmakuOverlay(String reason) {
@@ -2726,6 +3229,7 @@ class LiveRoomController extends PlayerController
   /// 加载直播间信息
   void loadData() async {
     final loadGeneration = ++_loadGeneration;
+    _resetOhosAutoLineSelectionSession();
     final loadStopwatch = Stopwatch()..start();
     _dismissLiveRoomLoadingOverlay();
     try {
@@ -3196,7 +3700,12 @@ class LiveRoomController extends PlayerController
     }
     // 重置播放器错误重试次数
     mediaErrorRetryCount = 0;
-    await initPlaylist(requestRevision: requestRevision);
+    await initPlaylist(
+      requestRevision: requestRevision,
+      allowOhosAutoLineSelection:
+          !userInitiatedQualityChange && automaticReconnectReason == null,
+      ohosPlaybackRecovery: automaticReconnectReason != null,
+    );
     if (_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
       if (userInitiatedQualityChange && _hasActivePlaybackSession) {
         recordLiveLinkHealthEvent(LiveLinkEventType.qualityChangedByUser);
@@ -3225,10 +3734,12 @@ class LiveRoomController extends PlayerController
           );
         }
       }
-      _scheduleAutoSelectFastestLine(
-        requestRevision: requestRevision,
-        loadGeneration: loadGeneration,
-      );
+      if (!Utils.isOhos) {
+        _scheduleAutoSelectFastestLine(
+          requestRevision: requestRevision,
+          loadGeneration: loadGeneration,
+        );
+      }
     }
   }
 
@@ -3257,6 +3768,7 @@ class LiveRoomController extends PlayerController
     final reopened = await setPlayer(
       reconnectReason: reconnectReason,
       reconnectHostChanged: reconnectHostChanged,
+      suppressOhosAutoLineSelection: persist,
     );
     if (!reopened || !_isCurrentLoad(loadGeneration)) {
       return;
@@ -3335,7 +3847,11 @@ class LiveRoomController extends PlayerController
     await changePlayLine(selectedLineIndex, persist: false);
   }
 
-  Future<void> initPlaylist({required int requestRevision}) async {
+  Future<void> initPlaylist({
+    required int requestRevision,
+    bool allowOhosAutoLineSelection = true,
+    bool ohosPlaybackRecovery = false,
+  }) async {
     final loadGeneration = _loadGeneration;
     if (_roomDisposed ||
         !_isCurrentPlaybackRequest(requestRevision, loadGeneration) ||
@@ -3389,6 +3905,10 @@ class LiveRoomController extends PlayerController
         'playerGeneration=${assigned.playerGeneration} '
         'source=${assigned.sourceFingerprint}',
       );
+      _ohosPlayerLoadGeneration = loadGeneration;
+      _ohosPlayerRequestRevision = requestRevision;
+      _ohosCurrentPlayerAllowsAutoLineSelection = allowOhosAutoLineSelection;
+      _ohosPlayerStartedDuringRecovery = ohosPlaybackRecovery;
       ohosPlayerRevision.value = nextPlayerGeneration;
       _hasActivePlaybackSession = true;
       waitingForPlaybackUrl.value = false;
@@ -3580,6 +4100,7 @@ class LiveRoomController extends PlayerController
     bool rotateOhosLine = false,
     LiveReconnectReason? reconnectReason,
     bool? reconnectHostChanged,
+    bool suppressOhosAutoLineSelection = false,
   }) async {
     if (!_holdPreviewPromotingMain &&
         _holdPreviewPhase != LiveRoomHoldPreviewPhase.closed) {
@@ -3625,7 +4146,13 @@ class LiveRoomController extends PlayerController
         return false;
       }
       _hasActivePlaybackSession = false;
-      await initPlaylist(requestRevision: requestRevision);
+      await initPlaylist(
+        requestRevision: requestRevision,
+        allowOhosAutoLineSelection: !suppressOhosAutoLineSelection &&
+            reconnectReason == null &&
+            !refreshUrls,
+        ohosPlaybackRecovery: reconnectReason != null || refreshUrls,
+      );
       if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration) ||
           !_hasActivePlaybackSession) {
         return false;

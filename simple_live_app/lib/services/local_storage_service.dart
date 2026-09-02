@@ -78,6 +78,7 @@ class LocalStorageService extends GetxService {
   static const String kOhosAutoQualityDegrade = "OhosAutoQualityDegrade";
   static const String kOhosNetworkFluctuationNotice =
       "OhosNetworkFluctuationNotice";
+  static const String kOhosPlaybackProfile = "OhosPlaybackProfile";
   static const String kAutoExitEnable = "AutoExitEnable";
   static const String kAutoExitDuration = "AutoExitDuration";
   static const String kRoomAutoExitDuration = "RoomAutoExitDuration";
