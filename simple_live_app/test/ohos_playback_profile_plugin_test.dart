@@ -14,7 +14,8 @@ void main() {
     expect(player, contains('static void configureNextCreation({'));
     expect(player, contains('required OhosPlaybackProfile profile'));
     expect(player, contains('required int generation'));
-    expect(player, contains('final configuration = _consumeNextCreationConfiguration();'));
+    expect(player,
+        contains('final configuration = _consumeNextCreationConfiguration();'));
     expect(player, contains('_nextCreationConfiguration = null;'));
     expect(player, contains('playbackProfile: configuration?.profile.name'));
     expect(player, contains('appPlayerGeneration: configuration?.generation'));
@@ -29,11 +30,13 @@ void main() {
     expect(messages, contains('int? appPlayerGeneration;'));
     expect(messages, contains('playbackProfile,'));
     expect(messages, contains('appPlayerGeneration,'));
-    expect(messages, contains('result.length > 5 ? result[5] as String? : null'));
+    expect(
+        messages, contains('result.length > 5 ? result[5] as String? : null'));
     expect(messages, contains('result.length > 6 ? result[6] as int? : null'));
   });
 
-  test('ArkTS stores profile and app generation and preserves stable policy', () {
+  test('ArkTS stores profile and app generation and preserves stable policy',
+      () {
     final messages = File(
       'third_party/video_player_ohos/ohos/src/main/ets/components/'
       'videoplayer/Messages.ets',
@@ -65,11 +68,17 @@ void main() {
     final strategy = RegExp(
       r'private buildLivePlaybackStrategy\(\): media\.PlaybackStrategy \{([\s\S]*?)\n  \}',
     ).firstMatch(player)!.group(1)!;
+    expect(
+      strategy,
+      contains(
+        'this.playbackProfile !== PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL',
+      ),
+    );
+    expect(strategy, contains('return {};'));
     expect(strategy, contains('preferredBufferDuration: 1'));
-    expect(strategy, contains('preferredBufferDuration: LIVE_PREFERRED_BUFFER_DURATION_SECONDS'));
-    expect(strategy, contains('preferredBufferDurationForPlaying'));
-    expect(strategy, contains('thresholdForAutoQuickPlay'));
-    expect(strategy, isNot(contains('setSpeed')));
+    expect(strategy, isNot(contains('preferredBufferDurationForPlaying')));
+    expect(strategy, isNot(contains('thresholdForAutoQuickPlay')));
+    expect(strategy, isNot(contains('.setSpeed(')));
   });
 
   test('profile status event contains no source secret fields', () {

@@ -46,13 +46,6 @@ const PLAYBACK_STRATEGY_IDLE: string = 'idle';
 const PLAYBACK_STRATEGY_APPLYING: string = 'applying';
 const PLAYBACK_STRATEGY_APPLIED: string = 'applied';
 const PLAYBACK_STRATEGY_FALLBACK: string = 'fallback';
-const OHOS_SMART_CATCHUP_API_VERSION: number = 18;
-const LIVE_PREFERRED_BUFFER_DURATION_SECONDS: number = 20;
-const LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS: number = 5;
-// AVPlayer's smart catch-up multiplier is fixed at 1.2x. A 60-second trigger
-// keeps it effectively disabled during ordinary viewing while retaining a
-// bounded escape hatch for an exceptionally stale FLV live stream.
-const LIVE_SMART_CATCHUP_THRESHOLD_SECONDS: number = 60;
 const PLAYBACK_PROFILE_STABLE: string = 'stable';
 const PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL: string =
   'lowLatencyExperimental';
@@ -190,25 +183,16 @@ export class VideoPlayer {
   }
 
   private buildLivePlaybackStrategy(): media.PlaybackStrategy {
-    if (this.playbackProfile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL) {
-      // Experimental low latency deliberately omits the API 18 smart
-      // catch-up fields. That leaves app-controlled speed untouched and keeps
-      // AVPlayer from applying an aggressive catch-up speed behind the app's
-      // back; setSpeed remains the user-facing control below.
-      return {
-        preferredBufferDuration: 1,
-      };
+    if (this.playbackProfile !== PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL) {
+      // Stable follows AVPlayer's system buffering policy. A fixed 20-second
+      // startup buffer can prevent HTTP-FLV from reaching prepared/playing
+      // before the app's initialization timeout on slower live endpoints.
+      return {};
     }
-    let strategy: media.PlaybackStrategy = {
-      preferredBufferDuration: LIVE_PREFERRED_BUFFER_DURATION_SECONDS,
+    // Experimental low latency changes only the preferred buffer duration.
+    return {
+      preferredBufferDuration: 1,
     };
-    if (deviceInfo.sdkApiVersion >= OHOS_SMART_CATCHUP_API_VERSION) {
-      strategy.preferredBufferDurationForPlaying =
-        LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS;
-      strategy.thresholdForAutoQuickPlay =
-        LIVE_SMART_CATCHUP_THRESHOLD_SECONDS;
-    }
-    return strategy;
   }
 
   private logPlaybackStrategy(
@@ -216,25 +200,16 @@ export class VideoPlayer {
     generation: number,
     usesConfiguredStrategy: boolean = true,
   ): void {
-    const supportsApi18Strategy =
-      deviceInfo.sdkApiVersion >= OHOS_SMART_CATCHUP_API_VERSION;
-    const usesPlayingWaterline =
+    const preferredBuffer =
       usesConfiguredStrategy &&
-      this.playbackProfile === PLAYBACK_PROFILE_STABLE &&
-      supportsApi18Strategy;
-    const unavailableApi18Value = supportsApi18Strategy ?
-      'system-default' : 'unsupported';
-    const preferredBuffer = usesConfiguredStrategy
-      ? (this.playbackProfile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL
-        ? '1s' : LIVE_PREFERRED_BUFFER_DURATION_SECONDS + 's')
-      : 'system-default';
+        this.playbackProfile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL ?
+      '1s' : 'system-default';
     Log.i(TAG,
       `playback strategy ${result} generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
       `profile=${this.playbackProfile} appGeneration=${this.appPlayerGeneration ?? 'none'} ` +
       `sourceKind=${this.sourceKind} ` +
       `preferredBuffer=${preferredBuffer} ` +
-      `playingWaterline=${usesPlayingWaterline ? LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS + 's' : unavailableApi18Value} ` +
-      `smartCatchup=${usesPlayingWaterline ? LIVE_SMART_CATCHUP_THRESHOLD_SECONDS + 's' : unavailableApi18Value}`);
+      `playingWaterline=system-default smartCatchup=system-default`);
   }
 
   private sendPlaybackProfile(status: string): void {
@@ -265,6 +240,14 @@ export class VideoPlayer {
     }
 
     this.playbackStrategyGeneration = generation;
+    if (this.playbackProfile === PLAYBACK_PROFILE_STABLE) {
+      this.playbackStrategyState = PLAYBACK_STRATEGY_APPLIED;
+      this.playbackStrategyTask = Promise.resolve();
+      this.logPlaybackStrategy('system-default', generation, false);
+      this.sendPlaybackProfile('applied');
+      return;
+    }
+
     this.playbackStrategyState = PLAYBACK_STRATEGY_APPLYING;
     const task = (async () => {
       try {
@@ -349,7 +332,9 @@ export class VideoPlayer {
           await player.setMediaSource(mediaSource, playbackStrategy);
           if (this.isCurrentGeneration(generation, player)) {
             this.playbackStrategyState = PLAYBACK_STRATEGY_APPLIED;
-            this.logPlaybackStrategy('applied-with-media-source', generation);
+            this.logPlaybackStrategy(
+              'applied-with-media-source', generation,
+              this.playbackProfile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL);
             this.sendPlaybackProfile('applied');
           }
         } catch (strategyError) {

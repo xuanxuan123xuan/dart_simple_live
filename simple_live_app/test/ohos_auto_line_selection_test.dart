@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 
 void main() {
-  test('candidate lines stay within the active protocol latency tier', () {
+  test('candidate lines stay within the active protocol family', () {
     expect(
       resolveOhosAutoLineCandidateIndices(
         urls: const [

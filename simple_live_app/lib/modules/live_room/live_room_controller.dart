@@ -493,15 +493,16 @@ class OhosAutoLineSelectionDiagnostic {
   final int candidateCount;
   final int? initialLineIndex;
   final int? selectedLineIndex;
+
   /// Candidate-relative result returned by the TCP probe. This is deliberately
   /// an index, never a URL or host name.
   final int? measuredLineIndex;
 }
 
-/// Returns lines in the same protocol latency tier as the active line.
+/// Returns lines in the same protocol family as the active line.
 ///
 /// The URL values stay in the caller's private list; this helper only returns
-/// indexes so diagnostics can remain URL-free.  Matching the active tier also
+/// indexes so diagnostics can remain URL-free. Matching the active protocol
 /// prevents a background probe from changing the user's explicitly selected
 /// protocol family.
 @visibleForTesting
@@ -512,13 +513,10 @@ List<int> resolveOhosAutoLineCandidateIndices({
   if (currentLineIndex < 0 || currentLineIndex >= urls.length) {
     return const [];
   }
-  final activePriority =
-      classifyLiveStreamProtocol(urls[currentLineIndex]).latencyPriority;
+  final activeProtocol = classifyLiveStreamProtocol(urls[currentLineIndex]);
   return [
     for (var index = 0; index < urls.length; index += 1)
-      if (classifyLiveStreamProtocol(urls[index]).latencyPriority ==
-          activePriority)
-        index,
+      if (classifyLiveStreamProtocol(urls[index]) == activeProtocol) index,
   ];
 }
 
