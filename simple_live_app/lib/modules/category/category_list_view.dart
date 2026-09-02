@@ -20,7 +20,8 @@ class CategoryListView extends StatelessWidget {
   Widget build(BuildContext context) {
     // Match the home feed: the list scrolls behind the floating app bar while
     // its initial content starts just below the selector.
-    final topClearance = MediaQuery.paddingOf(context).top + 8;
+    final topClearance =
+        MediaQuery.paddingOf(context).top + kToolbarHeight + 12;
     return KeepAliveWrapper(
       child: Obx(
         () => EasyRefresh(

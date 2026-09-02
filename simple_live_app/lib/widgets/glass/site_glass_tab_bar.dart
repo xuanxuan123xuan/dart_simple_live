@@ -4,6 +4,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/glass_controller.dart';
 import 'package:simple_live_app/app/glass_quality_policy.dart';
+import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/sites.dart';
 
 /// Site selector with the same focused glass indicator used by the bottom
@@ -11,18 +12,26 @@ import 'package:simple_live_app/app/sites.dart';
 class SiteGlassTabBar extends StatelessWidget {
   const SiteGlassTabBar({
     required this.controller,
+    this.iconOnly,
     super.key,
   });
 
   final TabController controller;
+  final bool? iconOnly;
+
+  bool _iconOnlyFor(BuildContext context) =>
+      iconOnly ??
+      (PlatformUtils.isMobileApp &&
+          MediaQuery.sizeOf(context).shortestSide < 600);
 
   @override
   Widget build(BuildContext context) {
+    final compact = _iconOnlyFor(context);
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
         if (!Get.isRegistered<AppSettingsController>()) {
-          return _buildFallback(context);
+          return _buildFallback(context, iconOnly: compact);
         }
         return Obx(() {
           final mode = AppSettingsController.instance.glassMode.value;
@@ -31,12 +40,13 @@ class SiteGlassTabBar extends StatelessWidget {
             role: GlassSurfaceRole.navigation,
           );
           if (quality == null) {
-            return _buildFallback(context);
+            return _buildFallback(context, iconOnly: compact);
           }
           return _buildGlass(
             context,
             quality,
             AppGlassAppearancePolicy.resolve(mode),
+            compact,
           );
         });
       },
@@ -47,6 +57,7 @@ class SiteGlassTabBar extends StatelessWidget {
     BuildContext context,
     GlassQuality quality,
     AppGlassAppearanceProfile appearance,
+    bool iconOnly,
   ) {
     final colors = Theme.of(context).colorScheme;
     return GlassTabBar.inline(
@@ -55,7 +66,7 @@ class SiteGlassTabBar extends StatelessWidget {
         for (final site in Sites.supportSites)
           GlassTab(
             icon: Image.asset(site.logo, width: 21, height: 21),
-            label: site.name,
+            label: iconOnly ? null : site.name,
             semanticLabel: site.name,
           ),
       ],
@@ -63,18 +74,21 @@ class SiteGlassTabBar extends StatelessWidget {
       onTabSelected: controller.animateTo,
       backgroundKey: LiquidGlassScope.of(context),
       quality: quality,
-      barHeight: 48,
-      barBorderRadius: 24,
-      tabWidth: 112,
-      iconSize: 21,
+      barHeight: iconOnly ? 56 : 48,
+      barBorderRadius: iconOnly ? 28 : 24,
+      tabWidth: iconOnly ? 56 : 112,
+      iconSize: iconOnly ? 24 : 21,
       labelFontSize: 13,
-      iconLabelSpacing: 6,
-      tabPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      indicatorExpansion:
-          const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
-      indicatorBorderRadius: 20,
+      iconLabelSpacing: iconOnly ? 0 : 6,
+      tabPadding: iconOnly
+          ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
+          : const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      indicatorExpansion: iconOnly
+          ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
+          : const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+      indicatorBorderRadius: iconOnly ? 26 : 20,
       indicatorPinchStrength: 0.55,
-      magnification: 1.04,
+      magnification: iconOnly ? 1.02 : 1.04,
       pressScale: 1.025,
       settings: LiquidGlassSettings(
         glassColor: colors.surface.withAlpha(appearance.navigationTintAlpha),
@@ -106,7 +120,7 @@ class SiteGlassTabBar extends StatelessWidget {
     );
   }
 
-  Widget _buildFallback(BuildContext context) {
+  Widget _buildFallback(BuildContext context, {required bool iconOnly}) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final neutralBorder =
@@ -116,75 +130,93 @@ class SiteGlassTabBar extends StatelessWidget {
       builder: (context, constraints) {
         final availableWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
-            : Sites.supportSites.length * 112.0;
-        final tabWidth =
-            (availableWidth / Sites.supportSites.length).clamp(0.0, 112.0);
-        return Material(
-          key: const ValueKey<String>('site-tab-bar-fallback'),
-          color: colors.surfaceContainerLow,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: BorderSide(
-              color: neutralBorder,
-            ),
-          ),
-          clipBehavior: Clip.antiAlias,
+            : Sites.supportSites.length * (iconOnly ? 56.0 : 112.0);
+        final maxTabWidth = iconOnly ? 56.0 : 112.0;
+        final tabWidth = (availableWidth / Sites.supportSites.length)
+            .clamp(0.0, maxTabWidth);
+        final barWidth = tabWidth * Sites.supportSites.length;
+        return Align(
+          alignment: Alignment.center,
           child: SizedBox(
-            height: 48,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 0; i < Sites.supportSites.length; i++)
-                  SizedBox(
-                    width: tabWidth,
-                    height: double.infinity,
-                    child: InkWell(
-                      onTap: () => controller.animateTo(i),
-                      borderRadius: BorderRadius.circular(20),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        margin: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: controller.index == i
-                                ? colors.primary
-                                : Colors.transparent,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Image.asset(
-                              Sites.supportSites[i].logo,
-                              width: 21,
-                              height: 21,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                Sites.supportSites[i].name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
+            width: barWidth,
+            child: Material(
+              key: const ValueKey<String>('site-tab-bar-fallback'),
+              color: colors.surfaceContainerLow,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(iconOnly ? 28 : 24),
+                side: BorderSide(
+                  color: neutralBorder,
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: SizedBox(
+                height: iconOnly ? 56 : 48,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < Sites.supportSites.length; i++)
+                      SizedBox(
+                        width: tabWidth,
+                        height: double.infinity,
+                        child: Semantics(
+                          button: true,
+                          selected: controller.index == i,
+                          label: Sites.supportSites[i].name,
+                          child: InkWell(
+                            onTap: () => controller.animateTo(i),
+                            borderRadius:
+                                BorderRadius.circular(iconOnly ? 26 : 20),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              margin: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Colors.transparent,
+                                borderRadius: BorderRadius.circular(
+                                  iconOnly ? 26 : 20,
+                                ),
+                                border: Border.all(
                                   color: controller.index == i
                                       ? colors.primary
-                                      : colors.onSurfaceVariant,
-                                  fontWeight: controller.index == i
-                                      ? FontWeight.w600
-                                      : FontWeight.w500,
+                                      : Colors.transparent,
+                                  width: 1.5,
                                 ),
                               ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Image.asset(
+                                    Sites.supportSites[i].logo,
+                                    width: 21,
+                                    height: 21,
+                                  ),
+                                  if (!iconOnly) ...[
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        Sites.supportSites[i].name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: controller.index == i
+                                              ? colors.primary
+                                              : colors.onSurfaceVariant,
+                                          fontWeight: controller.index == i
+                                              ? FontWeight.w600
+                                              : FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-              ],
+                  ],
+                ),
+              ),
             ),
           ),
         );

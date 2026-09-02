@@ -24,18 +24,25 @@ class HomePage extends GetView<HomeController> {
         title: null,
         flexibleSpace: SafeArea(
           bottom: false,
-          child: Padding(
-            // Reserve the same width on both sides so the selector is centered
-            // against the whole window, independent of the right search action.
-            padding: const EdgeInsets.symmetric(horizontal: 64),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
-                child: SiteGlassTabBar(
-                  controller: controller.tabController,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 600;
+              return Padding(
+                // The compact selector is centered in the space left of the
+                // search action, so its fixed icon slots cannot be occluded.
+                padding: compact
+                    ? const EdgeInsets.only(left: 12, right: 64)
+                    : const EdgeInsets.symmetric(horizontal: 64),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: SiteGlassTabBar(
+                      controller: controller.tabController,
+                    ),
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
         actions: [
