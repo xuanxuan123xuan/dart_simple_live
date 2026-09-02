@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import 'package:lottie/lottie.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:remixicon/remixicon.dart';
+import 'package:simple_live_app/app/app_glass_mode.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
@@ -471,17 +472,33 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ],
       );
     }
-    return Column(
-      children: [
-        AspectRatio(
-          aspectRatio: 16 / 9,
-          child: buildMediaPlayer(),
-        ),
-        buildUserProfile(context),
-        buildMessageArea(),
-        buildBottomActions(context),
-      ],
-    );
+    return Obx(() {
+      final glassOff =
+          AppSettingsController.instance.glassMode.value == AppGlassMode.off;
+      final profile = buildUserProfile(
+        context,
+        useStaticSurface: glassOff,
+        showDividers: !glassOff,
+      );
+      return Column(
+        children: [
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: buildMediaPlayer(),
+          ),
+          if (glassOff) const SizedBox(height: 8),
+          if (glassOff)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: profile,
+            )
+          else
+            profile,
+          buildMessageArea(),
+          buildBottomActions(context),
+        ],
+      );
+    });
   }
 
   Widget buildTabletUI(BuildContext context) {
@@ -1224,18 +1241,21 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   Widget buildUserProfile(
     BuildContext context, {
     bool useStaticSurface = false,
+    bool showDividers = true,
   }) {
     final content = Container(
-      decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(
-            color: Colors.grey.withAlpha(25),
-          ),
-          bottom: BorderSide(
-            color: Colors.grey.withAlpha(25),
-          ),
-        ),
-      ),
+      decoration: showDividers
+          ? BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                  color: Colors.grey.withAlpha(25),
+                ),
+                bottom: BorderSide(
+                  color: Colors.grey.withAlpha(25),
+                ),
+              ),
+            )
+          : null,
       padding: AppStyle.edgeInsetsA8.copyWith(
         left: 12,
         right: 12,
@@ -1320,23 +1340,38 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   }
 
   Widget buildBottomActions(BuildContext context) {
-    return _buildStaticGlassPanel(
-      context,
-      radius: 0,
-      role: GlassSurfaceRole.navigation,
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(
-              color: Colors.grey.withAlpha(25),
+    return Obx(() {
+      final glassOff =
+          AppSettingsController.instance.glassMode.value == AppGlassMode.off;
+      Widget action(Widget child) => Expanded(
+            child: Padding(
+              padding: glassOff
+                  ? const EdgeInsets.symmetric(horizontal: 4)
+                  : EdgeInsets.zero,
+              child: child,
             ),
-          ),
-        ),
-        padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
+          );
+      final content = Container(
+        // In the non-glass mode each action is its own surface. Keep the
+        // navigation background flat so the surfaces do not merge into one
+        // bordered strip or leave a distracting divider above it.
+        color: glassOff ? Theme.of(context).colorScheme.surface : null,
+        decoration: glassOff
+            ? null
+            : BoxDecoration(
+                border: Border(
+                  top: BorderSide(
+                    color: Colors.grey.withAlpha(25),
+                  ),
+                ),
+              ),
+        padding: glassOff
+            ? EdgeInsets.fromLTRB(4, 8, 4, _bottomActionInset(context) + 8)
+            : EdgeInsets.only(bottom: _bottomActionInset(context)),
         child: Row(
           children: [
-            Expanded(
-              child: Obx(
+            action(
+              Obx(
                 () => controller.followed.value
                     ? _buildGlassActionButton(
                         context,
@@ -1352,16 +1387,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                       ),
               ),
             ),
-            Expanded(
-              child: _buildGlassActionButton(
+            action(
+              _buildGlassActionButton(
                 context,
                 label: "刷新",
                 icon: Remix.refresh_line,
                 onPressed: controller.refreshRoom,
               ),
             ),
-            Expanded(
-              child: _buildGlassActionButton(
+            action(
+              _buildGlassActionButton(
                 context,
                 label: "分享",
                 icon: Remix.share_line,
@@ -1370,8 +1405,17 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             ),
           ],
         ),
-      ),
-    );
+      );
+      if (glassOff) {
+        return content;
+      }
+      return _buildStaticGlassPanel(
+        context,
+        radius: 0,
+        role: GlassSurfaceRole.navigation,
+        child: content,
+      );
+    });
   }
 
   Widget buildMessageArea() {
