@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:simple_live_app/app/constant.dart';
+import 'package:simple_live_app/app/app_glass_mode.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
@@ -85,6 +86,12 @@ class AppSettingsController extends GetxController {
   void _loadFromStorage() {
     themeMode.value = LocalStorageService.instance
         .getValue(LocalStorageService.kThemeMode, 0);
+    glassMode.value = AppGlassMode.fromStorage(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kGlassMode,
+        AppGlassMode.defaultMode.storageValue,
+      ),
+    );
     appIconVariant.value = AppIconVariant.fromStorage(
       LocalStorageService.instance.getValue(
         LocalStorageService.kAppIconVariant,
@@ -623,6 +630,24 @@ class AppSettingsController extends GetxController {
     LocalStorageService.instance.setValue(LocalStorageService.kThemeMode, i);
     Get.changeThemeMode(mode);
   }
+
+  /// Selected quality for liquid-glass surfaces. The renderer may still cap
+  /// this value according to platform capabilities; this is only the user's
+  /// persisted preference.
+  var glassMode = AppGlassMode.defaultMode.obs;
+
+  /// Alias kept for callers that use the full setting name.
+  Rx<AppGlassMode> get appGlassMode => glassMode;
+
+  void setGlassMode(AppGlassMode mode) {
+    glassMode.value = mode;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kGlassMode,
+      mode.storageValue,
+    );
+  }
+
+  void setAppGlassMode(AppGlassMode mode) => setGlassMode(mode);
 
   var appIconVariant = AppIconVariant.modern.storageValue.obs;
   var appIconChanging = false.obs;

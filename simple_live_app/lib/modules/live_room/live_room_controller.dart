@@ -1211,7 +1211,7 @@ class LiveRoomController extends PlayerController
       'manualLineRevision=${diagnostic.manualLineSelectionRevision} '
       'candidateCount=${diagnostic.candidateCount} '
       'initialLine=${diagnostic.initialLineIndex ?? "none"} '
-      'selectedLine=${diagnostic.selectedLineIndex ?? "none"}',
+      'selectedLine=${diagnostic.selectedLineIndex ?? "none"} '
       'measuredLine=${diagnostic.measuredLineIndex ?? "none"}',
     );
   }

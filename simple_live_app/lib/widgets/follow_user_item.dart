@@ -709,10 +709,9 @@ class FollowUserItem extends StatelessWidget {
   }
 
   Color _cardBackgroundColor(ThemeData theme) {
-    if (theme.brightness == Brightness.dark) {
-      return theme.colorScheme.surfaceContainerHigh;
-    }
-    return theme.cardColor;
+    return theme.colorScheme.surface.withAlpha(
+      theme.brightness == Brightness.dark ? 182 : 214,
+    );
   }
 
   BoxDecoration _cardFrameDecoration(
@@ -722,7 +721,7 @@ class FollowUserItem extends StatelessWidget {
     final borderColor = playing
         ? theme.colorScheme.primary
         : theme.colorScheme.outlineVariant.withAlpha(
-            theme.brightness == Brightness.dark ? 230 : 180,
+            theme.brightness == Brightness.dark ? 175 : 145,
           );
     return BoxDecoration(
       border: Border.all(

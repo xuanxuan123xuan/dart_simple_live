@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
+import 'package:simple_live_app/app/app_glass_mode.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
@@ -14,6 +16,7 @@ import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/page_grid_view.dart';
 
 class FollowUserPage extends StatefulWidget {
@@ -28,7 +31,27 @@ class _FollowUserPageState extends State<FollowUserPage> {
   Widget build(BuildContext context) {
     final controller = Get.find<FollowUserController>();
     return Scaffold(
+      backgroundColor: Colors.transparent,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        forceMaterialTransparency: true,
+        actionsPadding: const EdgeInsets.only(right: 8),
+        flexibleSpace: const SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(12, 4, 12, 4),
+            child: GlassSurface(
+              role: GlassSurfaceRole.navigation,
+              radius: 22,
+              liveBackdrop: true,
+              child: SizedBox.expand(),
+            ),
+          ),
+        ),
         title: const Text("关注用户"),
         actions: [
           IconButton(
@@ -49,7 +72,8 @@ class _FollowUserPageState extends State<FollowUserPage> {
           ),
           Obx(
             () => Visibility(
-              visible: controller.paginationEnabled.value,
+              visible: controller.paginationEnabled.value &&
+                  !PlatformUtils.isMobileApp,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -114,207 +138,154 @@ class _FollowUserPageState extends State<FollowUserPage> {
               ),
             ),
           ],
-          PopupMenuButton<String>(
-            tooltip: "更多",
-            onSelected: (value) {
-              switch (value) {
-                case "data":
-                  Get.toNamed(
-                    RoutePath.kProfileBackup,
-                    arguments: ProfileBackupController.kFollowDataArgument,
-                  );
-                  break;
-                case "tags":
-                  showTagsManager(controller);
-                  break;
-              }
+          Obx(
+            () {
+              final glassEnabled =
+                  AppSettingsController.instance.glassMode.value !=
+                      AppGlassMode.off;
+              final theme = Theme.of(context);
+              return PopupMenuButton<String>(
+                tooltip: "更多",
+                color: glassEnabled
+                    ? theme.popupMenuTheme.color
+                    : theme.colorScheme.surfaceContainerHigh,
+                surfaceTintColor: Colors.transparent,
+                onSelected: (value) {
+                  switch (value) {
+                    case "data":
+                      Get.toNamed(
+                        RoutePath.kProfileBackup,
+                        arguments: ProfileBackupController.kFollowDataArgument,
+                      );
+                      break;
+                    case "tags":
+                      showTagsManager(controller);
+                      break;
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: "data",
+                    child: Row(
+                      children: [
+                        Icon(Remix.file_transfer_line),
+                        SizedBox(width: 12),
+                        Text("数据管理"),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: "tags",
+                    child: Row(
+                      children: [
+                        Icon(Remix.price_tag_line),
+                        SizedBox(width: 12),
+                        Text("标签管理"),
+                      ],
+                    ),
+                  ),
+                ],
+                icon: const Icon(Icons.more_vert),
+              );
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: "data",
-                child: Row(
-                  children: [
-                    Icon(Remix.file_transfer_line),
-                    SizedBox(width: 12),
-                    Text("数据管理"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: "tags",
-                child: Row(
-                  children: [
-                    Icon(Remix.price_tag_line),
-                    SizedBox(width: 12),
-                    Text("标签管理"),
-                  ],
-                ),
-              ),
-            ],
-            icon: const Icon(Icons.more_vert),
           ),
         ],
         leading: Obx(
-          () => FollowService.instance.updating.value
-              ? const IconButton(
-                  onPressed: null,
-                  icon: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+          () => Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: FollowService.instance.updating.value
+                ? const IconButton(
+                    onPressed: null,
+                    icon: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : IconButton(
+                    onPressed: () {
+                      controller.refreshData();
+                    },
+                    icon: const Icon(Icons.refresh),
                   ),
-                )
-              : IconButton(
-                  onPressed: () {
-                    controller.refreshData();
-                  },
-                  icon: const Icon(Icons.refresh),
-                ),
+          ),
         ),
       ),
       body: Stack(
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Obx(
-                () => Visibility(
-                  visible: controller.paginationEnabled.value,
-                  child: Padding(
-                    padding: AppStyle.edgeInsetsH8.copyWith(top: 8),
-                    child: Text(
-                      "当前页刷新只处理当前结果；刷新全部会按当前筛选结果执行完整刷新，并在手动时补齐封面与标题。",
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+          Obx(
+            () {
+              // Establish the dependency for the selected multi-room count.
+              controller.selectedMultiRoomCount.value;
+              final layout = _resolveLayoutSpec(context, controller);
+              const gridPadding = EdgeInsets.only(
+                left: 8,
+                right: 8,
+                bottom: 96,
+              );
+              return GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragEnd: (details) {
+                  if (!controller.paginationEnabled.value) {
+                    return;
+                  }
+                  final velocity = details.primaryVelocity ?? 0;
+                  if (velocity < -260) {
+                    controller.goToNextPage();
+                  } else if (velocity > 260) {
+                    controller.goToPreviousPage();
+                  }
+                },
+                child: PageGridView(
+                  padding: gridPadding,
+                  headerSlivers: _buildScrollableHeaderSlivers(
+                    context,
+                    controller,
                   ),
-                ),
-              ),
-              Obx(
-                () => _buildRefreshProgress(context),
-              ),
-              Obx(
-                () => _buildSearchFilterBar(controller),
-              ),
-              Padding(
-                padding: AppStyle.edgeInsetsH8,
-                child: Obx(
-                  () => Row(
-                    children: [
-                      ChoiceChip(
-                        label: const Text("按状态"),
-                        selected: controller.groupMode.value ==
-                            FollowGroupMode.liveStatus,
-                        onSelected: (_) {
-                          controller.setGroupMode(FollowGroupMode.liveStatus);
-                        },
-                      ),
-                      AppStyle.hGap8,
-                      ChoiceChip(
-                        label: const Text("按平台"),
-                        selected: controller.groupMode.value ==
-                            FollowGroupMode.platform,
-                        onSelected: (_) {
-                          controller.setGroupMode(FollowGroupMode.platform);
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Padding(
-                padding: AppStyle.edgeInsetsA8.copyWith(top: 4),
-                child: Obx(
-                  () => SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Wrap(
-                      spacing: 12,
-                      children: controller.groupOptions.map((option) {
-                        return FilterButton(
-                          text: option.title,
-                          selected:
-                              controller.selectedGroupId.value == option.id,
-                          onTap: () {
-                            controller.setGroupOption(option);
-                          },
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: Obx(
-                  () {
-                    // 建立对多选集合的响应依赖。
-                    final _ = controller.selectedMultiRoomCount.value;
-                    final layout = _resolveLayoutSpec(context, controller);
-                    const gridPadding = EdgeInsets.only(
-                      left: 8,
-                      right: 8,
-                      bottom: 96,
-                    );
-                    return GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onHorizontalDragEnd: (details) {
-                        if (!controller.paginationEnabled.value) {
+                  crossAxisSpacing: layout.crossAxisSpacing,
+                  mainAxisSpacing: layout.mainAxisSpacing,
+                  mainAxisExtent: layout.mainAxisExtent,
+                  childAspectRatio: layout.childAspectRatio,
+                  useFixedGrid: true,
+                  crossAxisCount: layout.crossAxisCount,
+                  pageController: controller,
+                  firstRefresh: false,
+                  showPCRefreshButton: false,
+                  itemBuilder: (_, i) {
+                    final item = controller.list[i];
+                    final isCurrent = "${item.siteId}_${item.roomId}" ==
+                        CurrentRoomService.instance.currentKey;
+                    return FollowUserItem(
+                      item: item,
+                      style: layout.itemStyle,
+                      showLiveCover: AppSettingsController
+                          .instance.followShowLiveCover.value,
+                      showSpecialMark: AppSettingsController
+                          .instance.followShowSpecialFollow.value,
+                      onSpecialTap: () {
+                        controller.toggleSpecialFollow(item);
+                      },
+                      onRemove: () {
+                        controller.removeItem(item);
+                      },
+                      onTap: () {
+                        if (PlatformUtils.supportsInlineMultiRoom &&
+                            controller.multiSelectMode.value) {
+                          controller.toggleMultiRoomItem(item);
                           return;
                         }
-                        final velocity = details.primaryVelocity ?? 0;
-                        if (velocity < -260) {
-                          controller.goToNextPage();
-                        } else if (velocity > 260) {
-                          controller.goToPreviousPage();
-                        }
+                        controller.openFollowRoom(item);
                       },
-                      child: PageGridView(
-                        padding: gridPadding,
-                        crossAxisSpacing: layout.crossAxisSpacing,
-                        mainAxisSpacing: layout.mainAxisSpacing,
-                        mainAxisExtent: layout.mainAxisExtent,
-                        childAspectRatio: layout.childAspectRatio,
-                        useFixedGrid: true,
-                        crossAxisCount: layout.crossAxisCount,
-                        pageController: controller,
-                        firstRefresh: false,
-                        showPCRefreshButton: false,
-                        itemBuilder: (_, i) {
-                          final item = controller.list[i];
-                          final isCurrent = "${item.siteId}_${item.roomId}" ==
-                              CurrentRoomService.instance.currentKey;
-                          return FollowUserItem(
-                            item: item,
-                            style: layout.itemStyle,
-                            showLiveCover: AppSettingsController
-                                .instance.followShowLiveCover.value,
-                            showSpecialMark: AppSettingsController
-                                .instance.followShowSpecialFollow.value,
-                            onSpecialTap: () {
-                              controller.toggleSpecialFollow(item);
-                            },
-                            onRemove: () {
-                              controller.removeItem(item);
-                            },
-                            onTap: () {
-                              if (PlatformUtils.supportsInlineMultiRoom &&
-                                  controller.multiSelectMode.value) {
-                                controller.toggleMultiRoomItem(item);
-                                return;
-                              }
-                              controller.openFollowRoom(item);
-                            },
-                            onLongPress: () {
-                              setFollowTagDialog(controller, item);
-                            },
-                            playing: controller.isSelectedForMultiRoom(item) ||
-                                isCurrent,
-                          );
-                        },
-                      ),
+                      onLongPress: () {
+                        setFollowTagDialog(controller, item);
+                      },
+                      playing:
+                          controller.isSelectedForMultiRoom(item) || isCurrent,
                     );
                   },
                 ),
-              ),
-            ],
+              );
+            },
           ),
           Obx(
             () => controller.paginationEnabled.value
@@ -327,6 +298,140 @@ class _FollowUserPageState extends State<FollowUserPage> {
                 : const SizedBox.shrink(),
           ),
         ],
+      ),
+    );
+  }
+
+  List<Widget> _buildScrollableHeaderSlivers(
+    BuildContext context,
+    FollowUserController controller,
+  ) {
+    final topClearance = MediaQuery.paddingOf(context).top + 68;
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.only(top: topClearance),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (controller.paginationEnabled.value)
+                Padding(
+                  padding: AppStyle.edgeInsetsH8.copyWith(top: 8),
+                  child: Text(
+                    "当前页刷新只处理当前结果；刷新全部会按当前筛选结果执行完整刷新，并在手动时补齐封面与标题。",
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              _buildRefreshProgress(context),
+              _buildSearchFilterBar(controller),
+              Padding(
+                padding: AppStyle.edgeInsetsH8,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: GlassSurface(
+                    role: GlassSurfaceRole.control,
+                    radius: 18,
+                    padding: const EdgeInsets.all(4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildGroupModeButton(
+                          context,
+                          label: "按状态",
+                          icon: Icons.dynamic_feed_outlined,
+                          selected: controller.groupMode.value ==
+                              FollowGroupMode.liveStatus,
+                          onTap: () => controller.setGroupMode(
+                            FollowGroupMode.liveStatus,
+                          ),
+                        ),
+                        _buildGroupModeButton(
+                          context,
+                          label: "按平台",
+                          icon: Icons.grid_view_rounded,
+                          selected: controller.groupMode.value ==
+                              FollowGroupMode.platform,
+                          onTap: () => controller.setGroupMode(
+                            FollowGroupMode.platform,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: AppStyle.edgeInsetsA8.copyWith(top: 8),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Wrap(
+                    spacing: 8,
+                    children: controller.groupOptions.map((option) {
+                      return FilterButton(
+                        text: option.title,
+                        selected: controller.selectedGroupId.value == option.id,
+                        glass: true,
+                        onTap: () {
+                          controller.setGroupOption(option);
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildGroupModeButton(
+    BuildContext context, {
+    required String label,
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          constraints: const BoxConstraints(minWidth: 108, minHeight: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? colors.primary.withAlpha(26) : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? colors.primary : Colors.transparent,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: selected ? colors.primary : colors.onSurfaceVariant,
+              ),
+              AppStyle.hGap8,
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color:
+                          selected ? colors.primary : colors.onSurfaceVariant,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -573,37 +678,49 @@ class _FollowUserPageState extends State<FollowUserPage> {
     FollowUserController controller,
     BuildContext context,
   ) {
+    final compact = MediaQuery.sizeOf(context).width < 520;
     return SafeArea(
       top: false,
       child: Center(
-        child: Material(
-          elevation: 8,
-          color: Theme.of(context).colorScheme.surface.withAlpha(242),
-          borderRadius: AppStyle.radius8,
-          child: Padding(
-            padding: AppStyle.edgeInsetsH12.add(AppStyle.edgeInsetsV4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+        child: GlassSurface(
+          role: GlassSurfaceRole.control,
+          radius: 18,
+          liveBackdrop: true,
+          padding: AppStyle.edgeInsetsH8.add(AppStyle.edgeInsetsV4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: "上一页",
+                onPressed: controller.currentDisplayPage.value > 1
+                    ? controller.goToPreviousPage
+                    : null,
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Text(
+                "${controller.currentDisplayPage.value}/${controller.totalDisplayPages.value}",
+              ),
+              IconButton(
+                tooltip: "下一页",
+                onPressed: controller.currentDisplayPage.value <
+                        controller.totalDisplayPages.value
+                    ? controller.goToNextPage
+                    : null,
+                icon: const Icon(Icons.chevron_right),
+              ),
+              AppStyle.hGap4,
+              if (compact) ...[
                 IconButton(
-                  tooltip: "上一页",
-                  onPressed: controller.currentDisplayPage.value > 1
-                      ? controller.goToPreviousPage
-                      : null,
-                  icon: const Icon(Icons.chevron_left),
-                ),
-                Text(
-                  "${controller.currentDisplayPage.value}/${controller.totalDisplayPages.value}",
+                  tooltip: "刷新当前页",
+                  onPressed: controller.refreshCurrentPageStatus,
+                  icon: const Icon(Icons.refresh),
                 ),
                 IconButton(
-                  tooltip: "下一页",
-                  onPressed: controller.currentDisplayPage.value <
-                          controller.totalDisplayPages.value
-                      ? controller.goToNextPage
-                      : null,
-                  icon: const Icon(Icons.chevron_right),
+                  tooltip: "刷新全部",
+                  onPressed: controller.refreshAllStatus,
+                  icon: const Icon(Icons.sync),
                 ),
-                AppStyle.hGap8,
+              ] else ...[
                 TextButton.icon(
                   onPressed: controller.refreshCurrentPageStatus,
                   icon: const Icon(Icons.refresh),
@@ -616,7 +733,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   label: const Text("全部"),
                 ),
               ],
-            ),
+            ],
           ),
         ),
       ),

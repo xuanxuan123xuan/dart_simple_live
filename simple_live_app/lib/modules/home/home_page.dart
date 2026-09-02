@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/home/home_controller.dart';
 import 'package:simple_live_app/modules/home/home_list_view.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
+import 'package:simple_live_app/widgets/glass/site_glass_tab_bar.dart';
 
 class HomePage extends GetView<HomeController> {
   const HomePage({Key? key}) : super(key: key);
@@ -11,37 +13,43 @@ class HomePage extends GetView<HomeController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.transparent,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        titleSpacing: 8,
-        title: TabBar(
-          controller: controller.tabController,
-          labelPadding: AppStyle.edgeInsetsH20,
-          isScrollable: true,
-          indicatorSize: TabBarIndicatorSize.label,
-          tabAlignment: TabAlignment.center,
-          tabs: Sites.supportSites
-              .map(
-                (e) => Tab(
-                  //text: e.name,
-
-                  child: Row(
-                    children: [
-                      Image.asset(
-                        e.logo,
-                        width: 24,
-                      ),
-                      AppStyle.hGap8,
-                      Text(e.name),
-                    ],
-                  ),
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        forceMaterialTransparency: true,
+        title: null,
+        flexibleSpace: SafeArea(
+          bottom: false,
+          child: Padding(
+            // Reserve the same width on both sides so the selector is centered
+            // against the whole window, independent of the right search action.
+            padding: const EdgeInsets.symmetric(horizontal: 64),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: SiteGlassTabBar(
+                  controller: controller.tabController,
                 ),
-              )
-              .toList(),
+              ),
+            ),
+          ),
         ),
         actions: [
-          IconButton(
-            onPressed: controller.toSearch,
-            icon: const Icon(Icons.search),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GlassSurface(
+              role: GlassSurfaceRole.navigation,
+              radius: 22,
+              liveBackdrop: true,
+              child: IconButton(
+                onPressed: controller.toSearch,
+                icon: const Icon(Icons.search),
+              ),
+            ),
           )
         ],
       ),

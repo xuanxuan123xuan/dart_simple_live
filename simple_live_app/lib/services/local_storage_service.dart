@@ -46,6 +46,10 @@ class LocalStorageService extends GetxService {
   static const String kRoomQualityMemory = "RoomQualityMemory";
   static const String kMultiRoomLayout = "MultiRoomLayout";
   static const String kThemeMode = "ThemeMode";
+  static const String kGlassMode = "GlassMode";
+  // Source-level alias for callers that prefer the complete setting name.
+  // Both names intentionally point to the same stable Hive key.
+  static const String kAppGlassMode = kGlassMode;
   static const String kAppIconVariant = "AppIconVariant";
   static const String kDebugModeKey = "DebugMode";
   static const String kDanmuSize = "DanmuSize";

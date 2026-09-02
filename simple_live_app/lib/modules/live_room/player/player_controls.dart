@@ -9,11 +9,13 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_room_quick_access_panel.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/superchat_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
@@ -108,13 +110,11 @@ Widget buildFullControls(
 Widget buildLockButton(LiveRoomController controller) {
   return Obx(
     () => Center(
-      child: InkWell(
+      child: GlassSurface(
+        role: GlassSurfaceRole.platformViewControl,
+        radius: 12,
         onTap: controller.setLockState,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.black45,
-            borderRadius: AppStyle.radius8,
-          ),
+        child: SizedBox(
           width: 40,
           height: 40,
           child: Center(
@@ -337,96 +337,90 @@ Widget _buildFullTopBar(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {},
-        child: Container(
+        child: SizedBox(
           height: 48 + padding.top,
-          padding: EdgeInsets.only(
-            left: padding.left + 32,
-            right: padding.right + 32,
-            top: padding.top,
-          ),
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: [
-                Colors.transparent,
-                Colors.black87,
+          child: GlassSurface(
+            role: GlassSurfaceRole.platformViewControl,
+            radius: 0,
+            padding: EdgeInsets.only(
+              left: padding.left + 32,
+              right: padding.right + 32,
+              top: padding.top,
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: () {
+                    if (controller.smallWindowState.value) {
+                      controller.exitSmallWindow();
+                    } else {
+                      controller.exitFull();
+                    }
+                  },
+                  icon: const Icon(
+                    Icons.arrow_back,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+                AppStyle.hGap12,
+                Expanded(
+                  child: Text(
+                    displayTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                AppStyle.hGap12,
+                IconButton(
+                  onPressed: controller.saveScreenshot,
+                  icon: const Icon(
+                    Icons.camera_alt_outlined,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => showQuickAccess(controller),
+                  icon: const Icon(
+                    Remix.play_list_2_line,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+                if (controller.canStartInlineMultiRoom)
+                  IconButton(
+                    tooltip: "添加直播间并进入多开",
+                    onPressed: controller.showAddToMultiRoomPanel,
+                    icon: const Icon(
+                      Remix.play_list_add_line,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                if (Platform.isAndroid || Utils.isOhos)
+                  IconButton(
+                    onPressed: controller.enablePIP,
+                    icon: const Icon(
+                      Icons.picture_in_picture,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                IconButton(
+                  onPressed: () => showPlayerSettings(controller),
+                  icon: const Icon(
+                    Icons.more_horiz,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
               ],
             ),
-          ),
-          child: Row(
-            children: [
-              IconButton(
-                onPressed: () {
-                  if (controller.smallWindowState.value) {
-                    controller.exitSmallWindow();
-                  } else {
-                    controller.exitFull();
-                  }
-                },
-                icon: const Icon(
-                  Icons.arrow_back,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              AppStyle.hGap12,
-              Expanded(
-                child: Text(
-                  displayTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              AppStyle.hGap12,
-              IconButton(
-                onPressed: controller.saveScreenshot,
-                icon: const Icon(
-                  Icons.camera_alt_outlined,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              IconButton(
-                onPressed: () => showQuickAccess(controller),
-                icon: const Icon(
-                  Remix.play_list_2_line,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              if (controller.canStartInlineMultiRoom)
-                IconButton(
-                  tooltip: "添加直播间并进入多开",
-                  onPressed: controller.showAddToMultiRoomPanel,
-                  icon: const Icon(
-                    Remix.play_list_add_line,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-              if (Platform.isAndroid || Utils.isOhos)
-                IconButton(
-                  onPressed: controller.enablePIP,
-                  icon: const Icon(
-                    Icons.picture_in_picture,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-              IconButton(
-                onPressed: () => showPlayerSettings(controller),
-                icon: const Icon(
-                  Icons.more_horiz,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-            ],
           ),
         ),
       ),
@@ -453,17 +447,9 @@ Widget _buildFullBottomBar(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {},
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.transparent,
-                Colors.black87,
-              ],
-            ),
-          ),
+        child: GlassSurface(
+          role: GlassSurfaceRole.platformViewControl,
+          radius: 0,
           padding: EdgeInsets.only(
             left: padding.left + 32,
             right: padding.right + 32,
@@ -561,17 +547,9 @@ Widget _buildNormalBottomBar(
       right: 0,
       bottom: controller.showControlsState.value ? 0 : -48,
       duration: const Duration(milliseconds: 200),
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.transparent,
-              Colors.black87,
-            ],
-          ),
-        ),
+      child: GlassSurface(
+        role: GlassSurfaceRole.platformViewControl,
+        radius: 0,
         child: Row(
           children: [
             IconButton(

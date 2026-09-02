@@ -13,6 +13,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 
 typedef TextValidate = bool Function(String text);
 
@@ -868,15 +869,9 @@ class _RightSideDialogRoute extends PopupRoute<void> {
         key: const ValueKey<String>('right-side-dialog-panel'),
         width: panelWidth,
         height: mediaQuery.size.height,
-        child: Material(
-          color: Theme.of(context).cardColor,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(4),
-              bottomLeft: Radius.circular(4),
-            ),
-          ),
-          clipBehavior: Clip.antiAlias,
+        child: GlassOverlaySurface(
+          radius: 12,
+          liveBackdrop: true,
           child: Padding(
             padding: insets.asPadding,
             // 水平 inset 已在上面补过，摘掉它避免 ListTile 内部的
@@ -890,7 +885,7 @@ class _RightSideDialogRoute extends PopupRoute<void> {
                 right: false,
                 child: Column(
                   children: [
-                    if (showHeader) ...[
+                    if (showHeader)
                       ListTile(
                         visualDensity: VisualDensity.compact,
                         contentPadding: EdgeInsets.zero,
@@ -903,11 +898,6 @@ class _RightSideDialogRoute extends PopupRoute<void> {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
-                      Divider(
-                        height: 1,
-                        color: Colors.grey.withAlpha(25),
-                      ),
-                    ],
                     Expanded(child: child),
                   ],
                 ),
@@ -1013,18 +1003,11 @@ class _RightSideSheetRoute extends PopupRoute<void> {
           maxWidth: maxWidth,
           maxHeight: maxHeight,
         ),
-        // Material 而不是 BoxDecoration：内容多为 ListTile，缺少 Material
-        // 祖先时 debug 断言直接抛（release 只是没有水波纹），
-        // 顺带让点击反馈正常裁剪到圆角内。
-        child: Material(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(12),
-              topRight: Radius.circular(12),
-            ),
-          ),
-          clipBehavior: Clip.antiAlias,
+        // 可读性玻璃层内部提供 Material：内容多为 ListTile，缺少 Material
+        // 祖先时 debug 断言会直接抛，同时高不透明填充避免背景干扰文字。
+        child: GlassOverlaySurface(
+          radius: 16,
+          liveBackdrop: true,
           child: Padding(
             padding: insets.asPadding,
             // 与右侧面板同理：水平 inset 由这里补一次，摘掉 MediaQuery 里的
@@ -1156,7 +1139,9 @@ class _SafeBottomSheetRoute<T> extends PopupRoute<T> {
         : mediaQuery.size.height * 0.5;
     // 与 _RightSideSheetRoute 同理：受 maxWidth 约束居中时两侧本就有留白，
     // 够躲开安全区就不必再让，否则内容白缩一截（横屏导航条那侧尤其明显）。
-    final maxSheetWidth = constraints?.maxWidth ?? double.infinity;
+    final isCenteredDialog = alignment == Alignment.center;
+    final maxSheetWidth =
+        constraints?.maxWidth ?? (isCenteredDialog ? 560.0 : double.infinity);
     final sheetWidth = maxSheetWidth < mediaQuery.size.width
         ? maxSheetWidth
         : mediaQuery.size.width;
@@ -1166,68 +1151,92 @@ class _SafeBottomSheetRoute<T> extends PopupRoute<T> {
       freeLeft: freeSide,
       freeRight: freeSide,
     );
+    final useGlassSurface = !Utils.isOhos &&
+        (backgroundColor == null || backgroundColor == Colors.transparent);
+    final contentTheme = useGlassSurface
+        ? Theme.of(context).copyWith(
+            dialogTheme: const DialogThemeData(
+              backgroundColor: Colors.transparent,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+            ),
+          )
+        : Theme.of(context);
+    final panelContent = Material(
+      type: MaterialType.transparency,
+      child: Padding(
+        padding: insets.asPadding,
+        child: MediaQuery.removePadding(
+          context: context,
+          removeLeft: true,
+          removeRight: true,
+          child: SafeArea(
+            top: useSafeArea,
+            bottom: useSafeArea,
+            left: false,
+            right: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showDragHandle)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8, bottom: 4),
+                    child: Center(
+                      child: Container(
+                        width: 32,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (isCenteredDialog)
+                  Theme(
+                    data: contentTheme,
+                    child: Builder(builder: builder),
+                  )
+                else
+                  Flexible(
+                    child: Theme(
+                      data: contentTheme,
+                      child: Builder(builder: builder),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    final panel = useGlassSurface
+        ? GlassOverlaySurface(
+            radius: alignment == Alignment.center ? 20 : 16,
+            child: panelContent,
+          )
+        : DecoratedBox(
+            decoration: ShapeDecoration(
+              color:
+                  backgroundColor ?? Theme.of(context).scaffoldBackgroundColor,
+              shape: shape ??
+                  const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
+                    ),
+                  ),
+            ),
+            child: panelContent,
+          );
     return Align(
       alignment: alignment,
-      child: Container(
-        // 不做键盘避让（不按 viewInsets 上移）：输入框在屏幕中间，
-        // 键盘一般比它矮不会遮挡，保持位置稳定。
+      child: ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: maxSheetWidth,
           maxHeight: maxHeight,
         ),
-        decoration: ShapeDecoration(
-          color: backgroundColor ?? Theme.of(context).scaffoldBackgroundColor,
-          shape: shape ??
-              const RoundedRectangleBorder(
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(12),
-                  topRight: Radius.circular(12),
-                ),
-              ),
-        ),
-        // 内容常是裸 ListTile / RadioListTile（settings_menu 等），缺
-        // Material 祖先时 debug 断言直接抛。transparency 不额外上色，
-        // 背景仍由上面的 ShapeDecoration 画。
-        child: Material(
-          type: MaterialType.transparency,
-          child: Padding(
-            padding: insets.asPadding,
-            // 水平 inset 由这里补一次，摘掉 MediaQuery 里的值：否则
-            // Utils.bottomSheetSafeArea 和 ListTile 内部的 SafeArea 会再让
-            // 一次。（这也是调用方注释"useSafeArea似乎无效"的由来。）
-            child: MediaQuery.removePadding(
-              context: context,
-              removeLeft: true,
-              removeRight: true,
-              child: SafeArea(
-                top: useSafeArea,
-                bottom: useSafeArea,
-                left: false,
-                right: false,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (showDragHandle)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8, bottom: 4),
-                        child: Center(
-                          child: Container(
-                            width: 32,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: Colors.grey,
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                      ),
-                    Flexible(child: Builder(builder: builder)),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
+        child: panel,
       ),
     );
   }

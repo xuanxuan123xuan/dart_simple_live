@@ -10,7 +10,6 @@ import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/shadow_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
-import 'package:sticky_headers/sticky_headers.dart';
 
 class CategoryListView extends StatelessWidget {
   final String tag;
@@ -19,6 +18,9 @@ class CategoryListView extends StatelessWidget {
       Get.find<CategoryListController>(tag: tag);
   @override
   Widget build(BuildContext context) {
+    // Match the home feed: the list scrolls behind the floating app bar while
+    // its initial content starts just below the selector.
+    final topClearance = MediaQuery.paddingOf(context).top + 8;
     return KeepAliveWrapper(
       child: Obx(
         () => EasyRefresh(
@@ -29,48 +31,50 @@ class CategoryListView extends StatelessWidget {
             completeDuration: const Duration(milliseconds: 400),
           ),
           child: ListView.builder(
-            padding: AppStyle.edgeInsetsA12,
+            padding: AppStyle.edgeInsetsA12.copyWith(
+              top: topClearance,
+              bottom: 96,
+            ),
             itemCount: controller.list.length,
             controller: controller.scrollController,
             itemBuilder: (_, i) {
               var item = controller.list[i];
               return Column(
                 children: [
-                  StickyHeader(
-                    header: Container(
-                      padding: AppStyle.edgeInsetsV8.copyWith(left: 4),
-                      color: Theme.of(context).scaffoldBackgroundColor,
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        item.name,
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
+                  Container(
+                    padding: AppStyle.edgeInsetsV8.copyWith(left: 4),
+                    color: Colors.transparent,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      item.name,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    content: Obx(
-                      () => GridView.count(
-                        shrinkWrap: true,
-                        padding: AppStyle.edgeInsetsV8,
-                        physics: const NeverScrollableScrollPhysics(),
-                        crossAxisCount:
-                            (MediaQuery.of(context).size.width ~/ 80)
-                                .clamp(1, 12)
-                                .toInt(),
-                        crossAxisSpacing: 8,
-                        mainAxisSpacing: 8,
-                        children: item.showAll.value
-                            ? (item.children
-                                .map(
-                                  (e) => buildSubCategory(context, e),
-                                )
-                                .toList())
-                            : (item.take15
-                                .map(
-                                  (e) => buildSubCategory(context, e),
-                                )
-                                .toList()
-                              ..add(buildShowMore(item))),
-                      ),
+                  ),
+                  Obx(
+                    () => GridView.count(
+                      shrinkWrap: true,
+                      padding: AppStyle.edgeInsetsV8,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisCount: (MediaQuery.of(context).size.width ~/ 80)
+                          .clamp(1, 12)
+                          .toInt(),
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 8,
+                      children: item.showAll.value
+                          ? (item.children
+                              .map(
+                                (e) => buildSubCategory(context, e),
+                              )
+                              .toList())
+                          : (item.take15
+                              .map(
+                                (e) => buildSubCategory(context, e),
+                              )
+                              .toList()
+                            ..add(buildShowMore(item))),
                     ),
                   ),
                 ],
@@ -85,6 +89,7 @@ class CategoryListView extends StatelessWidget {
   Widget buildSubCategory(BuildContext context, LiveSubCategory item) {
     final pic = (item.pic ?? "").trim();
     return ShadowCard(
+      backgroundColor: Colors.transparent,
       onTap: () {
         AppNavigator.toCategoryDetail(site: controller.site, category: item);
       },
@@ -188,6 +193,7 @@ class CategoryListView extends StatelessWidget {
 
   Widget buildShowMore(AppLiveCategory item) {
     return ShadowCard(
+      backgroundColor: Colors.transparent,
       onTap: () {
         item.showAll.value = true;
       },

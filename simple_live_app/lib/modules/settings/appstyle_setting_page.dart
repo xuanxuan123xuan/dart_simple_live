@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:simple_live_app/app/app_glass_mode.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/services/app_icon_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
+import 'package:simple_live_app/widgets/settings/settings_menu.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 
 class AppstyleSettingPage extends GetView<AppSettingsController> {
@@ -64,6 +66,27 @@ class AppstyleSettingPage extends GetView<AppSettingsController> {
                     ),
                   ],
                 ),
+              ),
+            ),
+          ),
+          AppStyle.vGap12,
+          Padding(
+            padding: AppStyle.edgeInsetsA12,
+            child: Text(
+              "液态玻璃",
+              style: Get.textTheme.titleSmall,
+            ),
+          ),
+          SettingsCard(
+            child: Obx(
+              () => SettingsMenu<AppGlassMode>(
+                title: "显示效果",
+                subtitle: "档位越高越清透，同时提升折射与模糊质量；部分平台仅回退渲染质量",
+                value: controller.glassMode.value,
+                valueMap: {
+                  for (final mode in AppGlassMode.values) mode: mode.label,
+                },
+                onChanged: controller.setGlassMode,
               ),
             ),
           ),

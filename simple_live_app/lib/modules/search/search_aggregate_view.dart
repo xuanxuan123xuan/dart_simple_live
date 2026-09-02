@@ -17,23 +17,28 @@ import 'package:simple_live_core/simple_live_core.dart';
 class SearchAggregateView extends StatelessWidget {
   const SearchAggregateView({
     required this.result,
+    required this.topClearance,
     Key? key,
   }) : super(key: key);
 
   final SearchAggregateResult result;
+  final double topClearance;
 
   @override
   Widget build(BuildContext context) {
     if (result.query == null) {
-      return const _AggregateMessage(
-        icon: Icons.search,
-        message: "输入关键词开始搜索",
-        hint: "支持粘贴直播链接并直接进入直播间",
+      return Padding(
+        padding: EdgeInsets.only(top: topClearance),
+        child: const _AggregateMessage(
+          icon: Icons.search,
+          message: "输入关键词开始搜索",
+          hint: "支持粘贴直播链接并直接进入直播间",
+        ),
       );
     }
 
     return ListView.builder(
-      padding: AppStyle.pagePadding(bottom: 24),
+      padding: AppStyle.pagePadding(top: topClearance, bottom: 24),
       itemCount: result.sites.length,
       itemBuilder: (context, index) {
         final state = result.sites[index];

@@ -6,12 +6,14 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/app_update_service.dart';
 import 'package:simple_live_app/services/cache_service.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 
 class MinePage extends StatefulWidget {
   const MinePage({Key? key}) : super(key: key);
@@ -130,26 +132,30 @@ class _MinePageState extends State<MinePage> {
             ),
       child: SafeArea(
         child: ListView(
-          padding: AppStyle.edgeInsetsA4,
+          padding: AppStyle.edgeInsetsA4.copyWith(bottom: 96),
           children: [
             AppStyle.vGap12,
-            ListTile(
-              leading: Image.asset(
-                Theme.of(context).brightness == Brightness.dark
-                    ? 'assets/images/logo_dark.png'
-                    : 'assets/images/logo.png',
-                width: 56,
-                height: 56,
+            GlassSurface(
+              role: GlassSurfaceRole.content,
+              radius: 20,
+              child: ListTile(
+                leading: Image.asset(
+                  Theme.of(context).brightness == Brightness.dark
+                      ? 'assets/images/logo_dark.png'
+                      : 'assets/images/logo.png',
+                  width: 56,
+                  height: 56,
+                ),
+                title: const Text(
+                  "Simple Live",
+                  style: TextStyle(height: 1.0),
+                ),
+                subtitle: const Text("简简单单看直播"),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Get.toNamed(RoutePath.kAbout);
+                },
               ),
-              title: const Text(
-                "Simple Live",
-                style: TextStyle(height: 1.0),
-              ),
-              subtitle: const Text("简简单单看直播"),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Get.toNamed(RoutePath.kAbout);
-              },
             ),
             Divider(
               indent: 12,

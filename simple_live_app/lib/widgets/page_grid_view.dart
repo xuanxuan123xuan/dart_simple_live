@@ -23,6 +23,9 @@ class PageGridView extends StatelessWidget {
   final double? mainAxisExtent;
   final bool useFixedGrid;
   final Widget? emptyWidget;
+  /// Scrollable content rendered before the grid, under the same refresh and
+  /// pagination controller. Use [SliverToBoxAdapter] for regular widgets.
+  final List<Widget> headerSlivers;
   const PageGridView({
     required this.itemBuilder,
     required this.pageController,
@@ -37,6 +40,7 @@ class PageGridView extends StatelessWidget {
     this.mainAxisExtent,
     this.useFixedGrid = false,
     this.emptyWidget,
+    this.headerSlivers = const [],
     required this.crossAxisCount,
     Key? key,
   }) : super(key: key);
@@ -57,7 +61,7 @@ class PageGridView extends StatelessWidget {
               }
               return false;
             },
-            child: EasyRefresh(
+            child: EasyRefresh.custom(
               header: MaterialHeader(
                 completeDuration: const Duration(milliseconds: 400),
               ),
@@ -71,29 +75,7 @@ class PageGridView extends StatelessWidget {
                   ? pageController.loadData
                   : null,
               onRefresh: pageController.refreshData,
-              child: useFixedGrid
-                  ? GridView.builder(
-                      padding: padding,
-                      controller: pageController.scrollController,
-                      primary: false,
-                      itemCount: pageController.list.length,
-                      itemBuilder: itemBuilder,
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: crossAxisCount,
-                        crossAxisSpacing: crossAxisSpacing,
-                        mainAxisSpacing: mainAxisSpacing,
-                        childAspectRatio: childAspectRatio ?? 3.4,
-                        mainAxisExtent: mainAxisExtent,
-                      ),
-                    )
-                  : MasonryGridView.count(
-                      padding: padding,
-                      itemCount: pageController.list.length,
-                      itemBuilder: itemBuilder,
-                      crossAxisCount: crossAxisCount,
-                      crossAxisSpacing: crossAxisSpacing,
-                      mainAxisSpacing: mainAxisSpacing,
-                    ),
+              slivers: _buildSlivers(),
             ),
           ),
           Positioned(
@@ -123,25 +105,66 @@ class PageGridView extends StatelessWidget {
             ),
           ),
           Offstage(
-            offstage: !pageController.pageEmpty.value,
-            child: emptyWidget ??
-                AppEmptyWidget(
-                  onRefresh: () => pageController.refreshData(),
-                ),
-          ),
-          Offstage(
             offstage: !(showPageLoadding && pageController.pageLoadding.value),
             child: const AppLoaddingWidget(),
-          ),
-          Offstage(
-            offstage: !pageController.pageError.value,
-            child: AppErrorWidget(
-              errorMsg: pageController.errorMsg.value,
-              onRefresh: () => pageController.refreshData(),
-            ),
           ),
         ],
       ),
     );
+  }
+
+  List<Widget> _buildSlivers() {
+    final slivers = List<Widget>.of(headerSlivers);
+
+    if (pageController.pageError.value) {
+      slivers.add(
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: AppErrorWidget(
+            errorMsg: pageController.errorMsg.value,
+            onRefresh: pageController.refreshData,
+          ),
+        ),
+      );
+      return slivers;
+    }
+
+    if (pageController.pageEmpty.value) {
+      slivers.add(
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: emptyWidget ??
+              AppEmptyWidget(onRefresh: pageController.refreshData),
+        ),
+      );
+      return slivers;
+    }
+
+    final Widget grid = useFixedGrid
+        ? SliverGrid(
+            delegate: SliverChildBuilderDelegate(
+              itemBuilder,
+              childCount: pageController.list.length,
+            ),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: crossAxisSpacing,
+              mainAxisSpacing: mainAxisSpacing,
+              childAspectRatio: childAspectRatio ?? 3.4,
+              mainAxisExtent: mainAxisExtent,
+            ),
+          )
+        : SliverMasonryGrid.count(
+            childCount: pageController.list.length,
+            itemBuilder: itemBuilder,
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: crossAxisSpacing,
+            mainAxisSpacing: mainAxisSpacing,
+          );
+
+    slivers.add(
+      padding == null ? grid : SliverPadding(padding: padding!, sliver: grid),
+    );
+    return slivers;
   }
 }

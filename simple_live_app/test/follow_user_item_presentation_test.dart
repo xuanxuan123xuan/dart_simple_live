@@ -132,8 +132,8 @@ void main() {
     final border = decoration.border! as Border;
     final colorScheme = AppStyle.darkTheme.colorScheme;
 
-    expect(material.color, colorScheme.surfaceContainerHigh);
-    expect(border.top.color, colorScheme.outlineVariant.withAlpha(230));
+    expect(material.color, colorScheme.surface.withAlpha(182));
+    expect(border.top.color, colorScheme.outlineVariant.withAlpha(175));
     expect(border.top.width, 1);
   });
 

@@ -3,7 +3,8 @@ version: 26.3.1+26301
 publish_to: none
 description: "Simple Live APP"
 environment:
-  sdk: ">=3.0.5 <4.0.0"
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.41.0"
 
 dependencies:
   simple_live_core:
@@ -23,6 +24,9 @@ dependencies:
   intl: 0.20.2 # Flutter 3.41 SDK pin（flutter_localizations 要求 ^0.20.2）
   qr_flutter: ^4.1.0 #二维码生成
   dynamic_color: 1.6.8
+  # Liquid Glass surface primitives (pinned: the API is intentionally treated
+  # as part of the app's rendering contract).
+  liquid_glass_widgets: 1.2.3
   path: any
   collection: any
   udp: ^5.0.3 #UDP
