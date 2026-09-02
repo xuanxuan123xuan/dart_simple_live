@@ -47,9 +47,9 @@ class AppStyle {
     visualDensity: VisualDensity.standard,
     appBarTheme: AppBarTheme(
       centerTitle: true,
-      // Standard secondary-page app bars keep an opaque-enough surface, but
-      // stay flat so they do not draw a separator below every page title.
-      backgroundColor: const Color(0xF7FFFFFF),
+      // Let secondary-page app bars reveal the Scaffold's own background so
+      // dynamic colours cannot create a different band behind the title.
+      backgroundColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
@@ -124,7 +124,7 @@ class AppStyle {
         ),
     appBarTheme: AppBarTheme(
       centerTitle: true,
-      backgroundColor: const Color(0xF714171B),
+      backgroundColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
