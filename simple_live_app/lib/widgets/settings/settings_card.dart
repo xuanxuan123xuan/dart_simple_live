@@ -10,21 +10,17 @@ class SettingsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     if (PlatformUtils.isOhos) {
-      // HarmonyOS can lose the lower part of a tall, dynamically growing
-      // clipped translucent Material layer. Keep the proven non-clipping
-      // card path there.
-      return Material(
-        color: theme.brightness == Brightness.dark
-            ? Colors.grey.withAlpha(50)
-            : Colors.white70,
-        shape: RoundedRectangleBorder(
+      // Avoid Material entirely: the OHOS renderer can leave an oversized
+      // translucent Material surface after a settings card changes height.
+      return Container(
+        decoration: BoxDecoration(
+          color: theme.brightness == Brightness.dark
+              ? Colors.grey.withAlpha(50)
+              : Colors.white70,
           borderRadius: AppStyle.radius8,
-          side: BorderSide(color: Colors.grey.withAlpha(25)),
+          border: Border.all(color: Colors.grey.withAlpha(25)),
         ),
-        child: Container(
-          decoration: BoxDecoration(borderRadius: AppStyle.radius8),
-          child: child,
-        ),
+        child: child,
       );
     }
     final radius = BorderRadius.circular(14);
