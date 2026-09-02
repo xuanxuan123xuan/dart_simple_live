@@ -19,16 +19,19 @@ class HomeListView extends StatelessWidget {
       MediaQuery.sizeOf(context).width,
       detailsExtent: 0,
     );
-    // extendBodyBehindAppBar already exposes the app-bar height through the
-    // top MediaQuery padding. Only add a small breathing space after it.
-    final topClearance = MediaQuery.paddingOf(context).top + 8;
+    final topClearance =
+        MediaQuery.paddingOf(context).top + kToolbarHeight + 12;
     return KeepAliveWrapper(
       child: PageGridView(
         pageController: controller,
         padding: AppStyle.edgeInsetsA12.copyWith(
-          top: topClearance,
+          top: 0,
           bottom: 96,
         ),
+        headerSlivers: [
+          SliverToBoxAdapter(child: SizedBox(height: topClearance)),
+        ],
+        refreshHeaderIndex: 1,
         firstRefresh: true,
         mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
         crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,

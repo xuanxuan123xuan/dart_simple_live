@@ -23,6 +23,8 @@ class PageGridView extends StatelessWidget {
   final double? mainAxisExtent;
   final bool useFixedGrid;
   final Widget? emptyWidget;
+  final int refreshHeaderIndex;
+
   /// Scrollable content rendered before the grid, under the same refresh and
   /// pagination controller. Use [SliverToBoxAdapter] for regular widgets.
   final List<Widget> headerSlivers;
@@ -40,6 +42,7 @@ class PageGridView extends StatelessWidget {
     this.mainAxisExtent,
     this.useFixedGrid = false,
     this.emptyWidget,
+    this.refreshHeaderIndex = 0,
     this.headerSlivers = const [],
     required this.crossAxisCount,
     Key? key,
@@ -62,6 +65,7 @@ class PageGridView extends StatelessWidget {
               return false;
             },
             child: EasyRefresh.custom(
+              headerIndex: refreshHeaderIndex,
               header: MaterialHeader(
                 completeDuration: const Duration(milliseconds: 400),
               ),
