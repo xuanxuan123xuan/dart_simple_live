@@ -19,8 +19,10 @@ class HomeListView extends StatelessWidget {
       MediaQuery.sizeOf(context).width,
       detailsExtent: 0,
     );
-    final topClearance =
-        MediaQuery.paddingOf(context).top + kToolbarHeight + 12;
+    // The body already extends behind the transparent app bar. Reserve only
+    // the status-bar inset and a small breathing space; adding kToolbarHeight
+    // here double-counts the floating selector and leaves a large blank band.
+    final topClearance = MediaQuery.paddingOf(context).top + 8;
     return KeepAliveWrapper(
       child: PageGridView(
         pageController: controller,

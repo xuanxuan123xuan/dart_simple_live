@@ -9,6 +9,7 @@ import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
@@ -17,6 +18,7 @@ import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart'
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/settings/settings_action.dart';
@@ -78,6 +80,25 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     );
   }
 
+  Widget _buildGlassAppBarButton({
+    required BuildContext context,
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: _buildStaticGlassPanel(
+        context,
+        radius: 22,
+        child: IconButton(
+          onPressed: onPressed,
+          icon: Icon(icon),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMobileAppBarTitle(BuildContext context) {
     return SizedBox(
       height: kToolbarHeight,
@@ -93,16 +114,20 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           ),
           Align(
             alignment: Alignment.centerLeft,
-            child: IconButton(
+            child: _buildGlassAppBarButton(
+              context: context,
+              tooltip: "返回",
               onPressed: () => _handleBack(context),
-              icon: const Icon(Icons.arrow_back),
+              icon: Icons.arrow_back,
             ),
           ),
           Align(
             alignment: Alignment.centerRight,
-            child: IconButton(
+            child: _buildGlassAppBarButton(
+              context: context,
+              tooltip: "更多",
               onPressed: showMore,
-              icon: const Icon(Icons.more_horiz),
+              icon: Icons.more_horiz,
             ),
           ),
         ],
@@ -143,9 +168,11 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                     ),
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: IconButton(
+                      child: _buildGlassAppBarButton(
+                        context: context,
+                        tooltip: "返回",
                         onPressed: () => _handleBack(context),
-                        icon: const Icon(Icons.arrow_back),
+                        icon: Icons.arrow_back,
                       ),
                     ),
                   ],
@@ -155,9 +182,11 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 width: sidePanelWidth,
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: IconButton(
+                  child: _buildGlassAppBarButton(
+                    context: context,
+                    tooltip: "更多",
                     onPressed: showMore,
-                    icon: const Icon(Icons.more_horiz),
+                    icon: Icons.more_horiz,
                   ),
                 ),
               ),
@@ -169,19 +198,22 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   }
 
   Widget _buildDesktopOverlayIconButton({
+    required BuildContext context,
     required String tooltip,
     required IconData icon,
     required VoidCallback onPressed,
   }) {
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: Colors.black.withAlpha(120),
-        borderRadius: AppStyle.radius24,
+      child: _buildStaticGlassPanel(
+        context,
+        radius: 24,
         child: IconButton(
           onPressed: onPressed,
-          icon: Icon(icon),
-          color: Colors.white,
+          icon: Icon(
+            icon,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
         ),
       ),
     );
@@ -199,6 +231,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               left: 8,
               top: 8,
               child: _buildDesktopOverlayIconButton(
+                context: context,
                 tooltip: "返回",
                 icon: Icons.arrow_back,
                 onPressed: () => _handleBack(context),
@@ -208,6 +241,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               right: 8,
               top: controller.desktopSidePanelCollapsed.value ? 56 : 8,
               child: _buildDesktopOverlayIconButton(
+                context: context,
                 tooltip: "更多",
                 icon: Icons.more_horiz,
                 onPressed: showMore,
@@ -219,6 +253,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 right: 8,
                 top: 8,
                 child: _buildDesktopOverlayIconButton(
+                  context: context,
                   tooltip: "关闭",
                   icon: Icons.close,
                   onPressed: () => _handleBack(context),
@@ -231,6 +266,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 bottom: 0,
                 child: Center(
                   child: _buildDesktopOverlayIconButton(
+                    context: context,
                     tooltip: "展开聊天区",
                     icon: Icons.chevron_left,
                     onPressed: controller.toggleDesktopSidePanel,
@@ -465,78 +501,65 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             ),
           ),
           if (!collapsed)
-            Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                border: Border(
-                  top: BorderSide(
-                    color: Colors.grey.withAlpha(25),
-                  ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+              child: _buildStaticGlassPanel(
+                context,
+                radius: 20,
+                role: GlassSurfaceRole.content,
+                padding: AppStyle.edgeInsetsV4.copyWith(
+                  bottom: _bottomActionInset(context) + 4,
                 ),
-              ),
-              padding: AppStyle.edgeInsetsV4.copyWith(
-                bottom: _bottomActionInset(context) + 4,
-              ),
-              child: Row(
-                children: [
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      textStyle: const TextStyle(fontSize: 14),
+                child: Row(
+                  children: [
+                    _buildGlassActionButton(
+                      context,
+                      label: "刷新",
+                      icon: Remix.refresh_line,
+                      onPressed: controller.refreshRoom,
                     ),
-                    onPressed: controller.refreshRoom,
-                    icon: const Icon(Remix.refresh_line),
-                    label: const Text("刷新"),
-                  ),
-                  AppStyle.hGap4,
-                  Obx(
-                    () => controller.followed.value
-                        ? TextButton.icon(
-                            style: TextButton.styleFrom(
-                              textStyle: const TextStyle(fontSize: 14),
+                    AppStyle.hGap4,
+                    Obx(
+                      () => controller.followed.value
+                          ? _buildGlassActionButton(
+                              context,
+                              label: "取消关注",
+                              icon: Remix.heart_fill,
+                              onPressed: controller.removeFollowUser,
+                            )
+                          : _buildGlassActionButton(
+                              context,
+                              label: "关注",
+                              icon: Remix.heart_line,
+                              onPressed: controller.followUser,
                             ),
-                            onPressed: controller.removeFollowUser,
-                            icon: const Icon(Remix.heart_fill),
-                            label: const Text("取消关注"),
-                          )
-                        : TextButton.icon(
-                            style: TextButton.styleFrom(
-                              textStyle: const TextStyle(fontSize: 14),
-                            ),
-                            onPressed: controller.followUser,
-                            icon: const Icon(Remix.heart_line),
-                            label: const Text("关注"),
-                          ),
-                  ),
-                  const Expanded(child: Center()),
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      textStyle: const TextStyle(fontSize: 14),
                     ),
-                    onPressed: controller.share,
-                    icon: const Icon(Remix.share_line),
-                    label: const Text("分享"),
-                  ),
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      textStyle: const TextStyle(fontSize: 14),
+                    const Expanded(child: Center()),
+                    _buildGlassActionButton(
+                      context,
+                      label: "分享",
+                      icon: Remix.share_line,
+                      onPressed: controller.share,
                     ),
-                    onPressed: controller.copyUrl,
-                    icon: const Icon(Remix.file_copy_line),
-                    label: const Text("复制链接"),
-                  ),
-                  Obx(
-                    () => AppSettingsController.instance.playerShowPlayUrl.value
-                        ? TextButton.icon(
-                            style: TextButton.styleFrom(
-                              textStyle: const TextStyle(fontSize: 14),
-                            ),
-                            onPressed: controller.copyPlayUrl,
-                            icon: const Icon(Remix.file_copy_line),
-                            label: const Text("复制播放直链"),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                ],
+                    _buildGlassActionButton(
+                      context,
+                      label: "复制链接",
+                      icon: Remix.file_copy_line,
+                      onPressed: controller.copyUrl,
+                    ),
+                    Obx(
+                      () =>
+                          AppSettingsController.instance.playerShowPlayUrl.value
+                              ? _buildGlassActionButton(
+                                  context,
+                                  label: "复制播放直链",
+                                  icon: Remix.file_copy_line,
+                                  onPressed: controller.copyPlayUrl,
+                                )
+                              : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
               ),
             ),
         ],
@@ -548,80 +571,128 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     final showCollapseAction = _isDesktop;
     return SizedBox(
       width: _desktopSidePanelWidth,
-      child: Column(
-        children: [
-          if (showCollapseAction)
-            Container(
-              height: 40,
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                border: Border(
-                  left: BorderSide(
-                    color: Colors.grey.withAlpha(25),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        child: _buildStaticGlassPanel(
+          context,
+          radius: 24,
+          role: GlassSurfaceRole.content,
+          padding: const EdgeInsets.all(6),
+          child: Column(
+            children: [
+              if (showCollapseAction)
+                Container(
+                  height: 40,
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.grey.withAlpha(25),
+                      ),
+                    ),
                   ),
-                  bottom: BorderSide(
-                    color: Colors.grey.withAlpha(25),
+                  alignment: Alignment.centerLeft,
+                  child: Tooltip(
+                    message: "折叠聊天区",
+                    child: IconButton(
+                      onPressed: controller.toggleDesktopSidePanel,
+                      icon: const Icon(Icons.chevron_right),
+                    ),
                   ),
                 ),
-              ),
-              alignment: Alignment.centerLeft,
-              child: Tooltip(
-                message: "折叠聊天区",
-                child: IconButton(
-                  onPressed: controller.toggleDesktopSidePanel,
-                  icon: const Icon(Icons.chevron_right),
-                ),
-              ),
-            ),
-          Expanded(
-            child: Column(
-              children: [
-                buildUserProfile(context),
-                buildMessageArea(),
-              ],
-            ),
+              buildUserProfile(context, useStaticSurface: true),
+              const SizedBox(height: 8),
+              buildMessageArea(),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildCollapsedDesktopBottomPanel(BuildContext context) {
-    return Container(
-      height: 48 + _bottomActionInset(context),
-      padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        border: Border(
-          top: BorderSide(
-            color: Colors.grey.withAlpha(25),
+    return _buildStaticGlassPanel(
+      context,
+      radius: 0,
+      role: GlassSurfaceRole.navigation,
+      child: Container(
+        height: 48 + _bottomActionInset(context),
+        padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(
+              color: Colors.grey.withAlpha(25),
+            ),
           ),
         ),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 56,
-            child: Tooltip(
-              message: "展开聊天区",
-              child: IconButton(
-                onPressed: controller.toggleDesktopSidePanel,
-                icon: const Icon(Icons.keyboard_arrow_up),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 56,
+              child: Tooltip(
+                message: "展开聊天区",
+                child: IconButton(
+                  onPressed: controller.toggleDesktopSidePanel,
+                  icon: const Icon(Icons.keyboard_arrow_up),
+                ),
               ),
             ),
-          ),
-          const Expanded(
-            child: Center(
-              child: Icon(
-                Icons.chat_bubble_outline,
-                size: 18,
-                color: Colors.grey,
+            const Expanded(
+              child: Center(
+                child: Icon(
+                  Icons.chat_bubble_outline,
+                  size: 18,
+                  color: Colors.grey,
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 56),
-        ],
+            const SizedBox(width: 56),
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildGlassActionButton(
+    BuildContext context, {
+    required String label,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return _buildStaticGlassPanel(
+      context,
+      radius: 18,
+      child: TextButton.icon(
+        style: TextButton.styleFrom(
+          textStyle: const TextStyle(fontSize: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+        onPressed: onPressed,
+        icon: Icon(icon),
+        label: Text(label),
+      ),
+    );
+  }
+
+  Widget _buildStaticGlassPanel(
+    BuildContext context, {
+    required Widget child,
+    required double radius,
+    EdgeInsetsGeometry? padding,
+    GlassSurfaceRole role = GlassSurfaceRole.control,
+  }) {
+    // Stay linked to the app's liquid-glass setting, but avoid the live video
+    // backdrop path: the latter mirrors moving frames inside the glass and is
+    // the source of both the odd refraction and extra raster work.
+    return GlassSurface(
+      role: role,
+      radius: radius,
+      padding: padding,
+      liveBackdrop: false,
+      disablePlatformViewBackdrop: true,
+      child: child,
     );
   }
 
@@ -1150,10 +1221,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     );
   }
 
-  Widget buildUserProfile(BuildContext context) {
-    return Container(
+  Widget buildUserProfile(
+    BuildContext context, {
+    bool useStaticSurface = false,
+  }) {
+    final content = Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
         border: Border(
           top: BorderSide(
             color: Colors.grey.withAlpha(25),
@@ -1235,63 +1308,68 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
       ),
     );
+    if (useStaticSurface) {
+      return _buildStaticGlassPanel(
+        context,
+        radius: 16,
+        role: GlassSurfaceRole.content,
+        child: content,
+      );
+    }
+    return _buildStaticGlassPanel(context, radius: 0, child: content);
   }
 
   Widget buildBottomActions(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        border: Border(
-          top: BorderSide(
-            color: Colors.grey.withAlpha(25),
+    return _buildStaticGlassPanel(
+      context,
+      radius: 0,
+      role: GlassSurfaceRole.navigation,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(
+              color: Colors.grey.withAlpha(25),
+            ),
           ),
         ),
-      ),
-      padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
-      child: Row(
-        children: [
-          Expanded(
-            child: Obx(
-              () => controller.followed.value
-                  ? TextButton.icon(
-                      style: TextButton.styleFrom(
-                        textStyle: const TextStyle(fontSize: 14),
+        padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
+        child: Row(
+          children: [
+            Expanded(
+              child: Obx(
+                () => controller.followed.value
+                    ? _buildGlassActionButton(
+                        context,
+                        label: "取消关注",
+                        icon: Remix.heart_fill,
+                        onPressed: controller.removeFollowUser,
+                      )
+                    : _buildGlassActionButton(
+                        context,
+                        label: "关注",
+                        icon: Remix.heart_line,
+                        onPressed: controller.followUser,
                       ),
-                      onPressed: controller.removeFollowUser,
-                      icon: const Icon(Remix.heart_fill),
-                      label: const Text("取消关注"),
-                    )
-                  : TextButton.icon(
-                      style: TextButton.styleFrom(
-                        textStyle: const TextStyle(fontSize: 14),
-                      ),
-                      onPressed: controller.followUser,
-                      icon: const Icon(Remix.heart_line),
-                      label: const Text("关注"),
-                    ),
-            ),
-          ),
-          Expanded(
-            child: TextButton.icon(
-              style: TextButton.styleFrom(
-                textStyle: const TextStyle(fontSize: 14),
               ),
-              onPressed: controller.refreshRoom,
-              icon: const Icon(Remix.refresh_line),
-              label: const Text("刷新"),
             ),
-          ),
-          Expanded(
-            child: TextButton.icon(
-              style: TextButton.styleFrom(
-                textStyle: const TextStyle(fontSize: 14),
+            Expanded(
+              child: _buildGlassActionButton(
+                context,
+                label: "刷新",
+                icon: Remix.refresh_line,
+                onPressed: controller.refreshRoom,
               ),
-              onPressed: controller.share,
-              icon: const Icon(Remix.share_line),
-              label: const Text("分享"),
             ),
-          ),
-        ],
+            Expanded(
+              child: _buildGlassActionButton(
+                context,
+                label: "分享",
+                icon: Remix.share_line,
+                onPressed: controller.share,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1380,6 +1458,31 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         tabs.add(const Tab(text: "聊天"));
         pages.add(buildChatList());
       }
+      String tabLabel(String key) {
+        switch (key) {
+          case "chat":
+            return "聊天";
+          case "super_chat":
+            return controller.superChats.isNotEmpty
+                ? "${controller.site.id == Constant.kHuya ? "头条" : "SC"}(${controller.superChats.length})"
+                : controller.site.id == Constant.kHuya
+                    ? "头条"
+                    : "SC";
+          case "follow":
+            return "关注";
+          case "contribution_rank":
+            return controller.site.id == Constant.kDouyu ? "亲密榜" : "贡献榜";
+          case "event_flow":
+            return controller.liveEventFlows.isNotEmpty
+                ? "动态(${controller.liveEventFlows.length})"
+                : "动态";
+          case "settings":
+            return "设置";
+          default:
+            return key;
+        }
+      }
+
       final selectedKey = controller.liveRoomSelectedPanelKey.value;
       final initialIndex =
           keys.contains(selectedKey) ? keys.indexOf(selectedKey) : 0;
@@ -1390,16 +1493,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           initialIndex: initialIndex,
           child: Column(
             children: [
-              TabBar(
-                indicatorSize: TabBarIndicatorSize.tab,
-                labelPadding: EdgeInsets.zero,
-                indicatorWeight: 1.0,
-                onTap: (index) {
-                  if (index >= 0 && index < keys.length) {
-                    controller.liveRoomSelectedPanelKey.value = keys[index];
-                  }
+              Builder(
+                builder: (context) {
+                  final tabController = DefaultTabController.of(context);
+                  return _buildLiveRoomTabBar(
+                    context,
+                    tabController,
+                    keys.map(tabLabel).toList(growable: false),
+                    keys,
+                  );
                 },
-                tabs: tabs,
               ),
               Expanded(
                 child: TabBarView(
@@ -1413,38 +1516,165 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     });
   }
 
-  Widget buildChatList() {
-    return Stack(
-      children: [
-        ListView.separated(
-          controller: controller.scrollController,
-          reverse: false,
-          separatorBuilder: (_, i) => SizedBox(
-            // *2与原来的EdgeInsets.symmetric(vertical: )做兼容
-            height: AppSettingsController.instance.chatTextGap.value * 2,
-          ),
-          padding: AppStyle.edgeInsetsA12,
-          itemCount: controller.messages.length,
-          itemBuilder: (_, i) {
-            var item = controller.messages[i];
-            return buildMessageItem(item);
-          },
-        ),
-        Visibility(
-          visible: controller.disableAutoScroll.value,
-          child: Positioned(
-            right: 12,
-            bottom: 12,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                controller.forceChatScrollToBottom();
-              },
-              icon: const Icon(Icons.expand_more),
-              label: const Text("最新"),
+  Widget _buildLiveRoomTabBar(
+    BuildContext context,
+    TabController tabController,
+    List<String> labels,
+    List<String> keys,
+  ) {
+    return AnimatedBuilder(
+      animation: tabController,
+      builder: (context, _) {
+        final theme = Theme.of(context);
+        final colors = theme.colorScheme;
+        final isDark = theme.brightness == Brightness.dark;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+          child: SizedBox(
+            height: 48,
+            child: Row(
+              children: [
+                for (var i = 0; i < labels.length; i++)
+                  Expanded(
+                    child: Semantics(
+                      button: true,
+                      selected: tabController.index == i,
+                      label: labels[i],
+                      child: Material(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.circular(18),
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: () =>
+                              _selectLiveRoomTab(tabController, keys, i),
+                          borderRadius: BorderRadius.circular(18),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 160),
+                            margin: const EdgeInsets.symmetric(horizontal: 2),
+                            decoration: BoxDecoration(
+                              color: tabController.index == i
+                                  ? colors.primary.withAlpha(isDark ? 52 : 24)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: tabController.index == i
+                                    ? colors.primary
+                                        .withAlpha(isDark ? 110 : 80)
+                                    : Colors.transparent,
+                              ),
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  _liveRoomTabIcon(
+                                    keys[i],
+                                    tabController.index == i,
+                                  ),
+                                  size: 18,
+                                  color: tabController.index == i
+                                      ? colors.onPrimaryContainer
+                                      : colors.onSurfaceVariant,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  labels[i],
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: tabController.index == i
+                                        ? FontWeight.w600
+                                        : FontWeight.w500,
+                                    color: tabController.index == i
+                                        ? colors.onPrimaryContainer
+                                        : colors.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
-        ),
-      ],
+        );
+      },
+    );
+  }
+
+  void _selectLiveRoomTab(
+    TabController tabController,
+    List<String> keys,
+    int index,
+  ) {
+    if (index < 0 || index >= keys.length) return;
+    controller.liveRoomSelectedPanelKey.value = keys[index];
+    if (tabController.index != index) tabController.animateTo(index);
+  }
+
+  IconData _liveRoomTabIcon(String key, bool active) {
+    return switch (key) {
+      'chat' => active ? Icons.chat_bubble : Icons.chat_bubble_outline,
+      'super_chat' => active ? Icons.star : Icons.star_border,
+      'follow' => active ? Icons.favorite : Icons.favorite_border,
+      'contribution_rank' =>
+        active ? Icons.leaderboard : Icons.leaderboard_outlined,
+      'event_flow' => active ? Icons.bolt : Icons.bolt_outlined,
+      'settings' => active ? Icons.settings : Icons.settings_outlined,
+      _ => active ? Icons.circle : Icons.circle_outlined,
+    };
+  }
+
+  Widget buildChatList() {
+    return Builder(
+      builder: (context) => Stack(
+        children: [
+          ScrollConfiguration(
+            behavior:
+                ScrollConfiguration.of(context).copyWith(scrollbars: false),
+            child: RawScrollbar(
+              controller: controller.scrollController,
+              thumbVisibility: _isDesktop,
+              thickness: 4,
+              radius: const Radius.circular(4),
+              mainAxisMargin: 8,
+              crossAxisMargin: 6,
+              child: ListView.separated(
+                controller: controller.scrollController,
+                reverse: false,
+                separatorBuilder: (_, i) => SizedBox(
+                  // *2与原来的EdgeInsets.symmetric(vertical: )做兼容
+                  height: AppSettingsController.instance.chatTextGap.value * 2,
+                ),
+                padding: AppStyle.edgeInsetsA12.copyWith(right: 18),
+                itemCount: controller.messages.length,
+                itemBuilder: (_, i) {
+                  var item = controller.messages[i];
+                  return buildMessageItem(item);
+                },
+              ),
+            ),
+          ),
+          Visibility(
+            visible: controller.disableAutoScroll.value,
+            child: Positioned(
+              right: 12,
+              bottom: 12,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  controller.forceChatScrollToBottom();
+                },
+                icon: const Icon(Icons.expand_more),
+                label: const Text("最新"),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

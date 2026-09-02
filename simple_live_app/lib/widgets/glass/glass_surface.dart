@@ -14,6 +14,7 @@ class GlassSurface extends StatelessWidget {
     this.onTap,
     this.clipBehavior = Clip.antiAlias,
     this.liveBackdrop = false,
+    this.disablePlatformViewBackdrop = false,
     super.key,
   });
 
@@ -28,6 +29,12 @@ class GlassSurface extends StatelessWidget {
   /// surface is sampled in real time. This is intended for floating app bars
   /// and other chrome that sits above a scrolling Flutter scene.
   final bool liveBackdrop;
+
+  /// Keeps the configured glass material but prevents the live BackdropFilter
+  /// path from sampling a native video view. This is useful for video-player
+  /// chrome that should follow the app glass setting without mirroring video
+  /// content or paying for a per-frame backdrop capture.
+  final bool disablePlatformViewBackdrop;
 
   @override
   Widget build(BuildContext context) {
@@ -87,8 +94,9 @@ class GlassSurface extends StatelessWidget {
       shape: LiquidRoundedSuperellipse(borderRadius: radius),
       padding: padding,
       clipBehavior: clipBehavior,
-      platformViewBackdrop:
-          liveBackdrop || role == GlassSurfaceRole.platformViewControl,
+      platformViewBackdrop: liveBackdrop ||
+          (role == GlassSurfaceRole.platformViewControl &&
+              !disablePlatformViewBackdrop),
       child: content,
     );
   }

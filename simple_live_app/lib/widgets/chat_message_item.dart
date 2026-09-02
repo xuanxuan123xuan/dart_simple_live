@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -66,17 +68,13 @@ class ChatMessageItem extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Flexible(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.blueGrey.withAlpha(25),
-                      borderRadius: const BorderRadius.only(
-                        topRight: Radius.circular(12),
-                        bottomLeft: Radius.circular(12),
-                        bottomRight: Radius.circular(12),
-                      ),
+                  child: GlassSurface(
+                    role: GlassSurfaceRole.content,
+                    radius: 12,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
                     ),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     child: content(
                       userStyle:
                           TextStyle(color: Colors.grey, fontSize: textSize),

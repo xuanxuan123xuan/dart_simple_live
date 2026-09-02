@@ -113,6 +113,7 @@ Widget buildLockButton(LiveRoomController controller) {
       child: GlassSurface(
         role: GlassSurfaceRole.platformViewControl,
         radius: 12,
+        disablePlatformViewBackdrop: true,
         onTap: controller.setLockState,
         child: SizedBox(
           width: 40,
@@ -339,87 +340,75 @@ Widget _buildFullTopBar(
         onTap: () {},
         child: SizedBox(
           height: 48 + padding.top,
-          child: GlassSurface(
-            role: GlassSurfaceRole.platformViewControl,
-            radius: 0,
-            padding: EdgeInsets.only(
-              left: padding.left + 32,
-              right: padding.right + 32,
-              top: padding.top,
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  onPressed: () {
-                    if (controller.smallWindowState.value) {
-                      controller.exitSmallWindow();
-                    } else {
-                      controller.exitFull();
-                    }
-                  },
-                  icon: const Icon(
-                    Icons.arrow_back,
-                    color: Colors.white,
-                    size: 24,
+          child: ColoredBox(
+            color: Colors.black,
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: padding.left + 32,
+                right: padding.right + 32,
+                top: padding.top,
+              ),
+              child: Row(
+                children: [
+                  _buildFullscreenGlassIconButton(
+                    tooltip: "退出全屏",
+                    icon: Icons.arrow_back,
+                    onPressed: () {
+                      if (controller.smallWindowState.value) {
+                        controller.exitSmallWindow();
+                      } else {
+                        controller.exitFull();
+                      }
+                    },
                   ),
-                ),
-                AppStyle.hGap12,
-                Expanded(
-                  child: Text(
-                    displayTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      displayTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                      ),
                     ),
                   ),
-                ),
-                AppStyle.hGap12,
-                IconButton(
-                  onPressed: controller.saveScreenshot,
-                  icon: const Icon(
-                    Icons.camera_alt_outlined,
-                    color: Colors.white,
-                    size: 24,
+                  const SizedBox(width: 8),
+                  _buildFullscreenGlassIconButton(
+                    tooltip: "截图",
+                    onPressed: controller.saveScreenshot,
+                    icon: Icons.camera_alt_outlined,
                   ),
-                ),
-                IconButton(
-                  onPressed: () => showQuickAccess(controller),
-                  icon: const Icon(
-                    Remix.play_list_2_line,
-                    color: Colors.white,
-                    size: 24,
+                  const SizedBox(width: 4),
+                  _buildFullscreenGlassIconButton(
+                    tooltip: "快捷入口",
+                    onPressed: () => showQuickAccess(controller),
+                    icon: Remix.play_list_2_line,
                   ),
-                ),
-                if (controller.canStartInlineMultiRoom)
-                  IconButton(
-                    tooltip: "添加直播间并进入多开",
-                    onPressed: controller.showAddToMultiRoomPanel,
-                    icon: const Icon(
-                      Remix.play_list_add_line,
-                      color: Colors.white,
-                      size: 24,
+                  if (controller.canStartInlineMultiRoom) ...[
+                    const SizedBox(width: 4),
+                    _buildFullscreenGlassIconButton(
+                      tooltip: "添加直播间并进入多开",
+                      onPressed: controller.showAddToMultiRoomPanel,
+                      icon: Remix.play_list_add_line,
                     ),
-                  ),
-                if (Platform.isAndroid || Utils.isOhos)
-                  IconButton(
-                    onPressed: controller.enablePIP,
-                    icon: const Icon(
-                      Icons.picture_in_picture,
-                      color: Colors.white,
-                      size: 24,
+                  ],
+                  if (Platform.isAndroid || Utils.isOhos) ...[
+                    const SizedBox(width: 4),
+                    _buildFullscreenGlassIconButton(
+                      tooltip: "画中画",
+                      onPressed: controller.enablePIP,
+                      icon: Icons.picture_in_picture,
                     ),
+                  ],
+                  const SizedBox(width: 4),
+                  _buildFullscreenGlassIconButton(
+                    tooltip: "播放器设置",
+                    onPressed: () => showPlayerSettings(controller),
+                    icon: Icons.more_horiz,
                   ),
-                IconButton(
-                  onPressed: () => showPlayerSettings(controller),
-                  icon: const Icon(
-                    Icons.more_horiz,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -447,92 +436,161 @@ Widget _buildFullBottomBar(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {},
-        child: GlassSurface(
-          role: GlassSurfaceRole.platformViewControl,
-          radius: 0,
-          padding: EdgeInsets.only(
-            left: padding.left + 32,
-            right: padding.right + 32,
-            bottom: padding.bottom,
-          ),
-          child: Row(
-            children: [
-              IconButton(
-                onPressed: controller.refreshRoom,
-                icon: const Icon(
-                  Remix.refresh_line,
-                  color: Colors.white,
+        child: ColoredBox(
+          color: Colors.black,
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: padding.left + 32,
+              right: padding.right + 32,
+              bottom: padding.bottom,
+            ),
+            child: Row(
+              children: [
+                _buildFullscreenGlassIconButton(
+                  tooltip: "刷新直播间",
+                  onPressed: controller.refreshRoom,
+                  icon: Remix.refresh_line,
                 ),
-              ),
-              IconButton(
-                onPressed: () {
-                  controller.setDanmakuVisible(
-                    !controller.showDanmakuState.value,
-                  );
-                },
-                icon: ImageIcon(
-                  AssetImage(
-                    showDanmaku
-                        ? 'assets/icons/icon_danmaku_close.png'
-                        : 'assets/icons/icon_danmaku_open.png',
+                const SizedBox(width: 4),
+                _buildFullscreenGlassIconButton(
+                  tooltip: showDanmaku ? "关闭弹幕" : "开启弹幕",
+                  onPressed: () {
+                    controller.setDanmakuVisible(
+                      !controller.showDanmakuState.value,
+                    );
+                  },
+                  icon: ImageIcon(
+                    AssetImage(
+                      showDanmaku
+                          ? 'assets/icons/icon_danmaku_close.png'
+                          : 'assets/icons/icon_danmaku_open.png',
+                    ),
+                    size: 24,
+                    color: Colors.white,
                   ),
-                  size: 24,
-                  color: Colors.white,
                 ),
-              ),
-              IconButton(
-                onPressed: () => showDanmakuSettings(controller),
-                icon: const ImageIcon(
-                  AssetImage('assets/icons/icon_danmaku_setting.png'),
-                  size: 24,
-                  color: Colors.white,
+                const SizedBox(width: 4),
+                _buildFullscreenGlassIconButton(
+                  tooltip: "弹幕设置",
+                  onPressed: () => showDanmakuSettings(controller),
+                  icon: const ImageIcon(
+                    AssetImage('assets/icons/icon_danmaku_setting.png'),
+                    size: 24,
+                    color: Colors.white,
+                  ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Text(
-                  controller.liveDuration.value,
-                  style: const TextStyle(fontSize: 14, color: Colors.white),
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Text(
+                    controller.liveDuration.value,
+                    style: const TextStyle(fontSize: 14, color: Colors.white),
+                  ),
                 ),
-              ),
-              const Expanded(child: SizedBox()),
-              _buildCompactVolumeButton(
-                controller,
-                volumeButtonKey: volumeButtonKey,
-              ),
-              TextButton(
-                onPressed: () => showQualitesInfo(controller),
-                child: Text(
-                  controller.currentQualityInfo.value,
-                  style: const TextStyle(color: Colors.white, fontSize: 15),
+                const Expanded(child: SizedBox()),
+                _buildFullscreenGlassIconButton(
+                  key: volumeButtonKey,
+                  tooltip: controller.mutedState.value ? "取消静音" : "调节音量",
+                  onPressed: () {
+                    if (controller.mutedState.value) {
+                      unawaited(controller.toggleMute());
+                      return;
+                    }
+                    final context = volumeButtonKey.currentContext;
+                    if (context == null) {
+                      return;
+                    }
+                    controller.showVolumeSlider(context, keepAlive: true);
+                  },
+                  icon: Icon(
+                    controller.mutedState.value
+                        ? Icons.volume_off
+                        : Icons.volume_up,
+                    color: Colors.white,
+                  ),
                 ),
-              ),
-              TextButton(
-                onPressed: () => showLinesInfo(controller),
-                child: Text(
-                  controller.currentLineInfo.value,
-                  style: const TextStyle(color: Colors.white, fontSize: 15),
+                const SizedBox(width: 4),
+                _buildFullscreenGlassTextButton(
+                  text: controller.currentQualityInfo.value,
+                  onPressed: () => showQualitesInfo(controller),
                 ),
-              ),
-              IconButton(
-                onPressed: () {
-                  if (controller.smallWindowState.value) {
-                    controller.exitSmallWindow();
-                  } else {
-                    controller.exitFull();
-                  }
-                },
-                icon: const Icon(
-                  Remix.fullscreen_exit_fill,
-                  color: Colors.white,
+                const SizedBox(width: 4),
+                _buildFullscreenGlassTextButton(
+                  text: controller.currentLineInfo.value,
+                  onPressed: () => showLinesInfo(controller),
                 ),
-              ),
-            ],
+                const SizedBox(width: 4),
+                _buildFullscreenGlassIconButton(
+                  tooltip: "退出全屏",
+                  onPressed: () {
+                    if (controller.smallWindowState.value) {
+                      controller.exitSmallWindow();
+                    } else {
+                      controller.exitFull();
+                    }
+                  },
+                  icon: Remix.fullscreen_exit_fill,
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   });
+}
+
+Widget _buildFullscreenGlassIconButton({
+  Key? key,
+  required String tooltip,
+  required Object icon,
+  required VoidCallback onPressed,
+}) {
+  final iconWidget = icon is IconData
+      ? Icon(icon, color: Colors.white, size: 22)
+      : icon as Widget;
+  return Tooltip(
+    message: tooltip,
+    child: GlassSurface(
+      role: GlassSurfaceRole.platformViewControl,
+      radius: 18,
+      disablePlatformViewBackdrop: true,
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: IconButton(
+          key: key,
+          tooltip: tooltip,
+          onPressed: onPressed,
+          icon: iconWidget,
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _buildFullscreenGlassTextButton({
+  required String text,
+  required VoidCallback onPressed,
+}) {
+  return GlassSurface(
+    role: GlassSurfaceRole.platformViewControl,
+    radius: 18,
+    disablePlatformViewBackdrop: true,
+    child: TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        minimumSize: const Size(48, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+      ),
+    ),
+  );
 }
 
 Widget _buildNormalBottomBar(
@@ -547,9 +605,8 @@ Widget _buildNormalBottomBar(
       right: 0,
       bottom: controller.showControlsState.value ? 0 : -48,
       duration: const Duration(milliseconds: 200),
-      child: GlassSurface(
-        role: GlassSurfaceRole.platformViewControl,
-        radius: 0,
+      child: ColoredBox(
+        color: Colors.black,
         child: Row(
           children: [
             IconButton(
