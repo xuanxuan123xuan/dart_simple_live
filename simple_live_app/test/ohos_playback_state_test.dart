@@ -79,7 +79,7 @@ void main() {
     );
   });
 
-  test('OHOS live buffering policy changes at the API 18 boundary', () {
+  test('OHOS live buffering policy keeps stable defaults and low latency override', () {
     final nativePlayer = File(
       'third_party/video_player_ohos/ohos/src/main/ets/components/'
       'videoplayer/VideoPlayer.ets',
@@ -90,36 +90,28 @@ void main() {
 
     expect(
       nativePlayer,
-      contains('OHOS_SMART_CATCHUP_API_VERSION: number = 18'),
+      contains('LOW_LATENCY_EXPERIMENTAL_MIN_API_VERSION: number = 12'),
     );
     expect(
       nativePlayer,
-      contains('LIVE_PREFERRED_BUFFER_DURATION_SECONDS: number = 20'),
-    );
-    expect(
-      nativePlayer,
-      contains(
-        'LIVE_PREFERRED_BUFFER_DURATION_FOR_PLAYING_SECONDS: number = 5',
-      ),
-    );
-    expect(
-      nativePlayer,
-      contains('LIVE_SMART_CATCHUP_THRESHOLD_SECONDS: number = 60'),
+      contains('deviceInfo.sdkApiVersion >= LOW_LATENCY_EXPERIMENTAL_MIN_API_VERSION'),
     );
     expect(
       policyBuilder,
       contains(
-        'deviceInfo.sdkApiVersion >= OHOS_SMART_CATCHUP_API_VERSION',
+        'this.playbackProfile !== PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL',
       ),
     );
+    expect(policyBuilder, contains('return {};'));
     expect(policyBuilder, contains('preferredBufferDuration:'));
-    expect(policyBuilder, contains('preferredBufferDurationForPlaying'));
-    expect(policyBuilder, contains('thresholdForAutoQuickPlay'));
+    expect(policyBuilder, contains('preferredBufferDuration: 1'));
+    expect(policyBuilder, isNot(contains('preferredBufferDurationForPlaying')));
+    expect(policyBuilder, isNot(contains('thresholdForAutoQuickPlay')));
 
-    bool usesApi18Policy(int sdkApiVersion) => sdkApiVersion >= 18;
-    expect(usesApi18Policy(12), isFalse);
-    expect(usesApi18Policy(17), isFalse);
-    expect(usesApi18Policy(18), isTrue);
+    bool supportsLowLatency(int sdkApiVersion) => sdkApiVersion >= 12;
+    expect(supportsLowLatency(11), isFalse);
+    expect(supportsLowLatency(12), isTrue);
+    expect(supportsLowLatency(18), isTrue);
   });
 
   test('OHOS applies policy and prepare once per current generation', () {
