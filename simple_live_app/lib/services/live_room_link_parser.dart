@@ -53,7 +53,7 @@ class LiveRoomLinkParser {
     }
     if (KuaishouLiveLink.isShortLink(extractedUrl)) {
       final location = _locationResolver != null
-          ? await _locationResolver!(extractedUrl)
+          ? await _locationResolver(extractedUrl)
           : await _resolveLocation(
               extractedUrl,
               isAllowed: KuaishouLiveLink.isTrustedRedirectTarget,

@@ -904,7 +904,7 @@ class MpvLiveLatencyChaseService {
         return null;
       }
       try {
-        speed = await _readSpeed!.call();
+        speed = await _readSpeed.call();
       } catch (_) {
         return null;
       }
