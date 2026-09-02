@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
@@ -50,5 +52,19 @@ void main() {
         find.byKey(const ValueKey<String>('settings-card-expanded'));
     expect(expanded, findsOneWidget);
     expect(tester.getSize(expanded).height, 56);
+  });
+
+  test('OHOS settings cards do not create a painted wrapper', () {
+    final source = File(
+      'lib/widgets/settings/settings_card.dart',
+    ).readAsStringSync();
+    final ohosBranchStart = source.indexOf('if (PlatformUtils.isOhos)');
+    final materialBranchStart = source.indexOf('final radius', ohosBranchStart);
+    final ohosBranch = source.substring(ohosBranchStart, materialBranchStart);
+
+    expect(ohosBranch, contains('return child;'));
+    expect(ohosBranch, isNot(contains('Material(')));
+    expect(ohosBranch, isNot(contains('Container(')));
+    expect(ohosBranch, isNot(contains('DecoratedBox(')));
   });
 }

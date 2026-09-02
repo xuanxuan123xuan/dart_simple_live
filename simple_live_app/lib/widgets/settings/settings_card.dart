@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 
 class SettingsCard extends StatelessWidget {
@@ -10,18 +9,10 @@ class SettingsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     if (PlatformUtils.isOhos) {
-      // Avoid Material entirely: the OHOS renderer can leave an oversized
-      // translucent Material surface after a settings card changes height.
-      return Container(
-        decoration: BoxDecoration(
-          color: theme.brightness == Brightness.dark
-              ? Colors.grey.withAlpha(50)
-              : Colors.white70,
-          borderRadius: AppStyle.radius8,
-          border: Border.all(color: Colors.grey.withAlpha(25)),
-        ),
-        child: child,
-      );
+      // OHOS can stretch a painted card layer far beyond its render box after
+      // asynchronous content changes height. Keep settings groups paint-free;
+      // their tiles and dividers still provide the visual structure.
+      return child;
     }
     final radius = BorderRadius.circular(14);
     return Material(
