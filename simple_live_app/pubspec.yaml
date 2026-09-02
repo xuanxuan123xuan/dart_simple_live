@@ -26,7 +26,8 @@ dependencies:
   dynamic_color: 1.6.8
   # Liquid Glass surface primitives (pinned: the API is intentionally treated
   # as part of the app's rendering contract).
-  liquid_glass_widgets: 1.2.3
+  liquid_glass_widgets:
+    path: third_party/liquid_glass_widgets
   path: any
   collection: any
   udp: ^5.0.3 #UDP
