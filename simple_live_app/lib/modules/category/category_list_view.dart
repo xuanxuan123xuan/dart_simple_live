@@ -23,64 +23,79 @@ class CategoryListView extends StatelessWidget {
     final topClearance = MediaQuery.paddingOf(context).top + 8;
     return KeepAliveWrapper(
       child: Obx(
-        () => EasyRefresh(
+        () => EasyRefresh.custom(
+          // The body scrolls behind the transparent app bar. Same sliver
+          // layout as the home page: the refresh header is inserted after
+          // the top-clearance placeholder so the spinner shows below the
+          // floating selector instead of behind it.
+          headerIndex: 1,
           firstRefresh: true,
           controller: controller.easyRefreshController,
+          scrollController: controller.scrollController,
           onRefresh: controller.refreshData,
           header: MaterialHeader(
             completeDuration: const Duration(milliseconds: 400),
           ),
-          child: ListView.builder(
-            padding: AppStyle.edgeInsetsA12.copyWith(
-              top: topClearance,
-              bottom: 96,
+          slivers: [
+            SliverToBoxAdapter(
+              child: SizedBox(height: topClearance),
             ),
-            itemCount: controller.list.length,
-            controller: controller.scrollController,
-            itemBuilder: (_, i) {
-              var item = controller.list[i];
-              return Column(
-                children: [
-                  Container(
-                    padding: AppStyle.edgeInsetsV8.copyWith(left: 4),
-                    color: Colors.transparent,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      item.name,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  Obx(
-                    () => GridView.count(
-                      shrinkWrap: true,
-                      padding: AppStyle.edgeInsetsV8,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisCount: (MediaQuery.of(context).size.width ~/ 80)
-                          .clamp(1, 12)
-                          .toInt(),
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                      children: item.showAll.value
-                          ? (item.children
-                              .map(
-                                (e) => buildSubCategory(context, e),
-                              )
-                              .toList())
-                          : (item.take15
-                              .map(
-                                (e) => buildSubCategory(context, e),
-                              )
-                              .toList()
-                            ..add(buildShowMore(item))),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+            SliverPadding(
+              padding: AppStyle.edgeInsetsA12.copyWith(
+                top: 0,
+                bottom: 96,
+              ),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (_, i) {
+                    var item = controller.list[i];
+                    return Column(
+                      children: [
+                        Container(
+                          padding: AppStyle.edgeInsetsV8.copyWith(left: 4),
+                          color: Colors.transparent,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            item.name,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Obx(
+                          () => GridView.count(
+                            shrinkWrap: true,
+                            padding: AppStyle.edgeInsetsV8,
+                            physics: const NeverScrollableScrollPhysics(),
+                            crossAxisCount:
+                                (MediaQuery.of(context).size.width ~/ 80)
+                                    .clamp(1, 12)
+                                    .toInt(),
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                            children: item.showAll.value
+                                ? (item.children
+                                    .map(
+                                      (e) => buildSubCategory(context, e),
+                                    )
+                                    .toList())
+                                : (item.take15
+                                    .map(
+                                      (e) => buildSubCategory(context, e),
+                                    )
+                                    .toList()
+                                  ..add(buildShowMore(item))),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                  childCount: controller.list.length,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
