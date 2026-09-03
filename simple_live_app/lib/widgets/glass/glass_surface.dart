@@ -71,12 +71,20 @@ class GlassSurface extends StatelessWidget {
           );
 
     if (quality == null) {
+      // Video chrome (controls floating over the player) hardcodes a white
+      // foreground, so the opaque fallback must stay dark to keep icons and
+      // text readable in light theme when glass is disabled.
+      final isVideoChrome = role == GlassSurfaceRole.platformViewControl;
+      final fallbackColor =
+          isVideoChrome ? Colors.black.withAlpha(102) : colors.surface;
+      final fallbackBorder =
+          isVideoChrome ? Colors.white.withAlpha(46) : colors.outlineVariant;
       return Material(
-        color: colors.surface,
+        color: fallbackColor,
         clipBehavior: clipBehavior,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radius),
-          side: BorderSide(color: colors.outlineVariant),
+          side: BorderSide(color: fallbackBorder),
         ),
         child: Padding(
           padding: padding ?? EdgeInsets.zero,
