@@ -75,7 +75,8 @@ void main() {
     final background = tester.widget<ColoredBox>(
       find.byKey(const ValueKey('root-page-background')),
     );
-    expect(background.color, Colors.white);
+    final theme = Theme.of(tester.element(find.byType(Scaffold)));
+    expect(background.color, theme.scaffoldBackgroundColor);
     expect(tester.getTopLeft(find.byType(IndexedStack)).dy, 0);
   });
 }
