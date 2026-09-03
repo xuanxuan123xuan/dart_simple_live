@@ -71,6 +71,7 @@ class ChatMessageItem extends StatelessWidget {
                   child: GlassSurface(
                     role: GlassSurfaceRole.content,
                     radius: 12,
+                    fallbackBorder: true,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 4,

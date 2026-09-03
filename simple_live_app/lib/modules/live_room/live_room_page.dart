@@ -527,55 +527,58 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 padding: AppStyle.edgeInsetsV4.copyWith(
                   bottom: _bottomActionInset(context) + 4,
                 ),
-                child: Row(
-                  children: [
-                    _buildGlassActionButton(
-                      context,
-                      label: "刷新",
-                      icon: Remix.refresh_line,
-                      onPressed: controller.refreshRoom,
-                    ),
-                    AppStyle.hGap4,
-                    Obx(
-                      () => controller.followed.value
-                          ? _buildGlassActionButton(
-                              context,
-                              label: "取消关注",
-                              icon: Remix.heart_fill,
-                              onPressed: controller.removeFollowUser,
-                            )
-                          : _buildGlassActionButton(
-                              context,
-                              label: "关注",
-                              icon: Remix.heart_line,
-                              onPressed: controller.followUser,
-                            ),
-                    ),
-                    const Expanded(child: Center()),
-                    _buildGlassActionButton(
-                      context,
-                      label: "分享",
-                      icon: Remix.share_line,
-                      onPressed: controller.share,
-                    ),
-                    _buildGlassActionButton(
-                      context,
-                      label: "复制链接",
-                      icon: Remix.file_copy_line,
-                      onPressed: controller.copyUrl,
-                    ),
-                    Obx(
-                      () =>
-                          AppSettingsController.instance.playerShowPlayUrl.value
-                              ? _buildGlassActionButton(
-                                  context,
-                                  label: "复制播放直链",
-                                  icon: Remix.file_copy_line,
-                                  onPressed: controller.copyPlayUrl,
-                                )
-                              : const SizedBox.shrink(),
-                    ),
-                  ],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      _buildGlassActionButton(
+                        context,
+                        label: "刷新",
+                        icon: Remix.refresh_line,
+                        onPressed: controller.refreshRoom,
+                      ),
+                      AppStyle.hGap4,
+                      Obx(
+                        () => controller.followed.value
+                            ? _buildGlassActionButton(
+                                context,
+                                label: "取消关注",
+                                icon: Remix.heart_fill,
+                                onPressed: controller.removeFollowUser,
+                              )
+                            : _buildGlassActionButton(
+                                context,
+                                label: "关注",
+                                icon: Remix.heart_line,
+                                onPressed: controller.followUser,
+                              ),
+                      ),
+                      const Expanded(child: Center()),
+                      _buildGlassActionButton(
+                        context,
+                        label: "分享",
+                        icon: Remix.share_line,
+                        onPressed: controller.share,
+                      ),
+                      _buildGlassActionButton(
+                        context,
+                        label: "复制链接",
+                        icon: Remix.file_copy_line,
+                        onPressed: controller.copyUrl,
+                      ),
+                      Obx(
+                        () => AppSettingsController
+                                .instance.playerShowPlayUrl.value
+                            ? _buildGlassActionButton(
+                                context,
+                                label: "复制播放直链",
+                                icon: Remix.file_copy_line,
+                                onPressed: controller.copyPlayUrl,
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1600,12 +1603,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                                   ? colors.primary.withAlpha(isDark ? 52 : 24)
                                   : Colors.transparent,
                               borderRadius: BorderRadius.circular(18),
-                              border: Border.all(
-                                color: tabController.index == i
-                                    ? colors.primary
-                                        .withAlpha(isDark ? 110 : 80)
-                                    : Colors.transparent,
-                              ),
                             ),
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,

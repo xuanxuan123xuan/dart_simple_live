@@ -15,6 +15,7 @@ class GlassSurface extends StatelessWidget {
     this.clipBehavior = Clip.antiAlias,
     this.liveBackdrop = false,
     this.disablePlatformViewBackdrop = false,
+    this.fallbackBorder = false,
     super.key,
   });
 
@@ -35,6 +36,11 @@ class GlassSurface extends StatelessWidget {
   /// chrome that should follow the app glass setting without mirroring video
   /// content or paying for a per-frame backdrop capture.
   final bool disablePlatformViewBackdrop;
+
+  /// Keeps the outline in the opaque fallback path (glass off). Chat bubbles
+  /// opt in so their per-message outline survives when liquid glass is
+  /// disabled; every other surface renders flat instead.
+  final bool fallbackBorder;
 
   @override
   Widget build(BuildContext context) {
@@ -77,14 +83,15 @@ class GlassSurface extends StatelessWidget {
       final isVideoChrome = role == GlassSurfaceRole.platformViewControl;
       final fallbackColor =
           isVideoChrome ? Colors.black.withAlpha(102) : colors.surface;
-      final fallbackBorder =
+      final showBorder = isVideoChrome || fallbackBorder;
+      final borderColor =
           isVideoChrome ? Colors.white.withAlpha(46) : colors.outlineVariant;
       return Material(
         color: fallbackColor,
         clipBehavior: clipBehavior,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radius),
-          side: BorderSide(color: fallbackBorder),
+          side: showBorder ? BorderSide(color: borderColor) : BorderSide.none,
         ),
         child: Padding(
           padding: padding ?? EdgeInsets.zero,
