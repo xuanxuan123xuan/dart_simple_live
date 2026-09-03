@@ -3472,10 +3472,27 @@ class LiveRoomController extends PlayerController
         "读取播放清晰度失败：${site.id}/$roomId generation=$loadGeneration error=$e",
         stackTrace,
       );
-      if (site.id == Constant.kKuaishou &&
-          roomLiveState.value == LiveStatusState.live) {
-        waitingForPlaybackUrl.value = true;
-        return;
+      if (site.id == Constant.kKuaishou) {
+        // 明确限流/风控（403/429）不能被"等待播放地址"静默吞掉，
+        // 否则播放器永远不会创建，用户只看到无限转圈。与 loadData 的
+        // isHttpLimit 分支保持一致：显示可重试错误并交给恢复轮询。
+        final isHttpLimit = e is CoreError &&
+            (e.kind == CoreErrorKind.http) &&
+            (e.statusCode == 403 || e.statusCode == 429);
+        if (isHttpLimit) {
+          roomLiveState.value = LiveStatusState.unknown;
+          offlineConfirmations.value = 0;
+          loadError.value = true;
+          error = e;
+          errorStackTrace = stackTrace;
+          _configureKuaishouDeviceRecovery(e);
+          Log.w("快手播放地址请求被限流(${e.statusCode})，显示可重试错误");
+          return;
+        }
+        if (roomLiveState.value == LiveStatusState.live) {
+          waitingForPlaybackUrl.value = true;
+          return;
+        }
       }
       loadError.value = true;
       error = e;
