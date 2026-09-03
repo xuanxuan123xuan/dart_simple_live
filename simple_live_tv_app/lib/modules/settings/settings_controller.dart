@@ -14,6 +14,7 @@ import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/signalr_service.dart';
 import 'package:simple_live_tv_app/services/tv_app_update_service.dart';
 import 'package:simple_live_tv_app/modules/settings/tv_update_dialog.dart';
+import 'package:simple_live_tv_app/widgets/sync_server_picker_dialog.dart';
 
 class SettingsController extends BaseController
     with GetTickerProviderStateMixin {
@@ -112,25 +113,9 @@ class SettingsController extends BaseController
     SmartDialog.showToast("已恢复默认，重开直播间后生效");
   }
 
-  void editSyncServerUrl() async {
-    var value = await Utils.showEditTextDialog(
-      SignalRService.configuredUrl,
-      title: "同步服务地址",
-      hintText: SignalRService.kDefaultUrl,
-      validate: (text) {
-        final url = text.trim();
-        if (url.isEmpty) {
-          return true;
-        }
-        final uri = Uri.tryParse(url);
-        if (uri == null ||
-            !(uri.scheme == "wss" || uri.scheme == "ws") ||
-            uri.host.isEmpty) {
-          SmartDialog.showToast("请输入 ws:// 或 wss:// 开头的同步服务地址");
-          return false;
-        }
-        return true;
-      },
+  Future<void> chooseSyncServerUrl() async {
+    final value = await Get.dialog<String>(
+      const SyncServerPickerDialog(),
     );
     if (value == null) {
       return;

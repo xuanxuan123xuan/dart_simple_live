@@ -1,43 +1,42 @@
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:get/get.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/modules/sync/advanced_connection/sync_server_picker_dialog.dart';
 import 'package:simple_live_app/services/signalr_service.dart';
 
 class AdvancedConnectionController extends BaseController {
   String get syncServerUrlLabel {
     final configured = SignalRService.configuredUrl;
-    final isDefault = configured == SignalRService.kDefaultUrl;
+    final preset = SignalRService.presetForUrl(configured);
+    if (preset != null) {
+      return configured == SignalRService.kDefaultUrl
+          ? "默认服务（${preset.shortLabel}）"
+          : preset.shortLabel;
+    }
     final host = Uri.tryParse(configured)?.host ?? "";
-    if (host.isEmpty) return isDefault ? "默认服务" : "自定义服务";
-    return isDefault ? "默认服务" : "自定义: $host";
+    if (host.isEmpty) return "自定义服务";
+    return "自定义: $host";
   }
 
   String get syncServerUrlSubtitle {
     final configured = SignalRService.configuredUrl;
-    return configured == SignalRService.kDefaultUrl
-        ? "远程同步使用默认 WebSocket 服务"
-        : configured;
+    final preset = SignalRService.presetForUrl(configured);
+    if (configured == SignalRService.kDefaultUrl) {
+      return "远程同步使用默认 WebSocket 服务（可直连）";
+    }
+    if (preset != null) {
+      return "${preset.note}：$configured";
+    }
+    return configured;
   }
 
   String get syncProxyUrl => SignalRService.proxyDisplayName;
 
-  Future<void> editSyncServerUrl() async {
-    final value = await Utils.showEditTextDialog(
-      SignalRService.configuredUrl,
-      title: "同步服务地址",
-      hintText: SignalRService.kDefaultUrl,
-      validate: (text) {
-        final url = text.trim();
-        if (url.isEmpty) return true;
-        final uri = Uri.tryParse(url);
-        if (uri == null ||
-            !(uri.scheme == "wss" || uri.scheme == "ws") ||
-            uri.host.isEmpty) {
-          SmartDialog.showToast("请输入 ws:// 或 wss:// 开头的同步服务地址");
-          return false;
-        }
-        return true;
-      },
+  Future<void> chooseSyncServerUrl() async {
+    final value = await Utils.showDialogSafe<String>(
+      context: Get.context!,
+      builder: (_) => const SyncServerPickerDialog(),
     );
     if (value == null) return;
     await SignalRService.setConfiguredUrl(value);
