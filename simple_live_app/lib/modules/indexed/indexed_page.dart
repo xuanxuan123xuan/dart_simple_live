@@ -25,7 +25,7 @@ class IndexedPage extends GetView<IndexedController> {
     return LiquidGlassScope(
       child: Builder(
         builder: (context) => Scaffold(
-          backgroundColor: Colors.white,
+          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
           // All window sizes use the same floating bottom navigation. The
           // indexed pages already reserve 96 px at the end of their scroll
           // views, so initial content stays clear while scrolled content can
@@ -35,7 +35,7 @@ class IndexedPage extends GetView<IndexedController> {
             enabled: glassEnabled,
             child: ColoredBox(
               key: const ValueKey('root-page-background'),
-              color: Colors.white,
+              color: Theme.of(context).scaffoldBackgroundColor,
               child: stack,
             ),
           ),
