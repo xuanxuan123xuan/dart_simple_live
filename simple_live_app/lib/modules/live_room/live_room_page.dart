@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
@@ -115,20 +116,30 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           ),
           Align(
             alignment: Alignment.centerLeft,
-            child: _buildGlassAppBarButton(
-              context: context,
-              tooltip: "返回",
-              onPressed: () => _handleBack(context),
-              icon: Icons.arrow_back,
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: math.max(MediaQuery.paddingOf(context).left, 8),
+              ),
+              child: _buildGlassAppBarButton(
+                context: context,
+                tooltip: "返回",
+                onPressed: () => _handleBack(context),
+                icon: Icons.arrow_back,
+              ),
             ),
           ),
           Align(
             alignment: Alignment.centerRight,
-            child: _buildGlassAppBarButton(
-              context: context,
-              tooltip: "更多",
-              onPressed: showMore,
-              icon: Icons.more_horiz,
+            child: Padding(
+              padding: EdgeInsets.only(
+                right: math.max(MediaQuery.paddingOf(context).right, 8),
+              ),
+              child: _buildGlassAppBarButton(
+                context: context,
+                tooltip: "更多",
+                onPressed: showMore,
+                icon: Icons.more_horiz,
+              ),
             ),
           ),
         ],
@@ -169,11 +180,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                     ),
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: _buildGlassAppBarButton(
-                        context: context,
-                        tooltip: "返回",
-                        onPressed: () => _handleBack(context),
-                        icon: Icons.arrow_back,
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          left: math.max(MediaQuery.paddingOf(context).left, 8),
+                        ),
+                        child: _buildGlassAppBarButton(
+                          context: context,
+                          tooltip: "返回",
+                          onPressed: () => _handleBack(context),
+                          icon: Icons.arrow_back,
+                        ),
                       ),
                     ),
                   ],
@@ -183,11 +199,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 width: sidePanelWidth,
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: _buildGlassAppBarButton(
-                    context: context,
-                    tooltip: "更多",
-                    onPressed: showMore,
-                    icon: Icons.more_horiz,
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      right: math.max(MediaQuery.paddingOf(context).right, 8),
+                    ),
+                    child: _buildGlassAppBarButton(
+                      context: context,
+                      tooltip: "更多",
+                      onPressed: showMore,
+                      icon: Icons.more_horiz,
+                    ),
                   ),
                 ),
               ),
@@ -229,8 +250,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         return Stack(
           children: [
             Positioned(
-              left: 8,
-              top: 8,
+              left: 12,
+              top: 12,
               child: _buildDesktopOverlayIconButton(
                 context: context,
                 tooltip: "返回",
@@ -239,8 +260,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               ),
             ),
             Positioned(
-              right: 8,
-              top: controller.desktopSidePanelCollapsed.value ? 56 : 8,
+              right: 12,
+              top: controller.desktopSidePanelCollapsed.value ? 56 : 12,
               child: _buildDesktopOverlayIconButton(
                 context: context,
                 tooltip: "更多",
@@ -251,8 +272,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             if (Platform.isWindows &&
                 controller.desktopSidePanelCollapsed.value)
               Positioned(
-                right: 8,
-                top: 8,
+                right: 12,
+                top: 12,
                 child: _buildDesktopOverlayIconButton(
                   context: context,
                   tooltip: "关闭",
@@ -262,7 +283,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               ),
             if (_isDesktop && controller.desktopSidePanelCollapsed.value)
               Positioned(
-                right: 8,
+                right: 12,
                 top: 0,
                 bottom: 0,
                 child: Center(
