@@ -8,7 +8,7 @@
    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <application
-        android:label="Simple Live"
+        android:label="SimpleLive"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -39,7 +39,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
             android:roundIcon="@mipmap/ic_launcher_round"
-            android:label="Simple Live"
+            android:label="SimpleLive"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -52,7 +52,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_simplelive"
             android:roundIcon="@mipmap/ic_launcher_simplelive_round"
-            android:label="Simple Live"
+            android:label="SimpleLive"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
