@@ -13,6 +13,10 @@ class HighlightButton extends StatelessWidget {
   final Function()? onTap;
   final bool autofocus;
   final bool selected;
+  final FocusOnKeyDownCallback? onUpKey;
+  final FocusOnKeyDownCallback? onDownKey;
+  final FocusOnKeyDownCallback? onLeftKey;
+  final FocusOnKeyDownCallback? onRightKey;
   const HighlightButton({
     this.iconData,
     required this.text,
@@ -21,6 +25,10 @@ class HighlightButton extends StatelessWidget {
     required this.focusNode,
     this.autofocus = false,
     this.selected = false,
+    this.onUpKey,
+    this.onDownKey,
+    this.onLeftKey,
+    this.onRightKey,
     super.key,
   });
   @override
@@ -33,6 +41,10 @@ class HighlightButton extends StatelessWidget {
         onTap: onTap,
         autofocus: autofocus,
         selected: selected,
+        onUpKey: onUpKey,
+        onDownKey: onDownKey,
+        onLeftKey: onLeftKey,
+        onRightKey: onRightKey,
         child: Container(
           height: 64.w,
           //width: 64.w,

@@ -53,6 +53,7 @@ class HighlightWidget extends StatefulWidget {
 class _HighlightWidgetState extends State<HighlightWidget> {
   Timer? _longPressTimer;
   bool _longPressTriggered = false;
+  bool _activationKeyDownSeen = false;
 
   bool _isActivationKey(LogicalKeyboardKey key) {
     return key == LogicalKeyboardKey.enter ||
@@ -68,14 +69,19 @@ class _HighlightWidgetState extends State<HighlightWidget> {
   KeyEventResult _handleActivationKey(KeyEvent event) {
     if (widget.onLongPress == null) {
       if (event is KeyDownEvent) {
+        _activationKeyDownSeen = true;
         if (widget.onTap == null) return KeyEventResult.ignored;
         widget.onTap!.call();
         return KeyEventResult.handled;
+      }
+      if (event is KeyUpEvent) {
+        _activationKeyDownSeen = false;
       }
       return KeyEventResult.ignored;
     }
     if (event is KeyDownEvent) {
       _cancelLongPress();
+      _activationKeyDownSeen = true;
       _longPressTriggered = false;
       _longPressTimer = Timer(widget.longPressDuration, () {
         _longPressTimer = null;
@@ -89,10 +95,12 @@ class _HighlightWidgetState extends State<HighlightWidget> {
     }
     if (event is KeyUpEvent) {
       _cancelLongPress();
-      if (!_longPressTriggered) {
+      final shouldTap = _activationKeyDownSeen && !_longPressTriggered;
+      _activationKeyDownSeen = false;
+      _longPressTriggered = false;
+      if (shouldTap) {
         widget.onTap?.call();
       }
-      _longPressTriggered = false;
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -115,6 +123,7 @@ class _HighlightWidgetState extends State<HighlightWidget> {
           if (!focused) {
             _cancelLongPress();
             _longPressTriggered = false;
+            _activationKeyDownSeen = false;
           }
           widget.onFocusChange?.call(focused);
         },

@@ -194,6 +194,40 @@ class _FollowUserPageState extends State<FollowUserPage> {
     return KeyEventResult.handled;
   }
 
+  KeyEventResult _moveTopBarFocus(AppFocusNode target) {
+    target.requestFocus();
+    return KeyEventResult.handled;
+  }
+
+  KeyEventResult _keepTopBarFocus() {
+    return KeyEventResult.handled;
+  }
+
+  KeyEventResult _moveTopBarToGrid() {
+    if (FollowUserService.instance.list.isEmpty) {
+      return KeyEventResult.handled;
+    }
+    _focusItemAt(0);
+    return KeyEventResult.handled;
+  }
+
+  KeyEventResult _movePaginationBarFocus(AppFocusNode target) {
+    target.requestFocus();
+    return KeyEventResult.handled;
+  }
+
+  KeyEventResult _movePaginationBarToGrid() {
+    final layout = _currentLayout;
+    final items = FollowUserService.instance.list;
+    if (layout == null || items.isEmpty) {
+      return KeyEventResult.handled;
+    }
+    final columns = layout.crossAxisCount;
+    final lastRow = (items.length - 1) ~/ columns;
+    _focusItemAt(lastRow * columns);
+    return KeyEventResult.handled;
+  }
+
   void _pruneFocusNodes(Iterable<FollowUser> items) {
     final activeKeys = items.map((item) => item.id).toSet();
     final staleKeys = _focusNodes.keys
@@ -243,6 +277,10 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   iconData: Icons.arrow_back,
                   text: "返回",
                   onTap: Get.back,
+                  onUpKey: () => _keepTopBarFocus(),
+                  onLeftKey: () => _keepTopBarFocus(),
+                  onRightKey: () => _moveTopBarFocus(_searchFocusNode),
+                  onDownKey: () => _moveTopBarToGrid(),
                 ),
                 AppStyle.hGap24,
                 Text(
@@ -258,6 +296,10 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   iconData: Icons.search,
                   text: "搜索",
                   onTap: _showSearchDialog,
+                  onUpKey: () => _keepTopBarFocus(),
+                  onLeftKey: () => _moveTopBarFocus(_backFocusNode),
+                  onRightKey: () => _moveTopBarFocus(_displayFocusNode),
+                  onDownKey: () => _moveTopBarToGrid(),
                 ),
                 AppStyle.hGap16,
                 HighlightButton(
@@ -265,6 +307,10 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   iconData: Icons.tune,
                   text: "显示/筛选",
                   onTap: _showDisplayDialog,
+                  onUpKey: () => _keepTopBarFocus(),
+                  onLeftKey: () => _moveTopBarFocus(_searchFocusNode),
+                  onRightKey: () => _moveTopBarFocus(_refreshAllFocusNode),
+                  onDownKey: () => _moveTopBarToGrid(),
                 ),
                 const Spacer(),
                 HighlightButton(
@@ -272,6 +318,10 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   iconData: Icons.sync,
                   text: "刷新全部",
                   onTap: FollowUserService.instance.refreshAllStatus,
+                  onUpKey: () => _keepTopBarFocus(),
+                  onLeftKey: () => _moveTopBarFocus(_displayFocusNode),
+                  onRightKey: () => _keepTopBarFocus(),
+                  onDownKey: () => _moveTopBarToGrid(),
                 ),
                 AppStyle.hGap24,
                 AppStyle.hGap48,
@@ -712,6 +762,11 @@ class _FollowUserPageState extends State<FollowUserPage> {
                           FollowUserService.instance.goToPreviousPage,
                         )
                     : null,
+                onUpKey: () => _movePaginationBarToGrid(),
+                onLeftKey: () => _keepTopBarFocus(),
+                onRightKey: () =>
+                    _movePaginationBarFocus(_nextPageFocusNode),
+                onDownKey: () => _keepTopBarFocus(),
               ),
               AppStyle.hGap16,
               Text(
@@ -729,6 +784,12 @@ class _FollowUserPageState extends State<FollowUserPage> {
                           FollowUserService.instance.goToNextPage,
                         )
                     : null,
+                onUpKey: () => _movePaginationBarToGrid(),
+                onLeftKey: () =>
+                    _movePaginationBarFocus(_previousPageFocusNode),
+                onRightKey: () =>
+                    _movePaginationBarFocus(_refreshPageFocusNode),
+                onDownKey: () => _keepTopBarFocus(),
               ),
               AppStyle.hGap16,
               HighlightButton(
@@ -736,6 +797,10 @@ class _FollowUserPageState extends State<FollowUserPage> {
                 iconData: Icons.refresh,
                 text: "刷新当前页",
                 onTap: FollowUserService.instance.refreshCurrentPageStatus,
+                onUpKey: () => _movePaginationBarToGrid(),
+                onLeftKey: () => _movePaginationBarFocus(_nextPageFocusNode),
+                onRightKey: () => _keepTopBarFocus(),
+                onDownKey: () => _keepTopBarFocus(),
               ),
             ],
           ),

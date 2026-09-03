@@ -16,6 +16,7 @@ import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
+import 'package:simple_live_tv_app/services/profile_backup_service.dart';
 import 'package:simple_live_tv_app/widgets/sync_progress_dialog.dart';
 import 'package:udp/udp.dart';
 import 'package:uuid/uuid.dart';
@@ -165,6 +166,7 @@ class SyncService extends GetxService {
         ..post('/sync/tag', _syncFollowUserTagRequest)
         ..post('/sync/history', _syncHistoryRequest)
         ..post('/sync/blocked_word', _syncBlockedWordRequest)
+        ..post('/sync/profile', _syncProfileRequest)
         ..post('/sync/account/bilibili', _syncBiliAccountRequest)
         ..post('/sync/account/douyin', _syncDouyinAccountRequest);
 
@@ -402,6 +404,41 @@ class SyncService extends GetxService {
       return toJsonResponse({
         'status': true,
         'message': 'success',
+      });
+    } catch (e) {
+      SyncProgressDialog.dismiss();
+      return toJsonResponse({
+        'status': false,
+        'message': e.toString(),
+      });
+    }
+  }
+
+  Future<shelf.Response> _syncProfileRequest(shelf.Request request) async {
+    try {
+      final overlay =
+          int.parse(request.requestedUri.queryParameters['overlay'] ?? '0');
+      final body = await request.readAsString();
+
+      SyncProgressDialog.show(const SyncProgress(stage: "接收配置包"));
+      Log.d('_syncProfileRequest: ${body.length} bytes');
+
+      final summary = await ProfileBackupService.instance.importProfileJson(
+        body,
+        overwrite: overlay == 1,
+        onProgress: SyncProgressDialog.update,
+      );
+      Log.i("局域网同步配置包完成：${summary.message}");
+
+      EventBus.instance.emit(Constant.kUpdateFollow, 0);
+      EventBus.instance.emit(Constant.kUpdateHistory, 0);
+
+      _finishSyncImport(
+        successMessage: '已同步配置包',
+      );
+      return toJsonResponse({
+        'status': true,
+        'message': summary.message,
       });
     } catch (e) {
       SyncProgressDialog.dismiss();
