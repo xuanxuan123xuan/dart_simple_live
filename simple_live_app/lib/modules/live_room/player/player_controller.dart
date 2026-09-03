@@ -783,6 +783,11 @@ mixin PlayerMixin {
       GlobalKey(debugLabel: 'ohos-native-player');
   final RxBool ohosPlaying = false.obs;
   final RxBool ohosBuffering = true.obs;
+
+  /// Latches once the current ohos playback has actually started (first
+  /// playing state). The page-level buffering spinner only shows after
+  /// this, so it never stacks with the player widget loading spinner.
+  final RxBool ohosPlaybackStarted = false.obs;
   final RxBool ohosScreenshotInProgress = false.obs;
 
   /// Native OHOS 0..1 mirror. Persisted 0..100 user intent remains
@@ -798,6 +803,7 @@ mixin PlayerMixin {
 
   void attachOhosVideoController(VideoPlayerController controller) {
     _ohosVideoController = controller;
+    ohosPlaybackStarted.value = false;
     BackgroundPlaybackService.instance.attachOhosController(controller);
     updateOhosVideoState(controller.value);
     if (_livePlaybackSource != null && _liveLinkHealthCollector.isActive) {
@@ -819,6 +825,9 @@ mixin PlayerMixin {
   void updateOhosVideoState(VideoPlayerValue value) {
     final wasPlaying = ohosPlaying.value;
     ohosPlaying.value = value.isPlaying;
+    if (value.isPlaying) {
+      ohosPlaybackStarted.value = true;
+    }
     ohosBuffering.value = value.isBuffering || !value.isInitialized;
     _setKeepScreenAwake(value.isPlaying);
     if (value.aspectRatio > 0) {
@@ -3744,7 +3753,7 @@ class PlayerController extends BaseController
                         ? "播放中"
                         : "已暂停";
     return <MapEntry<String, String>>[
-      const MapEntry("Backend", "HarmonyOS AVPlayer"),
+      const MapEntry("Backend", "HarmonyOS libmpv"),
       MapEntry("State", state),
       MapEntry(
         "Resolution",
@@ -3812,6 +3821,16 @@ class PlayerController extends BaseController
         await ohosController?.pause();
       } catch (e) {
         Log.logPrint("鸿蒙播放器暂停失败: $e");
+      }
+      // Belt-and-braces (media_kit parity: explicit player.stop() in
+      // onClose). The widget dispose normally stops playback, but it races
+      // the controller teardown; stop here too so audio can never outlive
+      // the room. Generation-guarded natively: a stale controller cannot
+      // kill a room that already switched.
+      try {
+        await (ohosController as dynamic)?.stopPlayback();
+      } catch (e) {
+        Log.logPrint("stop playback on close failed: $e");
       }
       if (ohosController != null) {
         BackgroundPlaybackService.instance.detachOhosController(ohosController);

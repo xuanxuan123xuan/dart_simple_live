@@ -1,0 +1,1375 @@
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index fb22541..5e4a96b 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -2,6 +2,7 @@ NAME = avcodec
+ DESC = FFmpeg codec library
+ 
+ HEADERS = ac3_parser.h                                                  \
++          ohcodec_buffer.h                                              \
+           adts_parser.h                                                 \
+           avcodec.h                                                     \
+           avdct.h                                                       \
+diff --git a/libavcodec/ohcodec_buffer.h b/libavcodec/ohcodec_buffer.h
+new file mode 100644
+index 0000000..a1d3d7d
+--- /dev/null
++++ b/libavcodec/ohcodec_buffer.h
+@@ -0,0 +1,26 @@
++/*
++ * OpenHarmony Codec public output-buffer API
++ *
++ * This file is part of FFmpeg.
++ */
++
++#ifndef AVCODEC_OHCODEC_BUFFER_H
++#define AVCODEC_OHCODEC_BUFFER_H
++
++/** Opaque output token carried by AV_PIX_FMT_OHCODEC frames. */
++typedef struct AVOHCodecBuffer AVOHCodecBuffer;
++
++/**
++ * Return an output buffer to the decoder exactly once.
++ *
++ * If render is non-zero, the decoder queues the buffer to its configured
++ * Surface. Otherwise the buffer is discarded. Calls after the first one are
++ * harmless and return success. A token invalidated by flush/stop is discarded
++ * without calling the codec with a stale output index. A render request for
++ * an already released token returns AVERROR(EALREADY); a render request for a
++ * token invalidated by flush/stop returns AVERROR(ESTALE). Discard requests
++ * remain idempotent.
++ */
++int av_ohcodec_release_buffer(AVOHCodecBuffer *buffer, int render);
++
++#endif /* AVCODEC_OHCODEC_BUFFER_H */
+diff --git a/libavcodec/ohdec.c b/libavcodec/ohdec.c
+index cf1177a..ce0346d 100644
+--- a/libavcodec/ohdec.c
++++ b/libavcodec/ohdec.c
+@@ -21,14 +21,20 @@
+ #include "config_components.h"
+ 
+ #include <stdbool.h>
++#include <stdatomic.h>
+ #include <multimedia/player_framework/native_avcapability.h>
+ #include <multimedia/player_framework/native_avcodec_videodecoder.h>
++#include <native_buffer/native_buffer.h>
+ 
+ #include "libavutil/fifo.h"
++#include "libavutil/hwcontext.h"
+ #include "libavutil/hwcontext_oh.h"
+ #include "libavutil/imgutils.h"
++#include "libavutil/intreadwrite.h"
+ #include "libavutil/mem.h"
+ #include "libavutil/opt.h"
++#include "libavutil/pixdesc.h"
++#include "libavutil/avstring.h"
+ #include "libavutil/thread.h"
+ 
+ #include "avcodec.h"
+@@ -36,6 +42,7 @@
+ #include "decode.h"
+ #include "hwconfig.h"
+ #include "ohcodec.h"
++#include "ohcodec_buffer.h"
+ 
+ typedef struct OHCodecDecContext {
+     AVClass *avclass;
+@@ -60,6 +67,7 @@ typedef struct OHCodecDecContext {
+     bool eof_sent;
+ 
+     bool output_to_window;
++    bool output_hw_frame;
+     bool got_stream_info;
+     int width;
+     int height;
+@@ -69,13 +77,164 @@ typedef struct OHCodecDecContext {
+ 
+     char *name;
+     int allow_sw;
++
++    /* Live FLV: cache AnnexB SPS/PPS (never a lone PPS), then bootstrap OHCodec
++     * with a dedicated CODEC_DATA buffer followed by the first key frame.
++     */
++    uint8_t *ps_data;
++    int ps_size;
++    /* Parameter sets have been handed to the decoder for the current sequence. */
++    bool codec_data_sent;
++    /* Current packet was only partially copied into an input buffer; the
++     * remainder must go out on the next buffer with the same pts.
++     */
++    bool pkt_partial;
++    int64_t pkt_pts;
++    /* Bootstrap watchdog: holding packets back is bounded, otherwise a stream
++     * without parameter sets would produce neither frames nor decode errors and
++     * mpv could never trigger its software fallback.
++     */
++    bool bootstrap_done;
++    int bootstrap_drops;
++    bool bootstrap_gave_up;
++    bool bootstrap_got_first_pts;
++    int64_t bootstrap_first_pts; /* AV_TIME_BASE_Q */
+ } OHCodecDecContext;
+ 
+-typedef struct OHCodecBuffer {
++/* Public token type (see ohcodec_buffer.h). Internal fields are private. */
++struct AVOHCodecBuffer {
+     uint32_t index;
+     OH_AVBuffer *buffer;
+     AVBufferRef *dec_ref;
+-} OHCodecBuffer;
++    AVBufferRef *device_ref;
++    uint64_t generation;
++    bool render;
++    atomic_bool released;
++    AVOHCodecFrameDescriptor desc;
++};
++typedef struct AVOHCodecBuffer OHCodecBuffer;
++
++static enum AVPixelFormat oh_sw_format_from_native_format(OH_NativeBuffer_Format format)
++{
++    switch (format) {
++    case NATIVEBUFFER_PIXEL_FMT_YCBCR_P010:
++    case NATIVEBUFFER_PIXEL_FMT_YCRCB_P010:
++        return AV_PIX_FMT_P010;
++    case NATIVEBUFFER_PIXEL_FMT_YCBCR_420_SP:
++        return AV_PIX_FMT_NV12;
++    case NATIVEBUFFER_PIXEL_FMT_YCRCB_420_SP:
++        return AV_PIX_FMT_NV21;
++    default:
++        return AV_PIX_FMT_NONE;
++    }
++}
++
++/* Vendor OnOutputFormatChanged dumps these; not in public OH_MD_KEY_* macros. */
++#define OH_KEY_VIDEO_GRAPHIC_PIXEL_FORMAT "video_graphic_pixel_format"
++#define OH_KEY_PIXEL_FORMAT_STRING        "pixel_format_string"
++
++static int oh_sw_format_is_concrete(enum AVPixelFormat sw)
++{
++    return sw != AV_PIX_FMT_NONE && sw != AV_PIX_FMT_OHCODEC;
++}
++
++static enum AVPixelFormat oh_decode_sw_format_from_avformat(OH_AVFormat *format)
++{
++    int32_t graphic = 0;
++    const char *pfs = NULL;
++    enum AVPixelFormat sw;
++
++    if (OH_AVFormat_GetIntValue(format, OH_KEY_VIDEO_GRAPHIC_PIXEL_FORMAT, &graphic)) {
++        sw = oh_sw_format_from_native_format((OH_NativeBuffer_Format)graphic);
++        if (oh_sw_format_is_concrete(sw))
++            return sw;
++    }
++    if (OH_AVFormat_GetStringValue(format, OH_KEY_PIXEL_FORMAT_STRING, &pfs) && pfs) {
++        if (av_stristr(pfs, "10bit") || av_stristr(pfs, "P010"))
++            return AV_PIX_FMT_P010;
++        if (av_stristr(pfs, "NV21"))
++            return AV_PIX_FMT_NV21;
++        if (av_stristr(pfs, "NV12"))
++            return AV_PIX_FMT_NV12;
++    }
++    return AV_PIX_FMT_NONE;
++}
++
++static void oh_decode_fill_native_format_hint(enum AVPixelFormat sw,
++                                              OH_NativeBuffer_Format *native_format_out)
++{
++    if (!native_format_out)
++        return;
++    switch (sw) {
++    case AV_PIX_FMT_P010:
++        *native_format_out = NATIVEBUFFER_PIXEL_FMT_YCBCR_P010;
++        break;
++    case AV_PIX_FMT_NV12:
++        *native_format_out = NATIVEBUFFER_PIXEL_FMT_YCBCR_420_SP;
++        break;
++    case AV_PIX_FMT_NV21:
++        *native_format_out = NATIVEBUFFER_PIXEL_FMT_YCRCB_420_SP;
++        break;
++    default:
++        break;
++    }
++}
++
++static enum AVPixelFormat oh_decode_resolve_sw_format(AVCodecContext *avctx,
++                                                      OH_AVBuffer *buffer,
++                                                      OH_NativeBuffer_Format *native_format_out)
++{
++    OHCodecDecContext *s = avctx->priv_data;
++
++    /*
++     * SURFACE / ConsumerSurface: OH_AVBuffer has no CPU-mappable memory.
++     * Calling GetNativeBuffer() spams "buffer's memory is nullptr" and never
++     * yields a real format — keep the sw_pix_fmt resolved at OnStreamChanged.
++     */
++    if (s->output_to_window || s->output_hw_frame) {
++        oh_decode_fill_native_format_hint(avctx->sw_pix_fmt, native_format_out);
++        return avctx->sw_pix_fmt;
++    }
++
++    OH_NativeBuffer *native_buffer = OH_AVBuffer_GetNativeBuffer(buffer);
++    if (!native_buffer)
++        return avctx->sw_pix_fmt;
++
++    OH_NativeBuffer_Config config = {0};
++    OH_NativeBuffer_GetConfig(native_buffer, &config);
++    OH_NativeBuffer_Unreference(native_buffer);
++
++    if (native_format_out)
++        *native_format_out = config.format;
++
++    enum AVPixelFormat sw_format = oh_sw_format_from_native_format(config.format);
++    return sw_format == AV_PIX_FMT_NONE ? avctx->sw_pix_fmt : sw_format;
++}
++
++static AVOHCodecDeviceContext *oh_decode_device_hwctx(AVCodecContext *avctx)
++{
++    if (!avctx->hw_device_ctx)
++        return NULL;
++
++    AVHWDeviceContext *device_ctx = (AVHWDeviceContext *)avctx->hw_device_ctx->data;
++    if (!device_ctx || device_ctx->type != AV_HWDEVICE_TYPE_OHCODEC)
++        return NULL;
++
++    return device_ctx->hwctx;
++}
++
++static uint64_t oh_decode_output_generation(AVCodecContext *avctx)
++{
++    AVOHCodecDeviceContext *dev = oh_decode_device_hwctx(avctx);
++    return dev ? dev->output_generation : 0;
++}
++
++static void oh_decode_invalidate_outputs(AVCodecContext *avctx)
++{
++    AVOHCodecDeviceContext *dev = oh_decode_device_hwctx(avctx);
++    if (dev)
++        dev->output_generation++;
++}
+ 
+ static void oh_decode_release(void *opaque, uint8_t *data)
+ {
+@@ -130,17 +289,79 @@ static int oh_decode_create(OHCodecDecContext *s, AVCodecContext *avctx)
+     return 0;
+ }
+ 
++static int oh_decode_init_hwframes(OHCodecDecContext *s, AVCodecContext *avctx,
++                                   enum AVPixelFormat sw_format)
++{
++    AVHWFramesContext *frames_ctx;
++    int ret;
++
++    if (!s->output_hw_frame)
++        return 0;
++    if (!avctx->hw_device_ctx)
++        return AVERROR(EINVAL);
++
++    if (avctx->hw_frames_ctx) {
++        frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
++        if (frames_ctx->format == AV_PIX_FMT_OHCODEC &&
++            frames_ctx->sw_format == sw_format &&
++            frames_ctx->width == s->width &&
++            frames_ctx->height == s->height)
++            return 0;
++        av_buffer_unref(&avctx->hw_frames_ctx);
++    }
++
++    avctx->hw_frames_ctx = av_hwframe_ctx_alloc(avctx->hw_device_ctx);
++    if (!avctx->hw_frames_ctx)
++        return AVERROR(ENOMEM);
++
++    frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
++    frames_ctx->format = AV_PIX_FMT_OHCODEC;
++    frames_ctx->sw_format = sw_format;
++    frames_ctx->width = s->width;
++    frames_ctx->height = s->height;
++
++    ret = av_hwframe_ctx_init(avctx->hw_frames_ctx);
++    if (ret < 0)
++        av_buffer_unref(&avctx->hw_frames_ctx);
++
++    return ret;
++}
++
+ static int oh_decode_set_format(OHCodecDecContext *s, AVCodecContext *avctx)
+ {
+     int ret;
+     OHNativeWindow *window = NULL;
++    AVOHCodecOutputMode output_mode = AV_OHCODEC_OUTPUT_MODE_AUTO;
+ 
+     if (avctx->hw_device_ctx) {
+         AVHWDeviceContext *device_ctx = (AVHWDeviceContext*)(avctx->hw_device_ctx->data);
+         if (device_ctx->type == AV_HWDEVICE_TYPE_OHCODEC) {
+             AVOHCodecDeviceContext *dev = device_ctx->hwctx;
+-            window = dev->native_window;
+-            s->output_to_window = true;
++            output_mode = dev->output_mode;
++            if (output_mode == AV_OHCODEC_OUTPUT_MODE_AUTO)
++                output_mode = dev->native_window
++                    ? AV_OHCODEC_OUTPUT_MODE_SURFACE
++                    : AV_OHCODEC_OUTPUT_MODE_BUFFER;
++
++            if (output_mode == AV_OHCODEC_OUTPUT_MODE_SURFACE) {
++                window = dev->native_window;
++                if (!window) {
++                    av_log(avctx, AV_LOG_ERROR,
++                           "Surface output mode requires a native window\n");
++                    return AVERROR(EINVAL);
++                }
++                s->output_to_window = true;
++                s->output_hw_frame = true;
++            }
++            /*
++             * BUFFER 模式（mpv 的 ohcodec-copy）必须直接产出软件帧：
++             * hwcontext_oh 没有实现 transfer_data_from，一旦这里声明
++             * output_hw_frame，avctx->pix_fmt 会变成 AV_PIX_FMT_OHCODEC 并挂上
++             * hw_frames_ctx，mpv 在 copying 分支必走 mp_image_hw_download() ->
++             * av_hwframe_transfer_data()，直接 ENOSYS，表现为
++             * "Error while decoding frame (hardware decoding)!" 后回落软解。
++             * 走 oh_decode_wrap_sw_buffer 输出 NV12 才是 -copy 的语义。
++             */
+         } else {
+             av_log(avctx, AV_LOG_WARNING, "Ignore invalid hw device type %s\n",
+                    av_hwdevice_get_type_name(device_ctx->type));
+@@ -233,21 +454,49 @@ static void oh_decode_on_stream_changed(OH_AVCodec *codec, OH_AVFormat *format,
+     }
+ 
+     if (OH_AVFormat_GetIntValue(format, OH_MD_KEY_PIXEL_FORMAT, &n)) {
++        int ret;
++        enum AVPixelFormat sw_format;
++
+         s->pix_fmt = n;
+-        /* When use output_to_window, the returned format is the memory
+-         * layout of hardware frame, not AV_PIXEL_FORMAT_SURFACE_FORMAT as
+-         * expected.
++        sw_format = ff_oh_pix_to_ff_pix(s->pix_fmt);
++        /*
++         * SURFACE_FORMAT maps to AV_PIX_FMT_OHCODEC — that is the hw pix_fmt,
++         * not a concrete sw_format. mpv picks VK8 vs VK16 from hw_subfmt
++         * (P010 → 10bit). Resolve the real layout from vendor graphic keys
++         * (video_graphic_pixel_format=24/35 ↔ NV12/P010 in the dump).
+          */
+-        if (s->output_to_window)
+-            avctx->pix_fmt = AV_PIX_FMT_OHCODEC;
+-        else
+-            avctx->pix_fmt = ff_oh_pix_to_ff_pix(s->pix_fmt);
+-        // Check whether this pixel format is supported
+-        if (avctx->pix_fmt == AV_PIX_FMT_NONE) {
++        if (!oh_sw_format_is_concrete(sw_format)) {
++            enum AVPixelFormat from_fmt = oh_decode_sw_format_from_avformat(format);
++            if (oh_sw_format_is_concrete(from_fmt)) {
++                av_log(avctx, AV_LOG_INFO,
++                       "Resolved OHCodec SURFACE sw format to %s\n",
++                       av_get_pix_fmt_name(from_fmt));
++                sw_format = from_fmt;
++            } else if (s->output_hw_frame && sw_format == AV_PIX_FMT_OHCODEC) {
++                av_log(avctx, AV_LOG_WARNING,
++                       "SURFACE format without graphic pixel format; assuming NV12\n");
++                sw_format = AV_PIX_FMT_NV12;
++            }
++        }
++        if (!oh_sw_format_is_concrete(sw_format)) {
+             av_log(avctx, AV_LOG_ERROR, "Unsupported OH_AVPixelFormat %d\n",
+                    n);
+             goto out;
+         }
++
++        avctx->sw_pix_fmt = sw_format;
++        if (s->output_hw_frame) {
++            avctx->pix_fmt = AV_PIX_FMT_OHCODEC;
++            ret = oh_decode_init_hwframes(s, avctx, sw_format);
++            if (ret < 0) {
++                av_log(avctx, AV_LOG_ERROR,
++                       "Failed to initialize OHCodec hw frames context: %s\n",
++                       av_err2str(ret));
++                goto out;
++            }
++        } else {
++            avctx->pix_fmt = sw_format;
++        }
+     } else {
+         av_log(avctx, AV_LOG_ERROR, "Failed to get pixel format\n");
+         goto out;
+@@ -270,6 +519,36 @@ static void oh_decode_on_stream_changed(OH_AVCodec *codec, OH_AVFormat *format,
+                                 &n))
+         avctx->color_range = n ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+ 
++    /*
++     * Vendor dump keys (video_graphic_pixel_format / pixel_format_string) are
++     * often not readable via OH_AVFormat_Get* — SURFACE then falls back to
++     * NV12 and HDR 10-bit is mis-tagged. Upgrade using stride (P010 byte
++     * stride is 2× pic width) and HDR transfer.
++     */
++    if (s->output_hw_frame && avctx->sw_pix_fmt == AV_PIX_FMT_NV12) {
++        int want_p010 = 0;
++        if (s->width > 0 && s->stride >= s->width * 2)
++            want_p010 = 1;
++        else if (avctx->color_trc == AVCOL_TRC_SMPTE2084 ||
++                 avctx->color_trc == AVCOL_TRC_ARIB_STD_B67)
++            want_p010 = 1;
++        if (want_p010) {
++            int ret2;
++            avctx->sw_pix_fmt = AV_PIX_FMT_P010;
++            ret2 = oh_decode_init_hwframes(s, avctx, AV_PIX_FMT_P010);
++            if (ret2 < 0) {
++                av_log(avctx, AV_LOG_ERROR,
++                       "Failed to upgrade OHCodec hw frames to P010: %s\n",
++                       av_err2str(ret2));
++                goto out;
++            }
++            av_log(avctx, AV_LOG_INFO,
++                   "OHCodec SURFACE sw format upgraded to p010 "
++                   "(stride=%d width=%d trc=%d)\n",
++                   s->stride, s->width, (int)avctx->color_trc);
++        }
++    }
++
+     if (OH_AVFormat_GetDoubleValue(format, OH_MD_KEY_VIDEO_SAR, &d)) {
+         AVRational sar = av_d2q(d, 4096 * 4);
+         ff_set_sar(avctx, sar);
+@@ -395,8 +674,9 @@ static av_cold int oh_decode_close(AVCodecContext *avctx)
+     OHCodecDecContext *s = avctx->priv_data;
+ 
+     if (s->dec) {
+-        /* Stop but don't destroy dec directly, to keep hardware frames on
+-         * the fly valid.
++        oh_decode_invalidate_outputs(avctx);
++        /* Stop but don't destroy dec directly: outstanding frames still own a
++         * decoder reference, but their buffer-mode outputs are invalidated.
+          */
+         OH_AVErrCode err = OH_VideoDecoder_Stop(s->dec);
+         if (err == AV_ERR_OK)
+@@ -409,6 +689,8 @@ static av_cold int oh_decode_close(AVCodecContext *avctx)
+     }
+ 
+     av_packet_unref(&s->pkt);
++    av_freep(&s->ps_data);
++    s->ps_size = 0;
+ 
+     ff_mutex_destroy(&s->input_mutex);
+     ff_cond_destroy(&s->input_cond);
+@@ -421,28 +703,51 @@ static av_cold int oh_decode_close(AVCodecContext *avctx)
+     return 0;
+ }
+ 
+-static void oh_buffer_release(void *opaque, uint8_t *data)
++int av_ohcodec_release_buffer(AVOHCodecBuffer *buffer, int render)
+ {
+-    if (!opaque)
+-        return;
++    bool stale = false;
++    OH_AVErrCode err;
+ 
+-    OHCodecBuffer *buffer = opaque;
++    if (!buffer)
++        return AVERROR(EINVAL);
++    if (atomic_exchange_explicit(&buffer->released, true, memory_order_acq_rel))
++        return render ? AVERROR(EALREADY) : 0;
+ 
+-    if (!buffer->dec_ref) {
+-        av_free(buffer);
+-        return;
++    if (buffer->device_ref) {
++        AVHWDeviceContext *device_ctx = (AVHWDeviceContext *)buffer->device_ref->data;
++        if (device_ctx && device_ctx->type == AV_HWDEVICE_TYPE_OHCODEC) {
++            AVOHCodecDeviceContext *dev = device_ctx->hwctx;
++            stale = dev && buffer->generation != dev->output_generation;
++        }
+     }
+ 
+-    if (buffer->buffer) {
++    if (!buffer->dec_ref || !buffer->buffer || stale)
++        return render ? AVERROR(ESTALE) : 0;
++
++    {
+         OH_AVCodec *dec = (OH_AVCodec *)buffer->dec_ref->data;
+-        OH_AVCodecBufferAttr attr;
+-        OH_AVErrCode err = OH_AVBuffer_GetBufferAttr(buffer->buffer, &attr);
+-        if (err == AV_ERR_OK && !(attr.flags & AVCODEC_BUFFER_FLAGS_DISCARD))
+-            OH_VideoDecoder_RenderOutputBuffer(dec, buffer->index);
+-        else
+-            OH_VideoDecoder_FreeOutputBuffer(dec, buffer->index);
++        if (render) {
++            OH_AVCodecBufferAttr attr;
++            err = OH_AVBuffer_GetBufferAttr(buffer->buffer, &attr);
++            if (err == AV_ERR_OK && !(attr.flags & AVCODEC_BUFFER_FLAGS_DISCARD))
++                err = OH_VideoDecoder_RenderOutputBuffer(dec, buffer->index);
++            else
++                err = OH_VideoDecoder_FreeOutputBuffer(dec, buffer->index);
++        } else {
++            err = OH_VideoDecoder_FreeOutputBuffer(dec, buffer->index);
++        }
+     }
++    return ff_oh_err_to_ff_err(err);
++}
+ 
++static void oh_buffer_release(void *opaque, uint8_t *data)
++{
++    AVOHCodecBuffer *buffer = opaque;
++    if (!buffer)
++        return;
++    /* Drop without presenting if the mapper never rendered the token. */
++    av_ohcodec_release_buffer(buffer, 0);
++    av_buffer_unref(&buffer->device_ref);
+     av_buffer_unref(&buffer->dec_ref);
+     av_free(buffer);
+ }
+@@ -452,10 +757,30 @@ static int oh_decode_wrap_hw_buffer(AVCodecContext *avctx, AVFrame *frame,
+                                     const OH_AVCodecBufferAttr *attr)
+ {
+     OHCodecDecContext *s = avctx->priv_data;
++    OH_NativeBuffer_Format native_format = NATIVEBUFFER_PIXEL_FMT_BUTT;
++    enum AVPixelFormat sw_format =
++        oh_decode_resolve_sw_format(avctx, output->buffer, &native_format);
++    uint8_t *data[4] = {0};
++    int linesize[4] = {0};
++    int ret;
++
++    if (sw_format != avctx->sw_pix_fmt) {
++        avctx->sw_pix_fmt = sw_format;
++        ret = oh_decode_init_hwframes(s, avctx, sw_format);
++        if (ret < 0) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "Failed to update OHCodec hw frames context for native format %d: %s\n",
++                   native_format, av_err2str(ret));
++            return ret;
++        }
++        av_log(avctx, AV_LOG_DEBUG,
++               "Resolved OHCodec native buffer format %d to %s\n",
++               native_format, av_get_pix_fmt_name(sw_format));
++    }
+ 
+     frame->width = s->width;
+     frame->height = s->height;
+-    int ret = ff_decode_frame_props(avctx, frame);
++    ret = ff_decode_frame_props(avctx, frame);
+     if (ret < 0)
+         return ret;
+ 
+@@ -470,21 +795,82 @@ static int oh_decode_wrap_hw_buffer(AVCodecContext *avctx, AVFrame *frame,
+         return AVERROR(ENOMEM);
+     }
+ 
++    if (avctx->hw_device_ctx) {
++        buffer->device_ref = av_buffer_ref(avctx->hw_device_ctx);
++        if (!buffer->device_ref) {
++            oh_buffer_release(buffer, NULL);
++            return AVERROR(ENOMEM);
++        }
++    }
++
+     buffer->index = output->index;
+     buffer->buffer = output->buffer;
+-    frame->buf[0] = av_buffer_create((uint8_t *)buffer->buffer, 1,
++    buffer->render = s->output_to_window;
++    buffer->generation = oh_decode_output_generation(avctx);
++    atomic_init(&buffer->released, false);
++    buffer->desc = (AVOHCodecFrameDescriptor) {
++        .buffer = output->buffer,
++        .index = output->index,
++        .width = s->width,
++        .height = s->height,
++        .stride = s->stride,
++        .slice_height = s->slice_height,
++        .pixel_format = s->pix_fmt,
++        .native_buffer_format = native_format,
++        .generation = buffer->generation,
++    };
++    /* data[3] must be the opaque AVOHCodecBuffer token (ErBWs mpv interop). */
++    frame->buf[0] = av_buffer_create((uint8_t *)buffer, 1,
+                                      oh_buffer_release,
+                                      buffer, AV_BUFFER_FLAG_READONLY);
+     if (!frame->buf[0]) {
+         oh_buffer_release(buffer, NULL);
+         return AVERROR(ENOMEM);
+     }
+-    // Point to OH_AVBuffer
++
++    if (avctx->hw_frames_ctx) {
++        frame->hw_frames_ctx = av_buffer_ref(avctx->hw_frames_ctx);
++        if (!frame->hw_frames_ctx) {
++            av_buffer_unref(&frame->buf[0]);
++            return AVERROR(ENOMEM);
++        }
++    }
++
+     frame->data[3] = frame->buf[0]->data;
++
++    if (!buffer->render) {
++        uint8_t *p = OH_AVBuffer_GetAddr(output->buffer);
++        if (!p) {
++            av_log(avctx, AV_LOG_ERROR, "Failed to get output buffer addr\n");
++            ret = AVERROR_EXTERNAL;
++            goto fail;
++        }
++
++        /* Same as oh_decode_wrap_sw_buffer: s->stride is byte stride.
++         * av_image_fill_linesizes expects pixel width; P010 would double
++         * and place UV past the end of the buffer => SIGSEGV.
++         */
++        data[0]     = p;
++        data[1]     = p + (ptrdiff_t)s->stride * s->slice_height;
++        linesize[0] = s->stride;
++        linesize[1] = s->stride;
++
++        for (int i = 0; i < AV_NUM_DATA_POINTERS; i++) {
++            frame->data[i] = data[i];
++            frame->linesize[i] = linesize[i];
++        }
++        frame->data[3] = frame->buf[0]->data;
++    }
++
+     frame->pts = av_rescale_q(attr->pts, AV_TIME_BASE_Q, avctx->pkt_timebase);
+     frame->pkt_dts = AV_NOPTS_VALUE;
+ 
+     return 0;
++
++fail:
++    av_buffer_unref(&frame->hw_frames_ctx);
++    av_buffer_unref(&frame->buf[0]);
++    return ret;
+ }
+ 
+ static int oh_decode_wrap_sw_buffer(AVCodecContext *avctx, AVFrame *frame,
+@@ -493,6 +879,21 @@ static int oh_decode_wrap_sw_buffer(AVCodecContext *avctx, AVFrame *frame,
+ {
+     OHCodecDecContext *s = avctx->priv_data;
+ 
++    /* P010 streams report NV12 via OH_MD_KEY_PIXEL_FORMAT; read the actual
++     * NativeBuffer format so we allocate and copy with the correct stride.
++     * oh_decode_resolve_sw_format falls back to avctx->sw_pix_fmt if the
++     * native buffer is unavailable (e.g. the codec returned a CPU buffer).
++     */
++    enum AVPixelFormat real_fmt =
++        oh_decode_resolve_sw_format(avctx, output->buffer, NULL);
++    if (real_fmt != AV_PIX_FMT_NONE && real_fmt != avctx->pix_fmt) {
++        av_log(avctx, AV_LOG_DEBUG, "sw_buf: pix_fmt %s->%s (NativeBuffer)\n",
++               av_get_pix_fmt_name(avctx->pix_fmt),
++               av_get_pix_fmt_name(real_fmt));
++        avctx->pix_fmt = real_fmt;
++        avctx->sw_pix_fmt = real_fmt;
++    }
++
+     frame->format = avctx->pix_fmt;
+     frame->width = s->width;
+     frame->height = s->height;
+@@ -509,16 +910,16 @@ static int oh_decode_wrap_sw_buffer(AVCodecContext *avctx, AVFrame *frame,
+         return AVERROR_EXTERNAL;
+     }
+ 
+-    uint8_t *src[4] = {0};
+-    int src_linesizes[4] = {0};
+-
+-    ret = av_image_fill_linesizes(src_linesizes, frame->format, s->stride);
+-    if (ret < 0)
+-        return ret;
+-    ret = av_image_fill_pointers(src, frame->format, s->slice_height, p,
+-                                 src_linesizes);
+-    if (ret < 0)
+-        return ret;
++    /* OHCodec reports s->stride in bytes (not pixels).  For P010 that is
++     * width*2, so passing it to av_image_fill_linesizes (which expects
++     * pixel width) doubles the row size and places the UV plane ~14 MiB
++     * past the start of a 7 MiB buffer => SIGSEGV.
++     * Use s->stride directly as the byte row stride for both planes;
++     * UV follows immediately after Y (NV12 / P010 semi-planar layout).
++     */
++    uint8_t *src[4]       = { p, p + (ptrdiff_t)s->stride * s->slice_height,
++                               NULL, NULL };
++    int src_linesizes[4]  = { s->stride, s->stride, 0, 0 };
+     av_image_copy2(frame->data, frame->linesize, src, src_linesizes,
+                    frame->format, frame->width, frame->height);
+ 
+@@ -566,16 +967,410 @@ static int oh_decode_output_frame(AVCodecContext *avctx, AVFrame *frame,
+             return AVERROR_EXTERNAL;
+     }
+ 
+-    if (s->output_to_window)
++    if (s->output_hw_frame)
+         return oh_decode_wrap_hw_buffer(avctx, frame, output, &attr);
+     return oh_decode_wrap_sw_buffer(avctx, frame, output, &attr);
+ }
+ 
++static int oh_decode_recycle_input(OHCodecDecContext *s, OHBufferQueueItem *input)
++{
++    ff_mutex_lock(&s->input_mutex);
++    if (av_fifo_write(s->input_queue, input, 1) < 0) {
++        ff_mutex_unlock(&s->input_mutex);
++        return AVERROR_EXTERNAL;
++    }
++    ff_mutex_unlock(&s->input_mutex);
++    return 0;
++}
++
++/* AnnexB NAL type classes we care about while feeding OHCodec. */
++#define OH_NAL_CLASS_SPS (1 << 0)   /* H.264 SPS, HEVC VPS/SPS */
++#define OH_NAL_CLASS_PPS (1 << 1)
++#define OH_NAL_CLASS_IDR (1 << 2)
++
++/*
++ * Bootstrap hold is bounded so a stream without parameter sets still surfaces
++ * decode errors and lets mpv fall back to software decoding.
++ *
++ * Budget is stream time (packet count is only the fallback when pts is
++ * unavailable). 6s: on-device captures 2026-08-11/12 (Huya FLV, SDR + 60fps
++ * HDR up to 2K) measured holds of ~0.7-2.8s of stream time before the IDR
++ * arrived; live platforms keep GOPs short for latency, so 6s keeps >2x margin
++ * over the observed worst case while halving the previous 12s worst-case
++ * black window on streams that never deliver parameter sets.
++ */
++#define OH_BOOTSTRAP_MAX_USEC  (6LL * AV_TIME_BASE)
++#define OH_BOOTSTRAP_MAX_DROPS 300
++
++/*
++ * Classify the NAL units inside an AnnexB buffer.
++ *
++ * SPS and PPS are reported separately on purpose: a packet (or an extradata
++ * blob) may carry only a PPS, which is NOT enough to configure the decoder.
++ * Treating a lone PPS as "parameter sets present" is exactly what makes
++ * OHCodec fail with "missing parameter sets".
++ */
++static unsigned oh_decode_scan_nals(const uint8_t *data, int size,
++                                    enum AVCodecID id)
++{
++    const uint8_t *p = data;
++    const uint8_t *end;
++    unsigned found = 0;
++
++    if (!data || size < 4)
++        return 0;
++    end = data + size;
++    while (p + 3 < end) {
++        int nal_type;
++        if (p[0] == 0 && p[1] == 0 && p[2] == 1) {
++            p += 3;
++        } else if (p + 4 < end &&
++                   p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 1) {
++            p += 4;
++        } else {
++            p++;
++            continue;
++        }
++        if (p >= end)
++            break;
++        if (id == AV_CODEC_ID_HEVC) {
++            nal_type = (*p >> 1) & 0x3f;
++            if (nal_type == 32 || nal_type == 33)
++                found |= OH_NAL_CLASS_SPS;
++            else if (nal_type == 34)
++                found |= OH_NAL_CLASS_PPS;
++            /* IDR_W_RADL/IDR_N_LP/CRA plus BLA variants all restart the stream */
++            else if (nal_type >= 16 && nal_type <= 21)
++                found |= OH_NAL_CLASS_IDR;
++        } else {
++            nal_type = *p & 0x1f;
++            if (nal_type == 7)
++                found |= OH_NAL_CLASS_SPS;
++            else if (nal_type == 8)
++                found |= OH_NAL_CLASS_PPS;
++            else if (nal_type == 5)
++                found |= OH_NAL_CLASS_IDR;
++        }
++    }
++    return found;
++}
++
++static int oh_decode_append_nal(uint8_t **out, int *out_size,
++                                const uint8_t *nal, int nal_size)
++{
++    uint8_t *p = av_realloc(*out, *out_size + 4 + nal_size +
++                            AV_INPUT_BUFFER_PADDING_SIZE);
++    if (!p)
++        return AVERROR(ENOMEM);
++    *out = p;
++    AV_WB32(p + *out_size, 1);
++    memcpy(p + *out_size + 4, nal, nal_size);
++    *out_size += 4 + nal_size;
++    return 0;
++}
++
++static int oh_decode_capture_ps_from_annexb(OHCodecDecContext *s,
++                                            AVCodecContext *avctx,
++                                            const uint8_t *data, int size)
++{
++    const uint8_t *p = data;
++    const uint8_t *end = data + size;
++    uint8_t *out = NULL;
++    int out_size = 0;
++    int got_sps = 0;
++    int ret;
++
++    if (!data || size < 5)
++        return 0;
++
++    while (p + 4 < end) {
++        const uint8_t *nal_start;
++        const uint8_t *next;
++        int nal_type, nal_size;
++
++        if (p[0] == 0 && p[1] == 0 && p[2] == 1) {
++            nal_start = p + 3;
++        } else if (p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 1) {
++            nal_start = p + 4;
++        } else {
++            p++;
++            continue;
++        }
++        next = nal_start;
++        while (next + 3 < end) {
++            if (next[0] == 0 && next[1] == 0 &&
++                (next[2] == 1 || (next[2] == 0 && next[3] == 1)))
++                break;
++            next++;
++        }
++        if (next + 3 >= end)
++            next = end;
++        nal_size = (int)(next - nal_start);
++        if (nal_size <= 0) {
++            p = next;
++            continue;
++        }
++        if (avctx->codec_id == AV_CODEC_ID_HEVC)
++            nal_type = (nal_start[0] >> 1) & 0x3f;
++        else
++            nal_type = nal_start[0] & 0x1f;
++
++        if (avctx->codec_id == AV_CODEC_ID_HEVC) {
++            if (nal_type == 32 || nal_type == 33 || nal_type == 34) {
++                ret = oh_decode_append_nal(&out, &out_size, nal_start, nal_size);
++                if (ret < 0) {
++                    av_free(out);
++                    return ret;
++                }
++                if (nal_type == 33)
++                    got_sps = 1;
++            }
++        } else if (nal_type == 7 || nal_type == 8) {
++            ret = oh_decode_append_nal(&out, &out_size, nal_start, nal_size);
++            if (ret < 0) {
++                av_free(out);
++                return ret;
++            }
++            if (nal_type == 7)
++                got_sps = 1;
++        }
++        p = next;
++    }
++
++    /* Only a capture that actually carries SPS may be treated as "parameter
++     * sets ready". A PPS-only capture would make ps_size non-zero and cause
++     * the bootstrap path to skip prepending SPS, so OHCodec would still fail
++     * with "missing parameter sets".
++     */
++    if (out_size <= 0 || !got_sps) {
++        av_free(out);
++        return 0;
++    }
++    memset(out + out_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++    av_freep(&s->ps_data);
++    s->ps_data = out;
++    s->ps_size = out_size;
++    av_log(avctx, AV_LOG_INFO,
++           "Captured AnnexB codec config (%d bytes) from bitstream\n",
++           out_size);
++    return 0;
++}
++
++static int oh_decode_prepare_ps_from_bytes(OHCodecDecContext *s,
++                                           AVCodecContext *avctx,
++                                           const uint8_t *in, int in_size)
++{
++    uint8_t *out = NULL;
++    int out_size = 0;
++
++    if (!in || in_size <= 0)
++        return 0;
++
++    if ((in_size >= 4 && AV_RB32(in) == 1) ||
++        (in_size >= 3 && AV_RB24(in) == 1)) {
++        return oh_decode_capture_ps_from_annexb(s, avctx, in, in_size);
++    }
++
++    if (avctx->codec_id == AV_CODEC_ID_H264 && in_size >= 7 && in[0] == 1) {
++        const uint8_t *p = in + 5;
++        const uint8_t *end = in + in_size;
++        int sps_count, pps_count, i;
++        if (p >= end)
++            return AVERROR_INVALIDDATA;
++        sps_count = *p++ & 0x1f;
++        /* 无 SPS 的 avcC 不能当作参数集就绪：只有 PPS 时 OHCodec 仍会
++         * missing parameter sets，需继续等带内 SPS。 */
++        if (sps_count <= 0)
++            return 0;
++        for (i = 0; i < sps_count; i++) {
++            int n;
++            if (p + 2 > end)
++                return AVERROR_INVALIDDATA;
++            n = AV_RB16(p);
++            p += 2;
++            if (p + n > end)
++                return AVERROR_INVALIDDATA;
++            if (oh_decode_append_nal(&out, &out_size, p, n) < 0) {
++                av_free(out);
++                return AVERROR(ENOMEM);
++            }
++            p += n;
++        }
++        if (p >= end) {
++            av_free(out);
++            return AVERROR_INVALIDDATA;
++        }
++        pps_count = *p++;
++        for (i = 0; i < pps_count; i++) {
++            int n;
++            if (p + 2 > end)
++                return AVERROR_INVALIDDATA;
++            n = AV_RB16(p);
++            p += 2;
++            if (p + n > end)
++                return AVERROR_INVALIDDATA;
++            if (oh_decode_append_nal(&out, &out_size, p, n) < 0) {
++                av_free(out);
++                return AVERROR(ENOMEM);
++            }
++            p += n;
++        }
++        if (out_size > 0) {
++            memset(out + out_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++            av_freep(&s->ps_data);
++            s->ps_data = out;
++            s->ps_size = out_size;
++            av_log(avctx, AV_LOG_INFO,
++                   "Prepared AnnexB codec config (%d bytes) for OHCodec\n",
++                   out_size);
++            return 0;
++        }
++        av_free(out);
++        return 0;
++    }
++
++    av_log(avctx, AV_LOG_WARNING,
++           "OHCodec: unsupported extradata format (codec=%d size=%d)\n",
++           avctx->codec_id, in_size);
++    return 0;
++}
++
++static int oh_decode_prepare_ps(OHCodecDecContext *s, AVCodecContext *avctx)
++{
++    if (s->ps_data && s->ps_size > 0)
++        return 0;
++    return oh_decode_prepare_ps_from_bytes(s, avctx, avctx->extradata,
++                                           avctx->extradata_size);
++}
++
++static void oh_decode_absorb_new_extradata(OHCodecDecContext *s,
++                                           AVCodecContext *avctx,
++                                           const AVPacket *pkt)
++{
++    size_t sd_size = 0;
++    const uint8_t *sd = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA,
++                                               &sd_size);
++    if (!sd || sd_size <= 0)
++        return;
++    av_freep(&s->ps_data);
++    s->ps_size = 0;
++    /* New parameter sets must be re-sent as CODEC_DATA before the next frame. */
++    s->codec_data_sent = false;
++    oh_decode_prepare_ps_from_bytes(s, avctx, sd, (int)sd_size);
++}
++
++/*
++ * Copy at most one input buffer worth of data and push it.
++ *
++ * Returns the number of bytes consumed (>0), or a negative error code. The
++ * caller must keep feeding the remainder on later input buffers: OHCodec has
++ * no scatter-gather input, and silently truncating a slice corrupts the frame.
++ */
++static int oh_decode_push_raw(AVCodecContext *avctx, OHBufferQueueItem *input,
++                              const uint8_t *data, int size, int64_t pts,
++                              uint32_t flags)
++{
++    OHCodecDecContext *s = avctx->priv_data;
++    OH_AVErrCode err;
++    uint8_t *p;
++    int32_t cap;
++    int n;
++
++    p = OH_AVBuffer_GetAddr(input->buffer);
++    cap = OH_AVBuffer_GetCapacity(input->buffer);
++    if (!p || cap <= 0)
++        return AVERROR_EXTERNAL;
++    n = FFMIN(size, cap);
++    memcpy(p, data, n);
++    if (n < size)
++        flags |= AVCODEC_BUFFER_FLAGS_INCOMPLETE_FRAME;
++
++    OH_AVCodecBufferAttr attr = {
++        .size = n,
++        .offset = 0,
++        .pts = pts,
++        .flags = flags,
++    };
++    err = OH_AVBuffer_SetBufferAttr(input->buffer, &attr);
++    if (err != AV_ERR_OK)
++        return ff_oh_err_to_ff_err(err);
++    err = OH_VideoDecoder_PushInputBuffer(s->dec, input->index);
++    if (err != AV_ERR_OK) {
++        int ret = ff_oh_err_to_ff_err(err);
++        av_log(avctx, AV_LOG_ERROR, "Push input buffer failed, %d, %s\n",
++               err, av_err2str(ret));
++        return ret;
++    }
++    return n;
++}
++
++/*
++ * Push the cached AnnexB SPS/PPS as a dedicated CODEC_DATA buffer.
++ *
++ * OHCodec follows the same convention as Android's BUFFER_FLAG_CODEC_CONFIG:
++ * a buffer flagged CODEC_DATA is consumed as configuration and produces no
++ * output frame. Therefore the parameter sets must NOT share a buffer with the
++ * IDR, otherwise the first key frame is swallowed and every following P-frame
++ * references a picture the decoder never decoded.
++ */
++static int oh_decode_push_codec_data(AVCodecContext *avctx,
++                                     OHBufferQueueItem *input, int64_t pts)
++{
++    OHCodecDecContext *s = avctx->priv_data;
++    int ret;
++
++    ret = oh_decode_push_raw(avctx, input, s->ps_data, s->ps_size, pts,
++                             AVCODEC_BUFFER_FLAGS_CODEC_DATA);
++    if (ret < 0)
++        return ret;
++    if (ret < s->ps_size) {
++        av_log(avctx, AV_LOG_ERROR,
++               "OHCodec input buffer too small for codec config (%d < %d)\n",
++               ret, s->ps_size);
++        return AVERROR(ENOMEM);
++    }
++    s->codec_data_sent = true;
++    av_log(avctx, AV_LOG_INFO,
++           "Pushed OHCodec CODEC_DATA (%d bytes), wait key frame\n",
++           s->ps_size);
++    return 0;
++}
++
++/*
++ * Feed the current packet, transparently continuing a partially sent packet.
++ *
++ * Consumed bytes are trimmed off s->pkt so the next available input buffer
++ * carries the remainder; the packet is only unref'd once fully sent.
++ */
++static int oh_decode_push_pkt(AVCodecContext *avctx, OHBufferQueueItem *input,
++                              int64_t pts, uint32_t flags)
++{
++    OHCodecDecContext *s = avctx->priv_data;
++    int ret = oh_decode_push_raw(avctx, input, s->pkt.data, s->pkt.size, pts,
++                                 flags);
++    if (ret < 0)
++        return ret;
++    if (ret < s->pkt.size) {
++        s->pkt.data += ret;
++        s->pkt.size -= ret;
++        s->pkt_partial = true;
++        return 0;
++    }
++    s->pkt_partial = false;
++    av_packet_unref(&s->pkt);
++    return 0;
++}
++
+ static int oh_decode_send_pkt(AVCodecContext *avctx, OHBufferQueueItem *input)
+ {
+     OHCodecDecContext *s = avctx->priv_data;
+     OH_AVErrCode err;
++    unsigned nals;
+     int ret;
++    uint32_t flags;
++    int has_sps;
++    int is_key;
++    int64_t pts;
+ 
+     if (!s->pkt.size && !s->eof_sent) {
+         OH_AVCodecBufferAttr attr = {
+@@ -591,49 +1386,120 @@ static int oh_decode_send_pkt(AVCodecContext *avctx, OHBufferQueueItem *input)
+         return 0;
+     }
+ 
+-    uint8_t *p = OH_AVBuffer_GetAddr(input->buffer);
+-    int32_t n = OH_AVBuffer_GetCapacity(input->buffer);
+-    if (!p || n <= 0) {
+-        av_log(avctx, AV_LOG_ERROR,
+-               "Failed to get buffer addr (%p) or capacity (%d)\n",
+-               p, n);
+-        return AVERROR_EXTERNAL;
+-    }
+-    n = FFMIN(s->pkt.size, n);
+-    memcpy(p, s->pkt.data, n);
++    /* A partially sent packet must be finished before any new bookkeeping. */
++    if (s->pkt_partial)
++        return oh_decode_push_pkt(avctx, input, s->pkt_pts, 0);
+ 
+-    OH_AVCodecBufferAttr attr = {
+-            .size = n,
+-            .offset = 0,
+-            .pts = av_rescale_q(s->pkt.pts, avctx->pkt_timebase,
+-                                AV_TIME_BASE_Q),
+-            .flags = (s->pkt.flags & AV_PKT_FLAG_KEY)
+-                     ? AVCODEC_BUFFER_FLAGS_SYNC_FRAME : 0,
+-    };
++    oh_decode_absorb_new_extradata(s, avctx, &s->pkt);
+ 
+-    err = OH_AVBuffer_SetBufferAttr(input->buffer, &attr);
+-    if (err != AV_ERR_OK) {
+-        ret = ff_oh_err_to_ff_err(err);
+-        return ret;
+-    }
+-    err = OH_VideoDecoder_PushInputBuffer(s->dec, input->index);
+-    if (err != AV_ERR_OK) {
+-        ret = ff_oh_err_to_ff_err(err);
+-        av_log(avctx, AV_LOG_ERROR, "Push input buffer failed, %d, %s\n",
+-               err, av_err2str(ret));
++    ret = oh_decode_prepare_ps(s, avctx);
++    if (ret < 0)
+         return ret;
++
++    nals = oh_decode_scan_nals(s->pkt.data, s->pkt.size, avctx->codec_id);
++    has_sps = !!(nals & OH_NAL_CLASS_SPS);
++    /*
++     * Some low-latency encoders mark a recovery point I-frame as a key frame
++     * without emitting a real IDR NAL. Accept the container flag as well, or
++     * bootstrap would wait forever on such streams.
++     */
++    is_key = (nals & OH_NAL_CLASS_IDR) || (s->pkt.flags & AV_PKT_FLAG_KEY);
++
++    /* Only a real SPS makes the cache usable; a lone PPS does not. */
++    if (!s->ps_size && has_sps) {
++        ret = oh_decode_capture_ps_from_annexb(s, avctx, s->pkt.data, s->pkt.size);
++        if (ret < 0)
++            return ret;
+     }
+ 
+-    if (n < s->pkt.size) {
+-        s->pkt.size -= n;
+-        s->pkt.data += n;
+-    } else {
+-        av_packet_unref(&s->pkt);
++    pts = (s->pkt.pts == AV_NOPTS_VALUE)
++              ? 0
++              : av_rescale_q(s->pkt.pts, avctx->pkt_timebase, AV_TIME_BASE_Q);
++    s->pkt_pts = pts;
++
++    /*
++     * Live join usually starts mid-GOP. Pushing P-frames before the decoder has
++     * seen SPS/PPS makes OHCodec report "missing parameter sets" and kills
++     * hwdec for the whole session, so hold packets back until we can send a
++     * proper CODEC_DATA buffer followed by a key frame.
++     *
++     * The hold is deliberately bounded: if the stream never exposes parameter
++     * sets (or never reaches a key frame) we must stop swallowing packets and
++     * let them through. The resulting decoder errors are what drives mpv's
++     * vd-lavc-software-fallback; staying silent here would hang on a black
++     * screen forever instead of degrading to software decoding.
++     */
++    if (!s->bootstrap_done) {
++        if (!s->ps_size || !is_key) {
++            bool overtime = false;
++            int elapsed_ms = 0;
++
++            s->bootstrap_drops++;
++            if (s->pkt.pts != AV_NOPTS_VALUE) {
++                int64_t now = av_rescale_q(s->pkt.pts, avctx->pkt_timebase,
++                                           AV_TIME_BASE_Q);
++                if (!s->bootstrap_got_first_pts) {
++                    s->bootstrap_first_pts = now;
++                    s->bootstrap_got_first_pts = true;
++                }
++                elapsed_ms = (int)((now - s->bootstrap_first_pts) / 1000);
++                if (now - s->bootstrap_first_pts >= OH_BOOTSTRAP_MAX_USEC)
++                    overtime = true;
++            } else if (s->bootstrap_drops >= OH_BOOTSTRAP_MAX_DROPS) {
++                overtime = true;
++            }
++
++            if (!overtime) {
++                av_log(avctx, AV_LOG_VERBOSE,
++                       "OHCodec bootstrap: hold packet %d (~%d ms) "
++                       "(ps=%d key=%d)\n",
++                       s->bootstrap_drops, elapsed_ms,
++                       s->ps_size, is_key);
++                av_packet_unref(&s->pkt);
++                return oh_decode_recycle_input(s, input);
++            }
++            /* Give up holding: push as-is so decode errors can trigger fallback. */
++            if (!s->bootstrap_gave_up) {
++                s->bootstrap_gave_up = true;
++                av_log(avctx, AV_LOG_WARNING,
++                       "OHCodec bootstrap gave up after %d packets (~%d ms) "
++                       "(ps=%d key=%d); feeding stream as-is so software "
++                       "fallback can kick in\n",
++                       s->bootstrap_drops, elapsed_ms, s->ps_size, is_key);
++            }
++            s->bootstrap_done = true;
++        } else {
++            /*
++             * Parameter sets go in their own CODEC_DATA buffer; the key frame
++             * follows on the next input buffer. Sharing one buffer would make
++             * OHCodec treat the key frame as configuration and drop it.
++             */
++            if (!s->codec_data_sent)
++                return oh_decode_push_codec_data(avctx, input, pts);
++            s->bootstrap_done = true;
++            av_log(avctx, AV_LOG_INFO,
++                   "OHCodec bootstrapped: pushing key frame (%d bytes, "
++                   "in-band SPS=%d)\n", s->pkt.size, has_sps);
++        }
+     }
+ 
+-    return 0;
++    flags = is_key ? AVCODEC_BUFFER_FLAGS_SYNC_FRAME : 0;
++
++    /*
++     * Re-arm the decoder on every key frame that lacks in-band parameter sets
++     * (mid-stream resolution changes, decoder resets). CODEC_DATA stays on its
++     * own buffer so the key frame itself is still decoded and output.
++     */
++    if (is_key && s->ps_size > 0 && !has_sps && !s->codec_data_sent)
++        return oh_decode_push_codec_data(avctx, input, pts);
++
++    if (is_key)
++        s->codec_data_sent = true;
++
++    return oh_decode_push_pkt(avctx, input, pts, flags);
+ }
+ 
++
+ static int oh_decode_receive_frame(AVCodecContext *avctx, AVFrame *frame)
+ {
+     OHCodecDecContext *s = avctx->priv_data;
+@@ -696,6 +1562,7 @@ static void oh_decode_flush(AVCodecContext *avctx)
+ {
+     OHCodecDecContext *s = avctx->priv_data;
+ 
++    oh_decode_invalidate_outputs(avctx);
+     OH_VideoDecoder_Flush(s->dec);
+ 
+     ff_mutex_lock(&s->input_mutex);
+@@ -704,6 +1571,18 @@ static void oh_decode_flush(AVCodecContext *avctx)
+     av_fifo_reset2(s->output_queue);
+     s->decode_status = 0;
+     s->eof_sent = false;
++    s->codec_data_sent = false;
++    /* A half-sent packet cannot be continued across a flush. */
++    s->pkt_partial = false;
++    av_packet_unref(&s->pkt);
++    /*
++     * Flush drops the decoder's configuration, so the parameter sets must be
++     * pushed again. A stream already known to carry none keeps feeding as-is
++     * instead of re-entering the (bounded) hold phase.
++     */
++    s->bootstrap_done = s->bootstrap_gave_up;
++    s->bootstrap_drops = 0;
++    s->bootstrap_got_first_pts = false;
+     ff_mutex_unlock(&s->output_mutex);
+     ff_mutex_unlock(&s->input_mutex);
+ 
+diff --git a/libavutil/hwcontext_oh.c b/libavutil/hwcontext_oh.c
+index 6d1f27c..92cc046 100644
+--- a/libavutil/hwcontext_oh.c
++++ b/libavutil/hwcontext_oh.c
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include <multimedia/player_framework/native_avcodec_base.h>
++#include <native_window/external_window.h>
+ 
+ #include "hwcontext.h"
+ #include "hwcontext_internal.h"
+@@ -35,11 +36,23 @@ static int oh_device_create(AVHWDeviceContext *ctx, const char *device,
+     return 0;
+ }
+ 
++static void oh_device_uninit(AVHWDeviceContext *ctx)
++{
++    AVOHCodecDeviceContext *hwctx = ctx->hwctx;
++
++    if (hwctx->native_window && hwctx->native_window_owned) {
++        OH_NativeWindow_DestroyNativeWindow(hwctx->native_window);
++        hwctx->native_window = NULL;
++        hwctx->native_window_owned = 0;
++    }
++}
++
+ const HWContextType ff_hwcontext_type_oh = {
+     .type = AV_HWDEVICE_TYPE_OHCODEC,
+     .name = "ohcodec",
+     .device_hwctx_size = sizeof(AVOHCodecDeviceContext),
+     .device_create = oh_device_create,
++    .device_uninit = oh_device_uninit,
+     .pix_fmts = (const enum AVPixelFormat[]) {
+         AV_PIX_FMT_OHCODEC,
+         AV_PIX_FMT_NONE
+diff --git a/libavutil/hwcontext_oh.h b/libavutil/hwcontext_oh.h
+index 2794f85..ba11182 100644
+--- a/libavutil/hwcontext_oh.h
++++ b/libavutil/hwcontext_oh.h
+@@ -21,6 +21,33 @@
+ #ifndef AVUTIL_HWCONTEXT_OH_H
+ #define AVUTIL_HWCONTEXT_OH_H
+ 
++#include <stdint.h>
++
++typedef enum AVOHCodecOutputMode {
++    AV_OHCODEC_OUTPUT_MODE_AUTO = 0,
++    AV_OHCODEC_OUTPUT_MODE_SURFACE,
++    AV_OHCODEC_OUTPUT_MODE_BUFFER,
++} AVOHCodecOutputMode;
++
++/**
++ * Metadata carried by AVFrame.data[3] / AVFrame.buf[0]->data for
++ * AV_PIX_FMT_OHCODEC frames produced in buffer output mode.
++ *
++ * The buffer field is an OH_AVBuffer* and remains valid until the backing
++ * AVBufferRef is released.
++ */
++typedef struct AVOHCodecFrameDescriptor {
++    void *buffer;
++    int index;
++    int width;
++    int height;
++    int stride;
++    int slice_height;
++    int pixel_format;
++    int native_buffer_format;
++    uint64_t generation;
++} AVOHCodecFrameDescriptor;
++
+ /**
+  * OpenHarmony codec device
+  */
+@@ -29,6 +56,23 @@ typedef struct AVOHCodecDeviceContext {
+      * Pointer to OHNativeWindow
+      */
+     void *native_window;
++
++    /**
++     * How the decoder should expose decoded frames.
++     */
++    int output_mode;
++
++    /**
++     * Whether native_window is owned by this device context and should be
++     * released when the context is destroyed.
++     */
++    int native_window_owned;
++
++    /**
++     * Incremented whenever decoder control flow invalidates outstanding
++     * buffer-mode outputs (for example flush/reset/stop).
++     */
++    uint64_t output_generation;
+ } AVOHCodecDeviceContext;
+ 
+ #endif /* AVUTIL_HWCONTEXT_OH_H */

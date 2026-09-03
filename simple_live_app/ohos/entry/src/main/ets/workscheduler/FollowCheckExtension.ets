@@ -37,15 +37,17 @@ const QUERYABLE_SITES: Record<string, string> = {
 
 function isLivingResponse(siteId: string, body: string): boolean {
   try {
-    const json = JSON.parse(body);
+    const json: Object = JSON.parse(body);
+    const data = json as Record<string, Object>;
     if (siteId === 'huya') {
-      return json?.data?.stream?.living === 1;
+      const stream = data['data'] as Record<string, Object>;
+      return stream?.['living'] === 1;
     }
     if (siteId === 'douyu') {
-      return json?.data?.room_status === '1';
+      return data['data'] !== undefined && (data['data'] as Record<string, string>)['room_status'] === '1';
     }
     if (siteId === 'bilibili') {
-      return json?.data?.live_status === 1;
+      return data['data'] !== undefined && (data['data'] as Record<string, number>)['live_status'] === 1;
     }
   } catch { /* ignore */ }
   return false;
@@ -138,7 +140,7 @@ export default class FollowCheckExtension extends WorkSchedulerExtensionAbility 
         const id = `${item.siteId}_${item.roomId}`;
         const checked = targets.find(t => `${t.siteId}_${t.roomId}` === id);
         if (checked) {
-          return { ...item, living: nowNotified.includes(id) };
+          return { siteId: item.siteId, roomId: item.roomId, userName: item.userName, face: item.face, special: item.special, needsSign: item.needsSign, living: nowNotified.includes(id) } as FollowItem;
         }
         return item;
       });

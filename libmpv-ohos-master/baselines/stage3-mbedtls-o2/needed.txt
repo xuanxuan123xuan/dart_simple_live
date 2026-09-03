@@ -1,0 +1,12 @@
+libc++_shared.so
+libc.so
+libmpv.so
+libnative_buffer.so
+libnative_image.so
+libnative_media_codecbase.so
+libnative_media_core.so
+libnative_media_vdec.so
+libnative_window.so
+libohaudio.so
+libvulkan.so
+libz.so

@@ -1,0 +1,115 @@
+diff --git a/src/include/libplacebo/vulkan.h b/src/include/libplacebo/vulkan.h
+--- a/src/include/libplacebo/vulkan.h
++++ b/src/include/libplacebo/vulkan.h
+@@ -24,7 +24,7 @@
+ 
+ PL_API_BEGIN
+ 
+-#define PL_VK_MIN_VERSION VK_API_VERSION_1_2
++#define PL_VK_MIN_VERSION VK_API_VERSION_1_1
+ 
+ // Structure representing a VkInstance. Using this is not required.
+ typedef const struct pl_vk_inst_t {
+diff --git a/src/vulkan/context.c b/src/vulkan/context.c
+--- a/src/vulkan/context.c
++++ b/src/vulkan/context.c
+@@ -333,10 +333,23 @@
+         }                                                                       \
+     } while (0)
+ 
+-    CHECK_FEATURE(1, 2, hostQueryReset);
+-    CHECK_FEATURE(1, 2, timelineSemaphore);
+-
++    if (vk->api_ver >= VK_API_VERSION_1_2) {
++        CHECK_FEATURE(1, 2, hostQueryReset);
++        CHECK_FEATURE(1, 2, timelineSemaphore);
++        #undef CHECK_FEATURE
++        return true;
++    }
+     #undef CHECK_FEATURE
++
++    /* Vulkan 1.1 (OHOS Mali-G610 reports 1.1.231): core 1.2 features are KHR/EXT. */
++    const VkPhysicalDeviceTimelineSemaphoreFeatures *ts = vk_find_struct(&vk->features,
++        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES);
++    const VkPhysicalDeviceHostQueryResetFeatures *hq = vk_find_struct(&vk->features,
++        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES);
++    if (!ts || !ts->timelineSemaphore || !hq || !hq->hostQueryReset) {
++        PL_ERR(vk, "Vulkan 1.1 device missing timelineSemaphore/hostQueryReset");
++        return false;
++    }
+     return true;
+ }
+ 
+@@ -1229,6 +1242,25 @@
+     if (params->surface)
+         PL_ARRAY_APPEND(vk->alloc, vk->exts, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+ 
++    if (vk->api_ver < VK_API_VERSION_1_2) {
++        bool have_ts = false, have_hq = false;
++        for (int n = 0; n < num_exts_avail; n++) {
++            if (strcmp(exts_avail[n].extensionName,
++                       VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) == 0)
++                have_ts = true;
++            if (strcmp(exts_avail[n].extensionName,
++                       VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME) == 0)
++                have_hq = true;
++        }
++        if (!have_ts || !have_hq) {
++            PL_FATAL(vk, "Vulkan 1.1 device lacks timeline/hostQueryReset extensions");
++            goto error;
++        }
++        PL_ARRAY_APPEND(vk->alloc, vk->exts, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
++        PL_ARRAY_APPEND(vk->alloc, vk->exts, VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME);
++        PL_WARN(vk, "Using Vulkan 1.1 with KHR timeline / EXT hostQueryReset");
++    }
++
+     // Keep track of all optional function pointers associated with extensions
+     PL_ARRAY(const struct vk_fun *) ext_funs = {0};
+ 
+@@ -1275,6 +1307,22 @@
+     vk_features_normalize(tmp, &pl_vulkan_required_features, vk->api_ver, &features);
+     vk_features_normalize(tmp, &pl_vulkan_recommended_features, vk->api_ver, &features);
+     vk_features_normalize(tmp, params->features, vk->api_ver, &features);
++
++    if (vk->api_ver < VK_API_VERSION_1_2) {
++        VkPhysicalDeviceHostQueryResetFeatures *hq = pl_alloc_ptr(tmp, hq);
++        *hq = (VkPhysicalDeviceHostQueryResetFeatures) {
++            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
++            .pNext = features.pNext,
++            .hostQueryReset = true,
++        };
++        VkPhysicalDeviceTimelineSemaphoreFeatures *ts = pl_alloc_ptr(tmp, ts);
++        *ts = (VkPhysicalDeviceTimelineSemaphoreFeatures) {
++            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES,
++            .pNext = hq,
++            .timelineSemaphore = true,
++        };
++        features.pNext = ts;
++    }
+ 
+     // Explicitly clear the features struct before querying feature support
+     // from the driver. This way, we don't mistakenly mark as supported
+diff --git a/src/vulkan/gpu.c b/src/vulkan/gpu.c
+--- a/src/vulkan/gpu.c
++++ b/src/vulkan/gpu.c
+@@ -406,10 +406,17 @@
+         }
+     }
+ 
+-    pl_assert(vk->api_ver >= VK_API_VERSION_1_2);
++    if (vk->api_ver >= VK_API_VERSION_1_2) {
++        return (struct pl_spirv_version) {
++            .env_version = VK_API_VERSION_1_2,
++            .spv_version = PL_SPV_VERSION(1, 5),
++        };
++    }
++
++    pl_assert(vk->api_ver >= VK_API_VERSION_1_1);
+     return (struct pl_spirv_version) {
+-        .env_version = VK_API_VERSION_1_2,
+-        .spv_version = PL_SPV_VERSION(1, 5),
++        .env_version = VK_API_VERSION_1_1,
++        .spv_version = PL_SPV_VERSION(1, 3),
+     };
+ }
+ 

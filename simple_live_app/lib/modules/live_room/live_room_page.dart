@@ -16,7 +16,7 @@ import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
-import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
+import 'package:simple_live_app/modules/live_room/player/mpv_ohos_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
@@ -835,7 +835,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             children: [
               RepaintBoundary(
                 key: controller.ohosScreenshotKey,
-                child: OhosVideoPlayer(
+                child: MpvOhosPlayer(
                   key: controller.ohosPlayerWidgetKey,
                   url: url,
                   revision: revision,
@@ -866,7 +866,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 controller,
                 enableQuickAccessLongPress: fullScreen,
               ),
-              if (controller.ohosBuffering.value &&
+              if (controller.ohosPlaybackStarted.value &&
+                  controller.ohosBuffering.value &&
                   !controller.ohosScreenshotInProgress.value)
                 const Center(child: CircularProgressIndicator()),
               if (fullScreen && !controller.ohosScreenshotInProgress.value)

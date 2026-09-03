@@ -26,6 +26,7 @@ import OhosDocumentPlugin from '../plugins/OhosDocumentPlugin';
 import OhosWidgetPlugin from '../plugins/OhosWidgetPlugin';
 import OhosDisplayPlugin from '../plugins/OhosDisplayPlugin';
 import OhosCapabilitiesPlugin from '../plugins/OhosCapabilitiesPlugin';
+import OhosMpvPlugin from '../plugins/OhosMpvPlugin';
 
 export default class EntryAbility extends FlutterAbility {
   private notificationPlugin?: OhosNotificationPlugin;
@@ -62,6 +63,7 @@ export default class EntryAbility extends FlutterAbility {
     flutterEngine.getPlugins()?.add(new OhosWidgetPlugin(this.context))
     flutterEngine.getPlugins()?.add(new OhosDisplayPlugin())
     flutterEngine.getPlugins()?.add(new OhosCapabilitiesPlugin())
+    flutterEngine.getPlugins()?.add(new OhosMpvPlugin())
   }
 
   private notificationTargetFromWant(want: Want): LiveNotificationTarget | undefined {

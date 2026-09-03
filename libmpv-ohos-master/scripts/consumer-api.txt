@@ -1,0 +1,28 @@
+# 消费方 LiVify 实际调用的 libmpv 公共 API。
+# scripts/verify.sh 会逐个校验它们仍在导出面里——少一个就是 ABI 事故：
+# 消费方按 SONAME + $ORIGIN rpath dlopen，缺符号会在应用 namespace 里 reloc 失败，
+# 表现为看起来毫不相关的 "mpv_create not found"。
+#
+# 来源：对 LiVify 仓库 *.cpp / *.h 做 \bmpv_[a-z_]+\s*\( 提取（2026-08-11）。
+# 注意 BUILD-NOTES §7 写的「13 个」已过时，实际为下列 19 个。
+# 消费方新增 API 调用后需同步此表。
+
+mpv_client_api_version
+mpv_command
+mpv_command_string
+mpv_create
+mpv_error_string
+mpv_event_name
+mpv_free
+mpv_get_property
+mpv_get_property_string
+mpv_initialize
+mpv_observe_property
+mpv_request_log_messages
+mpv_set_option_string
+mpv_set_property_async
+mpv_set_property_string
+mpv_set_wakeup_callback
+mpv_terminate_destroy
+mpv_unobserve_property
+mpv_wait_event

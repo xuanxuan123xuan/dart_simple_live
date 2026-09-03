@@ -86,6 +86,6 @@ export default class OhosDisplayPlugin implements FlutterPlugin, MethodCallHandl
     if (context === undefined) return;
     window.getLastWindow(context)
       .then((appWindow: window.Window) => appWindow.setWindowKeepScreenOn(false))
-      .catch((error: Error) => Log.w(TAG, `Failed to release keep-screen-on: ${error}`));
+      .catch((error: Error): void => { Log.w(TAG, `Failed to release keep-screen-on: ${error}`); });
   }
 }

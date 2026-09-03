@@ -1,0 +1,3 @@
+size_bytes 16007760
+gzip9_bytes 7036911
+sha256 6b7da2b5ae374ad20786cd3d9a14c901b2502ef4b6ecf2cb05ec8edb1d435a30

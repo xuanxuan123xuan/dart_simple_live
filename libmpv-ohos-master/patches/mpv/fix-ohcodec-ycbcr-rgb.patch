@@ -1,0 +1,108 @@
+--- a/video/out/hwdec/hwdec_ohcodec_pl.c
++++ b/video/out/hwdec/hwdec_ohcodec_pl.c
+@@ -150,24 +150,38 @@
+     y->external_format = props->externalFormat;
+     y->format = props->format;
+ 
++    /*
++     * HM_GPU rejects RGB_IDENTITY for external NativeBuffer YUV (sampler is
++     * null spam); raw Cr/Y/Cb then shows as RGB -> green cast. Use the driver
++     * suggested YCbCr model so the immutable sampler outputs nonlinear RGB and
++     * mark dst as RGB (mapper_init) so mpv only does PQ/primaries/tone-map.
++     */
++    MP_INFO(mapper,
++            "OHCodec YCbCr model=%d range=%d comps=%d/%d/%d/%d vkfmt=%d "
++            "ext=%"PRIu64")\n",
++            (int)props->suggestedYcbcrModel, (int)props->suggestedYcbcrRange,
++            (int)props->samplerYcbcrConversionComponents.r,
++            (int)props->samplerYcbcrConversionComponents.g,
++            (int)props->samplerYcbcrConversionComponents.b,
++            (int)props->samplerYcbcrConversionComponents.a,
++            (int)props->format, props->externalFormat);
++
+     VkExternalFormatOHOS external = {
+         .sType = VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_OHOS,
+         .externalFormat = props->format == VK_FORMAT_UNDEFINED
+                         ? props->externalFormat : 0,
+     };
++    VkFilter filter = choose_filter(props);
+     VkSamplerYcbcrConversionCreateInfo conv = {
+         .sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO,
+         .pNext = props->format == VK_FORMAT_UNDEFINED ? &external : NULL,
+         .format = props->format,
+-        // Do not apply a matrix or range expansion. The immutable conversion
+-        // sampler exposes the encoded components for mpv's own color/Dolby
+-        // pipeline. Vulkan defines these post-swizzle channels as Cr/Y/Cb.
+-        .ycbcrModel = VK_SAMPLER_YCBCR_MODEL_CONVERSION_RGB_IDENTITY,
+-        .ycbcrRange = VK_SAMPLER_YCBCR_RANGE_ITU_FULL,
++        .ycbcrModel = props->suggestedYcbcrModel,
++        .ycbcrRange = props->suggestedYcbcrRange,
+         .components = props->samplerYcbcrConversionComponents,
+         .xChromaOffset = props->suggestedXChromaOffset,
+         .yChromaOffset = props->suggestedYChromaOffset,
+-        .chromaFilter = choose_filter(props),
++        .chromaFilter = filter,
+     };
+     VkResult res = vkCreateSamplerYcbcrConversion(dev, &conv, NULL,
+                                                    &y->conversion);
+@@ -181,8 +195,8 @@
+     VkSamplerCreateInfo sampler = {
+         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+         .pNext = &link,
+-        .magFilter = VK_FILTER_NEAREST,
+-        .minFilter = VK_FILTER_NEAREST,
++        .magFilter = filter,
++        .minFilter = filter,
+         .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+         .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+         .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+@@ -321,6 +335,28 @@
+ 
+     bool high_depth = config.format == NATIVEBUFFER_PIXEL_FMT_YCBCR_P010 ||
+                       config.format == NATIVEBUFFER_PIXEL_FMT_YCRCB_P010;
++    /*
++     * Trust NativeBuffer format if ffmpeg mis-tagged hw_subfmt as NV12.
++     * dst is RGB because the YCbCr conversion sampler already converted.
++     */
++    if (high_depth) {
++        mapper->dst_params.imgfmt = IMGFMT_RGBA64;
++        mapper->dst_params.hw_subfmt = 0;
++        mapper->dst_params.repr.sys = PL_COLOR_SYSTEM_RGB;
++        mapper->dst_params.repr.levels = PL_COLOR_LEVELS_FULL;
++        mapper->dst_params.repr.bits.sample_depth = 16;
++        mapper->dst_params.repr.bits.color_depth = 16;
++        mapper->dst_params.repr.bits.bit_shift = 0;
++    } else {
++        mapper->dst_params.imgfmt = IMGFMT_RGB0;
++        mapper->dst_params.hw_subfmt = 0;
++        mapper->dst_params.repr.sys = PL_COLOR_SYSTEM_RGB;
++        mapper->dst_params.repr.levels = PL_COLOR_LEVELS_FULL;
++    }
++    MP_INFO(mapper, "OHCodec NativeBuffer format=%d %dx%d high_depth=%d "
++                    "dst=%s\n",
++            (int)config.format, config.width, config.height, (int)high_depth,
++            mp_imgfmt_to_name(mapper->dst_params.imgfmt));
+     pl_fmt virtual_fmt = high_depth ? v->rgba16 : v->rgba8;
+     e->pltex = pl_vulkan_wrap(v->gpu, pl_vulkan_wrap_params(
+         .image = e->image,
+@@ -455,14 +491,14 @@
+ 
+     mapper->dst_params = mapper->src_params;
+     bool high_depth = mapper->src_params.hw_subfmt == IMGFMT_P010;
+-    mapper->dst_params.imgfmt = high_depth ? IMGFMT_OHCODEC_YUV_VK16
+-                                           : IMGFMT_OHCODEC_YUV_VK8;
++    /* Sampler does YCbCr->RGB; keep PQ/primaries, stop a second YUV matrix. */
++    mapper->dst_params.imgfmt = high_depth ? IMGFMT_RGBA64 : IMGFMT_RGB0;
+     mapper->dst_params.hw_subfmt = 0;
++    mapper->dst_params.repr.sys = PL_COLOR_SYSTEM_RGB;
++    mapper->dst_params.repr.levels = PL_COLOR_LEVELS_FULL;
+     if (high_depth) {
+-        mapper->dst_params.repr.bits.sample_depth = 10;
+-        mapper->dst_params.repr.bits.color_depth = 10;
+-        // The sampler returns normalized values. The six-bit storage shift
+-        // belongs to CPU-visible P010 words and must not be applied again.
++        mapper->dst_params.repr.bits.sample_depth = 16;
++        mapper->dst_params.repr.bits.color_depth = 16;
+         mapper->dst_params.repr.bits.bit_shift = 0;
+     }
+     return true;

@@ -82,7 +82,7 @@ const ohosUnobservableGrace = Duration(seconds: 20);
 ///
 /// Buffering keeps its own independent timer, since a player can be stuck
 /// buffering while its clock still ticks.
-@visibleForTesting
+// Shared with the libmpv player implementation (mpv_ohos_player.dart).
 OhosPlaybackHealthIssue? detectOhosPlaybackHealthIssue({
   required VideoPlayerValue value,
   required DateTime now,

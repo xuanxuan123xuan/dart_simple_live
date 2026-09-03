@@ -74,6 +74,13 @@ class OtherSettingsController extends BaseController {
     "rkmpp": "rkmpp",
   };
 
+  // Decoders the OHOS libmpv build actually provides (ohcodec / ohcodec-copy,
+  // see the integration README). Stored values are shared with desktop.
+  final ohosHardwareDecoder = {
+    "auto": "auto（OHCodec 硬解）",
+    "auto-copy": "auto-copy（硬解回拷）",
+    "no": "no（软解）",
+  };
   Future<void> editMpvAdvancedOptions() async {
     final textController = TextEditingController(
       text: AppSettingsController.instance.mpvAdvancedOptions.value,

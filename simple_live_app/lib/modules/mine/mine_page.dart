@@ -86,6 +86,10 @@ class _MinePageState extends State<MinePage> {
   }
 
   Widget _buildUpdateTile() {
+    // OHOS update delivery is not adapted yet: hide the entry entirely.
+    if (Utils.isOhos) {
+      return const SizedBox.shrink();
+    }
     final updateService = AppUpdateService.instance;
     return Obx(() {
       final hasUpdate = updateService.updateAvailable.value;

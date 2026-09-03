@@ -1,0 +1,23 @@
+/*
+ * libmpv 导出面收敛：只暴露公共 C API，其余符号全部内部化。
+ *
+ * 为什么需要：mpv 的 meson.build 为支持 cplugins 主动加了 -rdynamic，
+ * 导致产物全量导出 16887 个符号（其中 mpv_* 仅 54 个）。除了白占 1.4 MiB
+ * 符号表/重定位，它还让 --gc-sections 完全失效——链接器认为任何符号都可能
+ * 被 dlsym 命中，不敢回收。故本文件必须与 --gc-sections 成对使用。
+ *
+ * 用匿名 version node（而非 LIBMPV_2 之类具名节点）：具名节点会生成带版本的
+ * 符号定义（mpv_create@@LIBMPV_2），使用方链接后会记录符号版本依赖。匿名节点
+ * 只做可见性收敛，不引入版本，对 OHOS musl 最保守。
+ *
+ * 注意：链接脚本只认 C 风格块注释，写 `//` 会被 ld.lld 当成符号名，报
+ * "{ expected, but got ..."。该错误会让 meson 的每一项链接探测都失败并被
+ * 静默记为 NO（fork / ppoll / memrchr / ohaudio 等全部丢失），
+ * 表现为与本文件无关的诡异 configure 错误。
+ */
+{
+  global:
+    mpv_*;
+  local:
+    *;
+};

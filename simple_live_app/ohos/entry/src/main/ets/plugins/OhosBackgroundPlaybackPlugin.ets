@@ -86,7 +86,7 @@ export default class OhosBackgroundPlaybackPlugin implements FlutterPlugin, Meth
         await session.destroy();
       } catch (_error) {
       }
-      throw error;
+      throw new Error(`ensureSession failed: ${error}`);
     }
     this.session = session;
   }

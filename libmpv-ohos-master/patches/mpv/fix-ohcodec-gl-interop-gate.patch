@@ -1,0 +1,30 @@
+Gate the OHCodec GL interop entry on egl-ohos instead of the generic gl feature.
+
+hwdec_ohcodec_gl.c, which defines ohcodec_interop_gl_init(), is only compiled
+when features['egl-ohos'] is on (meson.build:1258-1263). The reference to it in
+hwdec_ohcodec.c was gated on HAVE_GL instead, and HAVE_GL is set unconditionally
+by the plain-gl option (meson.build, `if plain_gl.allowed()`), which defaults to
+auto. So with -Degl-ohos=disabled the reference is compiled while the definition
+is not.
+
+Nothing fails at build time: libmpv.so is a shared object, so the linker leaves
+the symbol undefined for the loader to resolve. It fails on the device instead,
+when the app dlopens libmpv_napi.so and relocation cannot resolve
+ohcodec_interop_gl_init -- surfacing as "Load native module failed" with no hint
+about which symbol is to blame.
+
+Matching the reference's condition to the definition's compilation condition is
+the minimal fix. Note this is latent upstream too: any configuration where GL is
+enabled by a backend other than egl-ohos hits the same dangling reference.
+
+--- a/video/out/hwdec/hwdec_ohcodec.c
++++ b/video/out/hwdec/hwdec_ohcodec.c
+@@ -14,7 +14,7 @@ static const ohcodec_interop_init interop_inits[] = {
+ #if HAVE_VULKAN
+     ohcodec_interop_pl_init,
+ #endif
+-#if HAVE_GL
++#if HAVE_EGL_OHOS
+     ohcodec_interop_gl_init,
+ #endif
+     NULL,

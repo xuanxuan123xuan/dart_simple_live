@@ -1,0 +1,21 @@
+# 本仓库的脚本只在 Linux / WSL / macOS 下执行，落盘必须是 LF。
+#
+# 起因：本机 core.autocrlf=true 且此前没有本文件，Windows 侧新建或编辑 .sh 会落成 CRLF。
+# 带 \r 的 shebang 在 WSL 里直接 "bad interpreter: /bin/bash^M"，
+# 而 CRLF 的数据文件会更隐蔽——verify.sh 用 while read 逐行读 consumer-api.txt 时，
+# 每个 API 名尾部会多一个 \r，grep -qx 永不命中，19 个 API 会被全部误报成缺失。
+# 这两种事故都真实发生过（session-2026-08-11.md 事实 11 与 D1），且靠人记得手工转换会复发。
+#
+# 本文件优先级高于 core.autocrlf，落地后 BUILD-NOTES §0 的 `tr -d '\r'` 手工工序可以省掉。
+
+*.sh    text eol=lf
+*.ini   text eol=lf
+*.map   text eol=lf
+*.txt   text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+
+# patch 必须逐字节保真：git apply 校验的是 hunk 里每一行的实际内容，
+# 任何行尾改写都可能让补丁失效，故彻底排除在换行符转换之外。
+*.patch -text

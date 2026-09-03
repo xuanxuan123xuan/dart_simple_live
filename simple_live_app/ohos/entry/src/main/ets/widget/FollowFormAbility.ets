@@ -1,4 +1,5 @@
-import { FormExtensionAbility, Want, formBindingData, formProvider, FormInfo } from '@kit.FormKit';
+import { FormExtensionAbility, formBindingData, formProvider, formInfo } from '@kit.FormKit';
+import { Want } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';

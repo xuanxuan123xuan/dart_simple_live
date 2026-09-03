@@ -1,0 +1,7 @@
+.idea
+libmpv
+**/.DS_Store
+
+# 实机抓取的临时日志，勿入库
+docs/log.txt
+*.log

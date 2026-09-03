@@ -3,8 +3,6 @@
  * 快照字段由 FollowFormAbility 通过 formBindingData 注入，
  * 卡片不联网，只渲染 Flutter 侧写入的开播状态快照。
  */
-let localStorageProp: LocalStorageProp<string> = LocalStorage.getShared().link('snapshot');
-
 interface FollowItem {
   siteId: string;
   roomId: string;
@@ -43,7 +41,6 @@ struct FollowCard {
   @LocalStorageProp('snapshot') snapshot: string = '';
 
   build() {
-    const data = parseSnapshot(this.snapshot);
     Column({ space: 0 }) {
       // 标题栏
       Row() {
@@ -53,8 +50,8 @@ struct FollowCard {
           .fontWeight(FontWeight.Medium)
           .maxLines(1)
         Blank()
-        if (data) {
-          Text(formatAge(data.updatedAt))
+        if (parseSnapshot(this.snapshot)) {
+          Text(formatAge(parseSnapshot(this.snapshot)!.updatedAt))
             .fontSize(10)
             .fontColor('#99FFFFFF')
         }
@@ -62,7 +59,7 @@ struct FollowCard {
       .width('100%')
       .padding({ left: 12, right: 12, top: 10, bottom: 4 })
 
-      if (!data || data.items.length === 0) {
+      if (!parseSnapshot(this.snapshot) || parseSnapshot(this.snapshot)!.items.length === 0) {
         // 空态
         Column() {
           Text('暂无关注')
@@ -75,7 +72,7 @@ struct FollowCard {
         .alignItems(HorizontalAlign.Center)
       } else {
         // 最多渲染 4 条（2×2 / 4×2 卡片尺寸下合适）
-        ForEach(data.items.slice(0, 4), (item: FollowItem) => {
+        ForEach(parseSnapshot(this.snapshot)!.items.slice(0, 4), (item: FollowItem) => {
           Row({ space: 8 }) {
             // 头像 + 开播圆点
             Stack({ alignContent: Alignment.BottomEnd }) {

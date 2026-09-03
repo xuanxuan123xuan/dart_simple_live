@@ -1,0 +1,70 @@
+# libmpv 集成用 CMakeLists 样板（HarmonyOS / OpenHarmony NDK）
+#
+# 用法：拷到你的 <模块>/src/main/cpp/CMakeLists.txt，按需改 NAPI 目标名与源文件名。
+# 前置：把本包的 libs/arm64-v8a/libmpv.so 拷到 third_party/libmpv/，
+#       把本包的 include/mpv/ 拷到 include/mpv/。
+# 说明与踩坑背景见同目录 README.md §3。
+
+cmake_minimum_required(VERSION 3.16)
+project(mpv_napi)
+
+set(NATIVERENDER_ROOT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 公共头（client.h 等），来自 release zip 的 mpv/include/mpv 或构建树的同名目录
+include_directories(${NATIVERENDER_ROOT_PATH}/include)
+
+set(LIBMPV_DIR "${NATIVERENDER_ROOT_PATH}/third_party/libmpv")
+
+# 铁律 ①：文件名必须与 SONAME 一致。
+# `-l:<file>` 记进 DT_NEEDED 的是该文件的 SONAME，名字与 SONAME 不符时运行时会按
+# SONAME 去 $ORIGIN 找不到同名文件而加载失败。本包产物的 SONAME 就是 libmpv.so
+# （不是 libmpv.so.2），按原样使用即可。
+#
+# 不要用 patchelf 改名：它塞不进原 .dynstr 时会新建高地址 LOAD 段并搬走 .dynsym/.dynstr，
+# 而 .gnu.hash 留在原处，musl 查符号越界 → dlopen 期 SIGSEGV。
+set(LIBMPV_SONAME "libmpv.so")
+
+if(NOT EXISTS "${LIBMPV_DIR}/${LIBMPV_SONAME}")
+    message(WARNING "${LIBMPV_SONAME} not found at ${LIBMPV_DIR}")
+    message(FATAL_ERROR "Missing ${LIBMPV_SONAME}")
+endif()
+
+add_library(mpv_napi SHARED mpv_napi.cpp)
+
+# OHOS NDK 工具链会自动向 clang 传 --gcc-toolchain，clang 认为该参数多余而告警。
+# 该参数非本项目添加，静默这条无害的工具链告警。
+target_compile_options(mpv_napi PRIVATE -Wno-unused-command-line-argument)
+
+# 铁律 ③：只链 NAPI 自己确实要用的系统库。
+#   libace_napi.z.so    —— NAPI 导出，必需
+#   libnative_window.so —— 只有当你要调 SET_BUFFER_GEOMETRY 改 surface 尺寸时才需要
+# 不要再强链 libnative_image.so / 编解码相关系统库：它们由 libmpv 自身的 DT_NEEDED 拉取，
+# NAPI 侧重复强链会在应用 namespace 里 reloc 失败，表现为毫不相关的 "mpv_create not found"。
+target_link_libraries(mpv_napi PUBLIC libace_napi.z.so libnative_window.so)
+
+get_filename_component(LIBMPV_DIR_ABS "${LIBMPV_DIR}" ABSOLUTE)
+
+# 铁律 ②：$ORIGIN rpath + --disable-new-dtags + -z lazy
+target_link_options(mpv_napi PRIVATE
+    "LINKER:-rpath,\$ORIGIN"
+    "LINKER:--disable-new-dtags"
+    "LINKER:-L${LIBMPV_DIR_ABS}"
+    "LINKER:--no-as-needed"
+    "-l:${LIBMPV_SONAME}"
+    "LINKER:--as-needed"
+    # 鸿蒙应用 namespace 对跨库符号使用立即绑定时，会在加载期误报 mpv API 缺失；
+    # 延迟解析到实际加载 libmpv 之后即可绕开。
+    "LINKER:-z,lazy"
+)
+
+# libmpv 是通过 LINKER:-l: 手工指定的，CMake 无法自动推导依赖关系。
+# 不声明 LINK_DEPENDS 时，替换该预编译库不会触发重链，下面的 POST_BUILD 拷贝也就不执行，
+# HAP 里会残留上一次的旧库——典型症状是「换了 .so 却没生效」。
+set_property(TARGET mpv_napi APPEND PROPERTY LINK_DEPENDS "${LIBMPV_DIR_ABS}/${LIBMPV_SONAME}")
+
+# 拷进 NAPI 产物同目录，运行时才能按 SONAME + $ORIGIN 找到
+add_custom_command(TARGET mpv_napi POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${LIBMPV_DIR}/${LIBMPV_SONAME}"
+    "$<TARGET_FILE_DIR:mpv_napi>/${LIBMPV_SONAME}"
+)

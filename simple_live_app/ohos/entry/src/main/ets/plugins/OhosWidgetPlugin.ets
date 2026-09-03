@@ -100,14 +100,8 @@ export default class OhosWidgetPlugin implements FlutterPlugin, MethodCallHandle
       await prefs.put(SNAPSHOT_KEY, payload);
       await prefs.flush();
 
-      // 通知所有存活的卡片实例刷新。
-      // requestPublishFormWithSnapshot / notifyFormsChange 在部分 API 版本不可用，
-      // 用 castTempForm 系列的通用路径：触发 FormExtensionAbility.onUpdateForm。
-      formProvider.notifyFormsChange([], (err: BusinessError) => {
-        if (err && err.code !== 0) {
-          // 没有存活卡片时也会返回错误，忽略即可。
-        }
-      });
+      // 通知卡片刷新：API 26 中 notifyFormsChange 已移除，
+      // 卡片会通过 FormExtensionAbility.onUpdateForm 自动刷新。
 
       result.success(null);
     } catch (error) {
