@@ -163,7 +163,11 @@ class MpvOhosVideoController extends VideoPlayerController {
       await _setProperty('cache', 'no');
       await _setProperty('cache-pause', 'no');
       await _setProperty('demuxer-lavf-o', 'fflags=+nobuffer');
-      await _setProperty('video-sync', 'desync');
+      // Keep mpv's startup A/V alignment: desync let audio lead the video by
+      // seconds while the decoder crawled to catch up. With audio sync the
+      // first frame and audio start together.
+      await _setProperty('video-sync', 'audio');
+      await _setProperty('initial-audio-sync', 'yes');
     }
   }
 

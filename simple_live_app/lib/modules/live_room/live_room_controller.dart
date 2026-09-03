@@ -588,6 +588,26 @@ class LiveRoomController extends PlayerController
   final roomLiveState = LiveStatusState.unknown.obs;
   final offlineConfirmations = 0.obs;
   final waitingForPlaybackUrl = false.obs;
+  bool _kuaishouNoCookieHintShown = false;
+
+  /// Kuaishou runs without any account cookie (anonymous device mode): the
+  /// site falls back to a dummy danmaku client and playback URLs may be
+  /// unavailable, so the room must tell the user instead of spinning forever.
+  bool get _kuaishouNoCookie =>
+      site.id == Constant.kKuaishou &&
+      (!Get.isRegistered<KuaishouAccountService>() ||
+          KuaishouAccountService.instance.activeSession == null);
+
+  /// Shown once per room load: kuaishou is live but playback URLs never
+  /// arrive, most likely because the anonymous (cookie-less) session is
+  /// not entitled to stream URLs.
+  void _showKuaishouNoCookiePlaybackHint() {
+    if (!_kuaishouNoCookie || _kuaishouNoCookieHintShown) {
+      return;
+    }
+    _kuaishouNoCookieHintShown = true;
+    SmartDialog.showToast("快手未登录（无 Cookie），可能无法获取播放地址，登录后重试");
+  }
   RxList<LiveSuperChatMessage> superChats = RxList<LiveSuperChatMessage>();
   RxList<LiveContributionRankItem> contributionRanks =
       RxList<LiveContributionRankItem>();
@@ -3238,6 +3258,7 @@ class LiveRoomController extends PlayerController
       roomLiveState.value = LiveStatusState.unknown;
       offlineConfirmations.value = 0;
       waitingForPlaybackUrl.value = false;
+      _kuaishouNoCookieHintShown = false;
       _hasActivePlaybackSession = false;
       _playbackBootstrapInFlight = false;
       liveStatus.value = false;
@@ -3337,7 +3358,12 @@ class LiveRoomController extends PlayerController
       if (detail.value!.isRecord) {
         addSysMsg("当前主播未开播，正在转播录像");
       }
-      addSysMsg("正在连接弹幕服务器");
+      if (_kuaishouNoCookie) {
+        addSysMsg("快手未登录（无 Cookie），弹幕不可用");
+        addSysMsg("可在「我的 → 账号管理」登录快手账号后重试");
+      } else {
+        addSysMsg("正在连接弹幕服务器");
+      }
       if (!_isCurrentLoad(loadGeneration)) {
         return;
       }
@@ -3411,6 +3437,7 @@ class LiveRoomController extends PlayerController
         if (site.id == Constant.kKuaishou &&
             roomLiveState.value == LiveStatusState.live) {
           waitingForPlaybackUrl.value = true;
+          _showKuaishouNoCookiePlaybackHint();
           Log.d("快手直播已开播，播放地址尚未就绪，等待后续轮询");
           return;
         }
@@ -3508,11 +3535,12 @@ class LiveRoomController extends PlayerController
     if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
       return false;
     }
-    if (playUrl.urls.isEmpty) {
-      if (site.id == Constant.kKuaishou &&
-          roomLiveState.value == LiveStatusState.live) {
-        waitingForPlaybackUrl.value = true;
-      } else if (!silent) {
+      if (playUrl.urls.isEmpty) {
+        if (site.id == Constant.kKuaishou &&
+            roomLiveState.value == LiveStatusState.live) {
+          waitingForPlaybackUrl.value = true;
+          _showKuaishouNoCookiePlaybackHint();
+        } else if (!silent) {
         SmartDialog.showToast("无法读取播放地址");
       }
       return false;
