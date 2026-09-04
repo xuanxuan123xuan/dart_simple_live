@@ -14,6 +14,7 @@
 */
 
 import common from '@ohos.app.ability.common';
+import { AVVolumePanel } from '@kit.AudioKit'
 import { FlutterPage } from '@ohos/flutter_ohos'
 import { PipSurfaceRegistry } from 'video_player_ohos'
 
@@ -26,6 +27,7 @@ struct Index {
   private context = getContext(this) as common.UIAbilityContext
   private pipSurfaceController: XComponentController = new XComponentController()
   @LocalStorageLink('viewId') viewId: string = "";
+  @StorageLink('simple_live_system_media_volume_level') systemMediaVolumeLevel: number = -1;
 
   build() {
     Stack() {
@@ -40,6 +42,12 @@ struct Index {
           PipSurfaceRegistry.register(this.pipSurfaceController)
         })
       FlutterPage({ viewId: this.viewId })
+      if (this.systemMediaVolumeLevel >= 0) {
+        AVVolumePanel({
+          volumeLevel: this.systemMediaVolumeLevel
+        })
+          .hitTestBehavior(HitTestMode.None)
+      }
     }
   }
 

@@ -4679,12 +4679,19 @@ class LiveRoomController extends PlayerController
     );
   }
 
-  void showVolumeSlider(
+  Future<void> showVolumeSlider(
     BuildContext targetContext, {
     bool keepAlive = false,
-  }) {
+  }) async {
     hidevolumeTimer?.cancel();
     pauseControlsAutoHide();
+    if (Utils.isOhos) {
+      await refreshOhosSystemMediaVolume();
+      if (!targetContext.mounted) {
+        resumeControlsAutoHide();
+        return;
+      }
+    }
     SmartDialog.showAttach(
       targetContext: targetContext,
       alignment: Alignment.topCenter,
@@ -4699,12 +4706,22 @@ class LiveRoomController extends PlayerController
           onExit: (_) => hideVolumeSlider(),
           child: Obx(
             () => ImmersiveVolumeSlider(
-              value: AppSettingsController.instance.playerVolume.value,
+              value: Utils.isOhos
+                  ? ohosSystemMediaVolumePercent.value
+                  : AppSettingsController.instance.playerVolume.value,
               onChanged: (newValue) {
-                setSessionPlayerVolume(newValue, persist: true);
+                if (Utils.isOhos) {
+                  unawaited(setOhosSystemMediaVolume(newValue));
+                } else {
+                  setSessionPlayerVolume(newValue, persist: true);
+                }
               },
               onMute: () {
-                unawaited(toggleMute());
+                if (Utils.isOhos) {
+                  unawaited(setOhosSystemMediaVolume(0));
+                } else {
+                  unawaited(toggleMute());
+                }
                 hideVolumeSlider();
               },
             ),

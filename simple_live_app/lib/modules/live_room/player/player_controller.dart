@@ -1237,6 +1237,9 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
 }
 mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+  final RxDouble ohosSystemMediaVolumePercent = 100.0.obs;
+  double _ohosSystemMediaVolumeBeforeMute = 100.0;
+  int _ohosSystemMediaVolumeWriteGeneration = 0;
 
   final pip = Floating();
   StreamSubscription<PiPStatus>? _pipSubscription;
@@ -1258,6 +1261,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
     if (Utils.isOhos) {
       _ensureOhosPipStatusListener();
+      unawaited(refreshOhosSystemMediaVolume());
     }
     if (Platform.isAndroid) {
       _ensureAndroidWindowStateListener();
@@ -1270,6 +1274,61 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     if (AppSettingsController.instance.autoFullScreen.value) {
       enterFullScreen();
     }
+  }
+
+  Future<double> refreshOhosSystemMediaVolume() async {
+    final writeGeneration = _ohosSystemMediaVolumeWriteGeneration;
+    try {
+      final normalized = await _ohosMediaChannel.invokeMethod<double>(
+        "getSystemMediaVolume",
+      );
+      if (normalized != null) {
+        final percent = (normalized * 100).clamp(0.0, 100.0).toDouble();
+        if (writeGeneration != _ohosSystemMediaVolumeWriteGeneration) {
+          return ohosSystemMediaVolumePercent.value;
+        }
+        ohosSystemMediaVolumePercent.value = percent;
+        if (percent > 0) {
+          _ohosSystemMediaVolumeBeforeMute = percent;
+        }
+        return percent;
+      }
+    } catch (error) {
+      Log.logPrint("读取鸿蒙系统媒体音量失败: $error");
+    }
+    return ohosSystemMediaVolumePercent.value;
+  }
+
+  Future<void> setOhosSystemMediaVolume(double volume) async {
+    final writeGeneration = ++_ohosSystemMediaVolumeWriteGeneration;
+    final percent = volume.clamp(0.0, 100.0).toDouble();
+    ohosSystemMediaVolumePercent.value = percent;
+    if (percent > 0) {
+      _ohosSystemMediaVolumeBeforeMute = percent;
+    }
+    try {
+      await _ohosMediaChannel.invokeMethod<void>(
+        "setSystemMediaVolume",
+        {"volume": percent / 100},
+      );
+    } catch (error) {
+      Log.logPrint("设置鸿蒙系统媒体音量失败: $error");
+      if (writeGeneration == _ohosSystemMediaVolumeWriteGeneration) {
+        await refreshOhosSystemMediaVolume();
+      }
+    }
+  }
+
+  Future<void> toggleOhosSystemMediaMute() async {
+    if (ohosSystemMediaVolumePercent.value <= 0) {
+      final restore = _ohosSystemMediaVolumeBeforeMute > 0
+          ? _ohosSystemMediaVolumeBeforeMute
+          : 100.0;
+      await setOhosSystemMediaVolume(restore);
+      return;
+    }
+    _ohosSystemMediaVolumeBeforeMute = ohosSystemMediaVolumePercent.value;
+    await setOhosSystemMediaVolume(0);
   }
 
   /// 释放一些系统状态
@@ -2474,6 +2533,8 @@ mixin PlayerGestureControlMixin
   var _currentVolume = 0.0;
   var _currentBrightness = 1.0;
   var verStartPosition = 0.0;
+  bool _ohosSystemVolumeGestureReady = false;
+  int _ohosSystemVolumeGestureGeneration = 0;
 
   DelayedThrottle? throttle;
 
@@ -2497,8 +2558,11 @@ mixin PlayerGestureControlMixin
     verStartPosition = dy;
     leftVerticalDrag = details.globalPosition.dx < Get.width / 2;
 
+    throttle?.cancel();
     throttle = DelayedThrottle(200);
     lastVolume = -1;
+    final gestureGeneration = ++_ohosSystemVolumeGestureGeneration;
+    _ohosSystemVolumeGestureReady = !Utils.isOhos || leftVerticalDrag;
 
     verticalDragging = true;
     if (Platform.isAndroid ||
@@ -2518,8 +2582,13 @@ mixin PlayerGestureControlMixin
                 .clamp(0.0, 100.0) /
             100;
       }
-    } else if (Utils.isOhos) {
-      _currentVolume = ohosVolume.value;
+    } else if (Utils.isOhos && !leftVerticalDrag) {
+      _currentVolume = await refreshOhosSystemMediaVolume() / 100;
+      if (!verticalDragging ||
+          gestureGeneration != _ohosSystemVolumeGestureGeneration) {
+        return;
+      }
+      _ohosSystemVolumeGestureReady = true;
     } else if (Platform.isAndroid || Platform.isIOS) {
       _currentVolume = await VolumeController.instance.getVolume();
     }
@@ -2562,6 +2631,9 @@ mixin PlayerGestureControlMixin
     if (leftVerticalDrag) {
       setGestureBrightness(e.globalPosition.dy);
     } else {
+      if (Utils.isOhos && !_ohosSystemVolumeGestureReady) {
+        return;
+      }
       setGestureVolume(e.globalPosition.dy);
     }
   }
@@ -2602,8 +2674,12 @@ mixin PlayerGestureControlMixin
 
   Future _realSetVolume(int volume) async {
     Log.logPrint(volume);
-    if (Platform.isWindows || Platform.isLinux || Utils.isOhos) {
+    if (Platform.isWindows || Platform.isLinux) {
       await setSessionPlayerVolume(volume.toDouble(), persist: true);
+      return;
+    }
+    if (Utils.isOhos) {
+      await setOhosSystemMediaVolume(volume.toDouble());
       return;
     }
     // 手势只调系统音量，播放器内部音量由独立设置控制。
@@ -2637,14 +2713,27 @@ mixin PlayerGestureControlMixin
   }
 
   /// 竖向手势完成
-  void onVerticalDragEnd(DragEndDetails details) async {
-    if (lockControlsState.value && fullScreenState.value) {
-      return;
+  void onVerticalDragEnd(DragEndDetails details) {
+    final finalOhosVolume = verticalDragging &&
+            !(lockControlsState.value && fullScreenState.value) &&
+            AppSettingsController.instance.playerGestureControlEnable.value &&
+            Utils.isOhos &&
+            !leftVerticalDrag &&
+            _ohosSystemVolumeGestureReady &&
+            lastVolume >= 0
+        ? lastVolume.toDouble()
+        : null;
+    _cancelVerticalGesture();
+    if (finalOhosVolume != null) {
+      unawaited(setOhosSystemMediaVolume(finalOhosVolume));
     }
-    if (!AppSettingsController.instance.playerGestureControlEnable.value) {
-      return;
-    }
+  }
+
+  void _cancelVerticalGesture() {
+    throttle?.cancel();
     throttle = null;
+    _ohosSystemVolumeGestureGeneration += 1;
+    _ohosSystemVolumeGestureReady = false;
     verticalDragging = false;
     leftVerticalDrag = false;
     showGestureTip.value = false;
@@ -2664,6 +2753,7 @@ class PlayerController extends BaseController
   void onInit() {
     if (Utils.isOhos) {
       initPlaybackDisplayLease();
+      unawaited(refreshOhosSystemMediaVolume());
       unawaited(restoreUserIntentPlayerVolumeForRoom());
       if (AppSettingsController.instance.autoFullScreen.value) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -3802,6 +3892,7 @@ class PlayerController extends BaseController
     if (_playerClosing) {
       return;
     }
+    _cancelVerticalGesture();
     _playerClosing = true;
     _setKeepScreenAwake(false);
     await releasePlaybackDisplayLease();

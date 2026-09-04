@@ -10,15 +10,25 @@ import AbilityAware from '@ohos/flutter_ohos/src/main/ets/embedding/engine/plugi
 import { AbilityPluginBinding } from '@ohos/flutter_ohos/src/main/ets/embedding/engine/plugins/ability/AbilityPluginBinding';
 import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { audio } from '@kit.AudioKit';
 import fileuri from '@ohos.file.fileuri';
 import image from '@ohos.multimedia.image';
 import window from '@ohos.window';
 
 const CHANNEL_NAME = 'simple_live/ohos_media';
+const SYSTEM_MEDIA_VOLUME_LEVEL_KEY = 'simple_live_system_media_volume_level';
+
+interface MediaVolumeRange {
+  current: number;
+  min: number;
+  max: number;
+}
 
 export default class OhosMediaPlugin implements FlutterPlugin, MethodCallHandler, AbilityAware {
   private channel?: MethodChannel;
   private context?: common.UIAbilityContext;
+  private mediaVolumeMin?: number;
+  private mediaVolumeMax?: number;
 
   getUniqueClassName(): string {
     return 'OhosMediaPlugin';
@@ -48,9 +58,66 @@ export default class OhosMediaPlugin implements FlutterPlugin, MethodCallHandler
       this.captureWindowRegion(call, result);
     } else if (call.method === 'saveImage') {
       this.saveImage(call, result);
+    } else if (call.method === 'getSystemMediaVolume') {
+      this.getSystemMediaVolume(result);
+    } else if (call.method === 'setSystemMediaVolume') {
+      this.setSystemMediaVolume(call, result);
     } else {
       result.notImplemented();
     }
+  }
+
+  private async readMediaVolumeRange(): Promise<MediaVolumeRange> {
+    const volumeManager = audio.getAudioManager().getVolumeManager();
+    const groupManager = await volumeManager.getVolumeGroupManager(audio.DEFAULT_VOLUME_GROUP_ID);
+    const current = await groupManager.getVolume(audio.AudioVolumeType.MEDIA);
+    const min = await groupManager.getMinVolume(audio.AudioVolumeType.MEDIA);
+    const max = await groupManager.getMaxVolume(audio.AudioVolumeType.MEDIA);
+    this.mediaVolumeMin = min;
+    this.mediaVolumeMax = max;
+    return { current: current, min: min, max: max };
+  }
+
+  private getSystemMediaVolume(result: MethodResult): void {
+    this.readMediaVolumeRange()
+      .then((range: MediaVolumeRange) => {
+        const span = range.max - range.min;
+        const normalized = span > 0 ? (range.current - range.min) / span : 0;
+        AppStorage.setOrCreate<number>(SYSTEM_MEDIA_VOLUME_LEVEL_KEY, range.current);
+        result.success(Math.max(0, Math.min(1, normalized)));
+      })
+      .catch((error: Error) => {
+        result.error('get_system_media_volume_failed', `${error}`, null);
+      });
+  }
+
+  private setSystemMediaVolume(call: MethodCall, result: MethodResult): void {
+    const requested: number = call.argument('volume');
+    if (!Number.isFinite(requested)) {
+      result.error('invalid_volume', 'System media volume must be a number', null);
+      return;
+    }
+    const normalized = Math.max(0, Math.min(1, requested));
+    if (this.mediaVolumeMin !== undefined && this.mediaVolumeMax !== undefined) {
+      this.applySystemMediaVolume(normalized, this.mediaVolumeMin, this.mediaVolumeMax);
+      result.success(null);
+      return;
+    }
+    this.readMediaVolumeRange()
+      .then((range: MediaVolumeRange) => {
+        this.applySystemMediaVolume(normalized, range.min, range.max);
+        result.success(null);
+      })
+      .catch((error: Error) => {
+        result.error('set_system_media_volume_failed', `${error}`, null);
+      });
+  }
+
+  private applySystemMediaVolume(normalized: number, min: number, max: number): void {
+    const level = Math.round(min + normalized * (max - min));
+    // Third-party apps drive system output volume through AVVolumePanel. The
+    // linked value is consumed by the panel hosted in pages/Index.ets.
+    AppStorage.setOrCreate<number>(SYSTEM_MEDIA_VOLUME_LEVEL_KEY, level);
   }
 
   private captureWindowRegion(call: MethodCall, result: MethodResult): void {

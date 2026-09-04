@@ -4,12 +4,16 @@
 /// 会保存一个方法，在最后还会调用一次，和普通的 throttle 不太一样
 class DelayedThrottle {
   bool isInvoking = false;
+  bool _cancelled = false;
   int eachDelayMilli;
   Future Function()? storeFunc;
 
   DelayedThrottle(this.eachDelayMilli);
 
   void invoke(Future Function() longCostFunc) {
+    if (_cancelled) {
+      return;
+    }
     if (isInvoking) {
       storeFunc = longCostFunc;
       return;
@@ -18,11 +22,21 @@ class DelayedThrottle {
     isInvoking = true;
     longCostFunc().then((value) {
       Future.delayed(Duration(milliseconds: eachDelayMilli), () {
+        if (_cancelled) {
+          storeFunc = null;
+          isInvoking = false;
+          return;
+        }
         isInvoking = false;
         if (storeFunc != null) {
           invoke(storeFunc!);
         }
       });
     });
+  }
+
+  void cancel() {
+    _cancelled = true;
+    storeFunc = null;
   }
 }
