@@ -79,6 +79,13 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   /// (from rapid clicking) from corrupting the state of a new gesture.
   int _gestureId = 0;
 
+  /// Tab selected when the current pointer sequence began.
+  ///
+  /// A delayed [onTapDown] may update [tabIndex] before the horizontal drag
+  /// recognizer resolves. Keep the original index so drag-end velocity is not
+  /// applied a second time to a selection already made by that tap-down.
+  int? _gestureStartTabIndex;
+
   /// Current horizontal alignment of the indicator in the range [-1, 1].
   double tabXAlign = 0.0;
 
@@ -146,6 +153,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
               null; // abort any in-flight hybrid tab switch
           _forceSnapToNearestTab();
           _gestureId++;
+          _gestureStartTabIndex = null;
           gestureEpoch++; // The old gesture recognizer is hopelessly wedged, kill it.
         });
       }
@@ -242,6 +250,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
     if (!mounted) return;
     setState(() {
       _gestureId++;
+      _gestureStartTabIndex = tabIndex;
       _gestureActive = true;
       tabIsDown = true;
     });
@@ -342,6 +351,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   /// Velocity fling is layered on top so a fast swipe carries the indicator
   /// past the nearest-position tab.
   void onBarDragEnd(DragEndDetails d) {
+    final gestureStartTabIndex = _gestureStartTabIndex ?? tabIndex;
     final relX = (tabXAlign + 1) / 2;
     final positionIndex =
         (relX * (tabCount - 1)).round().clamp(0, tabCount - 1);
@@ -357,7 +367,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
     // Velocity should only turn a short flick into a one-tab move. Once the
     // pointer has already crossed into another tab, positionIndex is the
     // intended destination; applying velocity again would skip an extra tab.
-    if (positionIndex == tabIndex) {
+    if (positionIndex == gestureStartTabIndex) {
       if (rawVelX > velocityThreshold && positionIndex < tabCount - 1) {
         target = positionIndex + 1;
       } else if (rawVelX < -velocityThreshold && positionIndex > 0) {
@@ -372,6 +382,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
         tabIsDown = false;
         tabXAlign = computeTabAlignment(target);
         barSwayOffset = 0.0; // spring back to center
+        _gestureStartTabIndex = null;
       });
       notifyTabChanged(target);
       reconcileWithHost(target);
@@ -390,6 +401,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
           tabIsDown = false;
           tabXAlign = computeTabAlignment(target);
           barSwayOffset = 0.0; // spring back to center
+          _gestureStartTabIndex = null;
         });
         notifyTabChanged(target);
         reconcileWithHost(target);
@@ -400,6 +412,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
         setState(() {
           tabIsDown = false;
           tabXAlign = computeTabAlignment(tabIndex);
+          _gestureStartTabIndex = null;
         });
       });
     }
@@ -436,6 +449,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
     setState(() {
       _gestureActive = false;
       tabIsDown = false;
+      _gestureStartTabIndex = null;
     });
 
     if (isPlatformViewBackdrop && _pendingHybridTabIndex != null) {
@@ -498,6 +512,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
         tabIsDown = false;
         tabXAlign = computeTabAlignment(target);
         barSwayOffset = 0.0;
+        _gestureStartTabIndex = null;
         gestureEpoch++; // dispose the wedged recognizer
       });
       notifyTabChanged(target);
