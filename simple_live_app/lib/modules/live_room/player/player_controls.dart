@@ -350,7 +350,7 @@ Widget _buildFullTopBar(
               ),
               child: Row(
                 children: [
-                  _buildFullscreenGlassIconButton(
+                  buildFullscreenGlassIconButton(
                     tooltip: "退出全屏",
                     icon: Icons.arrow_back,
                     onPressed: () {
@@ -374,20 +374,20 @@ Widget _buildFullTopBar(
                     ),
                   ),
                   const SizedBox(width: 8),
-                  _buildFullscreenGlassIconButton(
+                  buildFullscreenGlassIconButton(
                     tooltip: "截图",
                     onPressed: controller.saveScreenshot,
                     icon: Icons.camera_alt_outlined,
                   ),
                   const SizedBox(width: 4),
-                  _buildFullscreenGlassIconButton(
+                  buildFullscreenGlassIconButton(
                     tooltip: "快捷入口",
                     onPressed: () => showQuickAccess(controller),
                     icon: Remix.play_list_2_line,
                   ),
                   if (controller.canStartInlineMultiRoom) ...[
                     const SizedBox(width: 4),
-                    _buildFullscreenGlassIconButton(
+                    buildFullscreenGlassIconButton(
                       tooltip: "添加直播间并进入多开",
                       onPressed: controller.showAddToMultiRoomPanel,
                       icon: Remix.play_list_add_line,
@@ -395,14 +395,14 @@ Widget _buildFullTopBar(
                   ],
                   if (Platform.isAndroid || Utils.isOhos) ...[
                     const SizedBox(width: 4),
-                    _buildFullscreenGlassIconButton(
+                    buildFullscreenGlassIconButton(
                       tooltip: "画中画",
                       onPressed: controller.enablePIP,
                       icon: Icons.picture_in_picture,
                     ),
                   ],
                   const SizedBox(width: 4),
-                  _buildFullscreenGlassIconButton(
+                  buildFullscreenGlassIconButton(
                     tooltip: "播放器设置",
                     onPressed: () => showPlayerSettings(controller),
                     icon: Icons.more_horiz,
@@ -446,13 +446,13 @@ Widget _buildFullBottomBar(
             ),
             child: Row(
               children: [
-                _buildFullscreenGlassIconButton(
+                buildFullscreenGlassIconButton(
                   tooltip: "刷新直播间",
                   onPressed: controller.refreshRoom,
                   icon: Remix.refresh_line,
                 ),
                 const SizedBox(width: 4),
-                _buildFullscreenGlassIconButton(
+                buildFullscreenGlassIconButton(
                   tooltip: showDanmaku ? "关闭弹幕" : "开启弹幕",
                   onPressed: () {
                     controller.setDanmakuVisible(
@@ -470,7 +470,7 @@ Widget _buildFullBottomBar(
                   ),
                 ),
                 const SizedBox(width: 4),
-                _buildFullscreenGlassIconButton(
+                buildFullscreenGlassIconButton(
                   tooltip: "弹幕设置",
                   onPressed: () => showDanmakuSettings(controller),
                   icon: const ImageIcon(
@@ -487,7 +487,7 @@ Widget _buildFullBottomBar(
                   ),
                 ),
                 const Expanded(child: SizedBox()),
-                _buildFullscreenGlassIconButton(
+                buildFullscreenGlassIconButton(
                   key: volumeButtonKey,
                   tooltip: controller.mutedState.value ? "取消静音" : "调节音量",
                   onPressed: () {
@@ -509,17 +509,17 @@ Widget _buildFullBottomBar(
                   ),
                 ),
                 const SizedBox(width: 4),
-                _buildFullscreenGlassTextButton(
+                buildFullscreenGlassTextButton(
                   text: controller.currentQualityInfo.value,
                   onPressed: () => showQualitesInfo(controller),
                 ),
                 const SizedBox(width: 4),
-                _buildFullscreenGlassTextButton(
+                buildFullscreenGlassTextButton(
                   text: controller.currentLineInfo.value,
                   onPressed: () => showLinesInfo(controller),
                 ),
                 const SizedBox(width: 4),
-                _buildFullscreenGlassIconButton(
+                buildFullscreenGlassIconButton(
                   tooltip: "退出全屏",
                   onPressed: () {
                     if (controller.smallWindowState.value) {
@@ -539,7 +539,8 @@ Widget _buildFullBottomBar(
   });
 }
 
-Widget _buildFullscreenGlassIconButton({
+/// Shared full-screen player button used by both media_kit and HarmonyOS.
+Widget buildFullscreenGlassIconButton({
   Key? key,
   required String tooltip,
   required Object icon,
@@ -568,7 +569,8 @@ Widget _buildFullscreenGlassIconButton({
   );
 }
 
-Widget _buildFullscreenGlassTextButton({
+/// Shared full-screen player text button used by every playback backend.
+Widget buildFullscreenGlassTextButton({
   required String text,
   required VoidCallback onPressed,
 }) {

@@ -939,14 +939,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       ),
       child: Row(
         children: [
-          IconButton(
+          buildFullscreenGlassIconButton(
             tooltip: "退出全屏",
             onPressed: controller.exitFull,
-            icon: const Icon(
-              Icons.arrow_back,
-              color: Colors.white,
-              size: 24,
-            ),
+            icon: Icons.arrow_back,
           ),
           AppStyle.hGap12,
           Expanded(
@@ -958,19 +954,28 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             ),
           ),
           AppStyle.hGap12,
-          IconButton(
+          buildFullscreenGlassIconButton(
+            tooltip: "截图",
+            onPressed: controller.saveScreenshot,
+            icon: Icons.camera_alt_outlined,
+          ),
+          AppStyle.hGap4,
+          buildFullscreenGlassIconButton(
             tooltip: "快捷入口",
             onPressed: () => showQuickAccess(controller),
-            icon: const Icon(
-              Remix.play_list_2_line,
-              color: Colors.white,
-              size: 24,
-            ),
+            icon: Remix.play_list_2_line,
           ),
-          IconButton(
+          AppStyle.hGap4,
+          buildFullscreenGlassIconButton(
+            tooltip: "画中画",
+            onPressed: controller.enablePIP,
+            icon: Icons.picture_in_picture,
+          ),
+          AppStyle.hGap4,
+          buildFullscreenGlassIconButton(
             tooltip: "播放器设置",
             onPressed: () => showPlayerSettings(controller),
-            icon: const Icon(Icons.more_horiz, color: Colors.white),
+            icon: Icons.more_horiz,
           ),
         ],
       ),
@@ -979,6 +984,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
 
   Widget _buildOhosBottomBar(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
+    final volumeButtonKey = GlobalKey();
     return LayoutBuilder(
       builder: (context, constraints) {
         final fullScreen = controller.fullScreenState.value;
@@ -987,6 +993,56 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         // overflow。compact 不再排除全屏：只要可用宽度不足就收起次要文本与
         // 弹幕设置按钮（"更多功能"菜单里仍可访问），避免 Row 溢出。
         final compact = constraints.maxWidth < 520;
+        Widget iconButton({
+          Key? key,
+          required String tooltip,
+          required Object icon,
+          required VoidCallback onPressed,
+        }) {
+          if (fullScreen) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: buildFullscreenGlassIconButton(
+                key: key,
+                tooltip: tooltip,
+                icon: icon,
+                onPressed: onPressed,
+              ),
+            );
+          }
+          final iconWidget = icon is IconData
+              ? Icon(icon, color: Colors.white)
+              : icon as Widget;
+          return IconButton(
+            key: key,
+            tooltip: tooltip,
+            onPressed: onPressed,
+            icon: iconWidget,
+          );
+        }
+
+        Widget textButton({
+          required String text,
+          required VoidCallback onPressed,
+        }) {
+          if (fullScreen) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: buildFullscreenGlassTextButton(
+                text: text,
+                onPressed: onPressed,
+              ),
+            );
+          }
+          return TextButton(
+            onPressed: onPressed,
+            child: Text(
+              text,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+            ),
+          );
+        }
+
         return Container(
           height: 48 + padding.bottom,
           padding: EdgeInsets.only(
@@ -1005,12 +1061,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           ),
           child: Row(
             children: [
-              IconButton(
+              iconButton(
                 tooltip: "刷新直播间",
                 onPressed: controller.refreshRoom,
-                icon: const Icon(Remix.refresh_line, color: Colors.white),
+                icon: Remix.refresh_line,
               ),
-              IconButton(
+              iconButton(
                 tooltip: "弹幕开关",
                 onPressed: controller.toggleDanmakuByShortcut,
                 icon: ImageIcon(
@@ -1024,7 +1080,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 ),
               ),
               if (!compact)
-                IconButton(
+                iconButton(
                   tooltip: "弹幕设置",
                   onPressed: () => showDanmakuSettings(controller),
                   icon: const ImageIcon(
@@ -1033,68 +1089,67 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                     color: Colors.white,
                   ),
                 ),
-              if (!compact)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Text(
-                    controller.liveDuration.value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      controller.liveDuration.value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: compact ? 12 : 14,
+                      ),
                     ),
                   ),
                 ),
-              const Spacer(),
-              if (!compact || fullScreen)
-                IconButton(
-                  tooltip: controller.mutedState.value ? "恢复声音" : "静音",
-                  onPressed: controller.toggleMute,
-                  icon: Icon(
-                    controller.mutedState.value
-                        ? Icons.volume_off
-                        : Icons.volume_up,
-                    color: Colors.white,
-                  ),
-                ),
+              ),
+              iconButton(
+                key: volumeButtonKey,
+                tooltip: controller.mutedState.value ? "恢复声音" : "调节音量",
+                onPressed: () {
+                  if (controller.mutedState.value) {
+                    controller.toggleMute();
+                    return;
+                  }
+                  final volumeContext = volumeButtonKey.currentContext;
+                  if (volumeContext != null) {
+                    controller.showVolumeSlider(
+                      volumeContext,
+                      keepAlive: true,
+                    );
+                  }
+                },
+                icon: controller.mutedState.value
+                    ? Icons.volume_off
+                    : Icons.volume_up,
+              ),
               if (fullScreen && !compact && controller.qualites.isNotEmpty)
-                TextButton(
+                textButton(
                   onPressed: () => showQualitesInfo(controller),
-                  child: Text(
-                    controller.currentQualityInfo.value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                    ),
-                  ),
+                  text: controller.currentQualityInfo.value,
                 ),
               if (fullScreen && !compact && controller.playUrls.isNotEmpty)
-                TextButton(
+                textButton(
                   onPressed: () => showLinesInfo(controller),
-                  child: Text(
-                    controller.currentLineInfo.value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                    ),
-                  ),
+                  text: controller.currentLineInfo.value,
                 ),
               if (compact)
-                IconButton(
+                iconButton(
                   tooltip: "更多功能",
                   onPressed: _showOhosPlayerMenu,
-                  icon: const Icon(Icons.more_vert, color: Colors.white),
+                  icon: Icons.more_vert,
                 ),
-              IconButton(
+              iconButton(
                 tooltip: fullScreen ? "退出全屏" : "全屏",
                 onPressed: fullScreen
                     ? controller.exitFull
                     : controller.enterFullScreen,
-                icon: Icon(
-                  fullScreen
-                      ? Remix.fullscreen_exit_fill
-                      : Remix.fullscreen_line,
-                  color: Colors.white,
-                ),
+                icon: fullScreen
+                    ? Remix.fullscreen_exit_fill
+                    : Remix.fullscreen_line,
               ),
             ],
           ),
