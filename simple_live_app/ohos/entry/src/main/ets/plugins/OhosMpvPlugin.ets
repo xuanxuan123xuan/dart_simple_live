@@ -96,6 +96,9 @@ export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler {
         mpvNapi.setGeometry(call.argument('width') as number, call.argument('height') as number);
         result.success(null);
         break;
+      case 'getSurfaceSize':
+        result.success(mpvNapi.getSurfaceSize());
+        break;
       case 'command':
         mpvNapi.commandString(call.argument('cmd') as string);
         result.success(null);

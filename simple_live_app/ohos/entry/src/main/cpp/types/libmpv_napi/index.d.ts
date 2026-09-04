@@ -13,4 +13,5 @@ export const setPropertyString: (name: string, value: string) => void;
 export const getPropertyString: (name: string) => string;
 export const commandString: (cmd: string) => void;
 export const setGeometry: (width: number, height: number) => void;
+export const getSurfaceSize: () => { width: number; height: number };
 export const destroy: () => void;

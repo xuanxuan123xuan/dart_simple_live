@@ -701,6 +701,27 @@ napi_value Destroy(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// Returns the native buffer geometry currently in effect (g_geoW/g_geoH).
+// The buffer is a plugin-wide singleton shared across Dart controllers, so
+// a freshly created controller must read this to learn the REAL surface
+// size instead of assuming the 1920x1080 default — otherwise a portrait
+// buffer left by the previous room makes the next landscape stream look
+// squashed (the Dart side skips the reconfig, believing the buffer already
+// matches).
+napi_value GetSurfaceSize(napi_env env, napi_callback_info info) {
+    napi_value result = nullptr;
+    napi_create_object(env, &result);
+    const int32_t w = g_geoW.load();
+    const int32_t h = g_geoH.load();
+    napi_value wv = nullptr;
+    napi_value hv = nullptr;
+    napi_create_int32(env, w, &wv);
+    napi_create_int32(env, h, &hv);
+    napi_set_named_property(env, result, "width", wv);
+    napi_set_named_property(env, result, "height", hv);
+    return result;
+}
+
 napi_value InitModule(napi_env env, napi_value exports) {
     const napi_property_descriptor props[] = {
         {"setEventCallback", nullptr, SetEventCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -710,6 +731,7 @@ napi_value InitModule(napi_env env, napi_value exports) {
         {"getPropertyString", nullptr, GetPropertyString, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"commandString", nullptr, CommandString, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setGeometry", nullptr, SetGeometry, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getSurfaceSize", nullptr, GetSurfaceSize, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"destroy", nullptr, Destroy, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(props) / sizeof(props[0]), props);

@@ -112,7 +112,37 @@ class MpvOhosVideoController extends VideoPlayerController {
     Log.d('[mpv-ctrl] create textureId=$_mpvTextureId gen=$_generation');
     value = value.copyWith(isInitialized: _mpvTextureId >= 0);
     startEventListening();
+    // The native buffer is SHARED across controllers (mpv + texture are a
+    // plugin-wide singleton; create() only bumps the generation). A brand-new
+    // controller therefore must NOT assume the buffer is 1920x1080: if the
+    // previous room was portrait, the buffer is still 1080x1920 and blindly
+    // trusting the field default would make the next landscape stream look
+    // "squashed" (rendered into a portrait buffer the Dart side thinks is
+    // landscape, so _scheduleGeometryReconfig skips the reconfig). Re-sync
+    // _appliedSurfaceSize from the native buffer's real geometry instead.
+    await _syncAppliedSurfaceSize();
     return;
+  }
+
+  /// Re-reads the native buffer geometry into [_appliedSurfaceSize]. The
+  /// shared surface outlives any single controller, so this is the single
+  /// source of truth whenever a new controller is created.
+  Future<void> _syncAppliedSurfaceSize() async {
+    try {
+      final result = await _method.invokeMethod('getSurfaceSize');
+      if (result is! Map) {
+        return;
+      }
+      final w = (result['width'] as num?)?.toInt() ?? 0;
+      final h = (result['height'] as num?)?.toInt() ?? 0;
+      if (w >= 16 && h >= 16) {
+        _appliedSurfaceSize = Size(w.toDouble(), h.toDouble());
+        Log.i('[mpv-ctrl] synced surface size ${w}x$h');
+      }
+    } on PlatformException {
+      // Player not ready yet; keep the default until the first geometry
+      // event resyncs it.
+    }
   }
 
   Future<void> mpvLoad({
