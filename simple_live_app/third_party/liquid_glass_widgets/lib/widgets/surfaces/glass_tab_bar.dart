@@ -376,10 +376,14 @@ class GlassTabBar extends StatefulWidget with GlassDynamicPreferredSize {
     // inline hosts can match a reference feel (e.g. Apple Music's snappier
     // settle) without forking the physics.
     SpringDescription? springDescription,
+    // Optional continuous indicator position (0..tabCount-1). When set, the
+    // indicator tracks this position instead of springing to [selectedIndex].
+    double? indicatorPosition,
   }) : this._(
           key: key,
           placement: _GlassTabBarPlacement.inline,
           springDescription: springDescription,
+          indicatorPosition: indicatorPosition,
           tabs: tabs,
           selectedIndex: selectedIndex,
           onTabSelected: onTabSelected,
@@ -839,6 +843,12 @@ class GlassTabBar extends StatefulWidget with GlassDynamicPreferredSize {
       this.springDescription,
       this.tabPillAnchor = GlassTabPillAnchor.start,
       this.onBarTap,
+      // Optional continuous indicator position (0..tabCount-1). When set, the
+      // indicator pill tracks this fractional position directly instead of
+      // springing to [selectedIndex], so a host can follow an external swipe
+      // (e.g. a TabBarView). Null keeps the existing spring-to-selectedIndex
+      // behaviour.
+      this.indicatorPosition,
       this.whitenAtBottom = true,
       this.whitenBottomThreshold = 45.0,
       this.whitenAtBottomTarget = 1.0,
@@ -1123,6 +1133,13 @@ class GlassTabBar extends StatefulWidget with GlassDynamicPreferredSize {
   /// Optional tap callback for the whole bar (searchable only).
   final VoidCallback? onBarTap;
 
+  /// Optional continuous indicator position (0..tabCount-1).
+  ///
+  /// When set, the indicator pill tracks this fractional position directly
+  /// instead of springing to [selectedIndex], so a host can follow an external
+  /// swipe. Null keeps the existing spring-to-[selectedIndex] behaviour.
+  final double? indicatorPosition;
+
   /// Whiten glass at page bottom in light mode. Defaults to true.
   final bool whitenAtBottom;
 
@@ -1303,6 +1320,7 @@ class _GlassTabBarState extends State<GlassTabBar> {
       brightnessOverride: widget.brightnessOverride,
       scrollController: widget.scrollController,
       springDescription: widget.springDescription,
+      indicatorPosition: widget.indicatorPosition,
     );
   }
 
@@ -1360,6 +1378,7 @@ class _GlassTabBarState extends State<GlassTabBar> {
       onBrightnessChanged: widget.onBrightnessChanged,
       brightnessOverride: widget.brightnessOverride,
       springDescription: widget.springDescription,
+      indicatorPosition: widget.indicatorPosition,
       // No extra button in inline placement
     );
   }
