@@ -18,6 +18,7 @@ import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
+import 'package:simple_live_app/modules/live_room/widgets/live_room_tab_bar.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/glass/glass_surface.dart';
@@ -1564,11 +1565,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               Builder(
                 builder: (context) {
                   final tabController = DefaultTabController.of(context);
-                  return _buildLiveRoomTabBar(
-                    context,
-                    tabController,
-                    keys.map(tabLabel).toList(growable: false),
-                    keys,
+                  return LiveRoomTabBar(
+                    controller: tabController,
+                    labels: keys.map(tabLabel).toList(growable: false),
+                    keys: keys,
+                    onTabSelected: (index) => _selectLiveRoomTab(
+                      tabController,
+                      keys,
+                      index,
+                    ),
+                    iconBuilder: _liveRoomTabIcon,
                   );
                 },
               ),
@@ -1582,90 +1588,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
       );
     });
-  }
-
-  Widget _buildLiveRoomTabBar(
-    BuildContext context,
-    TabController tabController,
-    List<String> labels,
-    List<String> keys,
-  ) {
-    return AnimatedBuilder(
-      animation: tabController,
-      builder: (context, _) {
-        final theme = Theme.of(context);
-        final colors = theme.colorScheme;
-        final isDark = theme.brightness == Brightness.dark;
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
-          child: SizedBox(
-            height: 48,
-            child: Row(
-              children: [
-                for (var i = 0; i < labels.length; i++)
-                  Expanded(
-                    child: Semantics(
-                      button: true,
-                      selected: tabController.index == i,
-                      label: labels[i],
-                      child: Material(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(18),
-                        clipBehavior: Clip.antiAlias,
-                        child: InkWell(
-                          onTap: () =>
-                              _selectLiveRoomTab(tabController, keys, i),
-                          borderRadius: BorderRadius.circular(18),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 160),
-                            margin: const EdgeInsets.symmetric(horizontal: 2),
-                            decoration: BoxDecoration(
-                              color: tabController.index == i
-                                  ? colors.primary.withAlpha(isDark ? 52 : 24)
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  _liveRoomTabIcon(
-                                    keys[i],
-                                    tabController.index == i,
-                                  ),
-                                  size: 18,
-                                  color: tabController.index == i
-                                      ? colors.onPrimaryContainer
-                                      : colors.onSurfaceVariant,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  labels[i],
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: tabController.index == i
-                                        ? FontWeight.w600
-                                        : FontWeight.w500,
-                                    color: tabController.index == i
-                                        ? colors.onPrimaryContainer
-                                        : colors.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
   }
 
   void _selectLiveRoomTab(
