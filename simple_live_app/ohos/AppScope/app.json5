@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.simplelive.app",
     "vendor": "example",
-    "versionCode": 26308,
-    "versionName": "26.3.8",
+    "versionCode": 26309,
+    "versionName": "26.3.9",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }
