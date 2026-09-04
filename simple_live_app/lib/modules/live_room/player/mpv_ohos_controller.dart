@@ -13,6 +13,7 @@
 //                      without an explicit user pause
 //  - position        : mpv time-pos (throttled to ~4 updates/s natively)
 //  - size/aspectRatio: mpv width x height
+//  - visualReady    : native video-frame-presented event for this stream
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -45,8 +46,7 @@ class MpvOhosVideoController extends VideoPlayerController {
   double? _timePosSeconds;
   Duration? _demuxerCacheTime;
 
-  bool _firstFrameReported = false;
-  bool _firstTimePosSeen = false;
+  bool _visualReady = false;
   bool _fileLoaded = false;
   Completer<void>? _fileLoadedWaiter;
 
@@ -57,7 +57,6 @@ class MpvOhosVideoController extends VideoPlayerController {
   Size? _reportedDisplaySize;
   bool _streamGeometryApplied = false;
   Size? _pendingGeometry;
-  Timer? _geometryDebounce;
 
   /// Called on the first decoded frame; wired by the owning widget to the
   /// first-frame watchdog plumbing.
@@ -75,11 +74,11 @@ class MpvOhosVideoController extends VideoPlayerController {
   @override
   int get textureId => _mpvTextureId;
 
-  /// True once the new stream's playback clock has ticked at least once:
-  /// the first frame has actually been presented to the shared surface, so
-  /// it is safe to make the [Texture] visible (older frames may still sit in
-  /// the surface buffer before that point).
-  bool get firstFramePresented => _firstTimePosSeen;
+  /// True after native mpv reports that a video frame was presented for the
+  /// current stream. This is deliberately driven by the native
+  /// `video-frame-presented` event rather than `time-pos`: the playback clock
+  /// can advance while the shared texture is still black.
+  bool get visualReady => _visualReady;
 
   /// True once mpv finished opening the current stream (file-loaded).
   bool get fileLoaded => _fileLoaded;
@@ -121,7 +120,8 @@ class MpvOhosVideoController extends VideoPlayerController {
     // stream fire before its first frame is presented. Closing the
     // visibility gate here keeps the widget on its loading state until the
     // new stream really presents.
-    _firstTimePosSeen = false;
+    final wasVisualReady = _visualReady;
+    _visualReady = false;
     _fileLoaded = false;
     _eofReached = false;
     _timePosSeconds = null;
@@ -129,8 +129,10 @@ class MpvOhosVideoController extends VideoPlayerController {
     _reportedDisplaySize = null;
     _streamGeometryApplied = false;
     _pendingGeometry = null;
-    _geometryDebounce?.cancel();
     value = value.copyWith(size: Size.zero, position: Duration.zero);
+    if (wasVisualReady && !_mpvDisposed) {
+      notifyListeners();
+    }
     if (_mpvDisposed) {
       return;
     }
@@ -165,15 +167,22 @@ class MpvOhosVideoController extends VideoPlayerController {
   /// `lowLatencyExperimental` playback profile from the AVPlayer era; the
   /// values follow integration README section 6.2.
   Future<void> applyPlaybackProfile({required bool lowLatency}) async {
+    // Keep startup A/V alignment consistent across both profiles. The
+    // low-latency profile used to select `desync`, which allowed audio to
+    // start several seconds before the first video frame.
+    await _setProperty('video-sync', 'audio');
+    await _setProperty('initial-audio-sync', 'yes');
     if (lowLatency) {
       await _setProperty('cache', 'no');
       await _setProperty('cache-pause', 'no');
       await _setProperty('demuxer-lavf-o', 'fflags=+nobuffer');
-      // Keep mpv's startup A/V alignment: desync let audio lead the video by
-      // seconds while the decoder crawled to catch up. With audio sync the
-      // first frame and audio start together.
-      await _setProperty('video-sync', 'audio');
-      await _setProperty('initial-audio-sync', 'yes');
+    } else {
+      // The native player is reused across room switches. Restore the
+      // low-latency options explicitly so a stable stream never inherits the
+      // previous room's no-cache settings.
+      await _setProperty('cache', 'auto');
+      await _setProperty('cache-pause', 'yes');
+      await _setProperty('demuxer-lavf-o', '');
     }
   }
 
@@ -267,8 +276,8 @@ class MpvOhosVideoController extends VideoPlayerController {
       value = value.copyWith(size: displaySize);
     }
     // Settle the native surface once for every newly loaded stream. The
-    // first frame can arrive before video-out-params on OHOS, so using
-    // _firstFrameReported as the guard leaves portrait video rendered into
+    // first frame can arrive before video-out-params on OHOS, so using the
+    // visual-ready event as the guard would leave portrait video rendered into
     // the initial 1920x1080 buffer and Flutter then stretches that landscape
     // texture into a portrait box.
     if (_streamGeometryApplied) {
@@ -287,10 +296,10 @@ class MpvOhosVideoController extends VideoPlayerController {
       return;
     }
     _pendingGeometry = displaySize;
-    _geometryDebounce?.cancel();
-    _geometryDebounce = Timer(const Duration(milliseconds: 300), () {
-      unawaited(_runGeometryReconfig());
-    });
+    // This is the first geometry event for the stream. Start the reconfig
+    // immediately so the first useful frame does not wait behind a debounce
+    // timer. The native bridge serializes the individual operations.
+    unawaited(_runGeometryReconfig());
   }
 
   Future<void> _runGeometryReconfig() async {
@@ -336,6 +345,8 @@ class MpvOhosVideoController extends VideoPlayerController {
     final valueText = event['value'] as String? ?? '';
     if (kind == 'property' && name != null) {
       _handleProperty(name, valueText);
+    } else if (kind == 'event' && name == 'video-frame-presented') {
+      _markVisualReady();
     } else if (kind == 'event' && name == 'file-loaded') {
       _fileLoaded = true;
       final waiter = _fileLoadedWaiter;
@@ -372,7 +383,6 @@ class MpvOhosVideoController extends VideoPlayerController {
         final seconds = double.tryParse(valueText);
         if (seconds != null) {
           _timePosSeconds = seconds;
-          _firstTimePosSeen = true;
           onHeartbeat?.call(DateTime.now(), _positionFromSeconds(seconds));
         }
         break;
@@ -436,10 +446,19 @@ class MpvOhosVideoController extends VideoPlayerController {
     if (next != previous) {
       value = next;
     }
-    if (initialized && !_firstFrameReported && !_coreIdle) {
-      _firstFrameReported = true;
-      onFirstFrameDecoded?.call();
+  }
+
+  void _markVisualReady() {
+    if (_mpvDisposed || _visualReady) {
+      return;
     }
+    _visualReady = true;
+    // visualReady is controller state but is intentionally not duplicated in
+    // VideoPlayerValue. Notify the widget listener exactly once so it can
+    // replace the loading surface on the next frame without rebuilding for
+    // every time-pos heartbeat.
+    notifyListeners();
+    onFirstFrameDecoded?.call();
   }
 
   @override
@@ -498,7 +517,6 @@ class MpvOhosVideoController extends VideoPlayerController {
   Future<void> dispose() async {
     Log.d('[mpv-ctrl] dispose gen=$_generation');
     _mpvDisposed = true;
-    _geometryDebounce?.cancel();
     _fileLoadedWaiter = null;
     _eventSub?.cancel();
     _eventSub = null;

@@ -18,7 +18,8 @@ import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_p
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/services/ohos_playback_capabilities_service.dart';
 import 'package:video_player/video_player.dart';
-import 'package:video_player_ohos/video_player_ohos.dart' show OhosPlaybackProfile;
+import 'package:video_player_ohos/video_player_ohos.dart'
+    show OhosPlaybackProfile;
 
 class MpvOhosPlayer extends StatefulWidget {
   const MpvOhosPlayer({
@@ -95,6 +96,9 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
   bool _unobservableReported = false;
   bool _completionReported = false;
   bool _firstFrameRendered = false;
+  Size? _lastRenderedSize;
+  bool _lastRenderedVisualReady = false;
+  String? _lastRenderedError;
   int? _lowLatencyDisabledSessionGeneration;
   bool _profileFallbackInProgress = false;
   OhosPlaybackProfileDecision _activePlaybackProfileDecision =
@@ -149,6 +153,9 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
     }
     _controller = null;
     _controllerListener = null;
+    _lastRenderedSize = null;
+    _lastRenderedVisualReady = false;
+    _lastRenderedError = null;
     _ready = false;
     _errorReported = false;
     _error = null;
@@ -174,8 +181,8 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
         return;
       }
       await controller.initialize();
-      await controller
-          .applyPlaybackProfile(lowLatency: profileDecision.isExperimental);
+      await controller.applyPlaybackProfile(
+          lowLatency: profileDecision.isExperimental);
       await controller.applyUserOverrides();
       await controller.mpvLoad(
         url: widget.url,
@@ -288,11 +295,20 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
         identical(_controller, controller);
   }
 
-  void _handleValueChanged(VideoPlayerController controller) {
+  void _handleValueChanged(MpvOhosVideoController controller) {
     if (!identical(_controller, controller)) {
       return;
     }
     final value = controller.value;
+    final shouldRebuild = _lastRenderedSize != value.size ||
+        _lastRenderedVisualReady != controller.visualReady ||
+        _lastRenderedError != value.errorDescription;
+    _lastRenderedSize = value.size;
+    _lastRenderedVisualReady = controller.visualReady;
+    _lastRenderedError = value.errorDescription;
+    if (shouldRebuild && mounted) {
+      setState(() {});
+    }
     widget.onValueChanged?.call(value);
     widget.onGenerationValueChanged?.call(widget.revision, value);
     if (_controller?.eofReached == true && !_completionReported) {
@@ -507,9 +523,7 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
     // surface is shared across rooms, so rendering it before the first frame
     // would briefly show the previous room's last picture.
     final sizeKnown =
-        size.width > 0 &&
-        size.height > 0 &&
-        controller.firstFramePresented;
+        size.width > 0 && size.height > 0 && controller.visualReady;
     final video = sizeKnown
         ? ClipRect(
             child: FittedBox(
