@@ -526,15 +526,18 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
         size.width > 0 && size.height > 0 && controller.visualReady;
     // The native buffer follows the stream's display aspect (never this
     // widget's layout) and the texture sits in a SizedBox of exactly the
-    // buffer size under FittedBox(contain): the texture can only ever scale
-    // uniformly, so fullscreen/rotation/layout changes neither stretch the
-    // picture nor trigger a vo reconfig (no spinner, no flash) — this mirrors
-    // how video_player's AspectRatio texture works on other platforms.
+    // buffer size under FittedBox. The fit is the user's scale-mode choice
+    // (contain by default, fill/cover for stretch/crop) — identical to the
+    // ohos_video_player path — so fullscreen/rotation/layout changes neither
+    // trigger a vo reconfig (no spinner, no flash) nor override the chosen
+    // scale mode. The buffer geometry still matches the stream's aspect, so
+    // `contain` keeps the picture undistorted while `fill`/`cover` apply the
+    // requested stretch/crop on top.
     final surface = controller.surfaceSize;
     final video = sizeKnown
         ? ClipRect(
             child: FittedBox(
-              fit: BoxFit.contain,
+              fit: widget.fit,
               child: SizedBox(
                 width: surface.width,
                 height: surface.height,
