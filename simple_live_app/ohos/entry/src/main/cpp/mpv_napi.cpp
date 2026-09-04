@@ -235,28 +235,10 @@ bool QueueCommand(MpvCommand command) {
     return true;
 }
 
-// Lightweight: never touches mpv state (a synchronous vo teardown here
-// blocked the event pump and caused black-frame loops). Only notifies Dart,
-// which owns the full vo hot-reconfig sequence via async method calls.
-void HandleNativeWindowGeometry(int width, int height) {
-    if (width <= 0 || height <= 0) {
-        return;
-    }
-    if (width == g_geoW.load() && height == g_geoH.load()) {
-        return;
-    }
-    char sizeOpt[64] = {0};
-    snprintf(sizeOpt, sizeof(sizeOpt), "%dx%d", width, height);
-    auto *payload = new EventPayload();
-    payload->kind = "event";
-    payload->name = "geometry-changed";
-    payload->value = sizeOpt;
-    QueueEvent(payload);
-}
-
 // Applies the requested buffer geometry. Called from Dart as part of the
 // async vo reconfig sequence (vo=null -> setGeometry -> ohos-surface-size
-// -> vo=gpu-next).
+// -> vo=gpu-next). Dart is the only writer: it drives this from the player
+// widget's pixel size, never from the video dimensions.
 napi_value SetGeometry(napi_env env, napi_callback_info info) {
     size_t argc = 2;
     napi_value args[2] = {nullptr, nullptr};
@@ -281,6 +263,32 @@ napi_value SetGeometry(napi_env env, napi_callback_info info) {
 
 std::atomic<int64_t> g_lastTimePosPushMs{0};
 std::atomic<int64_t> g_lastCachePushMs{0};
+
+// Synthesizes the Dart-visible "first frame" event once per generation.
+// MPV_EVENT_VIDEO_RECONFIG fires when the vo is first configured (non-
+// deprecated, faster than the tick); MPV_EVENT_TICK is the per-second
+// fallback. Both share the same gates: an active generation, the
+// video-out-params marker for that generation, and a one-shot CAS.
+void TryPresentFirstFrame() {
+    const int32_t generation = g_activeGeneration.load();
+    if (generation <= 0 ||
+        !g_activePlayback.load() ||
+        g_videoGeometryGeneration.load() != generation) {
+        return;
+    }
+    int32_t expected = g_framePresentedGeneration.load();
+    if (expected == generation ||
+        !g_framePresentedGeneration.compare_exchange_strong(expected, generation)) {
+        return;
+    }
+    auto *payload = new EventPayload();
+    payload->kind = "event";
+    payload->name = "video-frame-presented";
+    if (!QueueEvent(payload, generation)) {
+        int32_t marked = generation;
+        g_framePresentedGeneration.compare_exchange_strong(marked, -1);
+    }
+}
 
 void EventLoop() {
     while (g_running.load()) {
@@ -310,14 +318,10 @@ void EventLoop() {
                     payload->value = "";
                 }
                 if (prop->name == std::string("video-out-params")) {
-                    int64_t dw = 0;
-                    int64_t dh = 0;
-                    if (mpv_get_property(mpv, "video-out-params/dw", MPV_FORMAT_INT64, &dw) >= 0 &&
-                        mpv_get_property(mpv, "video-out-params/dh", MPV_FORMAT_INT64, &dh) >= 0 &&
-                        dw > 0 && dh > 0) {
-                        g_videoGeometryGeneration.store(g_activeGeneration.load());
-                        HandleNativeWindowGeometry(static_cast<int>(dw), static_cast<int>(dh));
-                    }
+                    // Only feeds the frame-presented gate below. Buffer
+                    // geometry is owned by Dart (widget pixel size); the
+                    // video's own dimensions must never resize the buffer.
+                    g_videoGeometryGeneration.store(g_activeGeneration.load());
                 }
                 if (prop->name == std::string("time-pos") ||
                     prop->name == std::string("demuxer-cache-time")) {
@@ -380,29 +384,12 @@ void EventLoop() {
                 QueueEvent(payload, generation);
                 break;
             }
+            case MPV_EVENT_VIDEO_RECONFIG:
 #if MPV_ENABLE_DEPRECATED
-            case MPV_EVENT_TICK: {
-                const int32_t generation = g_activeGeneration.load();
-                if (generation <= 0 ||
-                    !g_activePlayback.load() ||
-                    g_videoGeometryGeneration.load() != generation) {
-                    break;
-                }
-                int32_t expected = g_framePresentedGeneration.load();
-                if (expected == generation ||
-                    !g_framePresentedGeneration.compare_exchange_strong(expected, generation)) {
-                    break;
-                }
-                auto *payload = new EventPayload();
-                payload->kind = "event";
-                payload->name = "video-frame-presented";
-                if (!QueueEvent(payload, generation)) {
-                    int32_t marked = generation;
-                    g_framePresentedGeneration.compare_exchange_strong(marked, -1);
-                }
-                break;
-            }
+            case MPV_EVENT_TICK:
 #endif
+                TryPresentFirstFrame();
+                break;
             case MPV_EVENT_IDLE:
             case MPV_EVENT_FILE_LOADED: {
                 auto *payload = new EventPayload();
@@ -566,6 +553,7 @@ napi_value Init(napi_env env, napi_callback_info info) {
                      "mpv tick event unavailable code=%{public}d", tickError);
     }
 #endif
+    mpv_request_event(mpv, MPV_EVENT_VIDEO_RECONFIG, 1);
     const char *observed[] = {
         "pause", "core-idle", "paused-for-cache", "eof-reached",
         "cache-buffering-state", "hwdec-current", "video-codec",

@@ -524,13 +524,20 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
     // would briefly show the previous room's last picture.
     final sizeKnown =
         size.width > 0 && size.height > 0 && controller.visualReady;
+    // The native buffer follows the stream's display aspect (never this
+    // widget's layout) and the texture sits in a SizedBox of exactly the
+    // buffer size under FittedBox(contain): the texture can only ever scale
+    // uniformly, so fullscreen/rotation/layout changes neither stretch the
+    // picture nor trigger a vo reconfig (no spinner, no flash) — this mirrors
+    // how video_player's AspectRatio texture works on other platforms.
+    final surface = controller.surfaceSize;
     final video = sizeKnown
         ? ClipRect(
             child: FittedBox(
-              fit: widget.fit,
+              fit: BoxFit.contain,
               child: SizedBox(
-                width: size.width,
-                height: size.height,
+                width: surface.width,
+                height: surface.height,
                 child: Texture(textureId: controller.textureId),
               ),
             ),

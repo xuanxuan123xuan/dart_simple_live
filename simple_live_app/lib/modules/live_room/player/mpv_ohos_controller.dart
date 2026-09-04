@@ -50,13 +50,24 @@ class MpvOhosVideoController extends VideoPlayerController {
   bool _fileLoaded = false;
   Completer<void>? _fileLoadedWaiter;
 
-  // Surface geometry currently applied to the native window. The Dart side
-  // owns the vo hot-reconfig sequence so the mpv event pump is never blocked
-  // by a synchronous vo teardown (that caused black-frame loops and UI jank).
+  // Surface geometry currently applied to the native window. Dart is the
+  // SINGLE writer: the buffer follows the STREAM's display aspect (never the
+  // widget layout), so the vo hot-reconfig only ever runs right after a
+  // room/quality switch while the loading spinner is already up. Fullscreen
+  // and rotation change the box, not the video, and reconfigure nothing.
+  // The widget scales the buffer uniformly with FittedBox(contain), so the
+  // texture can never be stretched and the video always keeps its aspect.
   Size _appliedSurfaceSize = const Size(1920, 1080);
   Size? _reportedDisplaySize;
-  bool _streamGeometryApplied = false;
   Size? _pendingGeometry;
+  Timer? _geometryDebounce;
+  bool _geometryReconfiguring = false;
+  Timer? _geometryResumeTimer;
+  DateTime? _lastGeometryReconfigCompletedAt;
+
+  /// Current native buffer size (video display aspect). The widget wraps
+  /// the texture in a SizedBox of exactly this size under FittedBox(contain).
+  Size get surfaceSize => _appliedSurfaceSize;
 
   /// Called on the first decoded frame; wired by the owning widget to the
   /// first-frame watchdog plumbing.
@@ -126,9 +137,16 @@ class MpvOhosVideoController extends VideoPlayerController {
     _eofReached = false;
     _timePosSeconds = null;
     _demuxerCacheTime = null;
+    // A fresh stream must not inherit the previous room's idle/buffering
+    // flags: a leftover _coreIdle=true (from a torn-down vo) would otherwise
+    // surface the new room as "buffering" before its first frame presents.
+    _coreIdle = true;
+    _pausedForCache = false;
     _reportedDisplaySize = null;
-    _streamGeometryApplied = false;
     _pendingGeometry = null;
+    _geometryDebounce?.cancel();
+    _geometryReconfiguring = false;
+    _geometryResumeTimer?.cancel();
     value = value.copyWith(size: Size.zero, position: Duration.zero);
     if (wasVisualReady && !_mpvDisposed) {
       notifyListeners();
@@ -263,43 +281,50 @@ class MpvOhosVideoController extends VideoPlayerController {
     onFatal?.call('live stream playback failed');
   }
 
-  Future<void> _applyGeometryChange(String sizeText) async {
-    final parts = sizeText.split('x');
-    final w = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 0;
-    final h = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
-    if (w < 16 || h < 16 || _mpvDisposed) {
+  /// Resizes the shared native buffer when the stream's display aspect maps
+  /// to a different canonical buffer (portrait vs landscape). Targets are
+  /// quantized to 1080x1920 / 1920x1080 so streams whose reported dw/dh
+  /// oscillates (adaptive streams, rotate metadata) cannot chain reconfigs
+  /// back and forth, and a short cooldown keeps any remaining churn bounded.
+  /// This only ever happens right after a room/quality switch — while the
+  /// loading spinner is already up — so the vo hot-reconfig (one black frame)
+  /// is never visible. Layout changes like fullscreen toggles never reach
+  /// this path.
+  void _scheduleGeometryReconfig(Size displaySize) {
+    if (_mpvDisposed) {
       return;
     }
-    final displaySize = Size(w.toDouble(), h.toDouble());
-    _reportedDisplaySize = displaySize;
-    if (value.size != displaySize) {
-      value = value.copyWith(size: displaySize);
-    }
-    // Settle the native surface once for every newly loaded stream. The
-    // first frame can arrive before video-out-params on OHOS, so using the
-    // visual-ready event as the guard would leave portrait video rendered into
-    // the initial 1920x1080 buffer and Flutter then stretches that landscape
-    // texture into a portrait box.
-    if (_streamGeometryApplied) {
+    final target = displaySize.width / displaySize.height < 1
+        ? const Size(1080, 1920)
+        : const Size(1920, 1080);
+    if (target == _appliedSurfaceSize) {
       return;
     }
-    if (_appliedSurfaceSize.width == w && _appliedSurfaceSize.height == h) {
-      _streamGeometryApplied = true;
+    // An orientation change (portrait <-> landscape) must always reconfigure:
+    // the 5s cooldown below is meant to suppress same-orientation size
+    // churn (adaptive streams, rotate metadata), but skipping a real
+    // orientation flip leaves a landscape stream rendered into a portrait
+    // buffer (or vice versa), which the uniform FittedBox(contain) then
+    // letterboxes into a visually squashed picture.
+    final orientationChanged =
+        (target.width < target.height) !=
+        (_appliedSurfaceSize.width < _appliedSurfaceSize.height);
+    if (!orientationChanged) {
+      final lastCompleted = _lastGeometryReconfigCompletedAt;
+      if (lastCompleted != null &&
+          DateTime.now().difference(lastCompleted) <
+              const Duration(seconds: 5)) {
+        return;
+      }
+    }
+    if (_pendingGeometry == target) {
       return;
     }
-    // Skip sub-2% aspect changes (1088 vs 1080 heights, minor adaptive
-    // quality fluctuations): every reconfig costs one black window.
-    final oldAspect = _appliedSurfaceSize.width / _appliedSurfaceSize.height;
-    final newAspect = w / h;
-    if ((newAspect - oldAspect).abs() / oldAspect < 0.02) {
-      _streamGeometryApplied = true;
-      return;
-    }
-    _pendingGeometry = displaySize;
-    // This is the first geometry event for the stream. Start the reconfig
-    // immediately so the first useful frame does not wait behind a debounce
-    // timer. The native bridge serializes the individual operations.
-    unawaited(_runGeometryReconfig());
+    _pendingGeometry = target;
+    _geometryDebounce?.cancel();
+    _geometryDebounce = Timer(const Duration(milliseconds: 300), () {
+      unawaited(_runGeometryReconfig());
+    });
   }
 
   Future<void> _runGeometryReconfig() async {
@@ -308,6 +333,31 @@ class MpvOhosVideoController extends VideoPlayerController {
       return;
     }
     _pendingGeometry = null;
+    // Fire-time verification: the stream may have settled back to the
+    // applied buffer's aspect while the debounce ran, in which case the
+    // reconfig must not happen at all.
+    final dw = int.tryParse(await _getProperty('video-out-params/dw') ?? '') ??
+        0;
+    final dh = int.tryParse(await _getProperty('video-out-params/dh') ?? '') ??
+        0;
+    if (dw > 0 && dh > 0) {
+      final currentTarget =
+          dw / dh < 1 ? const Size(1080, 1920) : const Size(1920, 1080);
+      if (currentTarget == _appliedSurfaceSize) {
+        Log.i('[mpv-ctrl] geometry reconfig skipped (settled)');
+        return;
+      }
+    }
+    _geometryReconfiguring = true;
+    Log.i(
+        '[mpv-ctrl] geometry reconfig -> ${target.width.toInt()}x${target.height.toInt()}');
+    // The ohosvk vo cannot follow an in-place buffer resize (it keeps
+    // rendering the old canvas into the top-left corner), so the vo must be
+    // rebuilt — which blanks the surface for a moment. Report "playing, not
+    // buffering" until playback actually resumes so the room UI never spins
+    // for this; the flash stays hidden behind the room-loading spinner
+    // because reconfigs only ever happen right after a switch.
+    notifyListeners();
     try {
       await _setProperty('vo', 'null');
       if (_mpvDisposed) {
@@ -322,10 +372,20 @@ class MpvOhosVideoController extends VideoPlayerController {
       await _setProperty('vo', 'gpu-next');
       if (!_mpvDisposed) {
         _appliedSurfaceSize = target;
-        _streamGeometryApplied = true;
+        _lastGeometryReconfigCompletedAt = DateTime.now();
+        Log.i(
+            '[mpv-ctrl] geometry reconfig done -> ${target.width.toInt()}x${target.height.toInt()}');
       }
     } on PlatformException {
       // Player gone mid-sequence.
+    } finally {
+      _geometryResumeTimer?.cancel();
+      _geometryResumeTimer = Timer(const Duration(seconds: 5), () {
+        if (_geometryReconfiguring && !_mpvDisposed) {
+          _geometryReconfiguring = false;
+          notifyListeners();
+        }
+      });
     }
   }
 
@@ -354,8 +414,6 @@ class MpvOhosVideoController extends VideoPlayerController {
         _fileLoadedWaiter = null;
         waiter.complete();
       }
-    } else if (kind == 'event' && name == 'geometry-changed') {
-      unawaited(_applyGeometryChange(valueText));
     } else if (kind == 'event' && name == 'end-file') {
       if (valueText == 'error') {
         unawaited(_confirmFatal());
@@ -372,6 +430,11 @@ class MpvOhosVideoController extends VideoPlayerController {
         break;
       case 'core-idle':
         _coreIdle = _containsYes(valueText);
+        if (_geometryReconfiguring && !_coreIdle) {
+          // Playback resumed after a buffer reconfig: end the spinner
+          // suppression exactly when frames flow again.
+          _geometryReconfiguring = false;
+        }
         break;
       case 'paused-for-cache':
         _pausedForCache = _containsYes(valueText);
@@ -393,6 +456,11 @@ class MpvOhosVideoController extends VideoPlayerController {
           onCacheDuration?.call(_demuxerCacheTime);
         }
         break;
+      case 'video-out-params':
+        // dw/dh includes rotation and pixel aspect ratio; width/height is
+        // only the decoded storage size. Prefer dw/dh for Flutter state.
+        unawaited(_refreshDisplaySize());
+        break;
       case 'width':
       case 'height':
         unawaited(_refreshSize());
@@ -401,6 +469,24 @@ class MpvOhosVideoController extends VideoPlayerController {
         break;
     }
     _publish();
+  }
+
+  Future<void> _refreshDisplaySize() async {
+    final dw = int.tryParse(await _getProperty('video-out-params/dw') ?? '') ??
+        0;
+    final dh = int.tryParse(await _getProperty('video-out-params/dh') ?? '') ??
+        0;
+    if (dw <= 0 || dh <= 0 || _mpvDisposed) {
+      return;
+    }
+    final displaySize = Size(dw.toDouble(), dh.toDouble());
+    Log.i('[mpv-ctrl] display $dw'
+        'x$dh buffer=${_appliedSurfaceSize.width.toInt()}x${_appliedSurfaceSize.height.toInt()}');
+    _reportedDisplaySize = displaySize;
+    if (value.size != displaySize) {
+      value = value.copyWith(size: displaySize);
+    }
+    _scheduleGeometryReconfig(displaySize);
   }
 
   Future<void> _refreshSize() async {
@@ -430,9 +516,21 @@ class MpvOhosVideoController extends VideoPlayerController {
       return;
     }
     final initialized = _mpvTextureId >= 0;
-    final playing = initialized && !_paused && !_coreIdle && !_pausedForCache;
+    // A vo hot-reconfig (vo=null -> setGeometry -> vo=gpu-next) is a
+    // same-room transient: audio keeps playing and the video clock keeps
+    // advancing while the gpu-next vo re-initializes. During that window mpv
+    // reports core-idle=true, but that is NOT a buffering stall — surfacing
+    // it as isBuffering would flash the room-level spinner (black screen with
+    // a spinner) over a picture that is about to come back on its own. Hold
+    // the previous playing state across the reconfig and never report
+    // buffering because of it.
+    final playing = initialized &&
+        !_paused &&
+        !_pausedForCache &&
+        (!_coreIdle || _geometryReconfiguring);
     final buffering = initialized &&
         !_eofReached &&
+        !_geometryReconfiguring &&
         (_pausedForCache || (_coreIdle && !_paused));
     final previous = value;
     final next = previous.copyWith(
@@ -517,6 +615,8 @@ class MpvOhosVideoController extends VideoPlayerController {
   Future<void> dispose() async {
     Log.d('[mpv-ctrl] dispose gen=$_generation');
     _mpvDisposed = true;
+    _geometryDebounce?.cancel();
+    _geometryResumeTimer?.cancel();
     _fileLoadedWaiter = null;
     _eventSub?.cancel();
     _eventSub = null;

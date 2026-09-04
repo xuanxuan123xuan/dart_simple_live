@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -1110,12 +1109,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               ),
               iconButton(
                 key: volumeButtonKey,
-                tooltip: controller.ohosSystemMediaVolumePercent.value <= 0
-                    ? "恢复系统媒体音量"
-                    : "调节系统媒体音量",
+                tooltip: controller.mutedState.value ? "恢复声音" : "调节音量",
                 onPressed: () {
-                  if (controller.ohosSystemMediaVolumePercent.value <= 0) {
-                    unawaited(controller.toggleOhosSystemMediaMute());
+                  if (controller.mutedState.value) {
+                    controller.toggleMute();
                     return;
                   }
                   final volumeContext = volumeButtonKey.currentContext;
@@ -1126,7 +1123,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                     );
                   }
                 },
-                icon: controller.ohosSystemMediaVolumePercent.value <= 0
+                icon: controller.mutedState.value
                     ? Icons.volume_off
                     : Icons.volume_up,
               ),
@@ -1170,18 +1167,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         children: [
           ListTile(
             leading: Icon(
-              controller.ohosSystemMediaVolumePercent.value <= 0
-                  ? Icons.volume_off
-                  : Icons.volume_up,
+              controller.mutedState.value ? Icons.volume_off : Icons.volume_up,
             ),
-            title: Text(
-              controller.ohosSystemMediaVolumePercent.value <= 0
-                  ? "恢复系统媒体音量"
-                  : "系统媒体音量静音",
-            ),
+            title: Text(controller.mutedState.value ? "恢复声音" : "静音"),
             onTap: () {
               Get.back();
-              unawaited(controller.toggleOhosSystemMediaMute());
+              controller.toggleMute();
             },
           ),
           ListTile(

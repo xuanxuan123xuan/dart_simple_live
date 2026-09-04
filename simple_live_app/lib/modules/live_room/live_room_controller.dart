@@ -4244,7 +4244,8 @@ class LiveRoomController extends PlayerController
   bool get _shouldRefreshUrlsOnPlaybackRetry =>
       site.id == Constant.kHuya ||
       site.id == Constant.kDouyu ||
-      site.id == Constant.kKuaishou;
+      site.id == Constant.kKuaishou ||
+      site.id == Constant.kBiliBili;
 
   @override
   void mediaEnd() async {
@@ -4679,19 +4680,12 @@ class LiveRoomController extends PlayerController
     );
   }
 
-  Future<void> showVolumeSlider(
+  void showVolumeSlider(
     BuildContext targetContext, {
     bool keepAlive = false,
-  }) async {
+  }) {
     hidevolumeTimer?.cancel();
     pauseControlsAutoHide();
-    if (Utils.isOhos) {
-      await refreshOhosSystemMediaVolume();
-      if (!targetContext.mounted) {
-        resumeControlsAutoHide();
-        return;
-      }
-    }
     SmartDialog.showAttach(
       targetContext: targetContext,
       alignment: Alignment.topCenter,
@@ -4706,22 +4700,12 @@ class LiveRoomController extends PlayerController
           onExit: (_) => hideVolumeSlider(),
           child: Obx(
             () => ImmersiveVolumeSlider(
-              value: Utils.isOhos
-                  ? ohosSystemMediaVolumePercent.value
-                  : AppSettingsController.instance.playerVolume.value,
+              value: AppSettingsController.instance.playerVolume.value,
               onChanged: (newValue) {
-                if (Utils.isOhos) {
-                  unawaited(setOhosSystemMediaVolume(newValue));
-                } else {
-                  setSessionPlayerVolume(newValue, persist: true);
-                }
+                setSessionPlayerVolume(newValue, persist: true);
               },
               onMute: () {
-                if (Utils.isOhos) {
-                  unawaited(setOhosSystemMediaVolume(0));
-                } else {
-                  unawaited(toggleMute());
-                }
+                unawaited(toggleMute());
                 hideVolumeSlider();
               },
             ),
