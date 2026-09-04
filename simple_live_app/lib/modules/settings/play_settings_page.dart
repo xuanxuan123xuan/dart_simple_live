@@ -230,6 +230,23 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
           Padding(
             padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
             child: Text(
+              "关注列表长按预览",
+              style: Get.textTheme.titleSmall,
+            ),
+          ),
+          SettingsCard(
+            child: Obx(
+              () => SettingsSwitch(
+                title: "长按预览时播放声音",
+                subtitle: "关闭时预览小窗保持静音，不影响正在观看的直播",
+                value: controller.liveRoomHoldPreviewAudio.value,
+                onChanged: controller.setLiveRoomHoldPreviewAudio,
+              ),
+            ),
+          ),
+          Padding(
+            padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
+            child: Text(
               "清晰度",
               style: Get.textTheme.titleSmall,
             ),

@@ -643,6 +643,18 @@ class LiveRoomController extends PlayerController
   final PlayerMutationQueue _holdPreviewMutations = PlayerMutationQueue();
   final MultiRoomPlaybackRecoveryCoordinator _holdPreviewRecovery =
       const MultiRoomPlaybackRecoveryCoordinator();
+
+  // 关闭路径专用：预览播放器销毁对音频会话的中断是必现的，首轮直接
+  // pause/play 重建原生输出，并收紧验证窗口以缩短声音交接的无声期。
+  final MultiRoomPlaybackRecoveryCoordinator _holdPreviewCloseRecovery =
+      const MultiRoomPlaybackRecoveryCoordinator(
+        forceRestartOnFirstAttempt: true,
+        maxAttempts: 4,
+        confirmTimeout: Duration(milliseconds: 400),
+        retryDelay: Duration(milliseconds: 100),
+      );
+  final List<Timer> _holdPreviewAudioWatchdogTimers = [];
+  int _holdPreviewAudioWatchdogGeneration = 0;
   MultiRoomPlayerController? _holdPreviewPlayer;
   String? _holdPreviewPlayerTag;
   MultiRoomItem? _holdPreviewItem;
@@ -3074,6 +3086,7 @@ class LiveRoomController extends PlayerController
 
   @override
   Future<void> closePlayerResources() async {
+    _cancelHoldPreviewAudioWatchdog();
     if (!_roomDisposed) {
       await closeFollowHoldPreview();
     }
@@ -3083,6 +3096,7 @@ class LiveRoomController extends PlayerController
   @override
   void onClose() async {
     _roomDisposed = true;
+    _cancelHoldPreviewAudioWatchdog();
     await closeFollowHoldPreview();
     await _holdPreviewMutations.close();
     _hasActivePlaybackSession = false;
@@ -4124,6 +4138,9 @@ class LiveRoomController extends PlayerController
         _holdPreviewPhase != LiveRoomHoldPreviewPhase.closed) {
       await closeFollowHoldPreview();
     }
+    // 任何新的开流（换房/换线/刷新/升级重开）都会使旧的声音交接看门狗
+    // 失效，避免它对着尚未起播的新流误判并触发二次重开。
+    _cancelHoldPreviewAudioWatchdog();
     final previousSource = _selectedPlaybackSource;
     final reconnectStartedAt =
         reconnectReason == null && !refreshUrls ? null : DateTime.now();
@@ -5298,6 +5315,7 @@ class LiveRoomController extends PlayerController
     }
     final mainShouldPlay = player.state.playing || player.state.buffering;
     _holdPreviewMainWasPlaying = mainShouldPlay;
+    _cancelHoldPreviewAudioWatchdog();
 
     final revision = ++_holdPreviewRevision;
     _holdPreviewLingerTimer?.cancel();
@@ -5745,7 +5763,21 @@ class LiveRoomController extends PlayerController
         isPlayerClosing) {
       return;
     }
-    await _holdPreviewRecovery.recover(
+    final recoveryStartedAt = DateTime.now();
+    // 预览播放器销毁会释放共享 AVAudioSession，主播放器的 audiounit AO
+    // 必然被中断。mpv 复用 pause/play 之间的 AO 实例，必须先通过
+    // audio-device 弹跳重建音频输出，否则位置推进而声音永久丢失。
+    await rebuildAudioOutput();
+    final recovered = await _recoverMainPlaybackAfterHoldPreview();
+    Log.i(
+      "长按预览关闭恢复完成：playback=$recovered "
+      "耗时${DateTime.now().difference(recoveryStartedAt).inMilliseconds}ms",
+    );
+    await _verifyHoldPreviewAudioHandback();
+  }
+
+  Future<bool> _recoverMainPlaybackAfterHoldPreview() {
+    return _holdPreviewCloseRecovery.recover(
       targets: [
         MultiRoomPlaybackRecoveryTarget(
           roomKey: "main:${site.id}/$roomId",
@@ -5764,6 +5796,106 @@ class LiveRoomController extends PlayerController
         ),
       ],
       isCancelled: () => _roomDisposed || isBackground || isPlayerClosing,
+    );
+  }
+
+  /// 恢复后确认音频输出真的在产数据：不活就再弹跳一次，仍不行则升级为
+  /// 重开当前流（等价于用户手动刷新），避免预览结束后永久无声。
+  Future<void> _verifyHoldPreviewAudioHandback() async {
+    if (!Platform.isIOS ||
+        _roomDisposed ||
+        isBackground ||
+        isPlayerClosing) {
+      return;
+    }
+    var audioAlive = await waitUntilAudioOutputAlive();
+    if (!audioAlive && !_roomDisposed && !isPlayerClosing) {
+      Log.w("长按预览关闭后音频输出未恢复，再次执行 audio-device 弹跳");
+      await rebuildAudioOutput();
+      audioAlive = await waitUntilAudioOutputAlive();
+    }
+    if (!audioAlive && !_roomDisposed && !isPlayerClosing) {
+      Log.w("音频输出重建仍未恢复，升级为重开当前流");
+      _cancelHoldPreviewAudioWatchdog();
+      refreshRoom();
+      return;
+    }
+    // 幂等 play() 不会触发 playing 事件，显式刷新一次 iOS 纹理限幅，
+    // 避免纹理停在预览销毁前的状态。
+    refreshIosVideoOutputLimit(force: true);
+    _startHoldPreviewAudioWatchdog();
+  }
+
+  /// 预览关闭后的声音交接看门狗。iOS 音频会话释放/重建是异步的，中断
+  /// 可能晚于恢复窗口落地：+1s / +3s 两次采样，位置停滞走播放恢复，
+  /// 音频缺失走 audio-device 弹跳，仍不恢复则升级重开当前流。
+  void _startHoldPreviewAudioWatchdog() {
+    _cancelHoldPreviewAudioWatchdog();
+    if (!Platform.isIOS || _roomDisposed || isPlayerClosing) {
+      return;
+    }
+    final generation = _holdPreviewAudioWatchdogGeneration;
+    for (final delay in const [Duration(seconds: 1), Duration(seconds: 3)]) {
+      _holdPreviewAudioWatchdogTimers.add(
+        Timer(delay, () {
+          if (generation != _holdPreviewAudioWatchdogGeneration) {
+            return;
+          }
+          unawaited(_runHoldPreviewAudioWatchdogCheck());
+        }),
+      );
+    }
+  }
+
+  void _cancelHoldPreviewAudioWatchdog() {
+    _holdPreviewAudioWatchdogGeneration += 1;
+    for (final timer in _holdPreviewAudioWatchdogTimers) {
+      timer.cancel();
+    }
+    _holdPreviewAudioWatchdogTimers.clear();
+  }
+
+  Future<void> _runHoldPreviewAudioWatchdogCheck() async {
+    if (_roomDisposed || isBackground || isPlayerClosing) {
+      return;
+    }
+    final checkStartedAt = DateTime.now();
+    final advancing = await _waitUntilMainPlayerAdvances(
+      const Duration(milliseconds: 700),
+    );
+    if (_roomDisposed || isBackground || isPlayerClosing) {
+      return;
+    }
+    if (!advancing && _holdPreviewMainWasPlaying) {
+      Log.w("预览关闭看门狗：主播放器位置停滞，重新执行恢复");
+      await _recoverMainPlaybackAfterHoldPreview();
+      if (_roomDisposed || isBackground || isPlayerClosing) {
+        return;
+      }
+    }
+    final audioAlive = await waitUntilAudioOutputAlive(
+      timeout: const Duration(milliseconds: 800),
+      interval: const Duration(milliseconds: 200),
+    );
+    if (_roomDisposed || isBackground || isPlayerClosing) {
+      return;
+    }
+    if (!audioAlive) {
+      Log.w("预览关闭看门狗：音频输出未产数据，执行 audio-device 弹跳");
+      await rebuildAudioOutput();
+      final retried = await waitUntilAudioOutputAlive(
+        timeout: const Duration(milliseconds: 1200),
+      );
+      if (!retried && !_roomDisposed && !isPlayerClosing) {
+        Log.w("预览关闭看门狗：音频输出重建失败，升级为重开当前流");
+        _cancelHoldPreviewAudioWatchdog();
+        refreshRoom();
+        return;
+      }
+    }
+    Log.d(
+      "预览关闭看门狗采样完成：advancing=$advancing audio=$audioAlive "
+      "耗时${DateTime.now().difference(checkStartedAt).inMilliseconds}ms",
     );
   }
 

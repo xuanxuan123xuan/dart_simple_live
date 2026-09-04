@@ -1838,6 +1838,75 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
   }
 
+  /// 强制重建音频输出（audio-device 弹跳）。
+  ///
+  /// iOS 上销毁第二个 libmpv Player（如长按预览小窗）会释放共享
+  /// AVAudioSession，主播放器的 audiounit AO 随之中断。mpv 在 pause/play
+  /// 之间复用同一 AO 实例，因此位置能继续推进，但声音送往已死掉的音频
+  /// 单元。把 `audio-device` 切到 `no` 再切回 `auto` 可强制 mpv 重建 AO
+  /// 并重新激活音频会话，是 pause/play 无法替代的恢复手段。
+  Future<void> rebuildAudioOutput() async {
+    if (!Platform.isIOS || _playerClosing) {
+      return;
+    }
+    final startedAt = DateTime.now();
+    try {
+      AudioDevice? disabledDevice;
+      for (final device in player.state.audioDevices) {
+        if (device.name == 'no') {
+          disabledDevice = device;
+          break;
+        }
+      }
+      await player.setAudioDevice(
+        disabledDevice ?? const AudioDevice('no', ''),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await player.setAudioDevice(AudioDevice.auto());
+      Log.d(
+        "已重建音频输出（audio-device 弹跳，"
+        "耗时 ${DateTime.now().difference(startedAt).inMilliseconds}ms）",
+      );
+    } catch (e, stackTrace) {
+      Log.e("重建音频输出失败: $e", stackTrace);
+    }
+  }
+
+  /// 轮询 mpv `audio-bitrate`，确认音频输出确实在产数据。
+  ///
+  /// `state.playing` 与位置推进都证明不了音频单元存活——只有 AO 真正
+  /// 输出数据时 `audio-bitrate` 才会大于 0。
+  Future<bool> waitUntilAudioOutputAlive({
+    Duration timeout = const Duration(milliseconds: 1500),
+    Duration interval = const Duration(milliseconds: 250),
+  }) async {
+    if (!Platform.isIOS) {
+      return true;
+    }
+    final platform = player.platform;
+    if (platform is! NativePlayer) {
+      return true;
+    }
+    // NativePlayer 的 web stub 缺少 getProperty，保持动态调用。
+    final dynamic native = platform;
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      try {
+        final value = await native.getProperty(mpvAudioBitrateProperty);
+        final bitrate = value is num
+            ? value.toDouble()
+            : double.tryParse(value?.toString() ?? '');
+        if (bitrate != null && bitrate > 0) {
+          return true;
+        }
+      } catch (_) {
+        // 属性读取失败按未就绪处理，重试直到超时。
+      }
+      await Future<void>.delayed(interval);
+    }
+    return false;
+  }
+
   Future<void> adjustDesktopPlayerVolumeByShortcut(int delta) async {
     if (delta == 0 ||
         !(Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
