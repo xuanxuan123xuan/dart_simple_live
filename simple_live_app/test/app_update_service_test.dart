@@ -97,6 +97,58 @@ void main() {
         isFalse,
       );
     });
+
+    test('forces stable channel on OHOS regardless of stored preference', () {
+      // 鸿蒙上没有 dev 通道，即使本地存储残留 dev 也必须归一到 stable，
+      // 否则会按 dev 匹配（dev 恒为 null）导致「没有找到 开发版 发布」、
+      // 下载页兜底跳 GitHub。
+      expect(
+        AppUpdateService.resolvePreferredChannel(
+          isOhos: true,
+          storedChannelValue: 'dev',
+        ),
+        AppUpdateChannel.stable,
+      );
+      expect(
+        AppUpdateService.resolvePreferredChannel(
+          isOhos: true,
+          storedChannelValue: 'stable',
+        ),
+        AppUpdateChannel.stable,
+      );
+      expect(
+        AppUpdateService.resolvePreferredChannel(
+          isOhos: true,
+          storedChannelValue: '',
+        ),
+        AppUpdateChannel.stable,
+      );
+    });
+
+    test('honors stored channel preference on non-OHOS platforms', () {
+      expect(
+        AppUpdateService.resolvePreferredChannel(
+          isOhos: false,
+          storedChannelValue: 'dev',
+        ),
+        AppUpdateChannel.dev,
+      );
+      expect(
+        AppUpdateService.resolvePreferredChannel(
+          isOhos: false,
+          storedChannelValue: 'stable',
+        ),
+        AppUpdateChannel.stable,
+      );
+      // 未知值回退到 stable。
+      expect(
+        AppUpdateService.resolvePreferredChannel(
+          isOhos: false,
+          storedChannelValue: 'garbage',
+        ),
+        AppUpdateChannel.stable,
+      );
+    });
   });
 }
 

@@ -68,11 +68,31 @@ class AppUpdateService {
   String get currentVersion => GeneratedAppVersion.fullVersion;
 
   AppUpdateChannel get preferredChannel {
-    final value = LocalStorageService.instance.getValue<String>(
-      _preferredChannelKey,
-      defaultChannel.label,
+    return resolvePreferredChannel(
+      isOhos: Utils.isOhos,
+      storedChannelValue: LocalStorageService.instance.getValue<String>(
+        _preferredChannelKey,
+        defaultChannel.label,
+      ),
     );
-    return AppUpdateChannel.fromValue(value);
+  }
+
+  /// 归一化首选更新通道。
+  ///
+  /// OHOS 只有 HAP Store 单一 stable 通道，不区分 stable/dev；用户可能在
+  /// 其它平台把首选通道切成了 dev，升级到鸿蒙后该值仍残留在本地存储里，
+  /// 若沿用会导致按 dev 匹配（dev 恒为 null）→ 检查弹「没有找到 开发版 发布」、
+  /// 下载页兜底跳 GitHub。因此鸿蒙端一律返回 stable。
+  ///
+  /// 抽成静态方法以便纯函数测试，不依赖真机平台。
+  static AppUpdateChannel resolvePreferredChannel({
+    required bool isOhos,
+    required String storedChannelValue,
+  }) {
+    if (isOhos) {
+      return AppUpdateChannel.stable;
+    }
+    return AppUpdateChannel.fromValue(storedChannelValue);
   }
 
   Future<void> setPreferredChannel(AppUpdateChannel channel) {
