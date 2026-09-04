@@ -47,6 +47,11 @@ class MpvOhosVideoController extends VideoPlayerController {
   Duration? _demuxerCacheTime;
 
   bool _visualReady = false;
+  // Set once the native first-frame event has arrived for the current
+  // stream, distinct from _visualReady: the frame may have been rendered
+  // into a buffer whose geometry is still pending reconfiguration, so we
+  // keep the reveal gated on _visualReady (see _tryReveal).
+  bool _firstFrameArrived = false;
   bool _fileLoaded = false;
   Completer<void>? _fileLoadedWaiter;
 
@@ -163,6 +168,7 @@ class MpvOhosVideoController extends VideoPlayerController {
     // new stream really presents.
     final wasVisualReady = _visualReady;
     _visualReady = false;
+    _firstFrameArrived = false;
     _fileLoaded = false;
     _eofReached = false;
     _timePosSeconds = null;
@@ -375,6 +381,9 @@ class MpvOhosVideoController extends VideoPlayerController {
           dw / dh < 1 ? const Size(1080, 1920) : const Size(1920, 1080);
       if (currentTarget == _appliedSurfaceSize) {
         Log.i('[mpv-ctrl] geometry reconfig skipped (settled)');
+        // The buffer already matches the stream, so the pending gate is
+        // gone and the first frame (if it arrived) can be revealed now.
+        _tryReveal();
         return;
       }
     }
@@ -405,6 +414,9 @@ class MpvOhosVideoController extends VideoPlayerController {
         _lastGeometryReconfigCompletedAt = DateTime.now();
         Log.i(
             '[mpv-ctrl] geometry reconfig done -> ${target.width.toInt()}x${target.height.toInt()}');
+        // The buffer now matches the stream; reveal the texture if the
+        // first frame had already arrived while we were reconfiguring.
+        _tryReveal();
       }
     } on PlatformException {
       // Player gone mid-sequence.
@@ -413,6 +425,7 @@ class MpvOhosVideoController extends VideoPlayerController {
       _geometryResumeTimer = Timer(const Duration(seconds: 5), () {
         if (_geometryReconfiguring && !_mpvDisposed) {
           _geometryReconfiguring = false;
+          _tryReveal();
           notifyListeners();
         }
       });
@@ -462,8 +475,10 @@ class MpvOhosVideoController extends VideoPlayerController {
         _coreIdle = _containsYes(valueText);
         if (_geometryReconfiguring && !_coreIdle) {
           // Playback resumed after a buffer reconfig: end the spinner
-          // suppression exactly when frames flow again.
+          // suppression exactly when frames flow again, and reveal the
+          // texture if the first frame had already arrived.
           _geometryReconfiguring = false;
+          _tryReveal();
         }
         break;
       case 'paused-for-cache':
@@ -577,7 +592,32 @@ class MpvOhosVideoController extends VideoPlayerController {
   }
 
   void _markVisualReady() {
+    if (_mpvDisposed || _firstFrameArrived) {
+      return;
+    }
+    _firstFrameArrived = true;
+    // The first-frame watchdog stops on the decoded frame, even if the frame
+    // was rendered into a buffer whose geometry still needs reconfiguring.
+    onFirstFrameDecoded?.call();
+    _tryReveal();
+  }
+
+  /// Reveals the texture (sets _visualReady) once it is safe: the first
+  /// frame has arrived AND no geometry reconfig is pending or in flight.
+  /// Without this gate, the very first frame of a room whose direction
+  /// differs from the previous room renders into the old-direction buffer
+  /// (one visibly squashed frame), and the following vo rebuild blanks the
+  /// surface for a frame — both would flash behind a prematurely-hidden
+  /// spinner. Delaying the reveal keeps the spinner up until the buffer
+  /// matches the stream, hiding the transition entirely.
+  void _tryReveal() {
     if (_mpvDisposed || _visualReady) {
+      return;
+    }
+    if (!_firstFrameArrived) {
+      return;
+    }
+    if (_geometryReconfiguring || _pendingGeometry != null) {
       return;
     }
     _visualReady = true;
@@ -586,7 +626,6 @@ class MpvOhosVideoController extends VideoPlayerController {
     // replace the loading surface on the next frame without rebuilding for
     // every time-pos heartbeat.
     notifyListeners();
-    onFirstFrameDecoded?.call();
   }
 
   @override
