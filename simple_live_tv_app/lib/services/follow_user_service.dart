@@ -1217,7 +1217,10 @@ class FollowUserService extends BasePageController<FollowUser> {
         _lastRefreshCompletedAt = DateTime.now();
         updating.value = false;
         _finishRefreshProgressLifecycle(generation);
-        _persistStatusSnapshot();
+        // 仅全量刷新范围才落盘快照；单页刷新不能代表全部关注的状态。
+        if (resolvedScope.includeAllNormals) {
+          _persistStatusSnapshot();
+        }
       }
     }
   }
