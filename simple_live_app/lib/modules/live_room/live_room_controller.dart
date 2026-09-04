@@ -29,6 +29,7 @@ import 'package:simple_live_app/modules/live_room/player/ohos_line_failover_poli
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
+import 'package:simple_live_app/modules/live_room/live_room_danmaku_status.dart';
 import 'package:simple_live_app/modules/live_room/live_room_hold_preview.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
@@ -895,6 +896,17 @@ class LiveRoomController extends PlayerController
     }
     return '';
   }
+
+  /// 快手弹幕需要可用 Cookie；未配置或当前会话不可用时视为未登录。
+  ///
+  /// 无 Cookie（匿名模式）时 `KuaishouSite.getDanmaku()` 返回空的
+  /// `LiveDanmaku`、详情 `danmakuData` 为 null，`start(null)` 是 no-op，
+  /// 否则会一直卡在"正在连接弹幕服务器"。检测到无可用 Cookie 就改为
+  /// 直接提示未登录，不发起连接。
+  bool get _kuaishouDanmakuCookieReady =>
+      site.id != Constant.kKuaishou ||
+      !Get.isRegistered<KuaishouAccountService>() ||
+      KuaishouAccountService.instance.activeSession != null;
 
   // 开播时长展示状态
   var liveDuration = "00:00:00".obs;
@@ -3337,12 +3349,20 @@ class LiveRoomController extends PlayerController
       if (detail.value!.isRecord) {
         addSysMsg("当前主播未开播，正在转播录像");
       }
-      addSysMsg("正在连接弹幕服务器");
+      final kuaishouDanmakuReady = _kuaishouDanmakuCookieReady;
+      for (final message in liveRoomDanmakuConnectMessages(
+        isKuaishou: site.id == Constant.kKuaishou,
+        hasKuaishouCookie: kuaishouDanmakuReady,
+      )) {
+        addSysMsg(message);
+      }
       if (!_isCurrentLoad(loadGeneration)) {
         return;
       }
       initDanmau();
-      unawaited(liveDanmaku.start(detail.value?.danmakuData));
+      if (kuaishouDanmakuReady) {
+        unawaited(liveDanmaku.start(detail.value?.danmakuData));
+      }
       startLiveDurationTimer();
     } catch (e, stackTrace) {
       Log.logPrint(e);
