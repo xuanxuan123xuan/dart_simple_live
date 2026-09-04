@@ -2310,6 +2310,11 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         return true;
       }
       _ensureOhosPipStatusListener();
+      final capabilities = await OhosPipService.instance.getCapabilities();
+      if (!capabilities.pipAutoOnLeaveSupported ||
+          !await OhosPipService.instance.isAvailable()) {
+        return false;
+      }
       final size = _resolveOhosPipSize();
       try {
         final configured = await OhosPipService.instance.prepareAuto(
@@ -2352,17 +2357,25 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   Future enablePIP() async {
     if (Utils.isOhos) {
       _ensureOhosPipStatusListener();
-      if (!await OhosPipService.instance.isAvailable()) {
+      final capabilities = await OhosPipService.instance.getCapabilities();
+      if (!capabilities.pipAvailable) {
         SmartDialog.showToast("设备不支持小窗播放");
+        return;
+      }
+      if (!await OhosPipService.instance.isAvailable()) {
+        SmartDialog.showToast("播放器尚未准备好，请稍后重试");
         return;
       }
       await cancelAutoPipOnLeave();
       final size = _resolveOhosPipSize();
       try {
-        await OhosPipService.instance.enter(
+        final entered = await OhosPipService.instance.enter(
           width: size.width,
           height: size.height,
         );
+        if (!entered) {
+          SmartDialog.showToast("开启小窗失败");
+        }
       } catch (e) {
         Log.d("开启鸿蒙小窗失败: $e");
         SmartDialog.showToast("开启小窗失败");

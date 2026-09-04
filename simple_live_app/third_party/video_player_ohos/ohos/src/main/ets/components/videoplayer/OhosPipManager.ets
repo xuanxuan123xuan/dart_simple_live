@@ -9,8 +9,7 @@ import {
 } from '@ohos/flutter_ohos';
 import common from '@ohos.app.ability.common';
 import PiPWindow from '@ohos.PiPWindow';
-import { VideoPlayer } from './VideoPlayer';
-import { PipSurfaceRegistry } from './PipSurfaceRegistry';
+import { PipPlaybackTarget, PipSurfaceRegistry } from './PipSurfaceRegistry';
 
 const TAG: string = 'OhosPipManager';
 const CHANNEL_NAME: string = 'simple_live/ohos_pip';
@@ -20,8 +19,7 @@ export class OhosPipManager implements MethodCallHandler {
   private context: common.UIAbilityContext;
   private channel?: MethodChannel;
   private controller?: PiPWindow.PiPController;
-  private activePlayer?: VideoPlayer;
-  private controllerPlayer?: VideoPlayer;
+  private controllerPlayer?: PipPlaybackTarget;
   private controllerSurface?: XComponentController;
   private pipActive: boolean = false;
   private pipStarting: boolean = false;
@@ -37,14 +35,12 @@ export class OhosPipManager implements MethodCallHandler {
     this.channel.setMethodCallHandler(this);
   }
 
-  setActivePlayer(player: VideoPlayer): void {
-    this.activePlayer = player;
+  setActivePlayer(player: PipPlaybackTarget): void {
+    PipSurfaceRegistry.registerPlaybackTarget(player);
   }
 
-  clearPlayer(player: VideoPlayer): void {
-    if (this.activePlayer === player) {
-      this.activePlayer = undefined;
-    }
+  clearPlayer(player: PipPlaybackTarget): void {
+    PipSurfaceRegistry.unregisterPlaybackTarget(player);
     if (this.controllerPlayer === player) {
       this.stopAndDispose().catch((error: Error) => {
         Log.e(TAG, `Failed to stop PiP while disposing player: ${error.message}`);
@@ -52,7 +48,7 @@ export class OhosPipManager implements MethodCallHandler {
     }
   }
 
-  syncPlaybackState(player: VideoPlayer): void {
+  syncPlaybackState(player: PipPlaybackTarget): void {
     if (this.controllerPlayer !== player || this.controller === undefined) {
       return;
     }
@@ -72,7 +68,6 @@ export class OhosPipManager implements MethodCallHandler {
       Log.e(TAG, `Failed to stop PiP during detach: ${error.message}`);
     });
     this.channel = undefined;
-    this.activePlayer = undefined;
   }
 
   onMethodCall(call: MethodCall, result: MethodResult): void {
@@ -105,7 +100,7 @@ export class OhosPipManager implements MethodCallHandler {
   private isAvailable(): boolean {
     return PiPWindow.isPiPEnabled() &&
       PipSurfaceRegistry.getController() !== undefined &&
-      this.activePlayer !== undefined;
+      PipSurfaceRegistry.getPlaybackTarget() !== undefined;
   }
 
   private readDimension(call: MethodCall, name: string, fallback: number): number {
@@ -175,7 +170,7 @@ export class OhosPipManager implements MethodCallHandler {
     if (!PiPWindow.isPiPEnabled()) {
       throw new Error('Picture-in-picture is disabled on this device.');
     }
-    const player = this.activePlayer;
+    const player = PipSurfaceRegistry.getPlaybackTarget();
     const surfaceController = PipSurfaceRegistry.getController();
     if (player === undefined || surfaceController === undefined) {
       throw new Error('Picture-in-picture video surface is not ready.');
@@ -218,7 +213,7 @@ export class OhosPipManager implements MethodCallHandler {
 
   private onStateChange(
     controller: PiPWindow.PiPController,
-    player: VideoPlayer,
+    player: PipPlaybackTarget,
     surfaceController: XComponentController,
     state: PiPWindow.PiPState,
     reason: string

@@ -10,6 +10,7 @@ import {
 } from '@ohos/flutter_ohos';
 import { EventSink, StreamHandler } from '@ohos/flutter_ohos/src/main/ets/plugin/common/EventChannel';
 import { TextureRegistry } from '@ohos/flutter_ohos/src/main/ets/view/TextureRegistry';
+import { PipPlaybackTarget, PipSurfaceRegistry } from 'video_player_ohos';
 import mpvNapi from 'libmpv_napi.so';
 
 const TAG = 'OhosMpvPlugin';
@@ -48,7 +49,7 @@ class MpvStreamHandler implements StreamHandler {
   }
 }
 
-export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler {
+export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler, PipPlaybackTarget {
   private channel?: MethodChannel;
   private eventChannel?: EventChannel;
   private textureRegistry?: TextureRegistry;
@@ -71,6 +72,7 @@ export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler {
   }
 
   onDetachedFromEngine(binding: FlutterPluginBinding): void {
+    PipSurfaceRegistry.unregisterPlaybackTarget(this);
     this.channel?.setMethodCallHandler(null);
     this.channel = undefined;
     this.eventChannel?.setStreamHandler(null);
@@ -113,6 +115,7 @@ export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler {
         const matched = generation === this.createSeq;
         hilog.info(0x3200, TAG, 'dispose gen=' + generation + ' seq=' + this.createSeq + ' stop=' + matched);
         if (matched) {
+          PipSurfaceRegistry.unregisterPlaybackTarget(this);
           mpvNapi.commandString('stop');
         }
         result.success(null);
@@ -131,6 +134,7 @@ export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler {
     }
     if (this.textureId >= 0) {
       this.createSeq++;
+      PipSurfaceRegistry.registerPlaybackTarget(this);
       result.success({
         'textureId': this.textureId,
         'surfaceId': this.cachedSurfaceId,
@@ -146,6 +150,7 @@ export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler {
     mpvNapi.init(this.cachedSurfaceId, 1920, 1080);
     hilog.info(0x3200, TAG, 'create: after napi init');
     this.createSeq++;
+    PipSurfaceRegistry.registerPlaybackTarget(this);
     result.success({
       'textureId': this.textureId,
       'surfaceId': this.cachedSurfaceId,
@@ -166,5 +171,31 @@ export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler {
     }
     mpvNapi.loadFile(url, joined, this.createSeq);
     result.success(null);
+  }
+
+  play(): void {
+    mpvNapi.setPropertyString('pause', 'no');
+  }
+
+  pause(): void {
+    mpvNapi.setPropertyString('pause', 'yes');
+  }
+
+  isPlaying(): boolean {
+    return mpvNapi.getPropertyString('pause') !== 'yes';
+  }
+
+  useOutputSurface(surfaceId: string): void {
+    if (surfaceId.length === 0) {
+      throw new Error('Picture-in-picture output surface is unavailable.');
+    }
+    mpvNapi.switchSurface(surfaceId, this.createSeq);
+  }
+
+  restoreOutputSurface(): void {
+    if (this.cachedSurfaceId.length === 0) {
+      return;
+    }
+    mpvNapi.switchSurface(this.cachedSurfaceId, this.createSeq);
   }
 }

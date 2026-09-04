@@ -49,6 +49,7 @@ enum class CommandType {
     SET_PROPERTY,
     COMMAND,
     SET_GEOMETRY,
+    SWITCH_SURFACE,
 };
 
 struct MpvCommand {
@@ -58,6 +59,7 @@ struct MpvCommand {
     std::string url;
     std::string headers;
     std::string command;
+    std::string surfaceId;
     int32_t generation = 0;
     int32_t width = 0;
     int32_t height = 0;
@@ -73,6 +75,7 @@ std::thread g_commandThread;
 std::mutex g_generationMutex;
 std::deque<int32_t> g_pendingGenerations;
 std::atomic<int32_t> g_activeGeneration{0};
+std::atomic<int32_t> g_latestRequestedGeneration{0};
 std::atomic<bool> g_activePlayback{false};
 std::atomic<int32_t> g_videoGeometryGeneration{-1};
 std::atomic<int32_t> g_framePresentedGeneration{-1};
@@ -199,6 +202,64 @@ void ExecuteCommand(const MpvCommand &command) {
                          code);
             break;
         }
+        case CommandType::SWITCH_SURFACE: {
+            if (command.generation <= 0 ||
+                command.generation != g_latestRequestedGeneration.load()) {
+                OH_LOG_Print(static_cast<LogType>(LOG_APP), LOG_WARN,
+                             LOG_DOMAIN, LOG_TAG,
+                             "switchSurface skipped stale gen=%{public}d latest=%{public}d",
+                             command.generation,
+                             g_latestRequestedGeneration.load());
+                break;
+            }
+
+            const uint64_t sid = strtoull(command.surfaceId.c_str(), nullptr, 10);
+            OHNativeWindow *nextWindow = nullptr;
+            const int32_t createCode =
+                OH_NativeWindow_CreateNativeWindowFromSurfaceId(sid, &nextWindow);
+            if (createCode != 0 || nextWindow == nullptr) {
+                OH_LOG_Print(static_cast<LogType>(LOG_APP), LOG_ERROR,
+                             LOG_DOMAIN, LOG_TAG,
+                             "switchSurface create failed gen=%{public}d code=%{public}d",
+                             command.generation, createCode);
+                break;
+            }
+
+            const int32_t width = g_geoW.load() >= 16 ? g_geoW.load() : 1920;
+            const int32_t height = g_geoH.load() >= 16 ? g_geoH.load() : 1080;
+            const int32_t geometryCode = OH_NativeWindow_NativeWindowHandleOpt(
+                nextWindow, SET_BUFFER_GEOMETRY, width, height);
+            if (geometryCode != 0) {
+                OH_NativeWindow_DestroyNativeWindow(nextWindow);
+                OH_LOG_Print(static_cast<LogType>(LOG_APP), LOG_ERROR,
+                             LOG_DOMAIN, LOG_TAG,
+                             "switchSurface geometry failed gen=%{public}d code=%{public}d",
+                             command.generation, geometryCode);
+                break;
+            }
+
+            char *hwdec = mpv_get_property_string(mpv, "hwdec");
+            mpv_set_property_string(mpv, "vo", "null");
+            mpv_set_property_string(mpv, "wid", command.surfaceId.c_str());
+            char surfaceSize[64] = {0};
+            snprintf(surfaceSize, sizeof(surfaceSize), "%dx%d", width, height);
+            mpv_set_property_string(mpv, "ohos-surface-size", surfaceSize);
+            if (hwdec != nullptr && hwdec[0] != '\0') {
+                mpv_set_property_string(mpv, "hwdec", hwdec);
+            }
+            mpv_free(hwdec);
+            mpv_set_property_string(mpv, "vo", "gpu-next");
+
+            OHNativeWindow *previousWindow = g_nativeWindow.exchange(nextWindow);
+            if (previousWindow != nullptr) {
+                OH_NativeWindow_DestroyNativeWindow(previousWindow);
+            }
+            OH_LOG_Print(static_cast<LogType>(LOG_APP), LOG_INFO,
+                         LOG_DOMAIN, LOG_TAG,
+                         "switchSurface applied gen=%{public}d size=%{public}dx%{public}d",
+                         command.generation, width, height);
+            break;
+        }
     }
 }
 
@@ -257,6 +318,29 @@ napi_value SetGeometry(napi_env env, napi_callback_info info) {
     command.type = CommandType::SET_GEOMETRY;
     command.width = static_cast<int32_t>(w);
     command.height = static_cast<int32_t>(h);
+    QueueCommand(std::move(command));
+    return nullptr;
+}
+
+napi_value SwitchSurface(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2] = {nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 2 || g_mpv.load() == nullptr) {
+        return nullptr;
+    }
+    char surfaceId[128] = {0};
+    size_t len = 0;
+    napi_get_value_string_utf8(env, args[0], surfaceId, sizeof(surfaceId), &len);
+    double generationValue = 0;
+    napi_get_value_double(env, args[1], &generationValue);
+    if (surfaceId[0] == '\0' || generationValue <= 0) {
+        return nullptr;
+    }
+    MpvCommand command;
+    command.type = CommandType::SWITCH_SURFACE;
+    command.surfaceId = surfaceId;
+    command.generation = static_cast<int32_t>(generationValue);
     QueueCommand(std::move(command));
     return nullptr;
 }
@@ -567,6 +651,7 @@ napi_value Init(napi_env env, napi_callback_info info) {
 
     ClearPendingGenerations();
     g_activeGeneration.store(0);
+    g_latestRequestedGeneration.store(0);
     g_activePlayback.store(false);
     g_videoGeometryGeneration.store(-1);
     g_framePresentedGeneration.store(-1);
@@ -610,6 +695,7 @@ napi_value LoadFile(napi_env env, napi_callback_info info) {
     command.url = url;
     command.headers = std::move(headersValue);
     command.generation = generation;
+    g_latestRequestedGeneration.store(generation);
     QueueCommand(std::move(command));
     return nullptr;
 }
@@ -694,6 +780,7 @@ napi_value Destroy(napi_env env, napi_callback_info info) {
     }
     ClearPendingGenerations();
     g_activeGeneration.store(0);
+    g_latestRequestedGeneration.store(0);
     g_activePlayback.store(false);
     g_videoGeometryGeneration.store(-1);
     g_framePresentedGeneration.store(-1);
@@ -731,6 +818,7 @@ napi_value InitModule(napi_env env, napi_value exports) {
         {"getPropertyString", nullptr, GetPropertyString, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"commandString", nullptr, CommandString, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setGeometry", nullptr, SetGeometry, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"switchSurface", nullptr, SwitchSurface, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getSurfaceSize", nullptr, GetSurfaceSize, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"destroy", nullptr, Destroy, nullptr, nullptr, nullptr, napi_default, nullptr},
     };

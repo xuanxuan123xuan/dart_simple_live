@@ -114,6 +114,56 @@ void main() {
     expect(await service.isAvailable(), isFalse);
   });
 
+  test('supported device can report that the player is not ready', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'isAvailable');
+      return false;
+    });
+
+    expect((await service.getCapabilities()).pipAvailable, isTrue);
+    expect(await service.isAvailable(), isFalse);
+  });
+
+  test('libmpv registers as the PiP target and switches surfaces', () {
+    final registry = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/PipSurfaceRegistry.ets',
+    ).readAsStringSync();
+    final manager = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/OhosPipManager.ets',
+    ).readAsStringSync();
+    final plugin = File(
+      'ohos/entry/src/main/ets/plugins/OhosMpvPlugin.ets',
+    ).readAsStringSync();
+    final nativeBridge = File(
+      'ohos/entry/src/main/cpp/mpv_napi.cpp',
+    ).readAsStringSync();
+
+    expect(registry, contains('interface PipPlaybackTarget'));
+    expect(registry, contains('registerPlaybackTarget'));
+    expect(manager, contains('PipSurfaceRegistry.getPlaybackTarget()'));
+    expect(plugin, contains('implements FlutterPlugin, MethodCallHandler, PipPlaybackTarget'));
+    expect(plugin, contains('PipSurfaceRegistry.registerPlaybackTarget(this)'));
+    expect(plugin, contains('mpvNapi.switchSurface(surfaceId, this.createSeq)'));
+    expect(plugin, contains('mpvNapi.switchSurface(this.cachedSurfaceId, this.createSeq)'));
+    expect(nativeBridge, contains('CommandType::SWITCH_SURFACE'));
+    expect(nativeBridge, contains('command.generation != g_latestRequestedGeneration.load()'));
+    expect(nativeBridge, contains('mpv_set_property_string(mpv, "vo", "null")'));
+    expect(nativeBridge, contains('mpv_set_property_string(mpv, "wid", command.surfaceId.c_str())'));
+    expect(nativeBridge, contains('mpv_set_property_string(mpv, "vo", "gpu-next")'));
+  });
+
+  test('manual PiP distinguishes device support from player readiness', () {
+    final controller = File(
+      'lib/modules/live_room/player/player_controller.dart',
+    ).readAsStringSync();
+
+    expect(controller, contains('if (!capabilities.pipAvailable)'));
+    expect(controller, contains('设备不支持小窗播放'));
+    expect(controller, contains('播放器尚未准备好，请稍后重试'));
+  });
+
   test('capabilities are cached and normalized', () async {
     var calls = 0;
     messenger.setMockMethodCallHandler(capabilitiesChannel, (call) async {
