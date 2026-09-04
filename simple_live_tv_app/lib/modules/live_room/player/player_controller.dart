@@ -28,11 +28,27 @@ mixin PlayerMixin {
     ),
   );
 
-  /// 视频控制器
-  late final videoController = VideoController(
-    player,
-    configuration: MpvOptionsService.videoControllerConfiguration(),
-  );
+  VideoController? _videoController;
+
+  /// 渲染降级重建次数，页面据此重建 Video 组件
+  final playerRenderGeneration = 0.obs;
+
+  /// 视频控制器（惰性创建；渲染降级后可重建）
+  VideoController get videoController =>
+      _videoController ??= VideoController(
+        player,
+        configuration: MpvOptionsService.videoControllerConfiguration(),
+      );
+
+  /// 渲染降级档位变更后重建视频控制器与 Video 组件。
+  Future<void> rebuildVideoControllerForRenderStage() async {
+    _videoController = VideoController(
+      player,
+      configuration: MpvOptionsService.videoControllerConfiguration(),
+    );
+    globalPlayerKey = GlobalKey<VideoState>();
+    playerRenderGeneration.value++;
+  }
 
   Future<void> initializePlayer() async {
     await MpvOptionsService.applyToPlayer(player);
@@ -223,6 +239,10 @@ class PlayerController extends BaseController
   StreamSubscription? _heightSubscription;
   StreamSubscription? _logSubscription;
   Timer? _playbackStallWatchdogTimer;
+  Timer? _startupVideoWatchdog;
+  int _startupWatchdogGeneration = -1;
+  bool _renderFallbackReopening = false;
+  static const Duration _startupVideoTimeout = Duration(seconds: 8);
   final PlaybackStallTracker _playbackStallTracker = PlaybackStallTracker();
   int playbackGeneration = 0;
   int _playbackDiagnosticsLoggedGeneration = -1;
@@ -302,7 +322,80 @@ class PlayerController extends BaseController
 
   void beginPlaybackGeneration() {
     playbackGeneration += 1;
+    _armStartupVideoWatchdog();
   }
+
+  /// 起播看门狗：仅监测"从未出画面"的场景；播中卡顿由
+  /// [PlaybackStallTracker] 负责。
+  void _armStartupVideoWatchdog() {
+    _startupVideoWatchdog?.cancel();
+    _startupWatchdogGeneration = playbackGeneration;
+    if (!Platform.isAndroid) {
+      return;
+    }
+    _startupVideoWatchdog = Timer(
+      _startupVideoTimeout,
+      () => unawaited(_handleStartupVideoWatchdog()),
+    );
+  }
+
+  Future<void> _handleStartupVideoWatchdog() async {
+    if (_startupWatchdogGeneration != playbackGeneration) return;
+    if ((player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0) {
+      return;
+    }
+    if (player.platform is NativePlayer) {
+      final voConfigured = await _readVoConfigured();
+      if (_startupWatchdogGeneration != playbackGeneration) return;
+      // vo 已配置但从未上报尺寸：交给卡顿看门狗，不做渲染降级。
+      if (voConfigured) return;
+    }
+    final settings = AppSettingsController.instance;
+    final currentStage = settings.renderFallbackStage.value;
+    final nextStage = MpvOptionsService.nextRenderFallbackStage(currentStage);
+    if (nextStage < 0) {
+      Log.w("起播看门狗：所有渲染降级档位均未出画面，恢复默认渲染配置");
+      settings.resetRenderFallbackStage();
+      return;
+    }
+    Log.w(
+      "起播 ${_startupVideoTimeout.inSeconds}s 未获得画面，"
+      "渲染降级：${MpvOptionsService.renderStageLabels[currentStage] ?? currentStage}"
+      " → ${MpvOptionsService.renderStageLabels[nextStage] ?? nextStage}",
+    );
+    settings.setRenderFallbackStage(nextStage);
+    await _reopenWithRenderStage(nextStage);
+  }
+
+  Future<bool> _readVoConfigured() async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) return true;
+    try {
+      final value = await platform.getProperty('vo-configured');
+      return value.trim().toLowerCase() == 'yes';
+    } catch (e) {
+      Log.d("读取 mpv 属性 vo-configured 失败: $e");
+      return true;
+    }
+  }
+
+  Future<void> _reopenWithRenderStage(int stage) async {
+    if (_renderFallbackReopening) return;
+    _renderFallbackReopening = true;
+    try {
+      await rebuildVideoControllerForRenderStage();
+      if (_startupWatchdogGeneration != playbackGeneration) return;
+      Log.i("渲染降级：应用档位 $stage 后重新打开播放流");
+      await reopenPlaybackForRenderFallback();
+    } catch (e, stackTrace) {
+      Log.e("渲染降级重开播放流失败: $e", stackTrace);
+    } finally {
+      _renderFallbackReopening = false;
+    }
+  }
+
+  /// 渲染降级后需要重开播放流；由具体房间控制器覆盖实现。
+  Future<void> reopenPlaybackForRenderFallback() async {}
 
   void _maybeLogPlaybackDiagnostics() {
     final generation = playbackGeneration;
@@ -370,6 +463,8 @@ class PlayerController extends BaseController
     _logSubscription?.cancel();
     _playbackStallWatchdogTimer?.cancel();
     _playbackStallWatchdogTimer = null;
+    _startupVideoWatchdog?.cancel();
+    _startupVideoWatchdog = null;
     _playbackStallTracker.reset();
   }
 

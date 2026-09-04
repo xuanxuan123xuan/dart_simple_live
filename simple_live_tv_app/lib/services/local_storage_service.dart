@@ -131,6 +131,9 @@ class LocalStorageService extends GetxService {
   static const String kAudioOutputDriver = "AudioOutputDriver";
   static const String kMpvAdvancedOptions = "MpvAdvancedOptions";
 
+  /// Android 起播渲染降级档位（自动探测结果）
+  static const String kRenderFallbackStage = "RenderFallbackStage";
+
   /// 自动全屏
   static const String kAutoFullScreen = "AutoFullScreen";
 

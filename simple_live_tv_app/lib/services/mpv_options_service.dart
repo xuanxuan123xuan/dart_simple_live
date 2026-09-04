@@ -19,6 +19,62 @@ class MpvOptionsService {
     "quality": "高画质",
   };
 
+  /// Android 起播渲染降级档位（设备相关兼容策略）。
+  /// * [renderStageDefault]：跟随用户配置
+  /// * [renderStageMediacodecEmbed]：mediacodec_embed 直挂 Surface + 硬解
+  /// * [renderStageSoftwareDecode]：gpu 输出 + 软件解码
+  static const int renderStageDefault = 0;
+  static const int renderStageMediacodecEmbed = 1;
+  static const int renderStageSoftwareDecode = 2;
+  static const int renderStageCount = 3;
+
+  static const Map<int, String> renderStageLabels = {
+    renderStageDefault: "默认",
+    renderStageMediacodecEmbed: "mediacodec_embed 直挂",
+    renderStageSoftwareDecode: "软件解码",
+  };
+
+  static const String kRenderFallbackSource = "render-fallback";
+
+  /// 返回下一个降级档位；已到最后仍失败时返回 -1。
+  static int nextRenderFallbackStage(int stage) {
+    final next = stage + 1;
+    if (next >= renderStageCount) {
+      return -1;
+    }
+    return next;
+  }
+
+  /// 在用户配置之上叠加渲染降级档位覆盖项。
+  static MpvEffectiveOptions applyRenderFallbackStage(
+    MpvEffectiveOptions effective,
+    int stage,
+  ) {
+    if (stage <= renderStageDefault) {
+      return effective;
+    }
+    final options = Map<String, String>.from(effective.options);
+    final source = Map<String, String>.from(effective.source);
+    void overrideOption(String key, String value) {
+      options[key] = value;
+      source[key] = kRenderFallbackSource;
+    }
+
+    switch (stage) {
+      case renderStageMediacodecEmbed:
+        overrideOption("vo", "mediacodec_embed");
+        overrideOption("hwdec", "mediacodec");
+        break;
+      case renderStageSoftwareDecode:
+        overrideOption("vo", "gpu");
+        overrideOption("hwdec", "no");
+        break;
+      default:
+        break;
+    }
+    return MpvEffectiveOptions(options, source);
+  }
+
   static const Map<String, String> videoOutputDrivers = {
     "gpu": "gpu（推荐）",
     "gpu-next": "gpu-next",
@@ -85,6 +141,7 @@ class MpvOptionsService {
     required bool hardwareDecodeEnabled,
     bool compatMode = false,
     bool isAndroid = false,
+    int renderFallbackStage = renderStageDefault,
   }) {
     final profileOptions = profiles[profile] ?? profiles["balanced"]!;
     final options = Map<String, String>.from(profileOptions);
@@ -117,11 +174,20 @@ class MpvOptionsService {
       source["vo"] = "compat-mode";
       source["hwdec"] = "compat-mode";
     }
-    return MpvEffectiveOptions(options, source);
+    return applyRenderFallbackStage(
+      MpvEffectiveOptions(options, source),
+      isAndroid ? renderFallbackStage : renderStageDefault,
+    );
   }
 
-  static MpvEffectiveOptions effectiveOptionsWithSource() {
+  static MpvEffectiveOptions effectiveOptionsWithSource({
+    int? renderFallbackStage,
+  }) {
     final settings = AppSettingsController.instance;
+    final stage = renderFallbackStage ??
+        (Platform.isAndroid
+            ? settings.renderFallbackStage.value
+            : renderStageDefault);
     return mergeOptions(
       profile: settings.mpvProfile.value,
       customOutput: settings.customPlayerOutput.value,
@@ -132,6 +198,7 @@ class MpvOptionsService {
       hardwareDecodeEnabled: settings.hardwareDecode.value,
       compatMode: settings.playerCompatMode.value,
       isAndroid: Platform.isAndroid,
+      renderFallbackStage: stage,
     );
   }
 
@@ -139,9 +206,13 @@ class MpvOptionsService {
     return effectiveOptionsWithSource().options;
   }
 
-  static VideoControllerConfiguration videoControllerConfiguration() {
+  static VideoControllerConfiguration videoControllerConfiguration({
+    int? renderFallbackStage,
+  }) {
     final settings = AppSettingsController.instance;
-    final options = effectiveOptions();
+    final options = effectiveOptionsWithSource(
+      renderFallbackStage: renderFallbackStage,
+    ).options;
     if (!Platform.isAndroid) {
       return VideoControllerConfiguration(
         hwdec: options["hwdec"],
@@ -153,6 +224,8 @@ class MpvOptionsService {
       hwdec: options["hwdec"],
       enableHardwareAcceleration:
           settings.hardwareDecode.value || settings.playerCompatMode.value,
+      // 部分安卓盒子必须等视频参数就绪后再挂载 Surface 才能出画面。
+      androidAttachSurfaceAfterVideoParameters: true,
     );
   }
 
@@ -203,6 +276,7 @@ class MpvOptionsService {
     return "profile=${AppSettingsController.instance.mpvProfile.value}, "
         "hardwareDecode=${AppSettingsController.instance.hardwareDecode.value}, "
         "compat=${AppSettingsController.instance.playerCompatMode.value}, "
+        "renderStage=${AppSettingsController.instance.renderFallbackStage.value}, "
         "options=[$applied]";
   }
 }

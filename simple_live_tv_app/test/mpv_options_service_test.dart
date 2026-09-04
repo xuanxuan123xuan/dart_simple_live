@@ -109,5 +109,126 @@ void main() {
         },
       );
     });
+
+    test('render fallback stage 0 keeps user configuration untouched', () {
+      final effective = MpvOptionsService.mergeOptions(
+        profile: 'balanced',
+        customOutput: false,
+        videoOutput: 'gpu',
+        hardwareDecoder: 'auto-safe',
+        audioOutput: 'audiotrack',
+        advancedOptions: '',
+        hardwareDecodeEnabled: true,
+        isAndroid: true,
+        renderFallbackStage: MpvOptionsService.renderStageDefault,
+      );
+
+      expect(effective.options['vo'], 'gpu');
+      expect(effective.options['hwdec'], 'auto-safe');
+      expect(
+        effective.options.values,
+        everyElement(isNot(MpvOptionsService.kRenderFallbackSource)),
+      );
+      expect(
+        effective.source.values,
+        isNot(contains(MpvOptionsService.kRenderFallbackSource)),
+      );
+    });
+
+    test('render fallback stage 1 switches to mediacodec direct surface', () {
+      final effective = MpvOptionsService.mergeOptions(
+        profile: 'balanced',
+        customOutput: false,
+        videoOutput: 'gpu',
+        hardwareDecoder: 'auto-safe',
+        audioOutput: 'audiotrack',
+        advancedOptions: '',
+        hardwareDecodeEnabled: true,
+        isAndroid: true,
+        renderFallbackStage: MpvOptionsService.renderStageMediacodecEmbed,
+      );
+
+      expect(effective.options['vo'], 'mediacodec_embed');
+      expect(effective.options['hwdec'], 'mediacodec');
+      expect(effective.source['vo'], MpvOptionsService.kRenderFallbackSource);
+      expect(
+        effective.source['hwdec'],
+        MpvOptionsService.kRenderFallbackSource,
+      );
+    });
+
+    test('render fallback stage 2 falls back to software decoding', () {
+      final effective = MpvOptionsService.mergeOptions(
+        profile: 'balanced',
+        customOutput: false,
+        videoOutput: 'gpu',
+        hardwareDecoder: 'auto-safe',
+        audioOutput: 'audiotrack',
+        advancedOptions: '',
+        hardwareDecodeEnabled: true,
+        isAndroid: true,
+        renderFallbackStage: MpvOptionsService.renderStageSoftwareDecode,
+      );
+
+      expect(effective.options['vo'], 'gpu');
+      expect(effective.options['hwdec'], 'no');
+      expect(effective.source['hwdec'], MpvOptionsService.kRenderFallbackSource);
+    });
+
+    test('render fallback stage overrides win over compat mode', () {
+      final effective = MpvOptionsService.mergeOptions(
+        profile: 'balanced',
+        customOutput: false,
+        videoOutput: 'gpu',
+        hardwareDecoder: 'auto-safe',
+        audioOutput: 'audiotrack',
+        advancedOptions: '',
+        hardwareDecodeEnabled: true,
+        compatMode: true,
+        isAndroid: true,
+        renderFallbackStage: MpvOptionsService.renderStageSoftwareDecode,
+      );
+
+      expect(effective.options['vo'], 'gpu');
+      expect(effective.options['hwdec'], 'no');
+    });
+
+    test('render fallback stage is ignored on non-Android platforms', () {
+      final effective = MpvOptionsService.mergeOptions(
+        profile: 'balanced',
+        customOutput: false,
+        videoOutput: 'gpu',
+        hardwareDecoder: 'auto-safe',
+        audioOutput: 'audiotrack',
+        advancedOptions: '',
+        hardwareDecodeEnabled: true,
+        isAndroid: false,
+        renderFallbackStage: MpvOptionsService.renderStageMediacodecEmbed,
+      );
+
+      expect(effective.options['vo'], 'gpu');
+      expect(effective.options['hwdec'], 'auto-safe');
+    });
+
+    test('render fallback stage chain advances then exhausts', () {
+      expect(
+        MpvOptionsService.nextRenderFallbackStage(
+          MpvOptionsService.renderStageDefault,
+        ),
+        MpvOptionsService.renderStageMediacodecEmbed,
+      );
+      expect(
+        MpvOptionsService.nextRenderFallbackStage(
+          MpvOptionsService.renderStageMediacodecEmbed,
+        ),
+        MpvOptionsService.renderStageSoftwareDecode,
+      );
+      expect(
+        MpvOptionsService.nextRenderFallbackStage(
+          MpvOptionsService.renderStageSoftwareDecode,
+        ),
+        -1,
+      );
+    });
   });
 }

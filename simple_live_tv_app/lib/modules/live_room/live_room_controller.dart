@@ -889,6 +889,11 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   @override
+  Future<void> reopenPlaybackForRenderFallback() async {
+    await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+  }
+
+  @override
   void playbackStable() {
     mediaErrorRetryCount = 0;
     Log.d("播放已连续稳定 30 秒，重置自动恢复次数");

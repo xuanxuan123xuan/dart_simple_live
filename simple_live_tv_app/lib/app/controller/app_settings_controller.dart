@@ -169,6 +169,8 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kAudioOutputDriver, "audiotrack");
     mpvAdvancedOptions.value = LocalStorageService.instance
         .getValue(LocalStorageService.kMpvAdvancedOptions, "");
+    renderFallbackStage.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kRenderFallbackStage, 0);
 
     playerAutoPause.value = LocalStorageService.instance
         .getValue(LocalStorageService.kPlayerAutoPause, false);
@@ -278,6 +280,7 @@ class AppSettingsController extends GetxController {
   var hardwareDecode = true.obs;
   void setHardwareDecode(bool e) {
     hardwareDecode.value = e;
+    resetRenderFallbackStage();
     LocalStorageService.instance
         .setValue(LocalStorageService.kHardwareDecode, e);
   }
@@ -507,6 +510,7 @@ class AppSettingsController extends GetxController {
   var playerCompatMode = false.obs;
   void setPlayerCompatMode(bool e) {
     playerCompatMode.value = e;
+    resetRenderFallbackStage();
     LocalStorageService.instance
         .setValue(LocalStorageService.kPlayerCompatMode, e);
   }
@@ -514,6 +518,7 @@ class AppSettingsController extends GetxController {
   var mpvProfile = "balanced".obs;
   void setMpvProfile(String e) {
     mpvProfile.value = e;
+    resetRenderFallbackStage();
     LocalStorageService.instance.setValue(LocalStorageService.kMpvProfile, e);
   }
 
@@ -523,8 +528,27 @@ class AppSettingsController extends GetxController {
   var audioOutputDriver = "audiotrack".obs;
   var mpvAdvancedOptions = "".obs;
 
+  /// Android 起播渲染降级档位（自动探测结果，见 MpvOptionsService）
+  var renderFallbackStage = 0.obs;
+
+  void setRenderFallbackStage(int value) {
+    renderFallbackStage.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kRenderFallbackStage,
+      value,
+    );
+  }
+
+  void resetRenderFallbackStage() {
+    if (renderFallbackStage.value == 0) {
+      return;
+    }
+    setRenderFallbackStage(0);
+  }
+
   void setCustomPlayerOutput(bool value) {
     customPlayerOutput.value = value;
+    resetRenderFallbackStage();
     LocalStorageService.instance.setValue(
       LocalStorageService.kCustomPlayerOutput,
       value,
@@ -533,6 +557,7 @@ class AppSettingsController extends GetxController {
 
   void setVideoOutputDriver(String value) {
     videoOutputDriver.value = value;
+    resetRenderFallbackStage();
     LocalStorageService.instance.setValue(
       LocalStorageService.kVideoOutputDriver,
       value,
@@ -541,6 +566,7 @@ class AppSettingsController extends GetxController {
 
   void setVideoHardwareDecoder(String value) {
     videoHardwareDecoder.value = value;
+    resetRenderFallbackStage();
     LocalStorageService.instance.setValue(
       LocalStorageService.kVideoHardwareDecoder,
       value,
@@ -557,6 +583,7 @@ class AppSettingsController extends GetxController {
 
   void setMpvAdvancedOptions(String value) {
     mpvAdvancedOptions.value = value;
+    resetRenderFallbackStage();
     LocalStorageService.instance.setValue(
       LocalStorageService.kMpvAdvancedOptions,
       value,
