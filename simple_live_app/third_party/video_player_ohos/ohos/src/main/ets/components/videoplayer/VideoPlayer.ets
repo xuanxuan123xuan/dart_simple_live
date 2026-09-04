@@ -23,6 +23,7 @@ import { BusinessError } from '@ohos.base';
 import { EventChannel } from '@ohos/flutter_ohos';
 import { EventSink, StreamHandler } from '@ohos/flutter_ohos/src/main/ets/plugin/common/EventChannel';
 import { QueuingEventSink } from './QueuingEventSink';
+import { PipPlaybackTarget } from './PipSurfaceRegistry';
 import { ArrayList, HashMap } from '@kit.ArkTS';
 import { audio } from '@kit.AudioKit';
 import fs from '@ohos.file.fs';
@@ -55,7 +56,7 @@ const PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL: string =
 const LOW_LATENCY_EXPERIMENTAL_MIN_API_VERSION: number = 12;
 
 const TAG = 'VideoPlayer'
-export class VideoPlayer {
+export class VideoPlayer implements PipPlaybackTarget {
   private avPlayer: media.AVPlayer | null = null;
   public playerModel: PlayerModel | null = null;
   private duration: number = 0;

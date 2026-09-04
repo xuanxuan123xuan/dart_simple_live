@@ -133,6 +133,10 @@ void main() {
       'third_party/video_player_ohos/ohos/src/main/ets/components/'
       'videoplayer/OhosPipManager.ets',
     ).readAsStringSync();
+    final legacyPlayer = File(
+      'third_party/video_player_ohos/ohos/src/main/ets/components/'
+      'videoplayer/VideoPlayer.ets',
+    ).readAsStringSync();
     final plugin = File(
       'ohos/entry/src/main/ets/plugins/OhosMpvPlugin.ets',
     ).readAsStringSync();
@@ -143,6 +147,8 @@ void main() {
     expect(registry, contains('interface PipPlaybackTarget'));
     expect(registry, contains('registerPlaybackTarget'));
     expect(manager, contains('PipSurfaceRegistry.getPlaybackTarget()'));
+    expect(legacyPlayer,
+        contains('class VideoPlayer implements PipPlaybackTarget'));
     expect(plugin, contains('implements FlutterPlugin, MethodCallHandler, PipPlaybackTarget'));
     expect(plugin, contains('PipSurfaceRegistry.registerPlaybackTarget(this)'));
     expect(plugin, contains('mpvNapi.switchSurface(surfaceId, this.createSeq)'));
