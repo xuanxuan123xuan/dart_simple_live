@@ -87,7 +87,10 @@ class FollowUserController extends BasePageController<FollowUser> {
   Future<void> _loadInitialData() async {
     await refreshData(forceStatus: false);
     if (AppSettingsController.instance.followRefreshOnEnter.value &&
-        FollowService.instance.followList.isNotEmpty) {
+        FollowService.instance.followList.isNotEmpty &&
+        // 快照仍新鲜时复用上次结果，快速重开 App 不再重复全量刷新。
+        !FollowService.instance
+            .hasFreshStatusSnapshotFor(FollowService.instance.followList)) {
       unawaited(
         FollowService.instance.startUpdateStatus(force: false).then((_) {
           filterData();
