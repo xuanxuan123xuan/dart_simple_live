@@ -691,8 +691,7 @@ class MyApp extends StatelessWidget {
       _iosMenuChannel.setMethodCallHandler(_handleIosMenuMethod);
       _iosMenuHandlerBound = true;
     }
-    // OHOS update delivery is not adapted yet: never auto-check there.
-    if (!_appUpdateAutoCheckStarted && !Utils.isOhos) {
+    if (!_appUpdateAutoCheckStarted) {
       _appUpdateAutoCheckStarted = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         unawaited(AppUpdateService.instance.checkUpdatesInBackground());

@@ -23,6 +23,15 @@ class AppUpdateService {
   static const releasesApiUrl =
       'https://api.github.com/repos/$repository/releases';
   static const releasesPageUrl = 'https://github.com/$repository/releases';
+
+  /// OHOS 更新源：HAP Store（sydxky.cn）开放 API。单一通道，下载固定
+  /// 跳转浏览器打开详情页（download.php 会按 API 账号记录每次下载）。
+  static const ohosUpdateApiUrl =
+      'https://www.sydxky.cn/api-open/app_detail.php?id=889';
+  static const ohosUpdateDetailPageUrl =
+      'https://www.sydxky.cn/detail.php?id=889';
+  static const _ohosUpdateApiKey =
+      'hso_dc9114fae28ab7a7a55b0a19cbed96405e0228a458909458965028d3d7520b09';
   static const _preferredChannelKey = 'AppUpdatePreferredChannel';
   static const _preferredPackageKeyPrefix = 'AppUpdatePreferredPackage:';
   static const _autoCheckEnabledKey = 'AppUpdateAutoCheckEnabled';
@@ -152,6 +161,9 @@ class AppUpdateService {
   }
 
   Future<AppUpdateCatalog> fetchCatalog() async {
+    if (Utils.isOhos) {
+      return fetchOhosCatalog();
+    }
     final result = await _fetchReleasesJson();
     if (result is! List) {
       throw const FormatException('GitHub Releases 响应格式异常');
@@ -178,6 +190,71 @@ class AppUpdateService {
     }
 
     return AppUpdateCatalog(stable: stable, dev: dev);
+  }
+
+  /// OHOS 走 HAP Store 开放 API：单一 stable 通道，远端版本号与本地
+  /// versionCode 同口径（26.3.8 -> 26308），下载按钮跳浏览器详情页。
+  Future<AppUpdateCatalog> fetchOhosCatalog() async {
+    dynamic result;
+    try {
+      result = await _httpClient.getJson(
+        ohosUpdateApiUrl,
+        header: const {'X-API-Key': _ohosUpdateApiKey},
+      );
+    } on HttpError catch (error) {
+      throw AppUpdateException(
+        error.statusCode == 0
+            ? '无法连接 HAP Store 更新接口，请检查网络后重试。'
+            : 'HAP Store 更新接口请求失败（${error.statusCode}）。',
+      );
+    }
+    if (result is! Map) {
+      throw const FormatException('HAP Store 更新接口响应格式异常');
+    }
+    final payload = Map<String, dynamic>.from(result);
+    if (payload['code'] != 200) {
+      throw AppUpdateException(
+        'HAP Store 更新接口返回异常：${payload['message'] ?? payload['code']}',
+      );
+    }
+    final data = payload['data'];
+    final app = data is Map ? data['app'] : null;
+    if (app is! Map) {
+      throw const FormatException('HAP Store 更新接口缺少应用信息');
+    }
+    final appMap = Map<String, dynamic>.from(app);
+    final version = appMap['version']?.toString().trim() ?? '';
+    if (version.isEmpty) {
+      throw const FormatException('HAP Store 更新接口未返回版本号');
+    }
+    String body = '';
+    DateTime? publishedAt;
+    final versionLogs = appMap['version_logs'];
+    if (versionLogs is List && versionLogs.isNotEmpty) {
+      final latest = Map<String, dynamic>.from(versionLogs.first as Map);
+      body = latest['update_notes']?.toString() ?? '';
+      publishedAt = DateTime.tryParse(latest['created_at']?.toString() ?? '');
+    }
+    final size = appMap['size'] is num ? (appMap['size'] as num).toInt() : null;
+    final release = AppUpdateRelease(
+      channel: AppUpdateChannel.stable,
+      tag: version,
+      version: version,
+      buildNumber: buildNumberFromVersion(version),
+      publishedAt: publishedAt,
+      assets: [
+        AppUpdateAsset(
+          name: 'HAP 安装包（浏览器下载）',
+          url: ohosUpdateDetailPageUrl,
+          platform: AppUpdatePlatform.ohos,
+          kind: AppUpdatePackageKind.hap,
+          size: size,
+        ),
+      ],
+      body: body,
+      releaseUrl: ohosUpdateDetailPageUrl,
+    );
+    return AppUpdateCatalog(stable: release, dev: null);
   }
 
   Future<dynamic> _fetchReleasesJson() async {

@@ -31,32 +31,37 @@ class AppUpdatePage extends GetView<AppUpdateController> {
                 onChanged: controller.setAutoCheckEnabled,
               ),
             ),
-            _sectionTitle('更新通道', top: 24),
+            _sectionTitle(
+              Utils.isOhos ? 'HAP Store 更新' : '更新通道',
+              top: 24,
+            ),
             SettingsCard(
               child: Padding(
                 padding: AppStyle.edgeInsetsA16,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    SegmentedButton<AppUpdateChannel>(
-                      segments: const [
-                        ButtonSegment(
-                          value: AppUpdateChannel.stable,
-                          label: Text('stable'),
-                          icon: Icon(Icons.verified_outlined),
-                        ),
-                        ButtonSegment(
-                          value: AppUpdateChannel.dev,
-                          label: Text('dev'),
-                          icon: Icon(Icons.code),
-                        ),
-                      ],
-                      selected: {controller.selectedChannel.value},
-                      onSelectionChanged: controller.loading.value
-                          ? null
-                          : (value) => controller.changeChannel(value.first),
-                    ),
-                    AppStyle.vGap12,
+                    if (!Utils.isOhos) ...[
+                      SegmentedButton<AppUpdateChannel>(
+                        segments: const [
+                          ButtonSegment(
+                            value: AppUpdateChannel.stable,
+                            label: Text('stable'),
+                            icon: Icon(Icons.verified_outlined),
+                          ),
+                          ButtonSegment(
+                            value: AppUpdateChannel.dev,
+                            label: Text('dev'),
+                            icon: Icon(Icons.code),
+                          ),
+                        ],
+                        selected: {controller.selectedChannel.value},
+                        onSelectionChanged: controller.loading.value
+                            ? null
+                            : (value) => controller.changeChannel(value.first),
+                      ),
+                      AppStyle.vGap12,
+                    ],
                     Row(
                       children: [
                         Expanded(
@@ -82,7 +87,7 @@ class AppUpdatePage extends GetView<AppUpdateController> {
                         OutlinedButton.icon(
                           onPressed: controller.openReleasePage,
                           icon: const Icon(Remix.external_link_line),
-                          label: const Text('Release'),
+                          label: Text(Utils.isOhos ? '下载页' : 'Release'),
                         ),
                       ],
                     ),
@@ -138,7 +143,9 @@ class AppUpdatePage extends GetView<AppUpdateController> {
                 ? '当前版本 ${controller.currentVersion}'
                 : '当前版本 ${controller.currentVersion}，${Utils.parseTime(checkedAt)} 检查',
           ),
-          trailing: Text(controller.selectedChannel.value.displayName),
+          trailing: Utils.isOhos
+              ? null
+              : Text(controller.selectedChannel.value.displayName),
         ),
         if (release != null) ...[
           AppStyle.divider,
