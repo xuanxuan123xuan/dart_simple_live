@@ -103,4 +103,49 @@ void main() {
       expect(find.bySemanticsLabel(site.name), findsOneWidget);
     }
   });
+
+  testWidgets('fallback indicator follows a fractional swipe position',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(600, 200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    settings.glassMode.value = AppGlassMode.off;
+
+    TabController? controller;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefaultTabController(
+          length: Sites.supportSites.length,
+          child: Builder(
+            builder: (context) {
+              controller = DefaultTabController.of(context);
+              return Center(
+                child: SizedBox(
+                  width: 560,
+                  height: 60,
+                  child: SiteGlassTabBar(controller: controller!),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final indicator = find.byKey(
+      const ValueKey('site-tab-bar-fallback-indicator'),
+    );
+    expect(indicator, findsOneWidget);
+    final initialLeft = tester.getRect(indicator).left;
+    expect(controller!.index, 0);
+
+    controller!.offset = 0.25;
+    await tester.pump();
+
+    final draggedLeft = tester.getRect(indicator).left;
+    // Selection index does not change on a mid-drag frame; the indicator moves.
+    expect(controller!.index, 0);
+    // tabWidth is 112 (560 / 5 sites), so a quarter slot is +28 px.
+    expect(draggedLeft, closeTo(initialLeft + 28, 0.5));
+  });
 }

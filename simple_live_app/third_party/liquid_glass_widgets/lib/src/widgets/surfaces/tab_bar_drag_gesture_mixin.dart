@@ -202,6 +202,14 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   double computeTabAlignment(int index) =>
       DraggableIndicatorPhysics.computeAlignment(index, tabCount);
 
+  /// Maps a continuous tab position (0..tabCount-1, fractional) to horizontal
+  /// alignment in [-1, 1]. Used to keep the pill glued to an external swipe.
+  double computeTabAlignmentForPosition(double position) {
+    if (tabCount <= 1) return 0;
+    final clamped = position.clamp(0.0, (tabCount - 1).toDouble());
+    return -1.0 + 2.0 * clamped / (tabCount - 1);
+  }
+
   /// Maps a global pointer position to alignment in [-1, 1] with rubber-band
   /// resistance applied at the edges.
   ///

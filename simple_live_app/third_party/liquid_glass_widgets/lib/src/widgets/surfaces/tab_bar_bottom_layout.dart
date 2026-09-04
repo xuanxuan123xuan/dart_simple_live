@@ -90,6 +90,7 @@ class TabBarBottomLayout extends StatefulWidget {
     this.brightnessOverride,
     this.scrollController,
     this.springDescription,
+    this.indicatorPosition,
   });
 
   static const double _kDefaultBorderRadius = 32.0;
@@ -146,6 +147,11 @@ class TabBarBottomLayout extends StatefulWidget {
   final ValueListenable<Brightness>? brightnessOverride;
   final ScrollController? scrollController;
   final SpringDescription? springDescription;
+
+  /// Optional continuous indicator position (0..tabCount-1). When set, the
+  /// indicator pill tracks this fractional position directly instead of
+  /// springing to [selectedIndex]. Null keeps the existing behaviour.
+  final double? indicatorPosition;
 
   @override
   State<TabBarBottomLayout> createState() => _TabBarBottomLayoutState();
@@ -338,6 +344,7 @@ class _TabBarBottomLayoutState extends State<TabBarBottomLayout>
                       child: TabIndicator(
                         quality: effectiveQuality,
                         springDescription: widget.springDescription,
+                        indicatorPosition: widget.indicatorPosition,
                         visible: widget.showIndicator,
                         tabIndex: selectedIndex,
                         tabCount: tabs.length,

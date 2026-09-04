@@ -449,6 +449,7 @@ class TabIndicator extends StatefulWidget {
     this.interactionScale = 1.0,
     this.platformViewBackdrop = false,
     this.springDescription,
+    this.indicatorPosition,
     super.key,
   });
 
@@ -470,6 +471,11 @@ class TabIndicator extends StatefulWidget {
   final MaskingQuality maskingQuality;
   final SpringDescription? springDescription;
   final GlobalKey? backgroundKey;
+
+  /// Optional continuous indicator position (0..tabCount-1). When set, the
+  /// pill tracks this fractional position directly instead of springing to
+  /// [tabIndex]. Null keeps the existing spring-to-tab behaviour.
+  final double? indicatorPosition;
 
   /// How far the jelly indicator's leading and trailing edges expand
   /// past the tab boundary as the indicator translates. Higher values
@@ -530,6 +536,17 @@ class TabIndicatorState extends State<TabIndicator>
   void didUpdateWidget(covariant TabIndicator oldWidget) {
     super.didUpdateWidget(oldWidget);
     updateTabAlignIfNeeded(oldWidget.tabIndex, oldWidget.tabCount);
+
+    // Continuous follow: when an external fractional position is supplied,
+    // drive the pill directly instead of springing to the discrete tab. This
+    // lets a host (e.g. a TabBarView) keep the indicator glued to a swipe.
+    if (widget.indicatorPosition != null &&
+        widget.indicatorPosition != oldWidget.indicatorPosition) {
+      if (mounted) {
+        setState(() =>
+            tabXAlign = computeTabAlignmentForPosition(widget.indicatorPosition!));
+      }
+    }
 
     // Update cached shape if border radius changes
     if (oldWidget.barBorderRadius != widget.barBorderRadius) {
