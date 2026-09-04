@@ -54,6 +54,8 @@ class MpvOhosVideoController extends VideoPlayerController {
   // owns the vo hot-reconfig sequence so the mpv event pump is never blocked
   // by a synchronous vo teardown (that caused black-frame loops and UI jank).
   Size _appliedSurfaceSize = const Size(1920, 1080);
+  Size? _reportedDisplaySize;
+  bool _streamGeometryApplied = false;
   Size? _pendingGeometry;
   Timer? _geometryDebounce;
 
@@ -124,6 +126,10 @@ class MpvOhosVideoController extends VideoPlayerController {
     _eofReached = false;
     _timePosSeconds = null;
     _demuxerCacheTime = null;
+    _reportedDisplaySize = null;
+    _streamGeometryApplied = false;
+    _pendingGeometry = null;
+    _geometryDebounce?.cancel();
     value = value.copyWith(size: Size.zero, position: Duration.zero);
     if (_mpvDisposed) {
       return;
@@ -207,6 +213,7 @@ class MpvOhosVideoController extends VideoPlayerController {
         return null;
     }
   }
+
   Future<void> _setProperty(String name, String value) async {
     if (_mpvDisposed) return;
     try {
@@ -254,13 +261,21 @@ class MpvOhosVideoController extends VideoPlayerController {
     if (w < 16 || h < 16 || _mpvDisposed) {
       return;
     }
-    if (_appliedSurfaceSize.width == w && _appliedSurfaceSize.height == h) {
+    final displaySize = Size(w.toDouble(), h.toDouble());
+    _reportedDisplaySize = displaySize;
+    if (value.size != displaySize) {
+      value = value.copyWith(size: displaySize);
+    }
+    // Settle the native surface once for every newly loaded stream. The
+    // first frame can arrive before video-out-params on OHOS, so using
+    // _firstFrameReported as the guard leaves portrait video rendered into
+    // the initial 1920x1080 buffer and Flutter then stretches that landscape
+    // texture into a portrait box.
+    if (_streamGeometryApplied) {
       return;
     }
-    // Once the first frame is on screen, a vo reconfig would flash black in
-    // the middle of playback; later resolution changes are rendered
-    // letterboxed by mpv into the existing surface instead.
-    if (_firstFrameReported) {
+    if (_appliedSurfaceSize.width == w && _appliedSurfaceSize.height == h) {
+      _streamGeometryApplied = true;
       return;
     }
     // Skip sub-2% aspect changes (1088 vs 1080 heights, minor adaptive
@@ -268,9 +283,10 @@ class MpvOhosVideoController extends VideoPlayerController {
     final oldAspect = _appliedSurfaceSize.width / _appliedSurfaceSize.height;
     final newAspect = w / h;
     if ((newAspect - oldAspect).abs() / oldAspect < 0.02) {
+      _streamGeometryApplied = true;
       return;
     }
-    _pendingGeometry = Size(w.toDouble(), h.toDouble());
+    _pendingGeometry = displaySize;
     _geometryDebounce?.cancel();
     _geometryDebounce = Timer(const Duration(milliseconds: 300), () {
       unawaited(_runGeometryReconfig());
@@ -283,7 +299,6 @@ class MpvOhosVideoController extends VideoPlayerController {
       return;
     }
     _pendingGeometry = null;
-    _appliedSurfaceSize = target;
     try {
       await _setProperty('vo', 'null');
       if (_mpvDisposed) {
@@ -296,6 +311,10 @@ class MpvOhosVideoController extends VideoPlayerController {
       await _setProperty('ohos-surface-size',
           '${target.width.toInt()}x${target.height.toInt()}');
       await _setProperty('vo', 'gpu-next');
+      if (!_mpvDisposed) {
+        _appliedSurfaceSize = target;
+        _streamGeometryApplied = true;
+      }
     } on PlatformException {
       // Player gone mid-sequence.
     }
@@ -378,11 +397,15 @@ class MpvOhosVideoController extends VideoPlayerController {
     final w = int.tryParse(await _getProperty('width') ?? '') ?? 0;
     final h = int.tryParse(await _getProperty('height') ?? '') ?? 0;
     if (w > 0 && h > 0 && !_mpvDisposed) {
-      final next = value.copyWith(size: Size(w.toDouble(), h.toDouble()));
+      // video-out-params/dw/dh includes rotation and pixel aspect ratio;
+      // width/height is only the decoded storage size. Prefer the former for
+      // Flutter layout once mpv has reported it.
+      final next = value.copyWith(
+        size: _reportedDisplaySize ?? Size(w.toDouble(), h.toDouble()),
+      );
       if (next != value) {
         value = next;
       }
-
     }
   }
 
