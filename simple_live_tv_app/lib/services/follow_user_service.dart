@@ -26,6 +26,69 @@ int? followStatusForLiveState(LiveStatusState state) {
   };
 }
 
+/// 关注直播状态快照：跨进程重启复用最近一次刷新结果，
+/// 避免快速重开 App 时重复全量刷新（降低风控风险）。
+class FollowStatusSnapshot {
+  const FollowStatusSnapshot({
+    required this.completedAt,
+    required this.statuses,
+  });
+
+  final DateTime completedAt;
+
+  /// follow id -> liveStatus（0=未知 1=未开播 2=直播中）
+  final Map<String, int> statuses;
+
+  Map<String, dynamic> toJson() => {
+        'completedAt': completedAt.toIso8601String(),
+        'statuses': statuses,
+      };
+
+  static FollowStatusSnapshot? fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    final completedAt =
+        DateTime.tryParse(json['completedAt']?.toString() ?? "");
+    if (completedAt == null) return null;
+    final raw = json['statuses'];
+    if (raw is! Map) return null;
+    final statuses = <String, int>{};
+    raw.forEach((key, value) {
+      if (key == null) return;
+      final parsed = int.tryParse(value?.toString() ?? "");
+      if (parsed != null) {
+        statuses[key.toString()] = parsed;
+      }
+    });
+    return FollowStatusSnapshot(
+      completedAt: completedAt,
+      statuses: statuses,
+    );
+  }
+
+  static FollowStatusSnapshot? decode(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      return fromJson(decoded is Map<String, dynamic> ? decoded : null);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String encode() => jsonEncode(toJson());
+
+  bool isFreshWithin(Duration window, {DateTime? now}) {
+    final checkedAt = now ?? DateTime.now();
+    if (completedAt.isAfter(checkedAt)) return false;
+    return checkedAt.difference(completedAt) < window;
+  }
+
+  /// 快照是否覆盖全部关注（关注列表有增删时视为不完整）。
+  bool coversAll(Iterable<FollowUser> items) {
+    return items.every((item) => statuses.containsKey(item.id));
+  }
+}
+
 Duration followPreviewCacheTtl(String _) => const Duration(minutes: 2);
 
 bool isFollowPreviewMetadataStale(FollowUser item, {DateTime? now}) {
@@ -79,6 +142,8 @@ class FollowUserService extends BasePageController<FollowUser> {
       LocalStorageService.kFollowRefreshTaskState;
   static const String _refreshTaskTargetsStorageKey =
       LocalStorageService.kFollowRefreshTaskTargets;
+  static const String _statusSnapshotStorageKey =
+      LocalStorageService.kFollowStatusSnapshot;
 
   static FollowUserService get instance => Get.find<FollowUserService>();
 
@@ -163,10 +228,62 @@ class FollowUserService extends BasePageController<FollowUser> {
         _distinctFollowUsers(DBService.instance.getFollowList()),
       ),
     );
+    _restoreStatusSnapshotIfFresh();
     updateLivingList();
     sortList();
     if (allList.isEmpty) {
       updating.value = false;
+    }
+  }
+
+  /// 快照仍新鲜且覆盖全部关注时，恢复上次刷新出的直播状态，
+  /// 并让进页复用窗口跨进程生效（快速重开 App 不再重复刷新）。
+  void _restoreStatusSnapshotIfFresh() {
+    final snapshot = _loadStatusSnapshot();
+    if (snapshot == null) return;
+    if (!snapshot.isFreshWithin(enterRefreshReuseWindow)) return;
+    if (!snapshot.coversAll(allList)) {
+      Log.logPrint("关注列表与状态快照不一致，放弃复用并照常刷新");
+      return;
+    }
+    for (final item in allList) {
+      final status = snapshot.statuses[item.id];
+      if (status != null && item.liveStatus.value == 0) {
+        item.liveStatus.value = status;
+      }
+    }
+    final last = _lastRefreshCompletedAt;
+    if (last == null || snapshot.completedAt.isAfter(last)) {
+      _lastRefreshCompletedAt = snapshot.completedAt;
+    }
+    Log.logPrint("已恢复 ${snapshot.statuses.length} 条关注状态快照");
+  }
+
+  void _persistStatusSnapshot() {
+    try {
+      final snapshot = FollowStatusSnapshot(
+        completedAt: DateTime.now(),
+        statuses: {
+          for (final item in allList) item.id: item.liveStatus.value,
+        },
+      );
+      unawaited(
+        LocalStorageService.instance
+            .setValue(_statusSnapshotStorageKey, snapshot.encode()),
+      );
+    } catch (e) {
+      Log.logPrint("保存关注状态快照失败: $e");
+    }
+  }
+
+  FollowStatusSnapshot? _loadStatusSnapshot() {
+    try {
+      final raw = LocalStorageService.instance
+          .getValue<String>(_statusSnapshotStorageKey, "");
+      return FollowStatusSnapshot.decode(raw);
+    } catch (e) {
+      Log.logPrint("读取关注状态快照失败: $e");
+      return null;
     }
   }
 
@@ -1100,6 +1217,7 @@ class FollowUserService extends BasePageController<FollowUser> {
         _lastRefreshCompletedAt = DateTime.now();
         updating.value = false;
         _finishRefreshProgressLifecycle(generation);
+        _persistStatusSnapshot();
       }
     }
   }

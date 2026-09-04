@@ -182,6 +182,7 @@ class LocalStorageService extends GetxService {
   static const String kFollowCardDensity = "FollowCardDensity";
   static const String kFollowRefreshTaskState = "FollowRefreshTaskState";
   static const String kFollowRefreshTaskTargets = "FollowRefreshTaskTargets";
+  static const String kFollowStatusSnapshot = "FollowStatusSnapshot";
 
   /// 远程同步服务地址
   static const String kSyncServerUrl = "SyncServerUrl";
