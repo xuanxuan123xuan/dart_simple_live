@@ -91,6 +91,16 @@ void main() {
     return controller;
   }
 
+  testWidgets('initial geometry applies without the visible-playback debounce',
+      (tester) async {
+    final controller = await open();
+    await emit('event', 'file-loaded');
+    await display(tester, 720, 1280);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(controller.surfaceSize, const Size(720, 1280));
+    await controller.dispose();
+  });
+
   testWidgets('consecutive and small size changes eventually reach the surface',
       (tester) async {
     final controller = await visible(tester);

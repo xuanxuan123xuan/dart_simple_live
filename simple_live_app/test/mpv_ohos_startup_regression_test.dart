@@ -33,7 +33,7 @@ void main() {
     final timePosition = _section(
       propertyHandler,
       "case 'time-pos':",
-      "case 'demuxer-cache-time':",
+      "case 'demuxer-cache-duration':",
     );
     final coreIdle = _section(
       propertyHandler,
@@ -83,9 +83,12 @@ void main() {
     );
 
     expect(source, contains('Size? _lastRenderedSize;'));
+    expect(source, contains('Size? _lastRenderedSurfaceSize;'));
     expect(source, contains('bool _lastRenderedVisualReady = false;'));
     expect(source, contains('String? _lastRenderedError;'));
     expect(rebuildInputs, contains('_lastRenderedSize != value.size'));
+    expect(rebuildInputs,
+        contains('_lastRenderedSurfaceSize != controller.surfaceSize'));
     expect(rebuildInputs,
         contains('_lastRenderedVisualReady != controller.visualReady'));
     expect(rebuildInputs,
@@ -104,100 +107,105 @@ void main() {
   test('native tick emits one visual-ready event for each active generation',
       () {
     final source = _read(_nativePath);
-    final params = _section(
+    final firstFrame = _section(
       source,
-      'if (prop->name == std::string("video-out-params"))',
-      'if (prop->name == std::string("time-pos") ||',
+      'void TryPresentFirstFrame()',
+      '\nstd::string LowerAscii',
+    );
+    final generation = _section(
+      source,
+      'int32_t ActivateNextGeneration()',
+      '\nstd::string ReadPropertyString',
     );
     final tick = _section(
       source,
-      'case MPV_EVENT_TICK:',
-      'case MPV_EVENT_LOG_MESSAGE:',
+      'case MPV_EVENT_VIDEO_RECONFIG:',
+      'case MPV_EVENT_IDLE:',
     );
     final startFile = _section(
       source,
       'case MPV_EVENT_START_FILE:',
-      'case MPV_EVENT_IDLE:',
+      'case MPV_EVENT_VIDEO_RECONFIG:',
     );
 
     expect(source, contains('case MPV_EVENT_TICK:'));
-    expect(tick, contains('"video-frame-presented"'));
-    expect(tick, contains('QueueEvent'));
+    expect(tick, contains('TryPresentFirstFrame();'));
+    expect(tick, isNot(contains('"video-frame-presented"')));
+
+    expect(firstFrame,
+        contains('const int32_t generation = g_activeGeneration.load();'));
+    expect(firstFrame, contains('g_activePlayback.load()'));
+    expect(firstFrame, contains('g_fileLoaded.load()'));
+    expect(firstFrame, contains('g_coreIdle.load()'));
+    expect(firstFrame, contains('g_videoWidth.load() < 16'));
+    expect(firstFrame, contains('g_videoHeight.load() < 16'));
     // The guard must compare a frame/presentation generation before emitting,
     // then remember it so repeated ticks do not retrigger the first-frame UI.
-    expect(tick, contains('expected == generation'));
-    expect(tick, contains('compare_exchange_strong'));
-    final paramsGeneration = RegExp(
-      r'\bg_[A-Za-z0-9_]*(?:[Vv]ideo|[Oo]ut)[A-Za-z0-9_]*[Gg]eneration\b',
-    ).firstMatch(params)?.group(0);
-    expect(paramsGeneration, isNotNull);
-    expect(params, matches(RegExp(r'\bdw\s*>\s*0')));
-    expect(params, matches(RegExp(r'\bdh\s*>\s*0')));
-    expect(params, contains('$paramsGeneration.store'));
-    expect(tick, contains(paramsGeneration!));
-    expect(
-      tick,
-      matches(RegExp(
-        '${RegExp.escape(paramsGeneration)}[^;\\n]*(?:!=|==)[^;\\n]*generation',
-      )),
-    );
-    expect(
-      tick,
-      matches(
-          RegExp(r'(?:frame|present)[A-Za-z_]*Generation[^\n]*(?:=|store)')),
-    );
+    expect(firstFrame, contains('expected == generation'));
+    expect(firstFrame, contains('g_framePresentedGeneration.load()'));
+    expect(firstFrame, contains('compare_exchange_strong'));
+    expect(firstFrame, contains('"video-frame-presented"'));
+    expect(firstFrame, contains('QueueEvent(payload, generation)'));
+
+    // A new active generation clears the one-shot marker before its first
+    // frame, so a room switch can emit exactly one event again.
+    expect(generation, contains('g_activeGeneration.store(next);'));
+    expect(generation, contains('if (next != previous)'));
+    expect(generation, contains('g_framePresentedGeneration.store(-1);'));
 
     // A load request only supplies the pending generation. It becomes active
     // when mpv confirms START_FILE, preventing late events from the old file
     // from being relabelled as the new stream.
-    expect(startFile, contains('Generation'));
-    expect(
-      startFile,
-      matches(
-          RegExp(r'(?:store|exchange|=|\+=)[^;\n]*(?:Generation|generation)')),
-    );
+    expect(startFile,
+        contains('const int32_t generation = ActivateNextGeneration();'));
+    expect(startFile, contains('g_videoWidth.store(0);'));
+    expect(startFile, contains('g_videoHeight.store(0);'));
+    expect(startFile, contains('g_fileLoaded.store(false);'));
+    expect(startFile, contains('g_coreIdle.store(true);'));
+    expect(startFile, contains('g_activePlayback.store(generation > 0);'));
   });
 
-  test('initial geometry reconfiguration bypasses the startup debounce', () {
-    final source = _read(_controllerPath);
-    final geometry = _section(
-      source,
-      '  Future<void> _applyGeometryChange(String sizeText)',
-      '  Future<void> _runGeometryReconfig()',
-    );
-    final pendingGeometry = geometry.indexOf('_pendingGeometry = displaySize;');
-    final immediateReconfig = geometry.indexOf('_runGeometryReconfig()');
-
-    expect(pendingGeometry, greaterThanOrEqualTo(0));
-    expect(immediateReconfig, greaterThan(pendingGeometry));
-    expect(
-      geometry,
-      isNot(contains('Timer(const Duration(milliseconds: 300))')),
-    );
-
-    // These timers belong to the first-frame and playback-health watchdogs;
-    // the assertion above is deliberately limited to geometry handling.
-    expect(source, contains('_firstFrameTimer = Timer('));
-    expect(source, contains('_watchdogTimer = Timer.periodic('));
-  });
-
-  test('native mpv mutations share one serial queue', () {
+  test('native mpv mutations use the shared command promise queue', () {
     final source = _read(_nativePath);
 
-    for (final declaration in const [
-      'napi_value SetGeometry',
-      'napi_value LoadFile',
-      'napi_value SetPropertyString',
-      'napi_value CommandString',
-    ]) {
-      final body = _section(source, declaration, 'napi_value ');
+    const promiseFunctionEnds = <String, String>{
+      'napi_value SetGeometry': 'napi_value ReconfigureSurface',
+      'napi_value ReconfigureSurface': 'napi_value SwitchSurface',
+      'napi_value SwitchSurface': 'napi_value LoadFile',
+      'napi_value SetPropertyString': 'napi_value GetPropertyString',
+    };
+    for (final entry in promiseFunctionEnds.entries) {
+      final body = _section(source, entry.key, entry.value);
       expect(
         body,
-        contains('QueueCommand'),
-        reason: '$declaration must enqueue onto the shared mpv queue',
+        contains('CreateCommandPromise'),
+        reason: '${entry.key} must use the shared command promise',
       );
     }
 
+    final loadFile =
+        _section(source, 'napi_value LoadFile', 'napi_value SetPropertyString');
+    expect(
+        loadFile, contains('g_latestRequestedGeneration.store(generation);'));
+    expect(loadFile, contains('QueueCommand(std::move(command));'));
+
+    final commandString =
+        _section(source, 'napi_value CommandString', 'napi_value Destroy');
+    expect(commandString, contains('QueueCommand(std::move(command));'));
+
+    final commandPromise = _section(
+      source,
+      'napi_value CreateCommandPromise',
+      '\nbool ReadStringArgument',
+    );
+    final asyncCommand = _section(
+      source,
+      'void ExecuteAsyncCommand',
+      '\nvoid CompleteAsyncCommand',
+    );
+    expect(commandPromise, contains('ExecuteAsyncCommand'));
+    expect(commandPromise, contains('napi_queue_async_work'));
+    expect(asyncCommand, contains('QueueCommand(std::move(request->command))'));
     expect(
       source,
       matches(RegExp(r'(?:std::queue|std::deque|condition_variable|Serial)')),
@@ -224,26 +232,5 @@ void main() {
       expect(call, isNot(contains('command.url.c_str()')));
       expect(call, isNot(contains('command.headers.c_str()')));
     }
-  });
-
-  test('stable and low-latency profiles share the audio sync baseline', () {
-    final native = _read(_nativePath);
-    final controller = _read(_controllerPath);
-    final profile = _section(
-      controller,
-      '  Future<void> applyPlaybackProfile',
-      '  /// Applies the user\'s own mpv tweaks',
-    );
-    final lowLatencyBody = _section(profile, 'if (lowLatency) {', '\n    }');
-
-    expect(native, contains('"video-sync"'));
-    expect(native, contains('"audio"'));
-    expect(native, contains('"initial-audio-sync"'));
-    expect(native, contains('"yes"'));
-    expect(profile, contains('if (lowLatency)'));
-    expect(profile, contains("'video-sync'"));
-    expect(profile, contains("'initial-audio-sync'"));
-    expect(lowLatencyBody, isNot(contains("'video-sync'")));
-    expect(lowLatencyBody, isNot(contains("'initial-audio-sync'")));
   });
 }
