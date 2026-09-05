@@ -20,7 +20,51 @@ import 'package:flutter/services.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
+import 'package:simple_live_app/modules/live_room/player/mpv_ohos_decoder_policy.dart';
 import 'package:video_player/video_player.dart';
+
+const double _maxSafeDurationMilliseconds = 9223372036854775.0;
+
+/// Parses an mpv seconds property without allowing invalid values to become
+/// misleading zero or overflowing [Duration] values.
+Duration? parseMpvOhosDurationSeconds(String value) {
+  final seconds = double.tryParse(value.trim());
+  if (seconds == null || !seconds.isFinite || seconds < 0) {
+    return null;
+  }
+  final milliseconds = seconds * 1000;
+  if (!milliseconds.isFinite || milliseconds > _maxSafeDurationMilliseconds) {
+    return null;
+  }
+  return Duration(milliseconds: milliseconds.round());
+}
+
+/// The native buffer geometry handed to `SET_BUFFER_GEOMETRY` and written to
+/// `ohos-surface-size`. This MUST be the video's DISPLAY size in physical
+/// pixels — i.e. `video-out-params/dw x dh` verbatim (rotation/SAR already
+/// applied by mpv) — NOT an independently scaled "long edge = 1920" value.
+///
+/// Rationale: mpv's gpu-next VO renders into a target of exactly `dwidth x
+/// dheight` (see vo_gpu_next.c `resize()` → `gpu_ctx_resize(context, dwidth,
+/// dheight)`), and the OHOS reference player syncs `ohos-surface-size` to the
+/// media size in physical pixels (`vp2px(playerMediaW) x vp2px(playerMediaH)`),
+/// NOT a re-scaled canvas. Scaling the buffer away from dw/dh makes the
+/// surface geometry disagree with the VO's render target, so the picture is
+/// stretched to fill the mismatched buffer — landscape streams get squashed
+/// vertically and portrait streams horizontally. Returning dw x dh (only
+/// rounded to even for codec friendliness) keeps buffer == render target, and
+/// Flutter's FittedBox(contain) handles the actual layout scaling.
+Size mpvOhosSurfaceSize(Size display) {
+  if (!display.width.isFinite ||
+      !display.height.isFinite ||
+      display.width <= 0 ||
+      display.height <= 0) {
+    return const Size(1920, 1080);
+  }
+  double even(double dimension) =>
+      dimension >= 16 ? (dimension / 2).round() * 2.0 : 16.0;
+  return Size(even(display.width), even(display.height));
+}
 
 class MpvOhosVideoController extends VideoPlayerController {
   MpvOhosVideoController({
@@ -36,6 +80,10 @@ class MpvOhosVideoController extends VideoPlayerController {
   int _generation = -1;
   int _eventGenFilter = -1;
   bool _mpvDisposed = false;
+  MpvOhosDecoderPolicy _decoderPolicy = MpvOhosDecoderPolicy();
+  MpvOhosHwdecMode _initialHwdecMode = MpvOhosHwdecMode.direct;
+  Timer? _hwdecConfirmationTimer;
+  Future<void> _decoderTransition = Future<void>.value();
   StreamSubscription? _eventSub;
 
   // Raw mpv state used to synthesize VideoPlayerValue.
@@ -44,7 +92,7 @@ class MpvOhosVideoController extends VideoPlayerController {
   bool _pausedForCache = false;
   bool _eofReached = false;
   double? _timePosSeconds;
-  Duration? _demuxerCacheTime;
+  Duration? _demuxerCacheDuration;
 
   bool _visualReady = false;
   // Set once the native first-frame event has arrived for the current
@@ -54,21 +102,20 @@ class MpvOhosVideoController extends VideoPlayerController {
   bool _firstFrameArrived = false;
   bool _fileLoaded = false;
   Completer<void>? _fileLoadedWaiter;
+  // A missed native event triggers a state check, never an unconditional
+  // success: opening a stream alone does not prove video is rendering.
+  Timer? _revealFallbackTimer;
 
-  // Surface geometry currently applied to the native window. Dart is the
-  // SINGLE writer: the buffer follows the STREAM's display aspect (never the
-  // widget layout), so the vo hot-reconfig only ever runs right after a
-  // room/quality switch while the loading spinner is already up. Fullscreen
-  // and rotation change the box, not the video, and reconfigure nothing.
-  // The widget scales the buffer uniformly with FittedBox(contain), so the
-  // texture can never be stretched and the video always keeps its aspect.
+  // The buffer follows the stream's display size; Flutter scales its layout.
+  // Coalesce pending sizes while allowing only one native update at a time.
   Size _appliedSurfaceSize = const Size(1920, 1080);
   Size? _reportedDisplaySize;
   Size? _pendingGeometry;
   Timer? _geometryDebounce;
   bool _geometryReconfiguring = false;
-  Timer? _geometryResumeTimer;
-  DateTime? _lastGeometryReconfigCompletedAt;
+  int _geometryEpoch = 0;
+  // Transient surface failures retry up to 20 times without ending playback.
+  int _geometryReconfigFailures = 0;
 
   /// Current native buffer size (video display aspect). The widget wraps
   /// the texture in a SizedBox of exactly this size under FittedBox(contain).
@@ -82,7 +129,7 @@ class MpvOhosVideoController extends VideoPlayerController {
   void Function(DateTime at, Duration position)? onHeartbeat;
 
   /// Called whenever the demuxer cache depth estimate changes.
-  void Function(Duration? cacheTime)? onCacheDuration;
+  void Function(DateTime? sampledAt, Duration? cacheTime)? onCacheDuration;
 
   /// Called when mpv reports an unrecoverable playback failure.
   void Function(String message)? onFatal;
@@ -115,6 +162,13 @@ class MpvOhosVideoController extends VideoPlayerController {
       _generation = gen;
     }
     Log.d('[mpv-ctrl] create textureId=$_mpvTextureId gen=$_generation');
+    if (_mpvDisposed) {
+      await _method.invokeMethod('dispose', {'generation': _generation});
+      return;
+    }
+    if (_mpvTextureId < 0 || _generation <= 0) {
+      throw StateError('鸿蒙播放器未能创建视频输出');
+    }
     value = value.copyWith(isInitialized: _mpvTextureId >= 0);
     startEventListening();
     // The native buffer is SHARED across controllers (mpv + texture are a
@@ -134,7 +188,9 @@ class MpvOhosVideoController extends VideoPlayerController {
   /// source of truth whenever a new controller is created.
   Future<void> _syncAppliedSurfaceSize() async {
     try {
-      final result = await _method.invokeMethod('getSurfaceSize');
+      final result = await _method.invokeMethod('getSurfaceSize', {
+        'generation': _generation,
+      });
       if (result is! Map) {
         return;
       }
@@ -160,6 +216,11 @@ class MpvOhosVideoController extends VideoPlayerController {
       // widget left to stop it.
       return;
     }
+    _hwdecConfirmationTimer?.cancel();
+    await _applyDecoderActions(
+        _decoderPolicy.beginStream(mode: _initialHwdecMode));
+    if (_mpvDisposed) return;
+    _clearCache();
     _eventGenFilter = _generation;
     // Reset per-stream visible state: the shared surface still holds the
     // previous stream's last frame, and width/height events of the new
@@ -172,17 +233,25 @@ class MpvOhosVideoController extends VideoPlayerController {
     _fileLoaded = false;
     _eofReached = false;
     _timePosSeconds = null;
-    _demuxerCacheTime = null;
+    _demuxerCacheDuration = null;
     // A fresh stream must not inherit the previous room's idle/buffering
     // flags: a leftover _coreIdle=true (from a torn-down vo) would otherwise
     // surface the new room as "buffering" before its first frame presents.
     _coreIdle = true;
     _pausedForCache = false;
     _reportedDisplaySize = null;
+    // NOTE: do NOT reset _appliedSurfaceSize here. It mirrors the native
+    // buffer geometry (g_geoW/g_geoH) which does NOT change on a room switch
+    // (loadfile replace does not touch SET_BUFFER_GEOMETRY). Keeping it lets
+    // the first frame of a same-direction room skip the vo rebuild entirely;
+    // resetting it to Size(0,0) would force a full vo=null→…→vo rebuild on
+    // EVERY switch (even same-direction), causing a ~10s black spinner.
     _pendingGeometry = null;
     _geometryDebounce?.cancel();
-    _geometryReconfiguring = false;
-    _geometryResumeTimer?.cancel();
+    _geometryEpoch++;
+    _geometryReconfigFailures = 0;
+    _revealFallbackTimer?.cancel();
+    _revealFallbackTimer = null;
     value = value.copyWith(size: Size.zero, position: Duration.zero);
     if (wasVisualReady && !_mpvDisposed) {
       notifyListeners();
@@ -221,23 +290,23 @@ class MpvOhosVideoController extends VideoPlayerController {
   /// `lowLatencyExperimental` playback profile from the AVPlayer era; the
   /// values follow integration README section 6.2.
   Future<void> applyPlaybackProfile({required bool lowLatency}) async {
-    // Keep startup A/V alignment consistent across both profiles. The
-    // low-latency profile used to select `desync`, which allowed audio to
-    // start several seconds before the first video frame.
-    await _setProperty('video-sync', 'audio');
-    await _setProperty('initial-audio-sync', 'yes');
-    if (lowLatency) {
-      await _setProperty('cache', 'no');
-      await _setProperty('cache-pause', 'no');
-      await _setProperty('demuxer-lavf-o', 'fflags=+nobuffer');
-    } else {
-      // The native player is reused across room switches. Restore the
-      // low-latency options explicitly so a stable stream never inherits the
-      // previous room's no-cache settings.
-      await _setProperty('cache', 'auto');
-      await _setProperty('cache-pause', 'yes');
-      await _setProperty('demuxer-lavf-o', '');
-    }
+    // Live streams (B 站 HTTP-FLV 等) use a no-cache / low-latency profile
+    // aligned with the reference player (聚映) and libmpv integration README
+    // §6.2. cache-pause=yes on a live stream would pause on cache underrun
+    // with no way to seek-recover, repeatedly stalling playback — the root
+    // cause of "live stream playback failed" on B 站.
+    //
+    // Both playback profiles are now unified to this live low-latency set;
+    // the `lowLatency` parameter is kept only for interface compatibility.
+    await _setProperty('video-sync', 'desync');
+    await _setProperty('cache', 'no');
+    await _setProperty('cache-pause', 'no');
+    await _setProperty('demuxer-lavf-o', 'fflags=+nobuffer');
+    await _setProperty('demuxer-max-back-bytes', '100KiB');
+    await _setProperty('demuxer-max-bytes', '8MiB');
+    await _setProperty('framedrop', 'vo');
+    await _setProperty('demuxer-lavf-analyzeduration', '0.5');
+    await _setProperty('demuxer-lavf-probesize', '1500000');
   }
 
   /// Applies the user's own mpv tweaks on top of the built-in playback
@@ -251,12 +320,49 @@ class MpvOhosVideoController extends VideoPlayerController {
     final advanced =
         MpvOptionsService.parseOptions(settings.mpvAdvancedOptions.value);
     for (final entry in advanced.entries) {
-      await _setProperty(entry.key, entry.value);
+      try {
+        await _setProperty(entry.key, entry.value);
+      } on PlatformException {
+        Log.w('[mpv-ctrl] unsupported option: ${entry.key}');
+      }
     }
-    final hwdec = _mapOhosHwdec(settings.videoHardwareDecoder.value);
-    if (hwdec != null) {
-      await _setProperty('hwdec', hwdec);
-    }
+    final hwdec = _mapOhosHwdec(settings.videoHardwareDecoder.value) ??
+        advanced['hwdec'] ??
+        'ohcodec';
+    _decoderPolicy = MpvOhosDecoderPolicy(preferredHwdec: hwdec != 'no');
+    _initialHwdecMode =
+        MpvOhosHwdecMode.fromCurrentValue(hwdec) ?? MpvOhosHwdecMode.direct;
+  }
+
+  Future<void> _applyDecoderActions(List<MpvOhosDecoderAction> actions) {
+    _decoderTransition = _decoderTransition.then((_) async {
+      for (final action in actions) {
+        if (_mpvDisposed) return;
+        switch (action.type) {
+          case MpvOhosDecoderActionType.setHwdec:
+            await _setProperty('hwdec', action.mpvValue!);
+            break;
+          case MpvOhosDecoderActionType.armConfirmation:
+            _hwdecConfirmationTimer?.cancel();
+            _hwdecConfirmationTimer = Timer(action.delay!, () {
+              unawaited(
+                  _applyDecoderActions(_decoderPolicy.onConfirmationTimeout()));
+            });
+            break;
+          case MpvOhosDecoderActionType.cancelConfirmation:
+            _hwdecConfirmationTimer?.cancel();
+            break;
+          case MpvOhosDecoderActionType.hardwareActive:
+          case MpvOhosDecoderActionType.softwareResolved:
+            Log.i(
+                '[mpv-ctrl] decoder=${action.mpvValue} reason=${action.reason}');
+            break;
+        }
+      }
+    }).catchError((Object error) {
+      if (!_mpvDisposed) onFatal?.call('解码器切换失败，请切换线路重试');
+    });
+    return _decoderTransition;
   }
 
   /// Maps the cross-platform hardware decoder preference onto OHOS decoder
@@ -280,16 +386,23 @@ class MpvOhosVideoController extends VideoPlayerController {
   Future<void> _setProperty(String name, String value) async {
     if (_mpvDisposed) return;
     try {
-      await _method.invokeMethod('setProperty', {'name': name, 'value': value});
+      await _method.invokeMethod('setProperty', {
+        'name': name,
+        'value': value,
+        'generation': _generation,
+      });
     } on PlatformException {
-      // A dead player must not take the room UI down with it.
+      if (!_mpvDisposed) rethrow;
     }
   }
 
   Future<String?> _getProperty(String name) async {
     if (_mpvDisposed) return null;
     try {
-      return await _method.invokeMethod('getProperty', {'name': name});
+      return await _method.invokeMethod('getProperty', {
+        'name': name,
+        'generation': _generation,
+      });
     } on PlatformException {
       return null;
     }
@@ -317,118 +430,79 @@ class MpvOhosVideoController extends VideoPlayerController {
     onFatal?.call('live stream playback failed');
   }
 
-  /// Resizes the shared native buffer when the stream's display aspect maps
-  /// to a different canonical buffer (portrait vs landscape). Targets are
-  /// quantized to 1080x1920 / 1920x1080 so streams whose reported dw/dh
-  /// oscillates (adaptive streams, rotate metadata) cannot chain reconfigs
-  /// back and forth, and a short cooldown keeps any remaining churn bounded.
-  /// This only ever happens right after a room/quality switch — while the
-  /// loading spinner is already up — so the vo hot-reconfig (one black frame)
-  /// is never visible. Layout changes like fullscreen toggles never reach
-  /// this path.
+  /// Keep the newest requested size, including updates received in flight.
   void _scheduleGeometryReconfig(Size displaySize) {
-    if (_mpvDisposed) {
-      return;
-    }
-    final target = displaySize.width / displaySize.height < 1
-        ? const Size(1080, 1920)
-        : const Size(1920, 1080);
-    if (target == _appliedSurfaceSize) {
-      return;
-    }
-    // An orientation change (portrait <-> landscape) must always reconfigure:
-    // the 5s cooldown below is meant to suppress same-orientation size
-    // churn (adaptive streams, rotate metadata), but skipping a real
-    // orientation flip leaves a landscape stream rendered into a portrait
-    // buffer (or vice versa), which the uniform FittedBox(contain) then
-    // letterboxes into a visually squashed picture.
-    final orientationChanged =
-        (target.width < target.height) !=
-        (_appliedSurfaceSize.width < _appliedSurfaceSize.height);
-    if (!orientationChanged) {
-      final lastCompleted = _lastGeometryReconfigCompletedAt;
-      if (lastCompleted != null &&
-          DateTime.now().difference(lastCompleted) <
-              const Duration(seconds: 5)) {
-        return;
-      }
-    }
-    if (_pendingGeometry == target) {
-      return;
-    }
-    _pendingGeometry = target;
+    if (_mpvDisposed) return;
+    _pendingGeometry = mpvOhosSurfaceSize(displaySize);
     _geometryDebounce?.cancel();
-    _geometryDebounce = Timer(const Duration(milliseconds: 300), () {
+    if (_geometryReconfiguring) return;
+    _queueGeometryReconfig();
+  }
+
+  void _queueGeometryReconfig({Duration? retryDelay}) {
+    if (_mpvDisposed || _geometryReconfiguring) return;
+    final target = _pendingGeometry;
+    if (target == null || target == _appliedSurfaceSize) {
+      _pendingGeometry = null;
+      _tryReveal();
+      return;
+    }
+    final orientationChanged = (target.width < target.height) !=
+        (_appliedSurfaceSize.width < _appliedSurfaceSize.height);
+    final delay = retryDelay ??
+        (!_visualReady || orientationChanged
+            ? Duration.zero
+            : const Duration(milliseconds: 300));
+    _geometryDebounce?.cancel();
+    _geometryDebounce = Timer(delay, () {
       unawaited(_runGeometryReconfig());
     });
   }
 
   Future<void> _runGeometryReconfig() async {
+    if (_mpvDisposed || _geometryReconfiguring) return;
     final target = _pendingGeometry;
-    if (target == null || _mpvDisposed) {
-      return;
-    }
+    if (target == null) return;
     _pendingGeometry = null;
-    // Fire-time verification: the stream may have settled back to the
-    // applied buffer's aspect while the debounce ran, in which case the
-    // reconfig must not happen at all.
-    final dw = int.tryParse(await _getProperty('video-out-params/dw') ?? '') ??
-        0;
-    final dh = int.tryParse(await _getProperty('video-out-params/dh') ?? '') ??
-        0;
-    if (dw > 0 && dh > 0) {
-      final currentTarget =
-          dw / dh < 1 ? const Size(1080, 1920) : const Size(1920, 1080);
-      if (currentTarget == _appliedSurfaceSize) {
-        Log.i('[mpv-ctrl] geometry reconfig skipped (settled)');
-        // The buffer already matches the stream, so the pending gate is
-        // gone and the first frame (if it arrived) can be revealed now.
-        _tryReveal();
-        return;
-      }
-    }
+    // Acquire before the first await so property events cannot start a second
+    // update. A later request replaces the pending size, never this transaction.
     _geometryReconfiguring = true;
-    Log.i(
-        '[mpv-ctrl] geometry reconfig -> ${target.width.toInt()}x${target.height.toInt()}');
-    // The ohosvk vo cannot follow an in-place buffer resize (it keeps
-    // rendering the old canvas into the top-left corner), so the vo must be
-    // rebuilt — which blanks the surface for a moment. Report "playing, not
-    // buffering" until playback actually resumes so the room UI never spins
-    // for this; the flash stays hidden behind the room-loading spinner
-    // because reconfigs only ever happen right after a switch.
-    notifyListeners();
+    final epoch = _geometryEpoch;
+    Duration? retryDelay;
     try {
-      await _setProperty('vo', 'null');
-      if (_mpvDisposed) {
-        return;
-      }
-      await _method.invokeMethod('setGeometry', {
+      await _method.invokeMethod('reconfigureSurface', {
         'width': target.width.toInt(),
         'height': target.height.toInt(),
+        'generation': _generation,
       });
-      await _setProperty('ohos-surface-size',
-          '${target.width.toInt()}x${target.height.toInt()}');
-      await _setProperty('vo', 'gpu-next');
-      if (!_mpvDisposed) {
-        _appliedSurfaceSize = target;
-        _lastGeometryReconfigCompletedAt = DateTime.now();
-        Log.i(
-            '[mpv-ctrl] geometry reconfig done -> ${target.width.toInt()}x${target.height.toInt()}');
-        // The buffer now matches the stream; reveal the texture if the
-        // first frame had already arrived while we were reconfiguring.
-        _tryReveal();
+      if (_mpvDisposed || epoch != _geometryEpoch) return;
+      _geometryReconfigFailures = 0;
+      _appliedSurfaceSize = target;
+      // surfaceSize is separate from VideoPlayerValue.size. Notify even when
+      // the metadata arrived earlier, so the widget uses the applied buffer.
+      notifyListeners();
+    } on PlatformException catch (error) {
+      if (_mpvDisposed || epoch != _geometryEpoch) return;
+      if (error.code == 'stale_player') {
+        _pendingGeometry = null;
+        return;
       }
-    } on PlatformException {
-      // Player gone mid-sequence.
+      _geometryReconfigFailures++;
+      Log.w('[mpv-ctrl] reconfigureSurface failed '
+          '(${error.code}/${error.message}); attempt $_geometryReconfigFailures');
+      if (_geometryReconfigFailures < 20) {
+        // Prefer any newer size received while the failed call was in flight.
+        _pendingGeometry ??= target;
+        retryDelay = const Duration(milliseconds: 400);
+      } else {
+        _pendingGeometry = null;
+      }
     } finally {
-      _geometryResumeTimer?.cancel();
-      _geometryResumeTimer = Timer(const Duration(seconds: 5), () {
-        if (_geometryReconfiguring && !_mpvDisposed) {
-          _geometryReconfiguring = false;
-          _tryReveal();
-          notifyListeners();
-        }
-      });
+      _geometryReconfiguring = false;
+      if (!_mpvDisposed) {
+        _queueGeometryReconfig(retryDelay: retryDelay);
+        _publish();
+      }
     }
   }
 
@@ -446,19 +520,37 @@ class MpvOhosVideoController extends VideoPlayerController {
     final kind = event['kind'] as String?;
     final name = event['name'] as String?;
     final valueText = event['value'] as String? ?? '';
-    if (kind == 'property' && name != null) {
+    if (kind == 'decoder') {
+      unawaited(_applyDecoderActions(_decoderPolicy.onMpvLog(
+        event['text'] as String? ?? '',
+      )));
+    } else if (kind == 'property' && name != null) {
       _handleProperty(name, valueText);
     } else if (kind == 'event' && name == 'video-frame-presented') {
       _markVisualReady();
     } else if (kind == 'event' && name == 'file-loaded') {
       _fileLoaded = true;
+      unawaited(_applyDecoderActions(_decoderPolicy.onFileLoaded()));
       final waiter = _fileLoadedWaiter;
       if (waiter != null) {
         _fileLoadedWaiter = null;
         waiter.complete();
       }
+      unawaited(_refreshDisplaySize());
+      _revealFallbackTimer?.cancel();
+      _revealFallbackTimer = Timer(const Duration(seconds: 3), () {
+        unawaited(_verifyVideoRendering());
+      });
     } else if (kind == 'event' && name == 'end-file') {
+      _fileLoaded = false;
+      _hwdecConfirmationTimer?.cancel();
+      _decoderPolicy.reset();
+      _revealFallbackTimer?.cancel();
+      _clearCache();
       if (valueText == 'error') {
+        final code = event['code'];
+        final text = event['text'] as String? ?? '';
+        Log.w('[mpv-ctrl] end-file error code=${code ?? '?'} text=$text');
         unawaited(_confirmFatal());
       }
     } else if (kind == 'event' && name == 'shutdown') {
@@ -468,17 +560,25 @@ class MpvOhosVideoController extends VideoPlayerController {
 
   void _handleProperty(String name, String valueText) {
     switch (name) {
+      case 'hwdec-current':
+        unawaited(
+            _applyDecoderActions(_decoderPolicy.onHwdecCurrent(valueText)));
+        break;
       case 'pause':
         _paused = _containsYes(valueText);
         break;
       case 'core-idle':
         _coreIdle = _containsYes(valueText);
-        if (_geometryReconfiguring && !_coreIdle) {
-          // Playback resumed after a buffer reconfig: end the spinner
-          // suppression exactly when frames flow again, and reveal the
-          // texture if the first frame had already arrived.
-          _geometryReconfiguring = false;
-          _tryReveal();
+        // core-idle=no is mpv's authoritative "the video core is running"
+        // signal and doubles as the primary first-frame marker. The native
+        // "video-frame-presented" event can be lost to a cross-room
+        // generation race (its gate never catches up), which would otherwise
+        // leave the spinner up forever while audio plays. Reveal on
+        // core-idle=no instead, mirroring the reference player's
+        // notifyVideoRendering path, but only once the stream is confirmed
+        // open so a stale idle flip cannot flash the previous room's frame.
+        if (!_coreIdle && _fileLoaded && _reportedDisplaySize != null) {
+          _markVisualReady();
         }
         break;
       case 'paused-for-cache':
@@ -488,22 +588,30 @@ class MpvOhosVideoController extends VideoPlayerController {
         _eofReached = _containsYes(valueText);
         break;
       case 'time-pos':
-        final seconds = double.tryParse(valueText);
-        if (seconds != null) {
-          _timePosSeconds = seconds;
-          onHeartbeat?.call(DateTime.now(), _positionFromSeconds(seconds));
+        if (!_fileLoaded) {
+          break;
+        }
+        final position = parseMpvOhosDurationSeconds(valueText);
+        if (position != null) {
+          _timePosSeconds = position.inMicroseconds / 1000000.0;
+          onHeartbeat?.call(DateTime.now(), position);
         }
         break;
-      case 'demuxer-cache-time':
-        final seconds = double.tryParse(valueText);
-        if (seconds != null) {
-          _demuxerCacheTime = _positionFromSeconds(seconds);
-          onCacheDuration?.call(_demuxerCacheTime);
+      case 'demuxer-cache-duration':
+        if (!_fileLoaded) {
+          break;
         }
+        final sampledAt = DateTime.now();
+        _demuxerCacheDuration = parseMpvOhosDurationSeconds(valueText);
+        onCacheDuration?.call(sampledAt, _demuxerCacheDuration);
         break;
       case 'video-out-params':
-        // dw/dh includes rotation and pixel aspect ratio; width/height is
-        // only the decoded storage size. Prefer dw/dh for Flutter state.
+      case 'video-out-params/dw':
+      case 'video-out-params/dh':
+        // dw/dh is the display size (SAR applied, the authoritative aspect for
+        // Flutter). The parent map serializes to an empty STRING and its
+        // change event can fire before dw/dh are readable, so the individual
+        // dw/dh leaf events (observed natively) are the reliable trigger.
         unawaited(_refreshDisplaySize());
         break;
       case 'width':
@@ -517,10 +625,10 @@ class MpvOhosVideoController extends VideoPlayerController {
   }
 
   Future<void> _refreshDisplaySize() async {
-    final dw = int.tryParse(await _getProperty('video-out-params/dw') ?? '') ??
-        0;
-    final dh = int.tryParse(await _getProperty('video-out-params/dh') ?? '') ??
-        0;
+    final dw =
+        int.tryParse(await _getProperty('video-out-params/dw') ?? '') ?? 0;
+    final dh =
+        int.tryParse(await _getProperty('video-out-params/dh') ?? '') ?? 0;
     if (dw <= 0 || dh <= 0 || _mpvDisposed) {
       return;
     }
@@ -534,25 +642,38 @@ class MpvOhosVideoController extends VideoPlayerController {
     _scheduleGeometryReconfig(displaySize);
   }
 
-  Future<void> _refreshSize() async {
-    final w = int.tryParse(await _getProperty('width') ?? '') ?? 0;
-    final h = int.tryParse(await _getProperty('height') ?? '') ?? 0;
-    if (w > 0 && h > 0 && !_mpvDisposed) {
-      // video-out-params/dw/dh includes rotation and pixel aspect ratio;
-      // width/height is only the decoded storage size. Prefer the former for
-      // Flutter layout once mpv has reported it.
-      final next = value.copyWith(
-        size: _reportedDisplaySize ?? Size(w.toDouble(), h.toDouble()),
-      );
-      if (next != value) {
-        value = next;
-      }
+  Future<void> _verifyVideoRendering() async {
+    if (_mpvDisposed || !_fileLoaded || _firstFrameArrived) return;
+    await _refreshDisplaySize();
+    final idle = await _getProperty('core-idle');
+    if (!_mpvDisposed &&
+        _fileLoaded &&
+        _reportedDisplaySize != null &&
+        idle == 'no') {
+      _markVisualReady();
     }
+  }
+
+  Future<void> _refreshSize() async {
+    // width/height is the decoded STORAGE size (rotation not applied); for a
+    // portrait stream encoded landscape with a 90-degree rotation matrix it
+    // reports e.g. 1920x1080 while the real display is 1080x1920. Using it to
+    // set value.size would make Flutter lay the texture out in the wrong
+    // orientation (portrait squashed horizontally / landscape squashed
+    // vertically). Always go through the rotation-aware dw/dh path instead;
+    // the raw width/height event is only a hint that the stream has a video
+    // track and a fresh display size may now be readable.
+    await _refreshDisplaySize();
   }
 
   Duration _positionFromSeconds(double seconds) {
     final ms = (seconds * 1000).round();
     return Duration(milliseconds: ms < 0 ? 0 : ms);
+  }
+
+  void _clearCache() {
+    _demuxerCacheDuration = null;
+    onCacheDuration?.call(null, null);
   }
 
   /// Recomputes the synthesized [VideoPlayerValue] and notifies listeners.
@@ -592,24 +713,26 @@ class MpvOhosVideoController extends VideoPlayerController {
   }
 
   void _markVisualReady() {
-    if (_mpvDisposed || _firstFrameArrived) {
+    if (_mpvDisposed || !_fileLoaded || _firstFrameArrived) {
       return;
     }
     _firstFrameArrived = true;
+    _revealFallbackTimer?.cancel();
+    _revealFallbackTimer = null;
     // The first-frame watchdog stops on the decoded frame, even if the frame
     // was rendered into a buffer whose geometry still needs reconfiguring.
     onFirstFrameDecoded?.call();
     _tryReveal();
   }
 
-  /// Reveals the texture (sets _visualReady) once it is safe: the first
-  /// frame has arrived AND no geometry reconfig is pending or in flight.
-  /// Without this gate, the very first frame of a room whose direction
-  /// differs from the previous room renders into the old-direction buffer
-  /// (one visibly squashed frame), and the following vo rebuild blanks the
-  /// surface for a frame — both would flash behind a prematurely-hidden
-  /// spinner. Delaying the reveal keeps the spinner up until the buffer
-  /// matches the stream, hiding the transition entirely.
+  /// Reveals the texture (sets _visualReady) once the first frame has arrived
+  /// and the display size is known. Reveal is deliberately decoupled from the
+  /// surface-geometry reconfig: the native reconfigure no longer tears the vo
+  /// down (only the first resize does), so there is no black frame to hide.
+  /// The buffer geometry follows the stream on its own via mpv's VIDEO_RECONFIG,
+  /// and Flutter's FittedBox(contain) keeps the picture undistorted throughout,
+  /// exactly like the reference player (Juying) which reveals videoVisible
+  /// independently of setSurfaceSize/forceVoResize.
   void _tryReveal() {
     if (_mpvDisposed || _visualReady) {
       return;
@@ -617,7 +740,12 @@ class MpvOhosVideoController extends VideoPlayerController {
     if (!_firstFrameArrived) {
       return;
     }
-    if (_geometryReconfiguring || _pendingGeometry != null) {
+    // Never reveal before the display size is known: doing so would show the
+    // first frame rendered into the previous room's buffer for one frame
+    // before the geometry reconfig catches up (the "比例残留" flash). The
+    // size is guaranteed known by the time _refreshDisplaySize schedules the
+    // reconfig, which re-enters _tryReveal once it settles.
+    if (_reportedDisplaySize == null) {
       return;
     }
     _visualReady = true;
@@ -632,7 +760,9 @@ class MpvOhosVideoController extends VideoPlayerController {
   Future<void> initialize() async {
     // The mpv path does not talk to the video_player platform; initialization
     // happens through mpvCreate/mpvLoad driven by the owning widget.
-    value = value.copyWith(isInitialized: true);
+    if (!_mpvDisposed && _mpvTextureId >= 0) {
+      value = value.copyWith(isInitialized: true);
+    }
   }
 
   @override
@@ -655,12 +785,31 @@ class MpvOhosVideoController extends VideoPlayerController {
 
   @override
   Future<void> setVolume(double volume) async {
+    if (_mpvDisposed) return;
     final clamped = volume.clamp(0.0, 1.0);
     if (value.volume != clamped) {
       value = value.copyWith(volume: clamped);
     }
     await _setProperty('volume', (clamped * 100).toStringAsFixed(1));
   }
+
+  @override
+  Future<void> setPlaybackSpeed(double speed) async {
+    if (_mpvDisposed) return;
+    if (!speed.isFinite || speed <= 0) {
+      throw ArgumentError.value(speed, 'speed', '必须为有限正数');
+    }
+    await _setProperty('speed', speed.toString());
+    if (!_mpvDisposed) value = value.copyWith(playbackSpeed: speed);
+  }
+
+  @override
+  Future<void> setLooping(bool looping) async {
+    await _setProperty('loop-file', looping ? 'inf' : 'no');
+    if (!_mpvDisposed) value = value.copyWith(isLooping: looping);
+  }
+
+  Future<String?> readProperty(String name) => _getProperty(name);
 
   /// Explicit stop for the room close path. Generation-guarded on the
   /// native side: a stale controller (room already switched) cannot kill the
@@ -683,9 +832,13 @@ class MpvOhosVideoController extends VideoPlayerController {
   @override
   Future<void> dispose() async {
     Log.d('[mpv-ctrl] dispose gen=$_generation');
+    _clearCache();
     _mpvDisposed = true;
+    _hwdecConfirmationTimer?.cancel();
+    _decoderPolicy.reset();
     _geometryDebounce?.cancel();
-    _geometryResumeTimer?.cancel();
+    _revealFallbackTimer?.cancel();
+    _revealFallbackTimer = null;
     _fileLoadedWaiter = null;
     _eventSub?.cancel();
     _eventSub = null;

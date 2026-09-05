@@ -18,8 +18,6 @@ import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_p
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/services/ohos_playback_capabilities_service.dart';
 import 'package:video_player/video_player.dart';
-import 'package:video_player_ohos/video_player_ohos.dart'
-    show OhosPlaybackProfile;
 
 class MpvOhosPlayer extends StatefulWidget {
   const MpvOhosPlayer({
@@ -91,12 +89,12 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
   bool _hasObservedProgress = false;
   DateTime? _lastHeartbeatAt;
   bool _hasObservedHeartbeat = false;
-  Duration? _lastCacheDuration;
   DateTime? _monitoringSince;
   bool _unobservableReported = false;
   bool _completionReported = false;
   bool _firstFrameRendered = false;
   Size? _lastRenderedSize;
+  Size? _lastRenderedSurfaceSize;
   bool _lastRenderedVisualReady = false;
   String? _lastRenderedError;
   int? _lowLatencyDisabledSessionGeneration;
@@ -154,6 +152,7 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
     _controller = null;
     _controllerListener = null;
     _lastRenderedSize = null;
+    _lastRenderedSurfaceSize = null;
     _lastRenderedVisualReady = false;
     _lastRenderedError = null;
     _ready = false;
@@ -174,9 +173,7 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
     _wireMpvCallbacks(controller);
     widget.onControllerReady?.call(controller);
     try {
-      await controller
-          .mpvCreate()
-          .timeout(_initializationTimeout, onTimeout: () => false);
+      await controller.mpvCreate().timeout(_initializationTimeout);
       if (!_isCurrent(generation, controller)) {
         return;
       }
@@ -184,6 +181,9 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
       await controller.applyPlaybackProfile(
           lowLatency: profileDecision.isExperimental);
       await controller.applyUserOverrides();
+      if (!_isCurrent(generation, controller)) {
+        return;
+      }
       await controller.mpvLoad(
         url: widget.url,
         headers: widget.headers ?? const <String, String>{},
@@ -218,54 +218,56 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
       widget.onControllerDisposed?.call(controller);
       unawaited(controller.dispose());
       _reportError(
-        e is TimeoutException
-            ? 'player initialization timed out, check the network or switch lines'
-            : e.toString(),
+        e is TimeoutException ? '播放器初始化超时，请检查网络或切换线路' : e.toString(),
       );
     }
   }
 
   void _wireMpvCallbacks(MpvOhosVideoController controller) {
+    final playerRevision = widget.revision;
     controller.onFirstFrameDecoded = () {
-      if (!mounted || _firstFrameRendered) {
+      if (!mounted ||
+          !identical(_controller, controller) ||
+          _firstFrameRendered) {
         return;
       }
       _firstFrameRendered = true;
       _firstFrameTimer?.cancel();
       _firstFrameTimer = null;
-      widget.onFirstFrame?.call(widget.revision);
+      widget.onFirstFrame?.call(playerRevision);
       _startWatchdog();
     };
     controller.onHeartbeat = (DateTime at, Duration position) {
-      if (!mounted) {
+      if (!mounted || !identical(_controller, controller)) {
         return;
       }
       _lastHeartbeatAt = at;
       _hasObservedHeartbeat = true;
       widget.onTelemetry?.call(
-        widget.revision,
+        playerRevision,
         OhosPlaybackTelemetry(
           heartbeatAt: at,
           position: position,
-          cacheDuration: _lastCacheDuration,
         ),
       );
     };
-    controller.onCacheDuration = (Duration? cacheTime) {
-      if (!mounted) {
+    controller.onCacheDuration = (DateTime? sampledAt, Duration? cacheTime) {
+      if (!mounted || !identical(_controller, controller)) {
         return;
       }
-      _lastCacheDuration = cacheTime;
       widget.onTelemetry?.call(
-        widget.revision,
+        playerRevision,
         OhosPlaybackTelemetry(
-          heartbeatAt: _lastHeartbeatAt,
-          position: _controller?.value.position,
           cacheDuration: cacheTime,
+          cacheSampledAt: sampledAt,
+          hasCacheUpdate: true,
         ),
       );
     };
     controller.onFatal = (String message) {
+      if (!mounted || !identical(_controller, controller)) {
+        return;
+      }
       _reportError(message);
     };
   }
@@ -301,9 +303,11 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
     }
     final value = controller.value;
     final shouldRebuild = _lastRenderedSize != value.size ||
+        _lastRenderedSurfaceSize != controller.surfaceSize ||
         _lastRenderedVisualReady != controller.visualReady ||
         _lastRenderedError != value.errorDescription;
     _lastRenderedSize = value.size;
+    _lastRenderedSurfaceSize = controller.surfaceSize;
     _lastRenderedVisualReady = controller.visualReady;
     _lastRenderedError = value.errorDescription;
     if (shouldRebuild && mounted) {
@@ -331,7 +335,6 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
     _hasObservedProgress = false;
     _lastHeartbeatAt = null;
     _hasObservedHeartbeat = false;
-    _lastCacheDuration = null;
     _monitoringSince = null;
     _unobservableReported = false;
     _completionReported = false;
@@ -349,7 +352,7 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
     _firstFrameTimer = Timer(_firstFrameAfterLoadedTimeout, () {
       if (_isCurrent(generation, controller) && !_firstFrameRendered) {
         _reportError(
-          'first frame took over ${_firstFrameAfterLoadedTimeout.inSeconds} seconds, retrying',
+          '超过 ${_firstFrameAfterLoadedTimeout.inSeconds} 秒未出画，正在重试',
         );
       }
     });
@@ -413,11 +416,11 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
     )) {
       case OhosPlaybackHealthIssue.bufferingTimeout:
         _reportError(
-          'buffering for over ${ohosBufferingTimeout.inSeconds} seconds, retrying',
+          '缓冲超过 ${ohosBufferingTimeout.inSeconds} 秒，正在重试',
         );
       case OhosPlaybackHealthIssue.playbackStall:
         _reportError(
-          'playback stalled for over ${ohosPlaybackStallTimeout.inSeconds} seconds, retrying',
+          '播放停滞超过 ${ohosPlaybackStallTimeout.inSeconds} 秒，正在重试',
         );
       case OhosPlaybackHealthIssue.playbackUnobservable:
         if (!_unobservableReported) {
@@ -492,7 +495,7 @@ class _MpvOhosPlayerState extends State<MpvOhosPlayer> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(20),
-          child: Text('Failed to play\n$_error',
+          child: Text('播放失败\n$_error',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white)),
         ),
