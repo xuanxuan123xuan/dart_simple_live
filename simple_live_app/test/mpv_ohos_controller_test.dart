@@ -215,6 +215,30 @@ void main() {
     await controller.dispose();
   });
 
+  test('stable fallback restores options on the reused mpv player', () async {
+    final controller = await open();
+    Map<String, String> writes() => {
+          for (final call
+              in calls.where((call) => call.method == 'setProperty'))
+            call.arguments['name'] as String: call.arguments['value'] as String,
+        };
+
+    for (final experimental in [false, true, false]) {
+      calls.clear();
+      await controller.applyPlaybackProfile(lowLatency: experimental);
+      final options = writes();
+      expect(options['video-sync'], experimental ? 'desync' : 'audio');
+      expect(options['cache'], experimental ? 'no' : 'auto');
+      expect(options['demuxer-lavf-o'], experimental ? 'fflags=+nobuffer' : '');
+      expect(options['demuxer-lavf-analyzeduration'],
+          experimental ? '0.5' : '1.5');
+      expect(options['cache-pause'], 'no');
+      expect(options['initial-audio-sync'], 'yes');
+      expect(calls.every((call) => call.arguments['generation'] == 7), isTrue);
+    }
+    await controller.dispose();
+  });
+
   test('a late creation is disposed without reopening a closed controller',
       () async {
     final gate = Completer<Object>();

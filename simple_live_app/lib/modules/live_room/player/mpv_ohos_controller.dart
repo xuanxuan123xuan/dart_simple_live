@@ -286,26 +286,22 @@ class MpvOhosVideoController extends VideoPlayerController {
     }
   }
 
-  /// Applies the live latency option set. [lowLatency] mirrors the
-  /// `lowLatencyExperimental` playback profile from the AVPlayer era; the
-  /// values follow integration README section 6.2.
+  /// Stable playback retains read-ahead and audio synchronization. Experimental
+  /// playback uses the low-latency options from integration README section 6.2.
+  /// Write both branches explicitly because mpv survives room/profile switches.
   Future<void> applyPlaybackProfile({required bool lowLatency}) async {
-    // Live streams (B 站 HTTP-FLV 等) use a no-cache / low-latency profile
-    // aligned with the reference player (聚映) and libmpv integration README
-    // §6.2. cache-pause=yes on a live stream would pause on cache underrun
-    // with no way to seek-recover, repeatedly stalling playback — the root
-    // cause of "live stream playback failed" on B 站.
-    //
-    // Both playback profiles are now unified to this live low-latency set;
-    // the `lowLatency` parameter is kept only for interface compatibility.
-    await _setProperty('video-sync', 'desync');
-    await _setProperty('cache', 'no');
+    await _setProperty('video-sync', lowLatency ? 'desync' : 'audio');
+    await _setProperty('initial-audio-sync', 'yes');
+    await _setProperty('cache', lowLatency ? 'no' : 'auto');
+    // Read-ahead is independent of pausing on cache underrun. Keep the latter
+    // disabled for live streams, including when falling back to stable mode.
     await _setProperty('cache-pause', 'no');
-    await _setProperty('demuxer-lavf-o', 'fflags=+nobuffer');
+    await _setProperty('demuxer-lavf-o', lowLatency ? 'fflags=+nobuffer' : '');
     await _setProperty('demuxer-max-back-bytes', '100KiB');
     await _setProperty('demuxer-max-bytes', '8MiB');
     await _setProperty('framedrop', 'vo');
-    await _setProperty('demuxer-lavf-analyzeduration', '0.5');
+    await _setProperty(
+        'demuxer-lavf-analyzeduration', lowLatency ? '0.5' : '1.5');
     await _setProperty('demuxer-lavf-probesize', '1500000');
   }
 

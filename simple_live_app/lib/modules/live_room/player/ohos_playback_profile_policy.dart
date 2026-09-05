@@ -1,8 +1,18 @@
 import 'package:simple_live_core/simple_live_core.dart';
-import 'package:video_player_ohos/video_player_ohos.dart';
 
 const String ohosStablePlaybackProfileValue = 'stable';
 const String ohosLowLatencyExperimentalProfileValue = 'lowLatencyExperimental';
+
+/// Playback policy selected for the active HarmonyOS player.
+///
+/// This enum used to live in the video_player_ohos package alongside the
+/// AVPlayer platform implementation. With the app fully on libmpv it now
+/// lives here so the mpv player can reference it without depending on the
+/// removed AVPlayer plugin.
+enum OhosPlaybackProfile {
+  stable,
+  lowLatencyExperimental,
+}
 
 enum OhosPlaybackProfileDecisionReason {
   stableRequested,
@@ -28,7 +38,7 @@ class OhosPlaybackProfileDecision {
 /// Resolves the native HarmonyOS playback profile without guessing support.
 ///
 /// The first experimental release is deliberately limited to HTTP-FLV. HLS
-/// and unknown/custom protocols keep the stable AVPlayer policy even when the
+/// and unknown/custom protocols keep the stable playback policy even when the
 /// persisted user preference requests the experiment.
 OhosPlaybackProfileDecision resolveOhosPlaybackProfile({
   required String requestedProfile,
