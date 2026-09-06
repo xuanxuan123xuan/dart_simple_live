@@ -69,7 +69,9 @@ Size mpvOhosSurfaceSize(Size display) {
 enum MpvOhosVideoOrientation { unknown, landscape, portrait }
 
 MpvOhosVideoOrientation mpvOhosVideoOrientation(Size size) {
-  if (!size.width.isFinite || !size.height.isFinite || size.width <= 0 ||
+  if (!size.width.isFinite ||
+      !size.height.isFinite ||
+      size.width <= 0 ||
       size.height <= 0) return MpvOhosVideoOrientation.unknown;
   final ratio = size.width / size.height;
   if (ratio > 1.15) return MpvOhosVideoOrientation.landscape;
@@ -125,7 +127,8 @@ class MpvOhosVideoController extends VideoPlayerController {
   Timer? _geometryDebounce;
   Timer? _displaySizeDebounce;
   MpvOhosVideoOrientation _orientation = MpvOhosVideoOrientation.unknown;
-  MpvOhosVideoOrientation _orientationCandidate = MpvOhosVideoOrientation.unknown;
+  MpvOhosVideoOrientation _orientationCandidate =
+      MpvOhosVideoOrientation.unknown;
   int _orientationCandidateCount = 0;
   int _displayReadRevision = 0;
   bool _geometryReconfiguring = false;
@@ -649,7 +652,10 @@ class MpvOhosVideoController extends VideoPlayerController {
         int.tryParse(await _getProperty('video-out-params/dw') ?? '') ?? 0;
     final dh =
         int.tryParse(await _getProperty('video-out-params/dh') ?? '') ?? 0;
-    if (dw <= 0 || dh <= 0 || _mpvDisposed || readRevision != _displayReadRevision) {
+    if (dw <= 0 ||
+        dh <= 0 ||
+        _mpvDisposed ||
+        readRevision != _displayReadRevision) {
       return;
     }
     final displaySize = Size(dw.toDouble(), dh.toDouble());
@@ -665,6 +671,10 @@ class MpvOhosVideoController extends VideoPlayerController {
     }
     if (_orientation == MpvOhosVideoOrientation.unknown &&
         _orientationCandidateCount < 2) return;
+    // Once a stream has established a stable display size, mpv may continue
+    // emitting storage/VO resize variants with the same aspect ratio. They
+    // are not a new video orientation and must not resize the shared surface.
+    if (_orientation != MpvOhosVideoOrientation.unknown) return;
     _orientation = sampleOrientation;
     Log.i('[mpv-ctrl] display $dw'
         'x$dh buffer=${_appliedSurfaceSize.width.toInt()}x${_appliedSurfaceSize.height.toInt()}');
