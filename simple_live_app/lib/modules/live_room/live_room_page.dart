@@ -36,6 +36,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   static const double _desktopSidePanelWidth = 300.0;
   static const double _desktopSidePanelCollapsedWidth = 48.0;
   static const double _ohosFullscreenHorizontalInset = 28.0;
+  static const double _ohosPortraitTopInset = 14.0;
+  static const double _ohosLandscapeLockInset = 20.0;
 
   const LiveRoomPage({Key? key}) : super(key: key);
 
@@ -770,6 +772,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             mediaQuery.viewPadding.right,
             mediaQuery.viewPadding.bottom,
           );
+          final portraitFullscreen =
+              fullScreen && mediaQuery.size.height > mediaQuery.size.width;
           if (controller.showOfflineOverlay) {
             return Stack(
               fit: StackFit.expand,
@@ -890,7 +894,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               if (fullScreen)
                 AnimatedPositioned(
                   left: controller.lockControlsState.value || controlsVisible
-                      ? safePadding.left + _ohosFullscreenHorizontalInset
+                      ? safePadding.left +
+                          _ohosFullscreenHorizontalInset +
+                          (portraitFullscreen ? 0 : _ohosLandscapeLockInset)
                       : -(64 + safePadding.left),
                   top: 0,
                   bottom: 0,
@@ -913,7 +919,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     return AnimatedPositioned(
       left: 0,
       right: 0,
-      top: controlsVisible ? 0 : -(48 + safePadding.top),
+      top: controlsVisible
+          ? (MediaQuery.sizeOf(context).height >
+                  MediaQuery.sizeOf(context).width
+              ? _ohosPortraitTopInset
+              : 0)
+          : -(48 + safePadding.top),
       duration: const Duration(milliseconds: 200),
       child: _buildOhosTopBar(context),
     );
