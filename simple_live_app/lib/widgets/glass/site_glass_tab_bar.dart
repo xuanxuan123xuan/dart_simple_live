@@ -64,6 +64,7 @@ class SiteGlassTabBar extends StatelessWidget {
             AppGlassAppearancePolicy.resolve(mode),
             compact,
             position,
+            indicatorOffset,
           );
         });
       },
@@ -76,6 +77,7 @@ class SiteGlassTabBar extends StatelessWidget {
     AppGlassAppearanceProfile appearance,
     bool iconOnly,
     double position,
+    double indicatorOffset,
   ) {
     final colors = Theme.of(context).colorScheme;
     return GlassTabBar.inline(
