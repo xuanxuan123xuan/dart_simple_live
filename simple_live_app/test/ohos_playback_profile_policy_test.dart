@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
-import 'package:video_player_ohos/video_player_ohos.dart';
 
 void main() {
   test('stable remains the default for every source', () {

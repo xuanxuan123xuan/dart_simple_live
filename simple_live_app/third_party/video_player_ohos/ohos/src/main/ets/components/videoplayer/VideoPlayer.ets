@@ -539,7 +539,7 @@ export class VideoPlayer implements PipPlaybackTarget {
     return this.avPlayer?.state === AvplayerStatus.PLAYING;
   }
 
-  useOutputSurface(surfaceId: string): void {
+  useOutputSurface(surfaceId: string, width: number, height: number): void {
     if (this.avPlayer === null || surfaceId.length === 0) {
       throw new Error('Video output surface is unavailable.');
     }
@@ -547,7 +547,11 @@ export class VideoPlayer implements PipPlaybackTarget {
   }
 
   restoreOutputSurface(): void {
-    this.useOutputSurface(this.surfaceId);
+    this.useOutputSurface(
+      this.surfaceId,
+      this.avPlayer?.width ?? 0,
+      this.avPlayer?.height ?? 0
+    );
   }
 
   seekTo(position: number) {

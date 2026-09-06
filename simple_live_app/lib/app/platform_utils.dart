@@ -24,7 +24,7 @@ class PlatformUtils {
   /// 避免"能不能开"和"为什么不能开"两套逻辑走偏。
   static String? get inlineMultiRoomUnavailableReason {
     // 多开完全基于 media_kit，而鸿蒙上 media_kit 不初始化（见 `main.dart`），
-    // 播放走 video_player_ohos，因此鸿蒙暂不支持多开。
+    // 播放走 libmpv，因此鸿蒙暂不支持多开。
     if (isOhos) {
       return "鸿蒙版暂不支持多开同屏";
     }

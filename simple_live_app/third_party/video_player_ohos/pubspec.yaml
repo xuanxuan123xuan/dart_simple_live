@@ -58,17 +58,22 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # The AVPlayer platform implementation (OhosVideoPlayer / VideoPlayerPlugin)
+  # and its HarmonyOS native module have been removed: the app plays
+  # exclusively through libmpv (MpvOhosVideoController), which never talks to
+  # VideoPlayerPlatform.
+  #
+  # This package still declares itself a plugin (with an ohos platform entry
+  # that has NO pluginClass/dartPluginClass) so that video_player's
+  # `platforms: ohos: default_package: video_player_ohos` reference resolves:
+  # flutter refuses to build when a default_package points at a package that
+  # is not a plugin. With no class names it registers nothing — a pure
+  # stub that keeps the tooling happy without resurrecting the AVPlayer.
   plugin:
-    implements: video_player
     platforms:
       ohos:
         dartPluginClass: OhosVideoPlayer
-        package: io.flutter.plugins.videoplayer
-        pluginClass: VideoPlayerPlugin
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware

@@ -8,11 +8,11 @@
   "dependencies": {
     "screen_brightness_ohos": "file:../har/screen_brightness_ohos.har",
     "path_provider_ohos": "file:../har/path_provider_ohos.har",
-    "video_player_ohos": "file:../har/video_player_ohos.har",
     "url_launcher_ohos": "file:../har/url_launcher_ohos.har",
     "file_selector_ohos": "file:../har/file_selector_ohos.har",
     "webview_flutter_ohos": "file:../har/webview_flutter_ohos.har",
     "@ohos/flutter_ohos": "har/flutter.har",
-    "libmpv_napi.so": "file:./src/main/cpp/types/libmpv_napi"
+    "libmpv_napi.so": "file:./src/main/cpp/types/libmpv_napi",
+    "video_player_ohos": "file:../har/video_player_ohos.har"
   }
 }

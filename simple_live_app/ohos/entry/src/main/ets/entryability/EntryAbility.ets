@@ -63,7 +63,7 @@ export default class EntryAbility extends FlutterAbility {
     flutterEngine.getPlugins()?.add(new OhosWidgetPlugin(this.context))
     flutterEngine.getPlugins()?.add(new OhosDisplayPlugin())
     flutterEngine.getPlugins()?.add(new OhosCapabilitiesPlugin())
-    flutterEngine.getPlugins()?.add(new OhosMpvPlugin())
+    flutterEngine.getPlugins()?.add(new OhosMpvPlugin(this.context))
   }
 
   private notificationTargetFromWant(want: Want): LiveNotificationTarget | undefined {

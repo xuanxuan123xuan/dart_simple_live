@@ -61,6 +61,13 @@ class BackgroundPlaybackService {
   }
 
   Future<void> _handleNativeControl(MethodCall call) async {
+    if (call.method == 'stateChanged') {
+      final data = call.arguments;
+      if (data is Map && data['running'] is bool) {
+        _running = data['running'] as bool;
+      }
+      return;
+    }
     final controller = _ohosController;
     if (controller == null || !controller.value.isInitialized) return;
     if (call.method == 'play') {

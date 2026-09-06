@@ -1,0 +1,9 @@
+{
+  "module": {
+    "name": "webview_flutter_ohos",
+    "type": "har",
+    "deviceTypes": [
+      "default"
+    ]
+  }
+}

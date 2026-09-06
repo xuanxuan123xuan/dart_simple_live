@@ -25,6 +25,8 @@ export class OhosPipManager implements MethodCallHandler {
   private pipStarting: boolean = false;
   private autoStartEnabled: boolean = false;
   private pipStartTimer: number | undefined = undefined;
+  private contentWidth: number = 16;
+  private contentHeight: number = 9;
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
@@ -175,6 +177,8 @@ export class OhosPipManager implements MethodCallHandler {
     if (player === undefined || surfaceController === undefined) {
       throw new Error('Picture-in-picture video surface is not ready.');
     }
+    this.contentWidth = width;
+    this.contentHeight = height;
     if (this.controller !== undefined &&
       this.controllerPlayer === player &&
       this.controllerSurface === surfaceController) {
@@ -220,7 +224,12 @@ export class OhosPipManager implements MethodCallHandler {
   ): void {
     Log.i(TAG, `PiP state=${state}, reason=${reason}`);
     if (state === PiPWindow.PiPState.ABOUT_TO_START) {
-      player.useOutputSurface(surfaceController.getXComponentSurfaceId());
+      PipSurfaceRegistry.activatePipPlaybackTarget(
+        player,
+        surfaceController.getXComponentSurfaceId(),
+        this.contentWidth,
+        this.contentHeight
+      );
       this.pipStarting = true;
       return;
     }
@@ -229,6 +238,11 @@ export class OhosPipManager implements MethodCallHandler {
       this.pipStarting = false;
       this.pipActive = true;
       this.channel?.invokeMethod('stateChanged', { 'enabled': true });
+      if (!this.autoStartEnabled) {
+        this.context.moveAbilityToBackground().catch((error: Error) => {
+          Log.w(TAG, `Failed to move app to background after PiP start: ${error.message}`);
+        });
+      }
       return;
     }
     if (state === PiPWindow.PiPState.STOPPED || state === PiPWindow.PiPState.ERROR) {
@@ -245,8 +259,13 @@ export class OhosPipManager implements MethodCallHandler {
   }
 
   private restorePlayerSurface(): void {
+    const player = this.controllerPlayer;
+    if (player === undefined) {
+      return;
+    }
     try {
-      this.controllerPlayer?.restoreOutputSurface();
+      PipSurfaceRegistry.deactivatePipPlaybackTarget(player);
+      player.restoreOutputSurface();
     } catch (error) {
       Log.w(TAG, `Failed to restore Flutter video surface: ${error}`);
     }

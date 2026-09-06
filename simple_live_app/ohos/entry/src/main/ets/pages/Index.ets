@@ -15,16 +15,26 @@
 
 import common from '@ohos.app.ability.common';
 import { FlutterPage } from '@ohos/flutter_ohos'
-import { PipSurfaceRegistry } from 'video_player_ohos'
+import { PipSurfaceRegistry } from '../pip/PipSurfaceRegistry'
 
 let storage = LocalStorage.getShared()
 const EVENT_BACK_PRESS = 'EVENT_BACK_PRESS'
+
+class PipXComponentController extends XComponentController {
+  onSurfaceChanged(surfaceId: string, rect: SurfaceRect): void {
+    PipSurfaceRegistry.updateSurface(
+      surfaceId,
+      rect.surfaceWidth,
+      rect.surfaceHeight
+    )
+  }
+}
 
 @Entry(storage)
 @Component
 struct Index {
   private context = getContext(this) as common.UIAbilityContext
-  private pipSurfaceController: XComponentController = new XComponentController()
+  private pipSurfaceController: XComponentController = new PipXComponentController()
   @LocalStorageLink('viewId') viewId: string = "";
 
   build() {
@@ -37,6 +47,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .onLoad(() => {
+          this.pipSurfaceController.setXComponentSurfaceRotation({ lock: true })
           PipSurfaceRegistry.register(this.pipSurfaceController)
         })
       FlutterPage({ viewId: this.viewId })
