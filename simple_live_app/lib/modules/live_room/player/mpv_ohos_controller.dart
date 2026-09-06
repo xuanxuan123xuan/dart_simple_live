@@ -721,14 +721,9 @@ class MpvOhosVideoController extends VideoPlayerController {
     _tryReveal();
   }
 
-  /// Reveals the texture (sets _visualReady) once the first frame has arrived
-  /// and the display size is known. Reveal is deliberately decoupled from the
-  /// surface-geometry reconfig: the native reconfigure no longer tears the vo
-  /// down (only the first resize does), so there is no black frame to hide.
-  /// The buffer geometry follows the stream on its own via mpv's VIDEO_RECONFIG,
-  /// and Flutter's FittedBox(contain) keeps the picture undistorted throughout,
-  /// exactly like the reference player (Juying) which reveals videoVisible
-  /// independently of setSurfaceSize/forceVoResize.
+  /// Reveal after the playback-ready marker and display metadata are known.
+  /// Surface resizing has its own serial queue; keep visibility independent
+  /// of that queue, as the reference player does during forceVoResize.
   void _tryReveal() {
     if (_mpvDisposed || _visualReady) {
       return;

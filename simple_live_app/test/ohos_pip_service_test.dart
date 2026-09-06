@@ -126,16 +126,10 @@ void main() {
 
   test('libmpv registers as the PiP target and switches surfaces', () {
     final registry = File(
-      'third_party/video_player_ohos/ohos/src/main/ets/components/'
-      'videoplayer/PipSurfaceRegistry.ets',
+      'ohos/entry/src/main/ets/pip/PipSurfaceRegistry.ets',
     ).readAsStringSync();
     final manager = File(
-      'third_party/video_player_ohos/ohos/src/main/ets/components/'
-      'videoplayer/OhosPipManager.ets',
-    ).readAsStringSync();
-    final legacyPlayer = File(
-      'third_party/video_player_ohos/ohos/src/main/ets/components/'
-      'videoplayer/VideoPlayer.ets',
+      'ohos/entry/src/main/ets/pip/OhosPipManager.ets',
     ).readAsStringSync();
     final plugin = File(
       'ohos/entry/src/main/ets/plugins/OhosMpvPlugin.ets',
@@ -147,17 +141,16 @@ void main() {
     expect(registry, contains('interface PipPlaybackTarget'));
     expect(registry, contains('registerPlaybackTarget'));
     expect(manager, contains('PipSurfaceRegistry.getPlaybackTarget()'));
-    expect(legacyPlayer,
-        contains('class VideoPlayer implements PipPlaybackTarget'));
+    expect(manager, contains('PiPWindow.create'));
     expect(plugin, contains('implements FlutterPlugin, MethodCallHandler, PipPlaybackTarget'));
-    expect(plugin, contains('PipSurfaceRegistry.registerPlaybackTarget(this)'));
-    expect(plugin, contains('mpvNapi.switchSurface(surfaceId, this.createSeq)'));
-    expect(plugin, contains('mpvNapi.switchSurface(this.cachedSurfaceId, this.createSeq)'));
+    expect(plugin, contains('pipManager'));
+    expect(plugin, contains('mpvNapi.switchSurface('));
+    expect(plugin, contains('restoreOutputSurface(): void'));
     expect(nativeBridge, contains('CommandType::SWITCH_SURFACE'));
-    expect(nativeBridge, contains('command.generation != g_latestRequestedGeneration.load()'));
-    expect(nativeBridge, contains('mpv_set_property_string(mpv, "vo", "null")'));
-    expect(nativeBridge, contains('mpv_set_property_string(mpv, "wid", command.surfaceId.c_str())'));
-    expect(nativeBridge, contains('mpv_set_property_string(mpv, "vo", "gpu-next")'));
+    expect(nativeBridge, contains('g_activeGeneration.load()'));
+    // Handoff outcomes and dimensions are exercised by the executable bridge
+    // tests; do not require synchronous mpv calls or a particular helper here.
+    expect(nativeBridge, contains('SwitchSurfaceOnMpv(mpv, command)'));
   });
 
   test('manual PiP distinguishes device support from player readiness', () {

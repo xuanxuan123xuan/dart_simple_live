@@ -205,7 +205,8 @@ void main() {
     );
     expect(commandPromise, contains('ExecuteAsyncCommand'));
     expect(commandPromise, contains('napi_queue_async_work'));
-    expect(asyncCommand, contains('QueueCommand(std::move(request->command))'));
+    expect(commandPromise, contains('QueueCommand('));
+    expect(asyncCommand, isNot(contains('QueueCommand(')));
     expect(
       source,
       matches(RegExp(r'(?:std::queue|std::deque|condition_variable|Serial)')),
