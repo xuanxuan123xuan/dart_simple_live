@@ -36,7 +36,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   static const double _desktopSidePanelWidth = 300.0;
   static const double _desktopSidePanelCollapsedWidth = 48.0;
   static const double _ohosFullscreenHorizontalInset = 28.0;
-  static const double _ohosPortraitTopInset = 14.0;
+  static const double _ohosPortraitTopInset = 34.0;
   static const double _ohosLandscapeLockInset = 20.0;
 
   const LiveRoomPage({Key? key}) : super(key: key);
