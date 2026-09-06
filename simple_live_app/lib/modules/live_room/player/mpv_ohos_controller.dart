@@ -621,11 +621,18 @@ class MpvOhosVideoController extends VideoPlayerController {
   }
 
   Future<void> _refreshDisplaySize() async {
+    // During a VO rebuild mpv briefly reports placeholder dimensions while
+    // the output is detached. Feeding those values back into the geometry
+    // queue creates a resize loop (for example 100x178 <-> 960x178) and can
+    // starve the decoder, especially for portrait streams.
+    if (_mpvDisposed || _geometryReconfiguring) {
+      return;
+    }
     final dw =
         int.tryParse(await _getProperty('video-out-params/dw') ?? '') ?? 0;
     final dh =
         int.tryParse(await _getProperty('video-out-params/dh') ?? '') ?? 0;
-    if (dw <= 0 || dh <= 0 || _mpvDisposed) {
+    if (dw <= 0 || dh <= 0 || _mpvDisposed || _geometryReconfiguring) {
       return;
     }
     final displaySize = Size(dw.toDouble(), dh.toDouble());

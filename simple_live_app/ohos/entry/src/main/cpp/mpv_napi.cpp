@@ -445,6 +445,12 @@ OperationResult ApplySurfaceState(mpv_handle *mpv, const std::string &surfaceSiz
         return result;
     }
     result = SetPropertyOnMpv(mpv, "ohos-surface-size", surfaceSize);
+    // This property is optional in older bundled libmpv builds. Native
+    // buffer geometry has already been applied, so continue the VO rebuild
+    // when the custom property is unavailable.
+    if (result.error == MPV_ERROR_PROPERTY_NOT_FOUND) {
+        result = Success();
+    }
     if (result.error < 0) {
         return failAfterDetach(result);
     }
