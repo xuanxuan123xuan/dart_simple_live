@@ -112,6 +112,7 @@ class MpvOhosVideoController extends VideoPlayerController {
   Size? _reportedDisplaySize;
   Size? _pendingGeometry;
   Timer? _geometryDebounce;
+  Timer? _displaySizeDebounce;
   bool _geometryReconfiguring = false;
   int _geometryEpoch = 0;
   // Transient surface failures retry up to 20 times without ending playback.
@@ -621,18 +622,14 @@ class MpvOhosVideoController extends VideoPlayerController {
   }
 
   Future<void> _refreshDisplaySize() async {
-    // During a VO rebuild mpv briefly reports placeholder dimensions while
-    // the output is detached. Feeding those values back into the geometry
-    // queue creates a resize loop (for example 100x178 <-> 960x178) and can
-    // starve the decoder, especially for portrait streams.
-    if (_mpvDisposed || _geometryReconfiguring) {
+    if (_mpvDisposed) {
       return;
     }
     final dw =
         int.tryParse(await _getProperty('video-out-params/dw') ?? '') ?? 0;
     final dh =
         int.tryParse(await _getProperty('video-out-params/dh') ?? '') ?? 0;
-    if (dw <= 0 || dh <= 0 || _mpvDisposed || _geometryReconfiguring) {
+    if (dw <= 0 || dh <= 0 || _mpvDisposed) {
       return;
     }
     final displaySize = Size(dw.toDouble(), dh.toDouble());
@@ -642,7 +639,13 @@ class MpvOhosVideoController extends VideoPlayerController {
     if (value.size != displaySize) {
       value = value.copyWith(size: displaySize);
     }
-    _scheduleGeometryReconfig(displaySize);
+    // mpv emits an intermediate square/thumbnail size while a rotated stream
+    // is attaching. Wait briefly for the final dimensions; the latest sample
+    // wins and is also retained while a reconfiguration is in flight.
+    _displaySizeDebounce?.cancel();
+    _displaySizeDebounce = Timer(const Duration(milliseconds: 120), () {
+      if (!_mpvDisposed) _scheduleGeometryReconfig(displaySize);
+    });
   }
 
   Future<void> _verifyVideoRendering() async {
@@ -835,6 +838,7 @@ class MpvOhosVideoController extends VideoPlayerController {
     _hwdecConfirmationTimer?.cancel();
     _decoderPolicy.reset();
     _geometryDebounce?.cancel();
+    _displaySizeDebounce?.cancel();
     _revealFallbackTimer?.cancel();
     _revealFallbackTimer = null;
     _fileLoadedWaiter = null;
