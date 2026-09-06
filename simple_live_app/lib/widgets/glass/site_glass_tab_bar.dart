@@ -41,6 +41,7 @@ class SiteGlassTabBar extends StatelessWidget {
         final rawPosition =
             controller.animation?.value ?? controller.index.toDouble();
         final position = rawPosition.clamp(0.0, (tabCount - 1).toDouble());
+        final indicatorOffset = rawPosition - controller.index;
         if (!Get.isRegistered<AppSettingsController>()) {
           return _buildFallback(context, iconOnly: compact, position: position);
         }
@@ -88,7 +89,7 @@ class SiteGlassTabBar extends StatelessWidget {
           ),
       ],
       selectedIndex: controller.index,
-      indicatorPosition: position,
+      indicatorPosition: indicatorOffset,
       onTabSelected: controller.animateTo,
       backgroundKey: LiquidGlassScope.of(context),
       quality: quality,
