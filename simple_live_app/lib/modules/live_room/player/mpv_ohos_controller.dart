@@ -123,6 +123,7 @@ class MpvOhosVideoController extends VideoPlayerController {
   // Coalesce pending sizes while allowing only one native update at a time.
   Size _appliedSurfaceSize = const Size(1920, 1080);
   Size? _reportedDisplaySize;
+  Size? _stableDisplaySize;
   Size? _pendingGeometry;
   Timer? _geometryDebounce;
   Timer? _displaySizeDebounce;
@@ -139,6 +140,10 @@ class MpvOhosVideoController extends VideoPlayerController {
   /// Current native buffer size (video display aspect). The widget wraps
   /// the texture in a SizedBox of exactly this size under FittedBox(contain).
   Size get surfaceSize => _appliedSurfaceSize;
+
+  /// Display size confirmed for this playback session. Unlike [value.size],
+  /// this never changes in response to transient VO/storage dimensions.
+  Size? get stableDisplaySize => _stableDisplaySize;
 
   /// Called on the first decoded frame; wired by the owning widget to the
   /// first-frame watchdog plumbing.
@@ -259,6 +264,7 @@ class MpvOhosVideoController extends VideoPlayerController {
     _coreIdle = true;
     _pausedForCache = false;
     _reportedDisplaySize = null;
+    _stableDisplaySize = null;
     _orientation = MpvOhosVideoOrientation.unknown;
     _orientationCandidate = MpvOhosVideoOrientation.unknown;
     _orientationCandidateCount = 0;
@@ -676,6 +682,7 @@ class MpvOhosVideoController extends VideoPlayerController {
     // are not a new video orientation and must not resize the shared surface.
     if (_orientation != MpvOhosVideoOrientation.unknown) return;
     _orientation = sampleOrientation;
+    _stableDisplaySize = displaySize;
     Log.i('[mpv-ctrl] display $dw'
         'x$dh buffer=${_appliedSurfaceSize.width.toInt()}x${_appliedSurfaceSize.height.toInt()}');
     _reportedDisplaySize = displaySize;

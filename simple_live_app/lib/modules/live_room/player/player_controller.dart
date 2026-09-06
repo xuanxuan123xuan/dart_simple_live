@@ -23,6 +23,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_tracker.dart';
 import 'package:simple_live_app/modules/live_room/player/player_volume_session_policy.dart';
+import 'package:simple_live_app/modules/live_room/player/mpv_ohos_controller.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart';
@@ -236,10 +237,23 @@ mixin PlayerMixin {
   MpvTelemetryValue get latestLivePlaybackCacheTelemetry {
     final sampledAt = _latestLivePlaybackCacheSampledAt;
     if (sampledAt == null ||
-        DateTime.now().difference(sampledAt) > const Duration(seconds: 3)) {
+        !_isOhosCacheSampleFresh(sampledAt, DateTime.now())) {
       return const MpvTelemetryValue.unsupported();
     }
     return MpvTelemetryValue.parse(_latestLivePlaybackCacheDurationSeconds);
+  }
+
+  bool _isOhosCacheSampleFresh(DateTime sampledAt, DateTime at) {
+    final age = at.difference(sampledAt);
+    return !age.isNegative && age <= const Duration(seconds: 3);
+  }
+
+  double? _freshOhosDemuxerCacheSeconds(DateTime at) {
+    final sampledAt = _latestLivePlaybackCacheSampledAt;
+    if (sampledAt == null || !_isOhosCacheSampleFresh(sampledAt, at)) {
+      return null;
+    }
+    return _ohosDemuxerCacheSeconds;
   }
 
   bool get _isLiveLatencyChaseActivationAllowed =>
@@ -403,11 +417,9 @@ mixin PlayerMixin {
           value.isBuffering || !value.isInitialized,
           at: sampledAt,
         );
-        final ohosCacheSeconds = _ohosDemuxerCacheSeconds;
-        if (ohosCacheSeconds != null) {
-          _latestLivePlaybackCacheSampledAt = sampledAt;
-          _latestLivePlaybackCacheDurationSeconds = ohosCacheSeconds;
-        }
+        // Only the native cache property event owns the sample timestamp.
+        // The health heartbeat must not keep an old cache value alive.
+        final ohosCacheSeconds = _freshOhosDemuxerCacheSeconds(sampledAt);
         _recordLiveLinkHealthSample(
           LiveLinkHealthSample(
             generation: generation,
@@ -716,7 +728,13 @@ mixin PlayerMixin {
   double? _ohosDemuxerCacheSeconds;
 
   /// 记录一次鸿蒙原生缓存深度上报。
-  void recordOhosDemuxerCacheDuration(Duration? cacheDuration) {
+  void recordOhosDemuxerCacheDuration(
+    Duration? cacheDuration, {
+    DateTime? sampledAt,
+  }) {
+    _latestLivePlaybackCacheSampledAt = sampledAt;
+    _latestLivePlaybackCacheDurationSeconds =
+        cacheDuration == null ? null : cacheDuration.inMilliseconds / 1000.0;
     _ohosDemuxerCacheSeconds =
         cacheDuration == null ? null : cacheDuration.inMilliseconds / 1000.0;
   }
@@ -2240,9 +2258,22 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Size _resolveOhosPipSize() {
+    final ohosController = ohosVideoController;
+    if (ohosController is MpvOhosVideoController) {
+      final stable = ohosController.stableDisplaySize;
+      if (stable != null &&
+          stable.width > 16 &&
+          stable.height > 16 &&
+          (stable.width / stable.height > 1.15 ||
+              stable.height / stable.width > 1.15)) {
+        return stable;
+      }
+    }
     final value = ohosVideoController?.value;
     final size = value?.size ?? Size.zero;
-    if (size.width > 0 && size.height > 0) {
+    if (size.width > 16 &&
+        size.height > 16 &&
+        (size.width / size.height > 1.15 || size.height / size.width > 1.15)) {
       return size;
     }
     return const Size(16, 9);
@@ -3605,8 +3636,9 @@ class PlayerController extends BaseController
   }
 
   Future<Map<String, String>> _readMpvDiagnosticProperties() async {
-    final platform = player.platform;
-    if (platform is! NativePlayer) {
+    final ohos = _ohosVideoController;
+    final platform = Utils.isOhos ? null : player.platform;
+    if (ohos is! MpvOhosVideoController && platform is! NativePlayer) {
       return const {};
     }
 
@@ -3617,9 +3649,18 @@ class PlayerController extends BaseController
       'estimated-vf-fps',
       'container-fps',
       'video-bitrate',
+      'hwdec',
+      'vo',
+      'video-params/pixelformat',
+      'video-params/gamma',
+      'video-out-params/gamma',
+      'frame-drop-count',
     ]) {
       try {
-        final value = (await platform.getProperty(name)).trim();
+        final raw = ohos is MpvOhosVideoController
+            ? await ohos.readProperty(name)
+            : await (platform as NativePlayer).getProperty(name);
+        final value = (raw ?? '').trim();
         if (value.isNotEmpty) {
           result[name] = value;
         }
@@ -3632,7 +3673,10 @@ class PlayerController extends BaseController
 
   Future<List<MapEntry<String, String>>> readPlaybackDiagnosticRows() async {
     if (Utils.isOhos) {
-      return _buildOhosDiagnosticRows();
+      return [
+        ..._buildOhosDiagnosticRows(),
+        ...(await _readMpvDiagnosticProperties()).entries,
+      ];
     }
     final mpvProperties = await _readMpvDiagnosticProperties();
     final videoTrack = player.state.track.video;
