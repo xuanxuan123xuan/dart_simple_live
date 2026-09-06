@@ -99,3 +99,42 @@ test('main-output size queries report native state after a failed resize', async
   assert.equal(size.width, 1920);
   assert.equal(size.height, 1080);
 });
+
+test('failed PiP handoff releases the deferred main-surface state', async () => {
+  const { plugin, invoke, calls, native } = fixture();
+  await invoke('create');
+  native.switchSurface = async (id, generation, width, height) => {
+    calls.push(['switch-failed', id, generation, width, height]);
+    throw new Error('surface unavailable');
+  };
+  plugin.useOutputSurface('200', 320, 180);
+  await new Promise(resolve => setImmediate(resolve));
+  await invoke('reconfigureSurface', { width: 720, height: 1280 });
+  assert.deepEqual(calls.at(-1), ['resize', 720, 1280, 1]);
+});
+
+test('failed PiP restore keeps main-surface updates deferred', async () => {
+  const { plugin, invoke, calls, native } = fixture();
+  await invoke('create');
+  plugin.useOutputSurface('200', 320, 180);
+  native.switchSurface = async (id, generation, width, height) => {
+    calls.push(['switch-failed', id, generation, width, height]);
+    throw new Error('surface unavailable');
+  };
+  plugin.restoreOutputSurface();
+  await new Promise(resolve => setImmediate(resolve));
+  await invoke('reconfigureSurface', { width: 720, height: 1280 });
+  assert.equal(calls.some(call => call[0] === 'resize'), false);
+});
+
+test('failed PiP resize retains an already active PiP output', async () => {
+  const { plugin, invoke, calls, native } = fixture();
+  await invoke('create');
+  plugin.useOutputSurface('200', 320, 180);
+  await new Promise(resolve => setImmediate(resolve));
+  native.switchSurface = async () => { throw new Error('resize failed'); };
+  plugin.useOutputSurface('200', 480, 270);
+  await new Promise(resolve => setImmediate(resolve));
+  await invoke('reconfigureSurface', { width: 720, height: 1280 });
+  assert.equal(calls.some(call => call[0] === 'resize'), false);
+});

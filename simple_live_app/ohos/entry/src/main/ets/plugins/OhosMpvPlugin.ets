@@ -70,6 +70,9 @@ export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler, 
   private flutterSurfaceWidth: number = 1920;
   private flutterSurfaceHeight: number = 1080;
   private pipOutputActive: boolean = false;
+  // Surface hand-offs are asynchronous. Only the newest hand-off may change
+  // the output-state flag when its Promise settles.
+  private surfaceSwitchSeq: number = 0;
   // Monotonic token handed to each Dart controller on create(); used by
   // dispose() to ignore stale controllers whose room has already switched.
   private createSeq: number = 0;
@@ -257,38 +260,75 @@ export default class OhosMpvPlugin implements FlutterPlugin, MethodCallHandler, 
   }
 
   useOutputSurface(surfaceId: string, width?: number, height?: number): void {
-    if (surfaceId.length === 0) {
-      throw new Error('Picture-in-picture output surface is unavailable.');
-    }
-    this.pipOutputActive = true;
-    if (width !== undefined && height !== undefined &&
-      Number.isFinite(width) && Number.isFinite(height) && width >= 16 && height >= 16) {
-      mpvNapi.switchSurface(surfaceId, this.createSeq, Math.round(width), Math.round(height))
-        .catch((error: Error) => {
-          hilog.error(0x3200, TAG,
-            'useOutputSurface failed (with size) surfaceId=' + surfaceId +
-            ' width=' + width + ' height=' + height + ' error=' + error.message);
-        });
-    } else {
-      mpvNapi.switchSurface(surfaceId, this.createSeq)
-        .catch((error: Error) => {
-          hilog.error(0x3200, TAG,
-            'useOutputSurface failed surfaceId=' + surfaceId + ' error=' + error.message);
-        });
-    }
+    this.queueSurfaceSwitch(surfaceId, width, height, true, 'useOutputSurface');
   }
 
   restoreOutputSurface(): void {
     if (this.cachedSurfaceId.length === 0) {
       return;
     }
-    this.pipOutputActive = false;
-    mpvNapi.switchSurface(this.cachedSurfaceId, this.createSeq,
-      this.flutterSurfaceWidth, this.flutterSurfaceHeight)
-      .catch((error: Error) => {
+    this.queueSurfaceSwitch(
+      this.cachedSurfaceId,
+      this.flutterSurfaceWidth,
+      this.flutterSurfaceHeight,
+      false,
+      'restoreOutputSurface'
+    );
+  }
+
+  private queueSurfaceSwitch(
+    surfaceId: string,
+    width: number | undefined,
+    height: number | undefined,
+    pipStateOnStart: boolean,
+    operationName: string
+  ): void {
+    const normalizedSurfaceId = surfaceId.trim();
+    if (normalizedSurfaceId.length === 0) {
+      throw new Error('Picture-in-picture output surface is unavailable.');
+    }
+    if ((width === undefined) !== (height === undefined)) {
+      throw new Error('Surface dimensions must be provided together.');
+    }
+
+    let normalizedWidth: number | undefined;
+    let normalizedHeight: number | undefined;
+    if (width !== undefined && height !== undefined) {
+      if (!Number.isFinite(width) || !Number.isFinite(height) ||
+        width < 16 || height < 16 || width > 32768 || height > 32768) {
+        throw new Error('Invalid output surface dimensions.');
+      }
+      normalizedWidth = Math.round(width);
+      normalizedHeight = Math.round(height);
+    }
+
+    const switchSeq = ++this.surfaceSwitchSeq;
+    const pipStateOnFailure = this.pipOutputActive;
+    this.pipOutputActive = pipStateOnStart;
+    try {
+      const operation = normalizedWidth !== undefined && normalizedHeight !== undefined
+        ? mpvNapi.switchSurface(
+          normalizedSurfaceId,
+          this.createSeq,
+          normalizedWidth,
+          normalizedHeight
+        )
+        : mpvNapi.switchSurface(normalizedSurfaceId, this.createSeq);
+      operation.catch((error: Error) => {
+        if (switchSeq === this.surfaceSwitchSeq) {
+          this.pipOutputActive = pipStateOnFailure;
+        }
         hilog.error(0x3200, TAG,
-          'restoreOutputSurface failed surfaceId=' + this.cachedSurfaceId +
+          operationName + ' failed surfaceId=' + normalizedSurfaceId +
           ' error=' + error.message);
       });
+    } catch (error) {
+      if (switchSeq === this.surfaceSwitchSeq) {
+        this.pipOutputActive = pipStateOnFailure;
+      }
+      hilog.error(0x3200, TAG,
+        operationName + ' threw surfaceId=' + normalizedSurfaceId +
+        ' error=' + `${error}`);
+    }
   }
 }
