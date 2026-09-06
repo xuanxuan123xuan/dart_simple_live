@@ -31,15 +31,11 @@ void main() {
     );
     final desktopEnter = enterFullScreen.substring(desktopStart);
 
-    expect(desktopEnter, contains('setFullScreen(true)'));
-    expect(desktopEnter, contains('_waitForWindowsFullScreenState(true)'));
+    expect(desktopEnter, contains('_setWindowsFullScreenState(true)'));
+    expect(desktopEnter, isNot(contains('_waitForWindowsFullScreenState(true)')));
     expect(desktopEnter, contains('fullScreenState.value = true'));
     expect(
-      desktopEnter.indexOf('setFullScreen(true)'),
-      lessThan(desktopEnter.indexOf('fullScreenState.value = true')),
-    );
-    expect(
-      desktopEnter.indexOf('_waitForWindowsFullScreenState(true)'),
+      desktopEnter.indexOf('_setWindowsFullScreenState(true)'),
       lessThan(desktopEnter.indexOf('fullScreenState.value = true')),
     );
   });

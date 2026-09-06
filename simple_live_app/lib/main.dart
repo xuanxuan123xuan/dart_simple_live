@@ -333,6 +333,26 @@ Future initWindow() async {
 
 final _desktopWindowLifecycle = _DesktopWindowLifecycle();
 
+Future<bool> _isDesktopFullScreen() async {
+  try {
+    return await windowManager
+        .isFullScreen()
+        .timeout(const Duration(milliseconds: 500));
+  } catch (e) {
+    Log.d('桌面窗口读取全屏状态失败：$e');
+    return false;
+  }
+}
+
+Future<void> _exitDesktopFullScreen() async {
+  try {
+    await windowManager.setFullScreen(false).timeout(const Duration(seconds: 2));
+  } catch (e, stackTrace) {
+    Log.e('桌面窗口退出全屏失败：$e', stackTrace);
+  }
+}
+
+
 Future<void> setupDesktopWindowLifecycle() async {
   if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
     return;
@@ -790,8 +810,8 @@ class MyApp extends StatelessWidget {
                         instance.onTapDown = (TapDownDetails details) async {
                           //如果处于全屏状态，退出全屏
                           if (_isDesktopPlatform) {
-                            if (await windowManager.isFullScreen()) {
-                              await windowManager.setFullScreen(false);
+                            if (await _isDesktopFullScreen()) {
+                              await _exitDesktopFullScreen();
                               return;
                             }
                           }
@@ -943,8 +963,8 @@ class MyApp extends StatelessWidget {
         await liveRoomController.exitPlayerWindowMode();
         return;
       }
-      if (_isDesktopPlatform && await windowManager.isFullScreen()) {
-        await windowManager.setFullScreen(false);
+      if (_isDesktopPlatform && await _isDesktopFullScreen()) {
+        await _exitDesktopFullScreen();
       }
       return;
     }

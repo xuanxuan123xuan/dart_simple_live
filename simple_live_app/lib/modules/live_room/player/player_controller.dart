@@ -1394,10 +1394,11 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         Log.d('Desktop fullscreen: enter start');
         try {
           _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
-          await windowManager
-              .setFullScreen(true)
-              .timeout(const Duration(seconds: 2));
-          await _waitForWindowsFullScreenState(true);
+          final entered = await _setWindowsFullScreenState(true);
+          if (!entered) {
+            fullScreenState.value = false;
+            return;
+          }
           // Let window_manager finish the native Win32 resize before moving
           // the Video widget into the fullscreen layout. Changing both at the
           // same time can stall the Windows texture/surface during a double
@@ -1407,13 +1408,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           Log.d('Desktop fullscreen: enter complete');
         } catch (e, stackTrace) {
           fullScreenState.value = false;
-          try {
-            await windowManager
-                .setFullScreen(false)
-                .timeout(const Duration(seconds: 2));
-          } catch (rollbackError) {
-            Log.d('Desktop fullscreen: enter rollback failed: $rollbackError');
-          }
           Log.e('Desktop fullscreen: enter failed: $e', stackTrace);
         }
       });
@@ -1536,14 +1530,15 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         }
         Log.d('Desktop fullscreen: exit start');
         try {
-          await windowManager
-              .setFullScreen(false)
-              .timeout(const Duration(seconds: 2));
-          await _waitForWindowsFullScreenState(false);
-          await _refreshWindowsWindowBounds();
-          if (_windowMaximizedBeforeFullScreen) {
-            await windowManager.maximize();
-            await _waitForWindowMaximizedState(true);
+          final exited = await _setWindowsFullScreenState(false);
+          if (exited) {
+            await _refreshWindowsWindowBounds();
+            if (_windowMaximizedBeforeFullScreen) {
+              await windowManager.maximize();
+              await _waitForWindowMaximizedState(true);
+            }
+          } else {
+            Log.d('Desktop fullscreen: exit settled without native confirmation');
           }
           Log.d('Desktop fullscreen: exit complete');
         } catch (e, stackTrace) {
@@ -1612,6 +1607,38 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     } finally {
       _desktopWindowModeTransition = null;
       completer.complete();
+    }
+  }
+
+  Future<bool> _setWindowsFullScreenState(bool value) async {
+    if (!Platform.isWindows) {
+      await windowManager.setFullScreen(value);
+      return value;
+    }
+
+    try {
+      await windowManager
+          .setFullScreen(value)
+          .timeout(const Duration(seconds: 2));
+    } catch (e, stackTrace) {
+      Log.d('Desktop fullscreen: setFullScreen($value) timed out or failed: $e');
+      Log.e('Desktop fullscreen: setFullScreen($value) failed', stackTrace);
+    }
+    final actualState = await _readWindowsFullScreenState();
+    return actualState ?? value;
+  }
+
+  Future<bool?> _readWindowsFullScreenState() async {
+    if (!Platform.isWindows) {
+      return null;
+    }
+    try {
+      return await windowManager
+          .isFullScreen()
+          .timeout(const Duration(milliseconds: 500));
+    } catch (e) {
+      Log.d('Desktop fullscreen: read isFullScreen failed: $e');
+      return null;
     }
   }
 
