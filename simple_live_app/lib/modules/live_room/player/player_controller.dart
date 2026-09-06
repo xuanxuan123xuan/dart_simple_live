@@ -1656,21 +1656,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
   }
 
-  Future<void> _waitForWindowsFullScreenState(bool value) async {
-    if (!Platform.isWindows) {
-      await Future.delayed(const Duration(milliseconds: 16));
-      return;
-    }
-
-    final deadline = DateTime.now().add(const Duration(milliseconds: 800));
-    while (DateTime.now().isBefore(deadline)) {
-      if (await windowManager.isFullScreen() == value) {
-        return;
-      }
-      await Future.delayed(const Duration(milliseconds: 16));
-    }
-  }
-
   Future<void> _waitForWindowBoundsToChange(Rect previousBounds) async {
     if (!Platform.isWindows) {
       return;
