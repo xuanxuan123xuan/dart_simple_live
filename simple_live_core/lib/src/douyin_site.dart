@@ -616,7 +616,9 @@ class DouyinSite implements LiveSite {
     var roomData = await _getRoomDataByRoomId(roomId);
     final room = roomData["data"]?["room"];
     if (room is! Map) {
-      throw CoreError("抖音直播间数据为空，可能是房间不存在、未开播或被风控限制");
+      throw CoreError(
+        "抖音直播间数据为空：该房间可能已失效（房间号为一次性ID，主播下播或重新开播后即失效），请通过搜索或主播主页重新进入",
+      );
     }
 
     // 通过房间信息获取WebRid
@@ -1045,7 +1047,7 @@ class DouyinSite implements LiveSite {
     }
     final rooms = data["data"];
     if (rooms is! List || rooms.isEmpty) {
-      throw CoreError("抖音直播间数据为空，可能是房间不存在、未开播或被风控限制");
+      throw CoreError("抖音直播间数据为空，可能是房间未开播或被风控限制");
     }
 
     _logElapsed("_getRoomDataByApi($webRid)", stopwatch);

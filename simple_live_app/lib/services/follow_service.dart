@@ -34,6 +34,69 @@ int? followStatusForLiveState(LiveStatusState state) {
   };
 }
 
+/// 关注直播状态快照：跨进程重启复用最近一次刷新结果，
+/// 避免快速重开 App 时重复全量刷新（降低风控风险）。
+class FollowStatusSnapshot {
+  const FollowStatusSnapshot({
+    required this.completedAt,
+    required this.statuses,
+  });
+
+  final DateTime completedAt;
+
+  /// follow id -> liveStatus（0=未知 1=未开播 2=直播中）
+  final Map<String, int> statuses;
+
+  Map<String, dynamic> toJson() => {
+        'completedAt': completedAt.toIso8601String(),
+        'statuses': statuses,
+      };
+
+  static FollowStatusSnapshot? fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    final completedAt =
+        DateTime.tryParse(json['completedAt']?.toString() ?? "");
+    if (completedAt == null) return null;
+    final raw = json['statuses'];
+    if (raw is! Map) return null;
+    final statuses = <String, int>{};
+    raw.forEach((key, value) {
+      if (key == null) return;
+      final parsed = int.tryParse(value?.toString() ?? "");
+      if (parsed != null) {
+        statuses[key.toString()] = parsed;
+      }
+    });
+    return FollowStatusSnapshot(
+      completedAt: completedAt,
+      statuses: statuses,
+    );
+  }
+
+  static FollowStatusSnapshot? decode(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      return fromJson(decoded is Map<String, dynamic> ? decoded : null);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String encode() => jsonEncode(toJson());
+
+  bool isFreshWithin(Duration window, {DateTime? now}) {
+    final checkedAt = now ?? DateTime.now();
+    if (completedAt.isAfter(checkedAt)) return false;
+    return checkedAt.difference(completedAt) < window;
+  }
+
+  /// 快照是否覆盖全部关注（关注列表有增删时视为不完整）。
+  bool coversAll(Iterable<FollowUser> items) {
+    return items.every((item) => statuses.containsKey(item.id));
+  }
+}
+
 /// All sites refresh visible live-room metadata instead of allowing historical
 /// follow data to remain authoritative indefinitely.
 bool shouldRefreshFollowMetadata(String _) => true;
@@ -89,6 +152,7 @@ bool applyFollowPreviewDetail(
 
 class FollowService extends GetxService {
   static const Duration updateStatusCooldown = Duration(seconds: 30);
+  static const Duration enterRefreshReuseWindow = Duration(minutes: 2);
   static const Duration refreshProgressCompletionHold = Duration(seconds: 2);
   static const int kDouyinLimitedAutoResumeMaxAttempts = 2;
   static const Duration kDouyinLimitedAutoResumeBaseDelay = Duration(
@@ -99,6 +163,8 @@ class FollowService extends GetxService {
       LocalStorageService.kFollowRefreshTaskState;
   static const String _refreshTaskTargetsStorageKey =
       LocalStorageService.kFollowRefreshTaskTargets;
+  static const String _statusSnapshotStorageKey =
+      LocalStorageService.kFollowStatusSnapshot;
   StreamSubscription<dynamic>? subscription;
   static FollowService get instance => Get.find<FollowService>();
   Timer? _eventReloadTimer;
@@ -274,8 +340,68 @@ class FollowService extends GetxService {
       return;
     }
     followList.assignAll(list);
+    _restoreStatusSnapshotIfFresh();
     if (updateStatus) {
       unawaited(startUpdateStatus(force: forceUpdateStatus));
+    }
+  }
+
+  /// 快照仍新鲜且覆盖全部关注时，恢复上次刷新出的直播状态，
+  /// 让进页复用窗口跨进程生效（快速重开 App 不再重复刷新）。
+  void _restoreStatusSnapshotIfFresh() {
+    final snapshot = _loadStatusSnapshot();
+    if (snapshot == null) return;
+    _statusSnapshot = snapshot;
+    if (!snapshot.isFreshWithin(enterRefreshReuseWindow)) return;
+    if (!snapshot.coversAll(followList)) {
+      Log.logPrint("关注列表与状态快照不一致，放弃复用并照常刷新");
+      return;
+    }
+    for (final item in followList) {
+      final status = snapshot.statuses[item.id];
+      if (status != null && item.liveStatus.value == 0) {
+        item.liveStatus.value = status;
+      }
+    }
+    Log.logPrint("已恢复 ${snapshot.statuses.length} 条关注状态快照");
+  }
+
+  /// 当前快照是否可用于跳过一次进页全量状态刷新。
+  bool hasFreshStatusSnapshotFor(Iterable<FollowUser> items) {
+    final snapshot = _statusSnapshot ??= _loadStatusSnapshot();
+    if (snapshot == null) return false;
+    if (!snapshot.isFreshWithin(enterRefreshReuseWindow)) return false;
+    return snapshot.coversAll(items);
+  }
+
+  FollowStatusSnapshot? _statusSnapshot;
+
+  void _persistStatusSnapshot() {
+    try {
+      final snapshot = FollowStatusSnapshot(
+        completedAt: DateTime.now(),
+        statuses: {
+          for (final item in followList) item.id: item.liveStatus.value,
+        },
+      );
+      _statusSnapshot = snapshot;
+      unawaited(
+        LocalStorageService.instance
+            .setValue(_statusSnapshotStorageKey, snapshot.encode()),
+      );
+    } catch (e) {
+      Log.logPrint("保存关注状态快照失败: $e");
+    }
+  }
+
+  FollowStatusSnapshot? _loadStatusSnapshot() {
+    try {
+      final raw = LocalStorageService.instance
+          .getValue<String>(_statusSnapshotStorageKey, "");
+      return FollowStatusSnapshot.decode(raw);
+    } catch (e) {
+      Log.logPrint("读取关注状态快照失败: $e");
+      return null;
     }
   }
 
@@ -1439,6 +1565,10 @@ class FollowService extends GetxService {
       if (generation == _updateGeneration) {
         updating.value = false;
         _finishRefreshProgressLifecycle(generation);
+        // 仅全量刷新范围才落盘快照；单页刷新不能代表全部关注的状态。
+        if (scope.includeAllNormals) {
+          _persistStatusSnapshot();
+        }
         // 刷新收尾后同步鸿蒙服务卡片快照（非鸿蒙平台内部短路）。
         unawaited(OhosFollowWidgetService.syncSnapshot(followList));
       }
