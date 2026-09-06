@@ -87,7 +87,10 @@ class SiteGlassTabBar extends StatelessWidget {
             semanticLabel: site.name,
           ),
       ],
-      selectedIndex: controller.index,
+      // Use the same animated position that drives the indicator. Reading
+      // controller.index here lags during a swipe, so the selection outline
+      // and the tinted highlight could briefly point at different tabs.
+      selectedIndex: position.round().clamp(0, controller.length - 1).toInt(),
       indicatorPosition: position,
       onTabSelected: controller.animateTo,
       backgroundKey: LiquidGlassScope.of(context),
@@ -160,8 +163,7 @@ class SiteGlassTabBar extends StatelessWidget {
             .clamp(0.0, maxTabWidth);
         final barWidth = tabWidth * Sites.supportSites.length;
         final indicatorLeft = tabWidth * position + 2;
-        final indicatorWidth =
-            math.max(0.0, tabWidth - 4).toDouble();
+        final indicatorWidth = math.max(0.0, tabWidth - 4).toDouble();
         return Align(
           alignment: Alignment.center,
           child: SizedBox(
@@ -193,7 +195,8 @@ class SiteGlassTabBar extends StatelessWidget {
                           color: colors.primary.withAlpha(
                             theme.brightness == Brightness.dark ? 52 : 24,
                           ),
-                          borderRadius: BorderRadius.circular(iconOnly ? 26 : 20),
+                          borderRadius:
+                              BorderRadius.circular(iconOnly ? 26 : 20),
                         ),
                       ),
                     ),
@@ -215,8 +218,7 @@ class SiteGlassTabBar extends StatelessWidget {
                                     iconOnly ? 26 : 20,
                                   ),
                                   child: AnimatedContainer(
-                                    duration:
-                                        const Duration(milliseconds: 180),
+                                    duration: const Duration(milliseconds: 180),
                                     margin: const EdgeInsets.all(4),
                                     decoration: BoxDecoration(
                                       color: Colors.transparent,
