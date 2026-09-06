@@ -608,6 +608,7 @@ class LiveRoomController extends PlayerController
     _kuaishouNoCookieHintShown = true;
     SmartDialog.showToast("快手未登录（无 Cookie），可能无法获取播放地址，登录后重试");
   }
+
   RxList<LiveSuperChatMessage> superChats = RxList<LiveSuperChatMessage>();
   RxList<LiveContributionRankItem> contributionRanks =
       RxList<LiveContributionRankItem>();
@@ -2298,8 +2299,11 @@ class LiveRoomController extends PlayerController
       // 心跳是唯一能证明这代播放器真的活了的信号。
       _confirmOhosReconnect(playerGeneration);
     }
-    if (telemetry.cacheDuration != null) {
-      recordOhosDemuxerCacheDuration(telemetry.cacheDuration);
+    if (telemetry.hasCacheUpdate) {
+      recordOhosDemuxerCacheDuration(
+        telemetry.cacheDuration,
+        sampledAt: telemetry.cacheSampledAt,
+      );
     }
   }
 
@@ -3552,12 +3556,12 @@ class LiveRoomController extends PlayerController
     if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
       return false;
     }
-      if (playUrl.urls.isEmpty) {
-        if (site.id == Constant.kKuaishou &&
-            roomLiveState.value == LiveStatusState.live) {
-          waitingForPlaybackUrl.value = true;
-          _showKuaishouNoCookiePlaybackHint();
-        } else if (!silent) {
+    if (playUrl.urls.isEmpty) {
+      if (site.id == Constant.kKuaishou &&
+          roomLiveState.value == LiveStatusState.live) {
+        waitingForPlaybackUrl.value = true;
+        _showKuaishouNoCookiePlaybackHint();
+      } else if (!silent) {
         SmartDialog.showToast("无法读取播放地址");
       }
       return false;
@@ -4275,7 +4279,14 @@ class LiveRoomController extends PlayerController
       }
       final refreshUrls =
           mediaErrorRetryCount > 0 && _shouldRefreshUrlsOnPlaybackRetry;
-      final rotateOhosLine = Utils.isOhos && refreshUrls;
+      // Bilibili CDN endpoints can fail immediately while another advertised
+      // line is healthy. Retrying the same URL first only delays recovery and
+      // makes the transient error surface as "live stream playback failed".
+      // On OHOS rotate on the first retry whenever multiple lines exist;
+      // refreshing URLs remains enabled on the second retry.
+      final rotateOhosLine = Utils.isOhos &&
+          playUrls.length > 1 &&
+          (refreshUrls || site.id == Constant.kBilibili);
       mediaErrorRetryCount += 1;
       await setPlayer(
         refreshUrls: refreshUrls,
