@@ -66,6 +66,17 @@ Size mpvOhosSurfaceSize(Size display) {
   return Size(even(display.width), even(display.height));
 }
 
+enum MpvOhosVideoOrientation { unknown, landscape, portrait }
+
+MpvOhosVideoOrientation mpvOhosVideoOrientation(Size size) {
+  if (!size.width.isFinite || !size.height.isFinite || size.width <= 0 ||
+      size.height <= 0) return MpvOhosVideoOrientation.unknown;
+  final ratio = size.width / size.height;
+  if (ratio > 1.15) return MpvOhosVideoOrientation.landscape;
+  if (ratio < 0.87) return MpvOhosVideoOrientation.portrait;
+  return MpvOhosVideoOrientation.unknown;
+}
+
 class MpvOhosVideoController extends VideoPlayerController {
   MpvOhosVideoController({
     required String url,
@@ -113,6 +124,10 @@ class MpvOhosVideoController extends VideoPlayerController {
   Size? _pendingGeometry;
   Timer? _geometryDebounce;
   Timer? _displaySizeDebounce;
+  MpvOhosVideoOrientation _orientation = MpvOhosVideoOrientation.unknown;
+  MpvOhosVideoOrientation _orientationCandidate = MpvOhosVideoOrientation.unknown;
+  int _orientationCandidateCount = 0;
+  int _displayReadRevision = 0;
   bool _geometryReconfiguring = false;
   int _geometryEpoch = 0;
   // Transient surface failures retry up to 20 times without ending playback.
@@ -241,6 +256,10 @@ class MpvOhosVideoController extends VideoPlayerController {
     _coreIdle = true;
     _pausedForCache = false;
     _reportedDisplaySize = null;
+    _orientation = MpvOhosVideoOrientation.unknown;
+    _orientationCandidate = MpvOhosVideoOrientation.unknown;
+    _orientationCandidateCount = 0;
+    _displayReadRevision++;
     // NOTE: do NOT reset _appliedSurfaceSize here. It mirrors the native
     // buffer geometry (g_geoW/g_geoH) which does NOT change on a room switch
     // (loadfile replace does not touch SET_BUFFER_GEOMETRY). Keeping it lets
@@ -625,14 +644,28 @@ class MpvOhosVideoController extends VideoPlayerController {
     if (_mpvDisposed) {
       return;
     }
+    final readRevision = _displayReadRevision;
     final dw =
         int.tryParse(await _getProperty('video-out-params/dw') ?? '') ?? 0;
     final dh =
         int.tryParse(await _getProperty('video-out-params/dh') ?? '') ?? 0;
-    if (dw <= 0 || dh <= 0 || _mpvDisposed) {
+    if (dw <= 0 || dh <= 0 || _mpvDisposed || readRevision != _displayReadRevision) {
       return;
     }
     final displaySize = Size(dw.toDouble(), dh.toDouble());
+    final sampleOrientation = mpvOhosVideoOrientation(displaySize);
+    if (sampleOrientation == MpvOhosVideoOrientation.unknown) return;
+    if (_orientation != MpvOhosVideoOrientation.unknown &&
+        sampleOrientation != _orientation) return;
+    if (sampleOrientation != _orientationCandidate) {
+      _orientationCandidate = sampleOrientation;
+      _orientationCandidateCount = 1;
+    } else {
+      _orientationCandidateCount++;
+    }
+    if (_orientation == MpvOhosVideoOrientation.unknown &&
+        _orientationCandidateCount < 2) return;
+    _orientation = sampleOrientation;
     Log.i('[mpv-ctrl] display $dw'
         'x$dh buffer=${_appliedSurfaceSize.width.toInt()}x${_appliedSurfaceSize.height.toInt()}');
     _reportedDisplaySize = displaySize;

@@ -21,6 +21,14 @@ void main() {
     expect(mpvOhosSurfaceSize(const Size(721, 1281)), const Size(722, 1282));
     expect(mpvOhosSurfaceSize(Size.zero), const Size(1920, 1080));
   });
+  test('orientation classifier ignores square intermediates', () {
+    expect(mpvOhosVideoOrientation(const Size(960, 960)),
+        MpvOhosVideoOrientation.unknown);
+    expect(mpvOhosVideoOrientation(const Size(540, 960)),
+        MpvOhosVideoOrientation.portrait);
+    expect(mpvOhosVideoOrientation(const Size(1920, 1080)),
+        MpvOhosVideoOrientation.landscape);
+  });
   late List<MethodCall> calls;
   late Map<String, String> properties;
   Future<void> Function(MethodCall)? reconfigure;
