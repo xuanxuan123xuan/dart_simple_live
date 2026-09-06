@@ -4286,7 +4286,7 @@ class LiveRoomController extends PlayerController
       // refreshing URLs remains enabled on the second retry.
       final rotateOhosLine = Utils.isOhos &&
           playUrls.length > 1 &&
-          (refreshUrls || site.id == Constant.kBilibili);
+          (refreshUrls || site.id == Constant.kBiliBili);
       mediaErrorRetryCount += 1;
       await setPlayer(
         refreshUrls: refreshUrls,
@@ -4374,7 +4374,9 @@ class LiveRoomController extends PlayerController
       }
       final refreshUrls =
           mediaErrorRetryCount > 0 && _shouldRefreshUrlsOnPlaybackRetry;
-      final rotateOhosLine = Utils.isOhos && refreshUrls;
+      final rotateOhosLine = Utils.isOhos &&
+          playUrls.length > 1 &&
+          (refreshUrls || site.id == Constant.kBiliBili);
       mediaErrorRetryCount += 1;
       await setPlayer(
         refreshUrls: refreshUrls,
