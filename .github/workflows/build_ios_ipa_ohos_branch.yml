@@ -18,6 +18,10 @@ name: 构建 iOS IPA
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: "可选版本号（如 1.13 或 1.13.1）；留空使用 pubspec 当前版本"
+        required: false
+        type: string
       ref:
         description: "要构建的 git ref，默认当前分支"
         required: false
@@ -70,6 +74,15 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: 应用指定版本
+        if: ${{ inputs.version != '' }}
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: dart run simple_live_app/tool/app_version.dart set "$REQUESTED_VERSION"
+
+      - name: 同步派生版本文件
+        run: dart run simple_live_app/tool/app_version.dart sync
 
       # pubspec 的依赖钉版与所用 Flutter 必须一致，否则 pub get 会在
       # flutter_localizations 的 intl 传递依赖上失败。这里提前核对，

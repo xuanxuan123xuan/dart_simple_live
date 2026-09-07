@@ -53,6 +53,15 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      - name: 应用指定版本
+        if: ${{ inputs.version != '' }}
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: dart run simple_live_app/tool/app_version.dart set "$REQUESTED_VERSION"
+
+      - name: 同步派生版本文件
+        run: dart run simple_live_app/tool/app_version.dart sync
+
       - name: 启用 macOS 桌面并恢复依赖
         working-directory: simple_live_app
         run: |

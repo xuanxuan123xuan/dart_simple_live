@@ -37,6 +37,25 @@ jobs:
           flutter-version: ${{ env.TV_FLUTTER_VERSION }}
           cache: true
 
+      - name: 应用指定版本
+        if: ${{ inputs.version != '' }}
+        shell: pwsh
+        working-directory: simple_live_tv_app
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:REQUESTED_VERSION -notmatch '^[vV]?d+.d+(.d+)?$') { throw "版本号必须是 major.minor 或 major.minor.patch。" }
+          $version = $env:REQUESTED_VERSION.TrimStart('v','V')
+          $pubspec = Get-Content pubspec.yaml -Raw
+          $pubspec = [regex]::Replace($pubspec, '(?m)^version:s*[^
+]+', "version: $version+1", 1)
+          Set-Content pubspec.yaml $pubspec -NoNewline
+
+      - name: 校验应用版本
+        working-directory: simple_live_tv_app
+        shell: pwsh
+        run: Get-Content pubspec.yaml | Select-String '^version:'
+
       - name: 准备 Android TV 分支签名
         shell: bash
         env:

@@ -35,6 +35,15 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: 应用指定版本
+        if: ${{ inputs.version != '' }}
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: dart run simple_live_app/tool/app_version.dart set "$REQUESTED_VERSION"
+
+      - name: 同步派生版本文件
+        run: dart run simple_live_app/tool/app_version.dart sync
           cache: true
 
       - name: 准备 Android 分支签名
