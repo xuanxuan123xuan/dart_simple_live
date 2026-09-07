@@ -242,6 +242,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
                     context,
                     controller,
                   ),
+                  refreshHeaderIndex: 1,
                   crossAxisSpacing: layout.crossAxisSpacing,
                   mainAxisSpacing: layout.mainAxisSpacing,
                   mainAxisExtent: layout.mainAxisExtent,
@@ -308,79 +309,78 @@ class _FollowUserPageState extends State<FollowUserPage> {
   ) {
     final topClearance = MediaQuery.paddingOf(context).top + 68;
     return [
+      // Insert the refresh header after the app-bar clearance, as on home.
+      SliverToBoxAdapter(child: SizedBox(height: topClearance)),
       SliverToBoxAdapter(
-        child: Padding(
-          padding: EdgeInsets.only(top: topClearance),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (controller.paginationEnabled.value)
-                Padding(
-                  padding: AppStyle.edgeInsetsH8.copyWith(top: 8),
-                  child: Text(
-                    "当前页刷新只处理当前结果；刷新全部会按当前筛选结果执行完整刷新，并在手动时补齐封面与标题。",
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              _buildRefreshProgress(context),
-              _buildSearchFilterBar(controller),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (controller.paginationEnabled.value)
               Padding(
-                padding: AppStyle.edgeInsetsH8,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: GlassSurface(
-                    role: GlassSurfaceRole.control,
-                    radius: 18,
-                    padding: const EdgeInsets.all(4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildGroupModeButton(
-                          context,
-                          label: "按状态",
-                          icon: Icons.dynamic_feed_outlined,
-                          selected: controller.groupMode.value ==
-                              FollowGroupMode.liveStatus,
-                          onTap: () => controller.setGroupMode(
+                padding: AppStyle.edgeInsetsH8.copyWith(top: 8),
+                child: Text(
+                  "当前页刷新只处理当前结果；刷新全部会按当前筛选结果执行完整刷新，并在手动时补齐封面与标题。",
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            _buildRefreshProgress(context),
+            _buildSearchFilterBar(controller),
+            Padding(
+              padding: AppStyle.edgeInsetsH8,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: GlassSurface(
+                  role: GlassSurfaceRole.control,
+                  radius: 18,
+                  padding: const EdgeInsets.all(4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildGroupModeButton(
+                        context,
+                        label: "按状态",
+                        icon: Icons.dynamic_feed_outlined,
+                        selected: controller.groupMode.value ==
                             FollowGroupMode.liveStatus,
-                          ),
+                        onTap: () => controller.setGroupMode(
+                          FollowGroupMode.liveStatus,
                         ),
-                        _buildGroupModeButton(
-                          context,
-                          label: "按平台",
-                          icon: Icons.grid_view_rounded,
-                          selected: controller.groupMode.value ==
-                              FollowGroupMode.platform,
-                          onTap: () => controller.setGroupMode(
+                      ),
+                      _buildGroupModeButton(
+                        context,
+                        label: "按平台",
+                        icon: Icons.grid_view_rounded,
+                        selected: controller.groupMode.value ==
                             FollowGroupMode.platform,
-                          ),
+                        onTap: () => controller.setGroupMode(
+                          FollowGroupMode.platform,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              Padding(
-                padding: AppStyle.edgeInsetsA8.copyWith(top: 8),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Wrap(
-                    spacing: 8,
-                    children: controller.groupOptions.map((option) {
-                      return FilterButton(
-                        text: option.title,
-                        selected: controller.selectedGroupId.value == option.id,
-                        glass: true,
-                        onTap: () {
-                          controller.setGroupOption(option);
-                        },
-                      );
-                    }).toList(),
-                  ),
+            ),
+            Padding(
+              padding: AppStyle.edgeInsetsA8.copyWith(top: 8),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Wrap(
+                  spacing: 8,
+                  children: controller.groupOptions.map((option) {
+                    return FilterButton(
+                      text: option.title,
+                      selected: controller.selectedGroupId.value == option.id,
+                      glass: true,
+                      onTap: () {
+                        controller.setGroupOption(option);
+                      },
+                    );
+                  }).toList(),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     ];
