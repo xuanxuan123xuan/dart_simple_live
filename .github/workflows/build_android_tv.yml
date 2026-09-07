@@ -44,11 +44,10 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          if ($env:REQUESTED_VERSION -notmatch '^[vV]?d+.d+(.d+)?$') { throw "版本号必须是 major.minor 或 major.minor.patch。" }
+          if ($env:REQUESTED_VERSION -notmatch '^[vV]?\d+\.\d+(\.\d+)?$') { throw "版本号必须是 major.minor 或 major.minor.patch。" }
           $version = $env:REQUESTED_VERSION.TrimStart('v','V')
           $pubspec = Get-Content pubspec.yaml -Raw
-          $pubspec = [regex]::Replace($pubspec, '(?m)^version:s*[^
-]+', "version: $version+1", 1)
+          $pubspec = [regex]::Replace($pubspec, '(?m)^version:\s*[^\r\n]+', "version: $version+1", 1)
           Set-Content pubspec.yaml $pubspec -NoNewline
 
       - name: 校验应用版本
