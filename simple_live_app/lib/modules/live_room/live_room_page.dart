@@ -94,9 +94,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       child: _buildStaticGlassPanel(
         context,
         radius: 22,
+        role: GlassSurfaceRole.platformViewControl,
         child: IconButton(
           onPressed: onPressed,
-          icon: Icon(icon),
+          icon: Icon(icon, color: Colors.white),
         ),
       ),
     );
