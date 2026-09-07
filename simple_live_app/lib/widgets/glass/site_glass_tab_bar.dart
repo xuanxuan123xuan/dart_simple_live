@@ -41,7 +41,6 @@ class SiteGlassTabBar extends StatelessWidget {
         final rawPosition =
             controller.animation?.value ?? controller.index.toDouble();
         final position = rawPosition.clamp(0.0, (tabCount - 1).toDouble());
-        final indicatorOffset = rawPosition - controller.index;
         if (!Get.isRegistered<AppSettingsController>()) {
           return _buildFallback(context, iconOnly: compact, position: position);
         }
@@ -64,7 +63,6 @@ class SiteGlassTabBar extends StatelessWidget {
             AppGlassAppearancePolicy.resolve(mode),
             compact,
             position,
-            indicatorOffset,
           );
         });
       },
@@ -77,7 +75,6 @@ class SiteGlassTabBar extends StatelessWidget {
     AppGlassAppearanceProfile appearance,
     bool iconOnly,
     double position,
-    double indicatorOffset,
   ) {
     final colors = Theme.of(context).colorScheme;
     return GlassTabBar.inline(
@@ -91,7 +88,9 @@ class SiteGlassTabBar extends StatelessWidget {
           ),
       ],
       selectedIndex: controller.index,
-      indicatorPosition: indicatorOffset,
+      // GlassTabBar expects an absolute tab position (0..tabCount - 1),
+      // matching TabController.animation.value during a swipe.
+      indicatorPosition: position,
       onTabSelected: controller.animateTo,
       backgroundKey: LiquidGlassScope.of(context),
       quality: quality,
