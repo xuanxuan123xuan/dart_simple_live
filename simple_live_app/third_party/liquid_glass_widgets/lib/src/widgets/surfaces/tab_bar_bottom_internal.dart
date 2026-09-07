@@ -619,7 +619,7 @@ class TabIndicatorState extends State<TabIndicator>
                   value: tabXAlign,
                   springWhenActive: GlassSpring.interactive(),
                   springWhenReleased: widget.springDescription ??
-                      GlassSpring.snappy(
+                                            GlassSpring.smooth(
                         duration: const Duration(milliseconds: 350),
                       ),
                   active: tabIsDragging,
