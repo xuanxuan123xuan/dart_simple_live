@@ -341,7 +341,7 @@ Widget _buildFullTopBar(
         child: SizedBox(
           height: 48 + padding.top,
           child: ColoredBox(
-            color: Colors.black,
+            color: Colors.transparent,
             child: Padding(
               padding: EdgeInsets.only(
                 left: padding.left + 32,
@@ -437,7 +437,7 @@ Widget _buildFullBottomBar(
         behavior: HitTestBehavior.opaque,
         onTap: () {},
         child: ColoredBox(
-          color: Colors.black,
+          color: Colors.transparent,
           child: Padding(
             padding: EdgeInsets.only(
               left: padding.left + 32,
