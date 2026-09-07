@@ -5,11 +5,9 @@ import 'package:simple_live_core/simple_live_core.dart';
 import 'package:test/test.dart';
 
 /// 在 loopback 上起一个可选的延迟假 TCP server，用于模拟可测速线路。
-/// 支持指定 loopback 地址（127.0.0.1 / 127.0.0.2），用于构造"不同 host"。
-Future<ServerSocket> _startServer(
-    {Duration? delay, String address = '127.0.0.1'}) async {
+Future<ServerSocket> _startServer({Duration? delay}) async {
   final server = await ServerSocket.bind(
-    InternetAddress(address),
+    InternetAddress.loopbackIPv4,
     0,
   );
   server.listen((socket) async {
@@ -145,13 +143,13 @@ void main() {
     // 比较（实现内联，见 findFastestLine）；可达性行为由以下测试覆盖。
 
     test('不通的线路被跳过，选中可达线路', () async {
-      final dead = await _deadPort();
-      final fast = await _startServer(address: '127.0.0.2');
+      final fast = await _startServer();
       try {
+        final dead = await _deadPort();
         final idx = await NetworkDiagnoseService.findFastestLine(
           [
             'http://127.0.0.1:$dead/a.flv',
-            'http://127.0.0.2:${fast.port}/b.flv',
+            'http://127.0.0.1:${fast.port}/b.flv',
           ],
           samples: 2,
         );
@@ -162,14 +160,20 @@ void main() {
     });
 
     test('全部不通返回 0（默认第一条）', () async {
-      final a = await _deadPort();
-      final b = await _deadPort();
-      // 两个死端口在不同 host，避免被去重成一个。
+      // 先占住第一个端口，确保第二个端口不同，再关闭监听模拟不通。
+      final first = await _startServer();
+      final a = first.port;
+      late final int b;
+      try {
+        b = await _deadPort();
+      } finally {
+        await first.close();
+      }
       expect(
         await NetworkDiagnoseService.findFastestLine(
           [
             'http://127.0.0.1:$a/a.flv',
-            'http://127.0.0.2:$b/b.flv',
+            'http://127.0.0.1:$b/b.flv',
           ],
           samples: 2,
         ),
