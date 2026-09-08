@@ -414,7 +414,7 @@ abstract class LiquidGlassRenderObject extends RenderProxyBox {
     // is relative to the compositing layer, i.e. our RepaintBoundary surface)
     // into the capture image's coordinate space.
     final captureOffset =
-        (captureOriginInScreenSpace - thisOriginLogical) * dpr;
+        (_captureOriginInScreenSpace - thisOriginLogical) * dpr;
 
     // uSize: physical pixel dimensions of the captured image.
     final captureSize =
@@ -430,7 +430,7 @@ abstract class LiquidGlassRenderObject extends RenderProxyBox {
     // (not screen origin) so that geometryUV = (fragCoord + uCaptureOffset -
     // uGeometryOffset) / uGeometrySize resolves correctly.
     final geometryOffsetInCapture =
-        (activeBounds.topLeft - captureOriginInScreenSpace) * dpr;
+        (activeBounds.topLeft - _captureOriginInScreenSpace) * dpr;
     final geometrySizePhysical = activeBounds.size * dpr;
     final scale = dpr / 3.0;
 

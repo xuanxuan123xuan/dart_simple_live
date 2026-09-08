@@ -364,7 +364,7 @@ class _GlassSliderState extends State<GlassSlider>
 
   void _handleDragStart(DragStartDetails details) {
     // Only call onChangeStart once per interaction
-    widget.onChangeStart?.call(widget.value);
+    widget.onChangeStart?.call(_positionValue);
   }
 
   void _handleDragUpdate(
@@ -471,9 +471,9 @@ class _GlassSliderState extends State<GlassSlider>
 
         final step = (widget.max - widget.min) / (widget.divisions ?? 10);
         final increasedValue =
-            (widget.value + step).clamp(widget.min, widget.max);
+            (_positionValue + step).clamp(widget.min, widget.max);
         final decreasedValue =
-            (widget.value - step).clamp(widget.min, widget.max);
+            (_positionValue - step).clamp(widget.min, widget.max);
 
         final normalizedIncreased =
             ((increasedValue - widget.min) / (widget.max - widget.min))
@@ -495,11 +495,13 @@ class _GlassSliderState extends State<GlassSlider>
           semanticDecreasedValue: '${(normalizedDecreased * 100).round()}%',
           semanticOnIncrease: widget.onChanged != null
               ? () {
+                  setState(() => _positionValue = increasedValue);
                   widget.onChanged!(increasedValue);
                 }
               : null,
           semanticOnDecrease: widget.onChanged != null
               ? () {
+                  setState(() => _positionValue = decreasedValue);
                   widget.onChanged!(decreasedValue);
                 }
               : null,
@@ -547,13 +549,13 @@ class _GlassSliderState extends State<GlassSlider>
                               if (normalizedValue > 0)
                                 Positioned(
                                   left: isRtl
-                                      ? constraints.maxWidth *
-                                          (1 - normalizedValue)
-                                      : 0,
+                                      ? widget.thumbRadius +
+                                          trackWidth * (1 - normalizedValue)
+                                      : widget.thumbRadius,
                                   right: isRtl
-                                      ? 0
-                                      : constraints.maxWidth *
-                                          (1 - normalizedValue),
+                                      ? widget.thumbRadius
+                                      : widget.thumbRadius +
+                                          trackWidth * (1 - normalizedValue),
                                   top: 0,
                                   bottom: 0,
                                   child: Container(
