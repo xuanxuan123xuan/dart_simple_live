@@ -260,7 +260,7 @@ class _GlassSliderState extends State<GlassSlider>
   static const _defaultThumbShadowColor =
       Color(0x40000000); // black.withValues(alpha: 0.25)
 
-  double? _dragValue;
+  late double _positionValue;
   bool _isDragging = false;
   // Scale (squash/stretch) and jelly controller
   late AnimationController _scaleController;
@@ -276,6 +276,8 @@ class _GlassSliderState extends State<GlassSlider>
   @override
   void initState() {
     super.initState();
+
+    _positionValue = widget.value;
 
     // Scale controller for thumb size change when dragging
     _scaleController = AnimationController(
@@ -323,6 +325,17 @@ class _GlassSliderState extends State<GlassSlider>
       ),
       initialValue: 0.0,
     );
+  }
+
+  @override
+  void didUpdateWidget(covariant GlassSlider oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Keep externally controlled values in sync while idle. During a drag,
+    // the pointer remains the source of truth until the interaction ends.
+    if (!_isDragging && oldWidget.value != widget.value) {
+      _positionValue = widget.value;
+    }
   }
 
   @override
@@ -382,13 +395,13 @@ class _GlassSliderState extends State<GlassSlider>
       newValue = newValue.clamp(widget.min, widget.max);
 
       // Haptic feedback on division change
-      if (_dragValue != null && newValue != _dragValue) {
+      if (newValue != _positionValue) {
         unawaited(HapticFeedback.selectionClick());
       }
     }
 
     setState(() {
-      _dragValue = newValue;
+      _positionValue = newValue;
     });
 
     widget.onChanged?.call(newValue);
@@ -396,7 +409,7 @@ class _GlassSliderState extends State<GlassSlider>
 
   void _handleDragEnd(DragEndDetails details) {
     _cleanupDrag();
-    widget.onChangeEnd?.call(widget.value);
+    widget.onChangeEnd?.call(_positionValue);
   }
 
   void _handleDragCancel() {
@@ -408,7 +421,6 @@ class _GlassSliderState extends State<GlassSlider>
 
     setState(() {
       _isDragging = false;
-      _dragValue = null;
     });
 
     // Scale down thumb when ending drag
@@ -433,7 +445,7 @@ class _GlassSliderState extends State<GlassSlider>
       widgetQuality: widget.quality,
     );
 
-    final effectiveValue = _dragValue ?? widget.value;
+    final effectiveValue = _positionValue;
     final normalizedValue =
         ((effectiveValue - widget.min) / (widget.max - widget.min))
             .clamp(0.0, 1.0);
