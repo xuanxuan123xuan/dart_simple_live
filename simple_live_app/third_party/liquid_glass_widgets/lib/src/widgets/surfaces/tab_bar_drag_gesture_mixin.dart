@@ -41,6 +41,14 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   /// Whether this tab bar is floating over a PlatformView (enables hybrid gesture mode).
   bool get isPlatformViewBackdrop;
 
+  /// Whether the indicator position is owned by an external continuous source.
+  ///
+  /// When true, the host (for example a [TabController.animation]) is the
+  /// only writer of the indicator position. Local gesture bookkeeping still
+  /// runs so taps and accessibility remain functional, but gesture callbacks
+  /// must not write a second position into [tabXAlign].
+  bool get usesExternalIndicatorPosition => false;
+
   /// Called once per gesture lifecycle when the active tab should change.
   ///
   /// Always invoked unconditionally — callers may use repeat-tap to trigger
@@ -89,6 +97,11 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   /// Current horizontal alignment of the indicator in the range [-1, 1].
   double tabXAlign = 0.0;
 
+  /// Writes the local indicator position unless the host owns it.
+  void setLocalTabXAlign(double alignment) {
+    if (!usesExternalIndicatorPosition) tabXAlign = alignment;
+  }
+
   /// Lateral sway offset in logical pixels.
   ///
   /// Driven by horizontal drag velocity — gives the bar body a subtle
@@ -114,7 +127,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   @override
   void initState() {
     super.initState();
-    tabXAlign = computeTabAlignment(tabIndex);
+    setLocalTabXAlign(computeTabAlignment(tabIndex));
     WidgetsBinding.instance.pointerRouter.addGlobalRoute(_handleGlobalPointer);
   }
 
@@ -165,7 +178,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   void _forceSnapToNearestTab() {
     final relX = (tabXAlign + 1) / 2;
     final target = (relX * (tabCount - 1)).round().clamp(0, tabCount - 1);
-    tabXAlign = computeTabAlignment(target);
+    setLocalTabXAlign(computeTabAlignment(target));
     barSwayOffset = 0.0;
   }
 
@@ -183,16 +196,20 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   /// Checked after the frame so the host has had its chance to adopt the
   /// index. When it did, this is a no-op.
   void reconcileWithHost(int target) {
+    if (usesExternalIndicatorPosition) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || tabIsDragging || tabIndex == target) return;
-      setState(() => tabXAlign = computeTabAlignment(tabIndex));
+      setState(() => setLocalTabXAlign(computeTabAlignment(tabIndex)));
     });
   }
 
   /// Call from [didUpdateWidget] when tabIndex or tabCount may have changed.
   void updateTabAlignIfNeeded(int oldTabIndex, int oldTabCount) {
+    if (usesExternalIndicatorPosition) return;
     if (oldTabIndex != tabIndex || oldTabCount != tabCount) {
-      if (mounted) setState(() => tabXAlign = computeTabAlignment(tabIndex));
+      if (mounted) {
+        setState(() => setLocalTabXAlign(computeTabAlignment(tabIndex)));
+      }
     }
   }
 
@@ -297,7 +314,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
     if (!mounted) return;
     setState(() {
       tabIsDragging = true;
-      tabXAlign = alignmentFromGlobal(d.globalPosition);
+      setLocalTabXAlign(alignmentFromGlobal(d.globalPosition));
     });
   }
 
@@ -313,7 +330,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
     if (!mounted) return;
     setState(() {
       tabIsDragging = true;
-      tabXAlign = alignmentFromGlobal(d.globalPosition);
+      setLocalTabXAlign(alignmentFromGlobal(d.globalPosition));
       // Velocity-gated lateral sway: only fast flicks cause movement.
       if (d.delta.dx.abs() > _swayVelocityThreshold) {
         barSwayOffset =
@@ -388,7 +405,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
       setState(() {
         tabIsDragging = false;
         tabIsDown = false;
-        tabXAlign = computeTabAlignment(target);
+        setLocalTabXAlign(computeTabAlignment(target));
         barSwayOffset = 0.0; // spring back to center
         _gestureStartTabIndex = null;
       });
@@ -407,7 +424,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
         setState(() {
           tabIsDragging = false;
           tabIsDown = false;
-          tabXAlign = computeTabAlignment(target);
+          setLocalTabXAlign(computeTabAlignment(target));
           barSwayOffset = 0.0; // spring back to center
           _gestureStartTabIndex = null;
         });
@@ -419,7 +436,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
       _applyDragResolution(() {
         setState(() {
           tabIsDown = false;
-          tabXAlign = computeTabAlignment(tabIndex);
+          setLocalTabXAlign(computeTabAlignment(tabIndex));
           _gestureStartTabIndex = null;
         });
       });
@@ -518,7 +535,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
         _gestureActive = false;
         tabIsDragging = false;
         tabIsDown = false;
-        tabXAlign = computeTabAlignment(target);
+        setLocalTabXAlign(computeTabAlignment(target));
         barSwayOffset = 0.0;
         _gestureStartTabIndex = null;
         gestureEpoch++; // dispose the wedged recognizer

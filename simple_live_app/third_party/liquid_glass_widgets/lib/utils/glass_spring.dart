@@ -414,6 +414,7 @@ class VelocitySpringBuilder extends StatefulWidget {
     required this.springWhenReleased,
     required this.builder,
     this.active = true,
+    this.followValueDirectly = false,
     this.teleportEpoch = 0,
     this.child,
     super.key,
@@ -430,6 +431,14 @@ class VelocitySpringBuilder extends StatefulWidget {
 
   /// Whether the user is currently dragging (selects [springWhenActive]).
   final bool active;
+
+  /// Renders the supplied value directly instead of retaining spring state.
+  ///
+  /// This is used when the value already comes from a continuous absolute
+  /// source, such as [TabController.animation]. A second spring would add
+  /// lag and carry old velocity into the new target, turning an absolute
+  /// position into an overshooting one.
+  final bool followValueDirectly;
 
   /// Monotonic marker for DISCONTINUOUS [value] changes.
   ///
@@ -472,6 +481,15 @@ class _VelocitySpringBuilderState extends State<VelocitySpringBuilder>
   void didUpdateWidget(VelocitySpringBuilder oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    if (widget.followValueDirectly) {
+      _ctrl.setValue(widget.value);
+      return;
+    }
+
+    if (oldWidget.followValueDirectly && !widget.followValueDirectly) {
+      _ctrl.setValue(widget.value);
+    }
+
     // Spring selection changes when drag state or spring params change.
     // Note: active here only controls WHICH spring is used, never stops the
     // animation — motor's VelocityMotionBuilder had no snap-on-inactive path.
@@ -503,6 +521,9 @@ class _VelocitySpringBuilderState extends State<VelocitySpringBuilder>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.followValueDirectly) {
+      return widget.builder(context, widget.value, 0.0, widget.child);
+    }
     return ListenableBuilder(
       listenable: _ctrl,
       builder: (context, child) =>

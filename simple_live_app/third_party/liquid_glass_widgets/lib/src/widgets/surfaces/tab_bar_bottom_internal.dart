@@ -520,6 +520,9 @@ class TabIndicatorState extends State<TabIndicator>
   @override
   bool get isPlatformViewBackdrop => widget.platformViewBackdrop;
   @override
+  bool get usesExternalIndicatorPosition =>
+      widget.indicatorPosition != null;
+  @override
   void notifyTabChanged(int index) => widget.onTabChanged(index);
 
   // Cache fallback indicator color to avoid allocations
@@ -533,15 +536,6 @@ class TabIndicatorState extends State<TabIndicator>
       LiquidRoundedRectangle(borderRadius: widget.barBorderRadius);
 
   @override
-  void initState() {
-    super.initState();
-    final position = widget.indicatorPosition;
-    if (position != null) {
-      tabXAlign = computeTabAlignmentForPosition(position);
-    }
-  }
-
-  @override
   void didUpdateWidget(covariant TabIndicator oldWidget) {
     super.didUpdateWidget(oldWidget);
     // When the host supplies a continuous position, it is the sole source of
@@ -549,18 +543,6 @@ class TabIndicatorState extends State<TabIndicator>
     // which would feed a second destination into the indicator spring.
     if (widget.indicatorPosition == null) {
       updateTabAlignIfNeeded(oldWidget.tabIndex, oldWidget.tabCount);
-    }
-
-    // Continuous follow: when an external fractional position is supplied,
-    // drive the pill directly instead of springing to the discrete tab. This
-    // lets a host (e.g. a TabBarView) keep the indicator glued to a swipe.
-    if (widget.indicatorPosition != null &&
-        (widget.indicatorPosition != oldWidget.indicatorPosition ||
-            oldWidget.indicatorPosition == null)) {
-      if (mounted) {
-        setState(() =>
-            tabXAlign = computeTabAlignmentForPosition(widget.indicatorPosition!));
-      }
     }
 
     // Update cached shape if border radius changes
@@ -576,6 +558,10 @@ class TabIndicatorState extends State<TabIndicator>
         theme.textTheme.textStyle.color?.withValues(alpha: .1) ??
         _fallbackIndicatorColor;
     final targetAlignment = computeTabAlignment(widget.tabIndex);
+    final externalPosition = widget.indicatorPosition;
+    final indicatorAlignment = externalPosition == null
+        ? tabXAlign
+        : computeTabAlignmentForPosition(externalPosition);
 
     // Nested-arc default: if the outer bar is a capsule sentinel (≥ 9999),
     // the indicator is also passed 9999 directly, so the glass shader clamps to
@@ -631,13 +617,17 @@ class TabIndicatorState extends State<TabIndicator>
                 onTapUp: onBarTapUp,
                 onTapCancel: onBarTapCancel,
                 child: VelocitySpringBuilder(
-                  value: tabXAlign,
+                  // A host-supplied position is already an absolute
+                  // coordinate. Follow it directly so an old local spring
+                  // velocity cannot carry the pill into another tab.
+                  value: indicatorAlignment,
                   springWhenActive: GlassSpring.interactive(),
                   springWhenReleased: widget.springDescription ??
                                             GlassSpring.smooth(
                         duration: const Duration(milliseconds: 350),
                       ),
                   active: tabIsDragging,
+                  followValueDirectly: externalPosition != null,
                   builder: (context, value, velocity, child) {
                     // tabXAlign is a PHYSICAL coordinate (−1 = physical left,
                     // +1 = physical right) — always. Use Alignment (not
