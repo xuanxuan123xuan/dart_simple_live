@@ -533,15 +533,30 @@ class TabIndicatorState extends State<TabIndicator>
       LiquidRoundedRectangle(borderRadius: widget.barBorderRadius);
 
   @override
+  void initState() {
+    super.initState();
+    final position = widget.indicatorPosition;
+    if (position != null) {
+      tabXAlign = computeTabAlignmentForPosition(position);
+    }
+  }
+
+  @override
   void didUpdateWidget(covariant TabIndicator oldWidget) {
     super.didUpdateWidget(oldWidget);
-    updateTabAlignIfNeeded(oldWidget.tabIndex, oldWidget.tabCount);
+    // When the host supplies a continuous position, it is the sole source of
+    // truth for the pill location. Do not briefly retarget to selectedIndex,
+    // which would feed a second destination into the indicator spring.
+    if (widget.indicatorPosition == null) {
+      updateTabAlignIfNeeded(oldWidget.tabIndex, oldWidget.tabCount);
+    }
 
     // Continuous follow: when an external fractional position is supplied,
     // drive the pill directly instead of springing to the discrete tab. This
     // lets a host (e.g. a TabBarView) keep the indicator glued to a swipe.
     if (widget.indicatorPosition != null &&
-        widget.indicatorPosition != oldWidget.indicatorPosition) {
+        (widget.indicatorPosition != oldWidget.indicatorPosition ||
+            oldWidget.indicatorPosition == null)) {
       if (mounted) {
         setState(() =>
             tabXAlign = computeTabAlignmentForPosition(widget.indicatorPosition!));
