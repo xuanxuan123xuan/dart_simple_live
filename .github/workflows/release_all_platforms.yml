@@ -839,11 +839,17 @@ jobs:
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
+          set -euo pipefail
           # 诊断：确认下载到 release-assets 的产物（应含各平台文件与分架构 APK）
           ls -la release-assets || true
+          # 普通 Release 永远不携带 TV 安装包，即使未来下载模式发生变化。
+          find release-assets -maxdepth 1 -type f -name 'simple-live-tv-*' \
+            -print -delete || true
           # 汇总校验值写入 body，不再作为 asset 上传（排除各平台 SHA256SUMS-*.txt）
           cd release-assets
-          mapfile -t files < <(ls | grep -v '^SHA256SUMS')
+          mapfile -t files < <(find . -maxdepth 1 -type f ! -name 'SHA256SUMS-*' \
+            -printf '%f\n' | sort)
+          ((${#files[@]} > 0))
           sha256sum -- "${files[@]}" > "$RUNNER_TEMP/sha256.txt"
           # SHA 值已汇总进 body（sha256.txt），删除各平台 SHA256SUMS-*.txt，
           # 避免作为 Release 附件上传（softprops 不支持 '!' 排除模式）。
@@ -874,57 +880,83 @@ jobs:
             commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges -30 HEAD)"
           fi
 
-          # AI 总结 What's Changed（配置 DEEPSEEK_API_KEY secret 时生效；
-          # 失败/无 key 自动回退到过滤后的用户侧 git log）
+          # AI 总结 What's Changed（配置 DEEPSEEK_API_KEY secret 时生效）。
+          # 任何失败都使用固定中文四段兜底，绝不把英文 commit 标题写入简介。
           ai_summary=""
           # Release 简介只关注用户可感知的 App 变化，先排除纯仓库维护提交。
           ai_commits="$(
             printf '%s\n' "$commits" \
-              | grep -Eiv '^[0-9a-f]+ (ci|docs|test|chore|build)(\([^)]*\))?!?:|workflow|readme|version number|release v?[0-9]|发布流程|发布产物|版本号' \
+              | grep -Eiv '^[0-9a-f]+ (ci|docs|test|chore|build)(\([^)]*\))?!?:|workflow|github actions|readme|version number|release v?[0-9]|发布流程|发布产物|版本号|版本更新|签名配置|构建流程|构建脚本|构建配置' \
               || true
           )"
-          if [[ -n "$DEEPSEEK_API_KEY" && -n "$ai_commits" ]]; then
-            ai_response="$(
-              jq -n --arg commits "$ai_commits" \
-                '{model:"deepseek-v4-flash",temperature:0.1,
-                  response_format:{type:"json_object"},
-                  messages:[
-                    {role:"system",content:"你是 Simple Live 的发布说明编辑。请把 git commit 列表归纳成只面向 App 用户的简体中文更新说明。只写用户能在 App 中直接看到、使用或感受到的功能、界面、播放体验、平台兼容性和问题修复。彻底忽略 GitHub Actions/workflow、CI、README、文档、源码文件、测试、重构、格式化、纯依赖升级、版本号、签名配置、内部打包步骤和发布流程，即使提交列表包含这些内容也不得提及。平台支持、系统兼容性、新增可下载平台或架构属于用户可见变化，应归入 engineering。你必须只输出一个合法 JSON 对象，不得输出 Markdown、代码围栏、前言或结语。JSON 必须且只能包含 highlights、improvements、fixes、engineering 四个数组字段。分类规则：highlights=值得优先关注的新功能或明显变化；improvements=用户体验、界面或性能优化；fixes=用户遇到的问题修复与稳定性提升；engineering=用户相关的平台支持、系统适配、架构支持或安装包变化。每项是一句不超过 36 个汉字的字符串，每个数组最多 4 项，无内容时使用空数组。合并同类提交，不逐条翻译，不写 commit hash，不编造提交信息无法确认的效果。每条必须点明具体功能、页面、平台或问题；禁止“优化分发效率”“提升用户体验”“提升整体体验”等缺少具体对象的套话。文案统一使用简体中文和中文标点，iOS、Android、Windows、Linux、macOS、HarmonyOS、TV 等正式名称保留原文。条目只用纯文本，禁止加粗、斜体、删除线、行内代码、链接、emoji 或其他装饰符号。"},
-                    {role:"user",content:("请严格按约定 JSON 格式总结以下提交：\n\n" + $commits)}
-                  ]}' \
-              | curl -sS https://api.deepseek.com/chat/completions \
-                  -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
-                  -H "Content-Type: application/json" -d @- \
-              | jq -r '.choices[0].message.content // empty' 2>/dev/null || true
-            )"
-
-            # AI 只负责结构化归纳，标题、顺序和 Markdown 均由脚本固定生成。
-            # 返回值不符合约定时保留 ai_summary 为空，走下方原有兜底。
-            if jq -e '
+          render_ai_summary() {
+            jq -r '
+              def section($title; $items):
+                "### " + $title + "\n" +
+                (if ($items | length) > 0
+                 then ($items | map("- " + .) | join("\n"))
+                 else "- 暂无相关更新"
+                 end) + "\n";
+              section("更新亮点"; .highlights) +
+              section("体验优化"; .improvements) +
+              section("问题修复"; .fixes) +
+              section("构建与适配"; .engineering)
+            '
+          }
+          validate_ai_response() {
+            jq -e '
+              def valid_item:
+                type == "string" and
+                (length > 0 and length <= 36) and
+                ([scan("[\\u4e00-\\u9fff]")] | length >= 4) and
+                (test("[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?") | not) and
+                (test("[*_`#~]|https?://|\\[[^]]*\\]\\(") | not) and
+                (test("workflow|github|actions|readme|commit|hash|源码|仓库|文档|测试|依赖|重构|格式化|版本号|版本更新|签名配置|构建流程|构建脚本|构建配置|内部打包|发布流程|发布产物|分发"; "i") | not) and
+                (test("优化分发效率|提升用户体验|优化使用体验|提升使用体验|提升整体体验") | not);
               type == "object" and
               ([keys[]] | sort == ["engineering", "fixes", "highlights", "improvements"]) and
               ([.highlights, .improvements, .fixes, .engineering] |
-                all(type == "array" and length <= 4 and
-                  all(type == "string" and length > 0 and length <= 36 and
-                    (test("[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?") | not) and
-                    (test("workflow|readme|github|文档|源码|仓库|测试|依赖|版本号|更新版本|版本更新|签名配置|构建流程|构建脚本|构建配置|内部打包|发布流程|发布产物|分发"; "i") | not) and
-                    (test("优化分发效率|提升用户体验|优化使用体验|提升使用体验|提升整体体验") | not) and
-                    (test("[*_`#~]|https?://|\\[[^]]*\\]\\(") | not))))
-            ' <<< "$ai_response" >/dev/null 2>&1; then
-              ai_summary="$(
-                jq -r '
-                  def section($title; $items):
-                    if ($items | length) > 0 then
-                      "### " + $title + "\n" +
-                      ($items | map("- " + .) | join("\n")) + "\n"
-                    else "" end;
-                  section("更新亮点"; .highlights) +
-                  section("体验优化"; .improvements) +
-                  section("问题修复"; .fixes) +
-                  section("构建与适配"; .engineering)
-                ' <<< "$ai_response"
-              )"
-            fi
+                all(.[]; type == "array" and length <= 4) and
+                (map(.[]) | all(valid_item)))
+            '
+          }
+          fallback_summary() {
+            cat <<'EOF'
+          ### 更新亮点
+          - 本次版本包含面向用户的功能更新
+          ### 体验优化
+          - 本次版本改进了界面与播放体验
+          ### 问题修复
+          - 本次版本修复了影响使用的已知问题
+          ### 构建与适配
+          - 本次版本完善了平台兼容与安装包支持
+          EOF
+          }
+          if [[ -n "$DEEPSEEK_API_KEY" && -n "$ai_commits" ]]; then
+            for attempt in 1 2; do
+              if ai_response="$(
+                jq -n --arg commits "$ai_commits" \
+                  '{model:"deepseek-v4-flash",temperature:0.1,
+                    response_format:{type:"json_object"},
+                    messages:[
+                      {role:"system",content:"你是 Simple Live 的发布说明编辑。请把 git commit 列表归纳成只面向 App 用户的简体中文更新说明。只写用户能在 App 中直接看到、使用或感受到的功能、界面、播放体验、平台兼容性和问题修复。彻底忽略 GitHub Actions、workflow、CI、README、文档、源码、测试、重构、格式化、纯依赖升级、版本号、签名配置、内部打包步骤、发布流程和仓库维护，即使提交列表包含这些内容也不得提及。平台支持、系统兼容性、新增可下载平台或架构属于 engineering。你必须只输出一个合法 JSON 对象，不得输出 Markdown、代码围栏、前言或结语。JSON 必须且只能包含 highlights、improvements、fixes、engineering 四个数组字段。分类规则：highlights=值得优先关注的新功能或明显变化；improvements=用户体验、界面或性能优化；fixes=用户遇到的问题修复与稳定性提升；engineering=用户相关的平台支持、系统适配、架构支持或安装包变化。每个数组最多 4 项，每项是 4 至 36 个汉字的一句中文短句，无内容时使用空数组。合并同类提交，不逐条翻译，不写 commit hash，不编造提交信息无法确认的效果。每条必须点明具体功能、页面、平台或问题。禁止纯英文、英文说明、空泛套话、仓库内部术语、链接和逐条翻译。统一使用简体中文、中文标点；iOS、Android、Windows、Linux、macOS、HarmonyOS、TV 等正式名称保留原文。条目只用纯文本，不得加粗、斜体、删除线、行内代码、链接、emoji 或其他装饰符号。"},
+                      {role:"user",content:("请严格按约定 JSON 格式总结以下提交：\n\n" + $commits)}
+                    ]}' \
+                  | curl -fsS https://api.deepseek.com/chat/completions \
+                      -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+                      -H "Content-Type: application/json" -d @- \
+                  | jq -er '.choices[0].message.content // empty'
+              )" && validate_ai_response <<< "$ai_response" >/dev/null 2>&1; then
+                ai_summary="$(validate_ai_response <<< "$ai_response" | render_ai_summary)"
+                break
+              fi
+              if [[ "$attempt" == "1" ]]; then
+                echo "::warning::AI 更新说明第一次请求失败或结果不合规，正在重试。" >&2
+              fi
+            done
+          fi
+          if [[ -z "$ai_summary" ]]; then
+            ai_summary="$(fallback_summary)"
           fi
 
           {
