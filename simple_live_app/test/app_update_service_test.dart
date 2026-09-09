@@ -14,6 +14,8 @@ void main() {
         AppUpdateChannel.dev,
       );
       expect(AppUpdateService.channelFromTag('v26.3.20-pre'), isNull);
+      expect(AppUpdateService.channelFromTag('tv_v1.7.9'), isNull);
+      expect(AppUpdateService.channelFromTag('tv_v26.3.20'), isNull);
     });
 
     test('extracts version and build number from release tags', () {
@@ -95,6 +97,45 @@ void main() {
       expect(
         release.assets.any((asset) => asset.platform == AppUpdatePlatform.tv),
         isFalse,
+      );
+    });
+
+    test('rejects TV releases from the normal app catalog', () {
+      for (final tag in ['tv_v1.7.9', 'tv_v26.3.20']) {
+        expect(
+          AppUpdateService.parseRelease({
+            'tag_name': tag,
+            'assets': [
+              _assetJson('simple-live-tv-1.7.9-android-universal.apk'),
+            ],
+          }),
+          isNull,
+        );
+      }
+    });
+
+    test('filters TV assets when an ordinary release contains mixed assets',
+        () {
+      final release = AppUpdateService.parseRelease({
+        'tag_name': 'v26.3.20',
+        'assets': [
+          _assetJson('simple-live-26.3.20-android-universal.apk'),
+          _assetJson('simple-live-tv-26.3.20-android-universal.apk'),
+          _assetJson('simple-live-tv-26.3.20-windows.exe'),
+        ],
+      });
+
+      expect(
+        release!.assets.map((asset) => asset.name),
+        contains('simple-live-26.3.20-android-universal.apk'),
+      );
+      expect(
+        release.assets.map((asset) => asset.name),
+        isNot(contains('simple-live-tv-26.3.20-android-universal.apk')),
+      );
+      expect(
+        release.assets.map((asset) => asset.name),
+        isNot(contains('simple-live-tv-26.3.20-windows.exe')),
       );
     });
   });

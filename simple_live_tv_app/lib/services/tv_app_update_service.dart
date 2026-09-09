@@ -22,6 +22,8 @@ class TvAppDownloadAsset {
   final String url;
 }
 
+enum TvAppDownloadPlatform { android, windows }
+
 class TvAppUpdateService extends GetxService {
   static TvAppUpdateService get instance => Get.find<TvAppUpdateService>();
 
@@ -81,10 +83,15 @@ class TvAppUpdateService extends GetxService {
     errorMessage.value = null;
     try {
       final version = await CommonRequest().checkUpdate();
+      if (tvReleaseTagFromUrl(version.downloadUrl) == null) {
+        throw const FormatException('TV 版本下载链接不是有效的 tv_v Release');
+      }
       latestVersion.value = version;
       updateAvailable.value = isNewer(version);
       return version;
     } catch (e, stackTrace) {
+      latestVersion.value = null;
+      updateAvailable.value = false;
       errorMessage.value = e.toString();
       Log.logPrint('TV 检查更新失败: $e\n$stackTrace');
       rethrow;
@@ -114,34 +121,39 @@ class TvAppUpdateService extends GetxService {
   }
 
   Future<TvAppDownloadAsset?> resolveAsset(VersionModel version) async {
-    final tag = _releaseTag(version.downloadUrl);
-    if (tag != null) {
-      try {
-        final result = await HttpClient.instance.getJson(
-          '$_githubApi/releases/tags/${Uri.encodeComponent(tag)}',
-          header: const {
-            'Accept': 'application/vnd.github+json',
-            'User-Agent': 'SimpleLiveTV',
-          },
-        );
-        final assets = result is Map ? result['assets'] : null;
-        if (assets is List) {
-          final candidates = assets
-              .whereType<Map>()
-              .map((item) => TvAppDownloadAsset(
-                    name: item['name']?.toString() ?? '',
-                    url: item['browser_download_url']?.toString() ?? '',
-                  ))
-              .where((asset) => asset.name.isNotEmpty && asset.url.isNotEmpty)
-              .toList();
-          final selected = _selectAsset(candidates, version.version);
-          if (selected != null) return selected;
-        }
-      } catch (e) {
-        Log.logPrint('TV Release 附件解析失败: $e');
-      }
+    final tag = tvReleaseTagFromUrl(version.downloadUrl);
+    if (tag == null) {
+      return null;
     }
-    return _fallbackAsset(version);
+    try {
+      final result = await HttpClient.instance.getJson(
+        '$_githubApi/releases/tags/${Uri.encodeComponent(tag)}',
+        header: const {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'SimpleLiveTV',
+        },
+      );
+      final assets = result is Map ? result['assets'] : null;
+      if (assets is List) {
+        final candidates = assets
+            .whereType<Map>()
+            .map((item) => TvAppDownloadAsset(
+                  name: item['name']?.toString() ?? '',
+                  url: item['browser_download_url']?.toString() ?? '',
+                ))
+            .where((asset) => asset.name.isNotEmpty && asset.url.isNotEmpty)
+            .toList();
+        final selected = selectTvAsset(
+          candidates,
+          version: version.version,
+          platform: _currentDownloadPlatform(),
+        );
+        if (selected != null) return selected;
+      }
+    } catch (e) {
+      Log.logPrint('TV Release 附件解析失败: $e');
+    }
+    return _fallbackAsset(version, tag: tag);
   }
 
   Future<String?> downloadLatest({VersionModel? version}) async {
@@ -210,36 +222,58 @@ class TvAppUpdateService extends GetxService {
     await launchUrlString(url, mode: LaunchMode.externalApplication);
   }
 
-  String? _releaseTag(String url) {
+  static String? tvReleaseTagFromUrl(String url) {
     final uri = Uri.tryParse(url);
-    if (uri == null) return null;
+    if (uri == null ||
+        (uri.scheme != 'https' && uri.scheme != 'http') ||
+        uri.host.isEmpty) {
+      return null;
+    }
     final segments = uri.pathSegments;
-    return segments.isEmpty ? null : segments.last;
+    if (segments.length < 4 ||
+        segments[segments.length - 2] != 'tag' ||
+        segments[segments.length - 3] != 'releases') {
+      return null;
+    }
+    final tag = segments.last;
+    return RegExp(r'^tv_v\d+\.\d+\.\d+(?:-(?:dev|pre))?$').hasMatch(tag)
+        ? tag
+        : null;
   }
 
-  TvAppDownloadAsset? _selectAsset(
+  TvAppDownloadPlatform? _currentDownloadPlatform() {
+    if (Platform.isAndroid) return TvAppDownloadPlatform.android;
+    if (Platform.isWindows) return TvAppDownloadPlatform.windows;
+    return null;
+  }
+
+  static TvAppDownloadAsset? selectTvAsset(
     List<TvAppDownloadAsset> assets,
-    String version,
-  ) {
+    {
+    required String version,
+    required TvAppDownloadPlatform? platform,
+  }) {
     final normalized = version.trim();
-    if (Platform.isAndroid) {
+    if (platform == TvAppDownloadPlatform.android) {
+      return _firstByName(
+        assets,
+        'simple-live-tv-$normalized-android-universal.apk',
+      );
+    }
+    if (platform == TvAppDownloadPlatform.windows) {
       return _firstByName(
             assets,
-            'simple-live-tv-$normalized-android-universal.apk',
+            'simple-live-tv-$normalized-windows.exe',
           ) ??
-          _firstByExtension(assets, '.apk');
-    }
-    if (Platform.isWindows) {
-      return _firstByName(assets, 'simple-live-$normalized-windows.exe') ??
-          _firstByExtension(assets, '.exe') ??
-          _firstByExtension(assets, '.zip');
+          _firstByName(assets, 'simple-live-$normalized-windows.exe');
     }
     return null;
   }
 
-  TvAppDownloadAsset? _fallbackAsset(VersionModel version) {
-    final tag = _releaseTag(version.downloadUrl);
-    if (tag == null) return null;
+  TvAppDownloadAsset? _fallbackAsset(
+    VersionModel version, {
+    required String tag,
+  }) {
     final base = 'https://github.com/$repository/releases/download/$tag';
     if (Platform.isAndroid) {
       return TvAppDownloadAsset(
@@ -256,22 +290,12 @@ class TvAppUpdateService extends GetxService {
     return null;
   }
 
-  TvAppDownloadAsset? _firstByName(
+  static TvAppDownloadAsset? _firstByName(
     List<TvAppDownloadAsset> assets,
     String name,
   ) {
     for (final asset in assets) {
       if (asset.name.toLowerCase() == name.toLowerCase()) return asset;
-    }
-    return null;
-  }
-
-  TvAppDownloadAsset? _firstByExtension(
-    List<TvAppDownloadAsset> assets,
-    String extension,
-  ) {
-    for (final asset in assets) {
-      if (asset.name.toLowerCase().endsWith(extension)) return asset;
     }
     return null;
   }

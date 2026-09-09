@@ -53,4 +53,117 @@ void main() {
       isFalse,
     );
   });
+
+  group('TV release source validation', () {
+    test('accepts only tv_v release tag URLs', () {
+      expect(
+        TvAppUpdateService.tvReleaseTagFromUrl(
+          'https://github.com/example/releases/tag/tv_v1.7.9',
+        ),
+        'tv_v1.7.9',
+      );
+      expect(
+        TvAppUpdateService.tvReleaseTagFromUrl(
+          'https://github.com/example/releases/tag/tv_v26.3.20?x=1',
+        ),
+        'tv_v26.3.20',
+      );
+      expect(
+        TvAppUpdateService.tvReleaseTagFromUrl(
+          'https://github.com/example/releases/tag/tv_v26.3.20-dev',
+        ),
+        'tv_v26.3.20-dev',
+      );
+      expect(
+        TvAppUpdateService.tvReleaseTagFromUrl(
+          'https://github.com/example/releases/tag/tv_v26.3.20-pre',
+        ),
+        'tv_v26.3.20-pre',
+      );
+    });
+
+    test('rejects normal, dev and malformed release URLs', () {
+      for (final url in [
+        'https://github.com/example/releases/tag/v1.7.9',
+        'https://github.com/example/releases/tag/v1.7.9-dev',
+        'https://github.com/example/releases/tag/1.7.9',
+        'https://github.com/example/releases/tv_v1.7.9',
+        'tv_v1.7.9',
+        '',
+      ]) {
+        expect(TvAppUpdateService.tvReleaseTagFromUrl(url), isNull);
+      }
+    });
+  });
+
+  group('TV asset selection', () {
+    test('selects only the TV APK or TV EXE and never extension fallbacks',
+        () {
+      final assets = [
+        const TvAppDownloadAsset(
+          name: 'simple-live-1.7.9-android-universal.apk',
+          url: 'https://example.com/ordinary.apk',
+        ),
+        const TvAppDownloadAsset(
+          name: 'simple-live-tv-1.7.9-android-universal.apk',
+          url: 'https://example.com/tv.apk',
+        ),
+        const TvAppDownloadAsset(
+          name: 'simple-live-1.7.9-windows.exe',
+          url: 'https://example.com/tv.exe',
+        ),
+        const TvAppDownloadAsset(
+          name: 'simple-live-1.7.9-windows.zip',
+          url: 'https://example.com/tv.zip',
+        ),
+      ];
+
+      expect(
+        TvAppUpdateService.selectTvAsset(
+          assets,
+          version: '1.7.9',
+          platform: TvAppDownloadPlatform.android,
+        )?.name,
+        'simple-live-tv-1.7.9-android-universal.apk',
+      );
+      expect(
+        TvAppUpdateService.selectTvAsset(
+          assets,
+          version: '1.7.9',
+          platform: TvAppDownloadPlatform.windows,
+        )?.name,
+        'simple-live-1.7.9-windows.exe',
+      );
+    });
+
+    test('rejects ordinary assets when no TV package name is present', () {
+      final assets = [
+        const TvAppDownloadAsset(
+          name: 'simple-live-1.7.9-android-universal.apk',
+          url: 'https://example.com/ordinary.apk',
+        ),
+        const TvAppDownloadAsset(
+          name: 'simple-live-1.7.9-windows.zip',
+          url: 'https://example.com/ordinary.zip',
+        ),
+      ];
+
+      expect(
+        TvAppUpdateService.selectTvAsset(
+          assets,
+          version: '1.7.9',
+          platform: TvAppDownloadPlatform.android,
+        ),
+        isNull,
+      );
+      expect(
+        TvAppUpdateService.selectTvAsset(
+          assets,
+          version: '1.7.9',
+          platform: TvAppDownloadPlatform.windows,
+        ),
+        isNull,
+      );
+    });
+  });
 }
