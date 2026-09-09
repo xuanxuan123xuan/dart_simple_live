@@ -438,11 +438,11 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
     final index = tabIndexFromGlobal(d.globalPosition);
 
     if (isPlatformViewBackdrop) {
-      // Hybrid mode: instantly slide the visual indicator for native responsiveness,
-      // but delay the actual content swap (PlatformView unmount) until onTapUp
-      // to prevent iOS mid-gesture touch drops.
+      // Hybrid mode: delay the content swap (PlatformView unmount) until
+      // onTapUp to prevent iOS mid-gesture touch drops. Do not move the
+      // indicator here: the host TabController will drive the single visual
+      // transition when the pending selection is committed on tap up.
       setState(() {
-        tabXAlign = computeTabAlignment(index);
         _pendingHybridTabIndex = index;
       });
     } else {
