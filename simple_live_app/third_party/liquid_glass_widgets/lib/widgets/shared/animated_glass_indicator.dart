@@ -134,6 +134,12 @@ class AnimatedGlassIndicator extends StatelessWidget {
   /// ([paintBackground] == true); reads through a translucent [indicatorColor].
   final double innerBlur;
 
+  /// Uses the live BackdropFilter path instead of screenshot-based refraction.
+  ///
+  /// Moving tab indicators on iOS use this mode so their glass geometry is
+  /// positioned by the widget tree without a separate capture-origin mapping.
+  final bool forceLiveBackdrop;
+
   /// Creates a new [AnimatedGlassIndicator].
   const AnimatedGlassIndicator({
     super.key,
@@ -156,6 +162,7 @@ class AnimatedGlassIndicator extends StatelessWidget {
     this.shadows,
     this.pinchStrength = 1.0,
     this.innerBlur = 0.0,
+    this.forceLiveBackdrop = false,
     this.direction = Axis.horizontal,
   });
 
@@ -399,6 +406,7 @@ class AnimatedGlassIndicator extends StatelessWidget {
       quality: quality,
       interactionIntensity: thickness,
       backgroundKey: backgroundKey,
+      forceLiveBackdrop: forceLiveBackdrop,
       clipExpansion:
           isVertical ? _jellyClipExpansionVertical : _jellyClipExpansion,
       // rimThickness translation: Premium uses thickness as 3D glass depth

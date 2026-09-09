@@ -8,6 +8,8 @@ library;
 import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 
 import '../../../widgets/shared/glass_focus_region.dart';
 import '../../../constants/glass_defaults.dart';
@@ -520,8 +522,10 @@ class TabIndicatorState extends State<TabIndicator>
   @override
   bool get isPlatformViewBackdrop => widget.platformViewBackdrop;
   @override
-  bool get usesExternalIndicatorPosition =>
-      widget.indicatorPosition != null;
+  bool get usesExternalIndicatorPosition => widget.indicatorPosition != null;
+
+  bool get _forceLiveIndicatorBackdrop =>
+      defaultTargetPlatform == TargetPlatform.iOS;
   @override
   void notifyTabChanged(int index) => widget.onTabChanged(index);
 
@@ -623,7 +627,7 @@ class TabIndicatorState extends State<TabIndicator>
                   value: indicatorAlignment,
                   springWhenActive: GlassSpring.interactive(),
                   springWhenReleased: widget.springDescription ??
-                                            GlassSpring.smooth(
+                      GlassSpring.smooth(
                         duration: const Duration(milliseconds: 350),
                       ),
                   active: tabIsDragging,
@@ -816,6 +820,7 @@ class TabIndicatorState extends State<TabIndicator>
           if (widget.visible && thickness > 0.05)
             AnimatedGlassIndicator(
               velocity: velocity,
+              forceLiveBackdrop: _forceLiveIndicatorBackdrop,
               itemCount: widget.tabCount,
               alignment: alignment,
               thickness: thickness,
@@ -893,6 +898,7 @@ class TabIndicatorState extends State<TabIndicator>
                   // 1.5. Solid Indicator Background (drawn below icons so selected icons are vibrant)
                   AnimatedGlassIndicator(
                     velocity: velocity,
+                    forceLiveBackdrop: _forceLiveIndicatorBackdrop,
                     itemCount: widget.tabCount,
                     alignment: alignment,
                     thickness: thickness,
@@ -1027,6 +1033,7 @@ class TabIndicatorState extends State<TabIndicator>
           // the merged icon RepaintBoundary AND the glow beneath it.
           AnimatedGlassIndicator(
             velocity: velocity,
+            forceLiveBackdrop: _forceLiveIndicatorBackdrop,
             itemCount: widget.tabCount,
             alignment: alignment,
             thickness: thickness,

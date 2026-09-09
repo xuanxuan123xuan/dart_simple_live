@@ -482,7 +482,6 @@ class _VelocitySpringBuilderState extends State<VelocitySpringBuilder>
     super.didUpdateWidget(oldWidget);
 
     if (widget.followValueDirectly) {
-      _ctrl.setValue(widget.value);
       return;
     }
 

@@ -40,6 +40,7 @@ class GlassEffect extends StatefulWidget {
     this.rimThickness = 0.5,
     this.rimSmoothing = 1.5,
     this.clipExpansion = EdgeInsets.zero,
+    this.forceLiveBackdrop = false,
     super.key,
   });
 
@@ -88,6 +89,15 @@ class GlassEffect extends StatefulWidget {
   ///
   /// Defaults to [EdgeInsets.zero] — no extra cost for static glass.
   final EdgeInsets clipExpansion;
+
+  /// Forces the moving glass surface to use a live [BackdropFilter] instead
+  /// of capturing a repaint boundary into a texture.
+  ///
+  /// This is useful for indicators on iOS, where the captured texture's
+  /// physical-pixel origin can drift from the moving render layer during a
+  /// tab transition. The widget keeps its normal shape, tint, blur, and child
+  /// content; only the screenshot-based refraction path is disabled.
+  final bool forceLiveBackdrop;
 
   static ui.FragmentProgram? _cachedProgram;
   static bool _isPreparing = false;
@@ -169,7 +179,7 @@ class _GlassEffectState extends State<GlassEffect>
     WidgetsBinding.instance.addObserver(this);
     // Skip shader init entirely in minimal quality — build() returns early via
     // the _FrostedFallback path and the shader is never used.
-    if (widget.quality != GlassQuality.minimal) {
+    if (widget.quality != GlassQuality.minimal && !widget.forceLiveBackdrop) {
       _initShader();
     }
 
@@ -236,6 +246,11 @@ class _GlassEffectState extends State<GlassEffect>
   GlobalKey? get _effectiveKey => widget.backgroundKey ?? _cachedScopeKey;
 
   void _updateTicker() {
+    if (widget.forceLiveBackdrop) {
+      if (_ticker.isActive) _ticker.stop();
+      _clearBackgroundCapture();
+      return;
+    }
     // Background capture requirements:
     //  1. Widget is actively interacting (cost only paid during gesture)
     //  2. A valid capture key is available
@@ -255,12 +270,18 @@ class _GlassEffectState extends State<GlassEffect>
     } else {
       if (_ticker.isActive) {
         _ticker.stop();
-        _backgroundImage?.dispose();
-        _backgroundImage = null;
+        _clearBackgroundCapture();
         // debugPrint(
         //     '[GlassEffect] 📸 Interaction finished, cleared snapshot.');
       }
     }
+  }
+
+  void _clearBackgroundCapture() {
+    _backgroundImage?.dispose();
+    _backgroundImage = null;
+    _lastCaptureSize = null;
+    _lastCapturePosition = null;
   }
 
   void _handleTick(Duration elapsed) {
@@ -432,6 +453,21 @@ class _GlassEffectState extends State<GlassEffect>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.forceLiveBackdrop) {
+      return AdaptiveGlass(
+        shape: widget.shape,
+        settings: widget.settings,
+        quality: GlassQuality.minimal,
+        useOwnLayer: true,
+        clipBehavior: Clip.antiAlias,
+        // Keep the live blur mounted while the indicator moves. This path
+        // samples the current scene directly and has no capture-origin math.
+        isInteractive: false,
+        platformViewBackdrop: true,
+        child: widget.child,
+      );
+    }
+
     // 1. Detect Environment & Constraints
     final bool isImpeller = !kIsWeb && GlassEffect._canUseImpeller;
 
