@@ -225,12 +225,16 @@ class TvAppUpdateService extends GetxService {
   static String? tvReleaseTagFromUrl(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null ||
-        (uri.scheme != 'https' && uri.scheme != 'http') ||
-        uri.host.isEmpty) {
+        uri.scheme != 'https' ||
+        uri.host != 'github.com' ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasPort) {
       return null;
     }
     final segments = uri.pathSegments;
-    if (segments.length < 4 ||
+    if (segments.length != 5 ||
+        segments[0].isEmpty ||
+        segments[1].isEmpty ||
         segments[segments.length - 2] != 'tag' ||
         segments[segments.length - 3] != 'releases') {
       return null;
@@ -248,8 +252,7 @@ class TvAppUpdateService extends GetxService {
   }
 
   static TvAppDownloadAsset? selectTvAsset(
-    List<TvAppDownloadAsset> assets,
-    {
+    List<TvAppDownloadAsset> assets, {
     required String version,
     required TvAppDownloadPlatform? platform,
   }) {
@@ -262,10 +265,9 @@ class TvAppUpdateService extends GetxService {
     }
     if (platform == TvAppDownloadPlatform.windows) {
       return _firstByName(
-            assets,
-            'simple-live-tv-$normalized-windows.exe',
-          ) ??
-          _firstByName(assets, 'simple-live-$normalized-windows.exe');
+        assets,
+        'simple-live-tv-$normalized-windows.exe',
+      );
     }
     return null;
   }
@@ -283,8 +285,8 @@ class TvAppUpdateService extends GetxService {
     }
     if (Platform.isWindows) {
       return TvAppDownloadAsset(
-        name: 'simple-live-${version.version}-windows.exe',
-        url: '$base/simple-live-${version.version}-windows.exe',
+        name: 'simple-live-tv-${version.version}-windows.exe',
+        url: '$base/simple-live-tv-${version.version}-windows.exe',
       );
     }
     return null;

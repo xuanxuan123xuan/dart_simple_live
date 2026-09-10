@@ -4,6 +4,24 @@ import 'package:simple_live_app/services/app_update_service.dart';
 
 void main() {
   group('AppUpdateService release parsing', () {
+    test('mixed release directory retains only ordinary stable and dev', () {
+      final tags = [
+        'tv_v1.7.9',
+        'tv_v26.3.20',
+        'tv_v26.3.20-dev',
+        'v26.3.20',
+        'v26.3.20-dev',
+        'v26.3.20-pre',
+        'ios-dev'
+      ];
+      final releases = tags
+          .map((tag) => AppUpdateService.parseRelease({'tag_name': tag}))
+          .whereType<AppUpdateRelease>()
+          .toList();
+      expect(releases.map((r) => r.tag), ['v26.3.20', 'v26.3.20-dev']);
+      expect(releases.map((r) => r.channel),
+          [AppUpdateChannel.stable, AppUpdateChannel.dev]);
+    });
     test('detects stable and dev tags', () {
       expect(
         AppUpdateService.channelFromTag('v26.3.20'),
