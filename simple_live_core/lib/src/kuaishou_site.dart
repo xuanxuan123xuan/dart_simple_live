@@ -1580,6 +1580,32 @@ class KuaishouSite extends LiveSite {
       searchCoordinator.cancelScope('kuaishou:search');
     }
     final firstTransport = _anonymousMode ? null : _preferredCookieTransport();
+
+    // Playback is public whenever Kuaishou exposes a visitor URL. Probe that
+    // path first even for logged-in users: an authenticated room page can
+    // confirm "live" before it has populated playUrls, which would otherwise
+    // hide a usable anonymous stream behind playback_missing.
+    if (firstTransport != null &&
+        (source == KuaishouRequestSource.userEnter ||
+            source == KuaishouRequestSource.multiRoom)) {
+      try {
+        return await _getAnonymousPlaybackRoomDetail(
+          roomId,
+          source: source,
+          danmakuTransport: firstTransport,
+        );
+      } on KuaishouCooldownError {
+        rethrow;
+      } on KuaishouRequestCanceledError {
+        rethrow;
+      } catch (error) {
+        CoreLog.i(
+          '[ks-request] anonymous playback fallback room=${_maskRoomId(roomId)} '
+          'source=${source.name} error=$error',
+        );
+      }
+    }
+
     if (firstTransport == null) {
       return _getAnonymousPlaybackRoomDetail(roomId, source: source);
     }
@@ -1653,17 +1679,20 @@ class KuaishouSite extends LiveSite {
   Future<LiveRoomDetail> _getAnonymousPlaybackRoomDetail(
     String roomId, {
     required KuaishouRequestSource source,
+    _KuaishouAccountTransport? danmakuTransport,
   }) async {
     if (!KuaishouRequestTrace.forceNetwork) {
       final snapshot = _readAnonymousRoomSnapshot(roomId);
-      if (snapshot != null) return snapshot;
+      if (snapshot != null) {
+        return _addLazyDanmakuCredentials(snapshot, danmakuTransport);
+      }
     }
 
     try {
       final detail = await _getAnonymousRoomDetail(roomId, source: source);
       if (extractPlayableUrls(detail.data).isNotEmpty ||
           detail.resolvedLiveStatus == LiveStatusState.offline) {
-        return detail;
+        return _addLazyDanmakuCredentials(detail, danmakuTransport);
       }
     } on _KuaishouChallengePageException catch (error) {
       throw CoreError(
@@ -1679,6 +1708,52 @@ class KuaishouSite extends LiveSite {
     throw CoreError(
       '该快手直播间暂未提供游客播放地址，可登录后重试',
       kind: CoreErrorKind.response,
+    );
+  }
+
+  LiveRoomDetail _addLazyDanmakuCredentials(
+    LiveRoomDetail detail,
+    _KuaishouAccountTransport? transport,
+  ) {
+    if (transport == null ||
+        detail.resolvedLiveStatus != LiveStatusState.live ||
+        extractPlayableUrls(detail.data).isEmpty) {
+      return detail;
+    }
+
+    late final KuaishouDanmakuArgs args;
+    args = KuaishouDanmakuArgs(
+      roomId: detail.roomId,
+      // The anonymous playback response is deliberately kept credential-free.
+      // Resolve the authenticated stream id/token only when danmaku starts.
+      liveStreamId: '',
+      token: '',
+      websocketUrls: const [],
+      pageId: _generatePageId(),
+      cookie: _currentCookieHeaderFor(transport),
+      userAgent: userAgent,
+      credentialResolver: () => _resolveDanmakuCredentials(args, transport),
+    );
+    return LiveRoomDetail(
+      roomId: detail.roomId,
+      title: detail.title,
+      cover: detail.cover,
+      userName: detail.userName,
+      userAvatar: detail.userAvatar,
+      online: detail.online,
+      introduction: detail.introduction,
+      notice: detail.notice,
+      status: detail.status,
+      liveStatusState: detail.liveStatusState,
+      data: detail.data,
+      danmakuData: args,
+      url: detail.url,
+      isRecord: detail.isRecord,
+      showTime: detail.showTime,
+      categoryId: detail.categoryId,
+      categoryName: detail.categoryName,
+      categoryParentId: detail.categoryParentId,
+      categoryPic: detail.categoryPic,
     );
   }
 
@@ -2472,49 +2547,13 @@ class KuaishouSite extends LiveSite {
     return getAnonymousLiveStatusState(roomId: roomId);
   }
 
-  /// Follow-list entry point. Prefer the authenticated detail chain when an
-  /// account is available; Kuaishou's anonymous room page can be a rate-limit
-  /// shell whose `isLiving=false` is not real offline evidence.
+  /// Follow-list status is always read from the anonymous public page. A
+  /// Cookie is reserved for danmaku credentials and must not turn a transient
+  /// authenticated room-page failure into a false offline state.
   Future<LiveStatusState> getFollowLiveStatusState({
     required String roomId,
-  }) {
-    final transport = _anonymousMode ? null : _preferredCookieTransport();
-    if (transport == null) {
-      return getAnonymousLiveStatusState(roomId: roomId);
-    }
-
-    return coordinator.coalesce(
-      key: '${transport.cacheNamespace}:follow_live_status:$roomId',
-      cacheTtlForValue: anonymousStatusCacheTtl,
-      bypassCache: KuaishouRequestTrace.forceNetwork,
-      task: () => KuaishouRequestTrace.run(
-        KuaishouRequestSource.followStatus,
-        () async {
-          try {
-            final detail = await _getRoomDetailForTransport(
-              roomId,
-              source: KuaishouRequestSource.followStatus,
-              transport: transport,
-            );
-            return detail.resolvedLiveStatus;
-          } on KuaishouCooldownError {
-            rethrow;
-          } on CoreError catch (error) {
-            if (error.statusCode == 401 ||
-                error.statusCode == 403 ||
-                error.statusCode == 429) {
-              rethrow;
-            }
-            return getAnonymousLiveStatusState(roomId: roomId);
-          } catch (_) {
-            return getAnonymousLiveStatusState(roomId: roomId);
-          }
-        },
-        scopeId: KuaishouRequestTrace.scopeId,
-        forceNetwork: KuaishouRequestTrace.forceNetwork,
-      ),
-    );
-  }
+  }) =>
+      getAnonymousLiveStatusState(roomId: roomId);
 
   /// Anonymous public-page status path. Follow refresh only uses this when no
   /// authenticated account is available or authenticated parsing has a normal
