@@ -4,22 +4,43 @@ import 'package:simple_live_app/services/app_update_service.dart';
 
 void main() {
   group('AppUpdateService release parsing', () {
+    test('mixed release directory retains only ordinary stable and dev', () {
+      final tags = [
+        'tv_v1.7.9',
+        'tv_v26.3.20',
+        'tv_v26.3.20-dev',
+        'v26.3.20',
+        'v26.3.20-dev',
+        'v26.3.20-pre',
+        'ios-dev'
+      ];
+      final releases = tags
+          .map((tag) => AppUpdateService.parseRelease({'tag_name': tag}))
+          .whereType<AppUpdateRelease>()
+          .toList();
+      expect(releases.map((r) => r.tag), ['v26.3.20', 'v26.3.20-dev']);
+      expect(releases.map((r) => r.channel),
+          [AppUpdateChannel.stable, AppUpdateChannel.dev]);
+    });
     test('detects stable and dev tags', () {
       expect(
-        AppUpdateService.channelFromTag('v1.13.20'),
+        AppUpdateService.channelFromTag('v26.3.20'),
         AppUpdateChannel.stable,
       );
       expect(
-        AppUpdateService.channelFromTag('v1.13.20-dev'),
+        AppUpdateService.channelFromTag('v26.3.20-dev'),
         AppUpdateChannel.dev,
       );
-      expect(AppUpdateService.channelFromTag('v1.13.20-pre'), isNull);
+      expect(AppUpdateService.channelFromTag('v26.3.20-pre'), isNull);
+      expect(AppUpdateService.channelFromTag('tv_v1.7.9'), isNull);
+      expect(AppUpdateService.channelFromTag('tv_v26.3.20'), isNull);
     });
 
     test('extracts version and build number from release tags', () {
-      expect(AppUpdateService.versionFromTag('v1.13.20-dev'), '1.13.20');
-      expect(AppUpdateService.versionFromTag('v1.13.20'), '1.13.20');
-      expect(AppUpdateService.buildNumberFromVersion('1.13.20'), 11320);
+      expect(AppUpdateService.versionFromTag('v26.3.20-dev'), '26.3.20');
+      expect(AppUpdateService.versionFromTag('v26.3.20'), '26.3.20');
+      expect(AppUpdateService.buildNumberFromVersion('26.3.20'), 260320);
+      expect(AppUpdateService.buildNumberFromVersion('26.3.1'), 260301);
       expect(AppUpdateService.buildNumberFromVersion('bad.version'), 0);
     });
 
@@ -27,11 +48,11 @@ void main() {
       final service = AppUpdateService();
       final currentBuild = service.currentBuildNumber;
       final nextRelease = _release(
-        'v9.99.99',
+        'v99.4.99',
         buildNumber: currentBuild + 1,
       );
       final currentRelease = _release(
-        'v1.13.9',
+        'v26.3.1',
         buildNumber: currentBuild,
       );
 
@@ -43,18 +64,18 @@ void main() {
       const hash =
           '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       final values = AppUpdateService.parseSha256(
-        '### SHA-256\n```\n$hash  simple-live-1.13.20-windows.exe\n```',
+        '### SHA-256\n```\n$hash  simple-live-26.3.20-windows.exe\n```',
       );
 
-      expect(values['simple-live-1.13.20-windows.exe'], hash);
+      expect(values['simple-live-26.3.20-windows.exe'], hash);
     });
 
     test('parses platform, package kind and ABI from asset names', () {
-      final android = _asset('simple-live-1.13.20-android-arm64-v8a.apk');
-      final windows = _asset('simple-live-1.13.20-windows.exe');
-      final linux = _asset('simple-live-1.13.20-linux.AppImage');
-      final macos = _asset('simple-live-1.13.20-macos.dmg');
-      final ohos = _asset('simple-live-1.13.20-ohos-arm64-signed.hap');
+      final android = _asset('simple-live-26.3.20-android-arm64-v8a.apk');
+      final windows = _asset('simple-live-26.3.20-windows.exe');
+      final linux = _asset('simple-live-26.3.20-linux.AppImage');
+      final macos = _asset('simple-live-26.3.20-macos.dmg');
+      final ohos = _asset('simple-live-26.3.20-ohos-arm64-signed.hap');
 
       expect(android?.platform, AppUpdatePlatform.android);
       expect(android?.kind, AppUpdatePackageKind.apk);
@@ -71,14 +92,14 @@ void main() {
     test('keeps desktop assets and filters Android TV assets from releases',
         () {
       final release = AppUpdateService.parseRelease({
-        'tag_name': 'v1.13.20',
+        'tag_name': 'v26.3.20',
         'published_at': '2026-08-19T00:00:00Z',
-        'html_url': 'https://github.com/example/releases/tag/v1.13.20',
+        'html_url': 'https://github.com/example/releases/tag/v26.3.20',
         'body': '',
         'assets': [
-          _assetJson('simple-live-1.13.20-windows.exe'),
-          _assetJson('simple-live-1.13.20-windows.zip'),
-          _assetJson('simple-live-tv-1.13.20-android-universal.apk'),
+          _assetJson('simple-live-26.3.20-windows.exe'),
+          _assetJson('simple-live-26.3.20-windows.zip'),
+          _assetJson('simple-live-tv-26.3.20-android-universal.apk'),
         ],
       });
 
@@ -87,13 +108,52 @@ void main() {
       expect(
         release.assets.map((asset) => asset.name),
         containsAll([
-          'simple-live-1.13.20-windows.exe',
-          'simple-live-1.13.20-windows.zip',
+          'simple-live-26.3.20-windows.exe',
+          'simple-live-26.3.20-windows.zip',
         ]),
       );
       expect(
         release.assets.any((asset) => asset.platform == AppUpdatePlatform.tv),
         isFalse,
+      );
+    });
+
+    test('rejects TV releases from the normal app catalog', () {
+      for (final tag in ['tv_v1.7.9', 'tv_v26.3.20']) {
+        expect(
+          AppUpdateService.parseRelease({
+            'tag_name': tag,
+            'assets': [
+              _assetJson('simple-live-tv-1.7.9-android-universal.apk'),
+            ],
+          }),
+          isNull,
+        );
+      }
+    });
+
+    test('filters TV assets when an ordinary release contains mixed assets',
+        () {
+      final release = AppUpdateService.parseRelease({
+        'tag_name': 'v26.3.20',
+        'assets': [
+          _assetJson('simple-live-26.3.20-android-universal.apk'),
+          _assetJson('simple-live-tv-26.3.20-android-universal.apk'),
+          _assetJson('simple-live-tv-26.3.20-windows.exe'),
+        ],
+      });
+
+      expect(
+        release!.assets.map((asset) => asset.name),
+        contains('simple-live-26.3.20-android-universal.apk'),
+      );
+      expect(
+        release.assets.map((asset) => asset.name),
+        isNot(contains('simple-live-tv-26.3.20-android-universal.apk')),
+      );
+      expect(
+        release.assets.map((asset) => asset.name),
+        isNot(contains('simple-live-tv-26.3.20-windows.exe')),
       );
     });
   });

@@ -5,6 +5,8 @@ import 'package:simple_live_tv_app/requests/http_client.dart';
 
 /// 通用的请求
 class CommonRequest {
+  static const String _repository = "xuanxuan123xuan/dart_simple_live";
+
   Future<VersionModel> checkUpdate() async {
     try {
       return await checkUpdateGitMirror();
@@ -16,7 +18,7 @@ class CommonRequest {
   /// 检查更新
   Future<VersionModel> checkUpdateGitMirror() async {
     var result = await HttpClient.instance.getJson(
-      "https://github.iill.moe/June6699/dart_simple_live/master/assets/tv_app_version.json",
+      "https://raw.githubusercontent.com/$_repository/master/assets/tv_app_version.json",
       queryParameters: {
         "ts": DateTime.now().millisecondsSinceEpoch,
       },
@@ -30,7 +32,7 @@ class CommonRequest {
   /// 检查更新
   Future<VersionModel> checkUpdateJsDelivr() async {
     var result = await HttpClient.instance.getJson(
-      "https://cdn.jsdelivr.net/gh/June6699/dart_simple_live@master/assets/tv_app_version.json",
+      "https://cdn.jsdelivr.net/gh/$_repository@master/assets/tv_app_version.json",
       queryParameters: {
         "ts": DateTime.now().millisecondsSinceEpoch,
       },

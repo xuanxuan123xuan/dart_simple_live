@@ -300,6 +300,9 @@ class AppUpdateService {
 
   static AppUpdateRelease? parseRelease(Map<String, dynamic> json) {
     final tag = json['tag_name'] as String? ?? '';
+    if (isTvReleaseTag(tag)) {
+      return null;
+    }
     final channel = channelFromTag(tag);
     if (channel == null) {
       return null;
@@ -314,11 +317,16 @@ class AppUpdateService {
     final assets = <AppUpdateAsset>[];
     if (assetsJson is List) {
       for (final item in assetsJson.whereType<Map>()) {
+        final assetJson = Map<String, dynamic>.from(item);
+        final assetName = assetJson['name'] as String? ?? '';
+        if (isTvAssetName(assetName)) {
+          continue;
+        }
         final asset = parseAsset(
-          Map<String, dynamic>.from(item),
+          assetJson,
           sha256: sha256,
         );
-        if (asset != null && asset.platform != AppUpdatePlatform.tv) {
+        if (asset != null) {
           assets.add(asset);
         }
       }
@@ -336,6 +344,11 @@ class AppUpdateService {
       releaseUrl: json['html_url'] as String? ?? releasesPageUrl,
     );
   }
+
+  static bool isTvReleaseTag(String tag) => tag.toLowerCase().startsWith('tv_v');
+
+  static bool isTvAssetName(String name) =>
+      name.toLowerCase().startsWith('simple-live-tv-');
 
   static AppUpdateChannel? channelFromTag(String tag) {
     if (RegExp(r'^v\d+\.\d+\.\d+$').hasMatch(tag)) {
