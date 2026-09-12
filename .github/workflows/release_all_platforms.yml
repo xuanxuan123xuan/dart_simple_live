@@ -914,7 +914,6 @@ jobs:
           target_commitish: ${{ needs.prepare.outputs.sha }}
           fail_on_unmatched_files: true
           # v-dev 等固定 tag 每次构建覆盖更新（dev 分支重复发布必须）
-          allowUpdates: true
           prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           body_path: ${{ env.body_path }}
           # SHA256SUMS-*.txt 已在"生成汇总校验"步骤删除，files 不需要排除模式

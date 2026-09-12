@@ -414,7 +414,6 @@ jobs:
           name: Simple Live TV ${{ needs.prepare.outputs.version }}
           target_commitish: ${{ needs.prepare.outputs.sha }}
           fail_on_unmatched_files: true
-          allowUpdates: true
           prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           body_path: ${{ runner.temp }}/release_body.md
           files: release-assets/*
