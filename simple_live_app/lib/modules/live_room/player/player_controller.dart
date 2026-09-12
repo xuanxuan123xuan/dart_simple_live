@@ -2779,6 +2779,9 @@ class PlayerController extends BaseController
 
   // Fix Issue #57: 流错误重试计数器
   int _streamErrorRetryCount = 0;
+  int _decodeFailureCount = 0;
+  bool _softwareDecodeFallback = false;
+  DateTime? _lastPlayerOpenAt;
   DateTime? _lastStreamErrorTime;
   bool _streamErrorRecoveryInFlight = false;
   Timer? _surfaceHealthCheckTimer;
@@ -2804,6 +2807,8 @@ class PlayerController extends BaseController
   static const _surfaceRecoveryGraceDuration = Duration(seconds: 8);
   static const _surfaceRecoveryValidationDelay = Duration(milliseconds: 600);
   static const _maxSurfaceRecoveryAttempts = 3;
+  static const _maxDecodeFailuresBeforeFallback = 2;
+  static const _playerOpenCooldown = Duration(seconds: 2);
   static const _playbackStallSampleInterval = Duration(seconds: 3);
   static const _playbackStallTimeout = Duration(seconds: 15);
   static const _playbackBufferingStallTimeout = Duration(seconds: 30);
@@ -3252,6 +3257,9 @@ class PlayerController extends BaseController
     _stallMediaUri = null;
     _playbackStallRecoveryAttempts = 0;
     _playbackStallRecoveryInFlight = false;
+    _decodeFailureCount = 0;
+    _softwareDecodeFallback = false;
+    _lastPlayerOpenAt = null;
   }
 
   // Fix Issue #57: 判断是否为流错误（网络/解码错误）
@@ -3262,6 +3270,30 @@ class PlayerController extends BaseController
         error.contains('tls:') ||
         error.contains('Invalid NAL unit') ||
         error.contains('missing picture');
+  }
+
+  bool _isDecodeSurfaceError(String error) {
+    final value = error.toLowerCase();
+    return value.contains('both surface and native_window are null') ||
+        value.contains('invalid nal unit') ||
+        value.contains('missing picture');
+  }
+
+  Future<void> _applySoftwareDecodeFallback() async {
+    if (_softwareDecodeFallback || _playerClosing || !Platform.isAndroid) {
+      return;
+    }
+    _softwareDecodeFallback = true;
+    try {
+      final native = player.platform;
+      if (native is NativePlayer) {
+        await (native as dynamic).setProperty('hwdec', 'no');
+        await (native as dynamic).setProperty('vo', 'gpu');
+        Log.w('检测到连续硬件解码故障，当前直播会话降级为软件解码');
+      }
+    } catch (e, stackTrace) {
+      Log.e('切换软件解码失败: $e', stackTrace);
+    }
   }
 
   // Fix Issue #57: 处理流错误，自动重试
@@ -3287,6 +3319,13 @@ class PlayerController extends BaseController
     }
 
     _streamErrorRetryCount++;
+    if (_isDecodeSurfaceError(error)) {
+      _decodeFailureCount++;
+      Log.w('解码/Surface故障计数=$_decodeFailureCount');
+      if (_decodeFailureCount >= _maxDecodeFailuresBeforeFallback) {
+        await _applySoftwareDecodeFallback();
+      }
+    }
     Log.w(
       "检测到流错误，自动重试解码器 ($_streamErrorRetryCount/3): $error",
       false,
@@ -3326,6 +3365,12 @@ class PlayerController extends BaseController
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
         }
+        final now = DateTime.now();
+        if (_lastPlayerOpenAt != null &&
+            now.difference(_lastPlayerOpenAt!) < _playerOpenCooldown) {
+          return;
+        }
+        _lastPlayerOpenAt = now;
         await player.open(currentMedia);
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
@@ -3550,6 +3595,16 @@ class PlayerController extends BaseController
         return;
       }
       Log.w("Surface恢复失败，重开当前媒体");
+      final now = DateTime.now();
+      if (_lastPlayerOpenAt != null &&
+          now.difference(_lastPlayerOpenAt!) < _playerOpenCooldown) {
+        return;
+      }
+      _lastPlayerOpenAt = now;
+      _decodeFailureCount++;
+      if (_decodeFailureCount >= _maxDecodeFailuresBeforeFallback) {
+        await _applySoftwareDecodeFallback();
+      }
       await player.open(activeMedia);
       if (!_isCurrentSurfaceRecovery(
         token: recoveryToken,
