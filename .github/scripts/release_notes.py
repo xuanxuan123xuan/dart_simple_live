@@ -8,7 +8,13 @@ import urllib.request
 
 SECTIONS = dict(highlights="更新亮点", improvements="体验优化", fixes="问题修复", engineering="构建与适配")
 INTERNAL = re.compile(r"workflow|github|actions|readme|commit|hash|\bci\b|源码|仓库|文档|测试|依赖|重构|格式化|版本号|版本更新|更新版本|签名配置|构建流程|构建脚本|构建配置|内部打包|发布流程|发布产物|分发", re.I)
-NAMES = re.compile(r"Android TV|Windows TV|HarmonyOS|Android|Windows|macOS|Linux|iOS|TV|APK|EXE|ARM64|x86", re.I)
+# These are user-facing product and transport terms, not English prose.
+TECHNICAL_TERMS = re.compile(
+    r"Android TV|Windows TV|HarmonyOS|Android|Windows|macOS|Linux|iOS|TV|"
+    r"APK|EXE|ARM64|x86(?:_64)?|Cookie|CDN|HLS|FLV|URL|API|WebDAV|"
+    r"LiveContainer|AltStore|IPA|AAB|AppImage|DEB|DMG|HAP",
+    re.I,
+)
 
 
 def validate(value):
@@ -24,11 +30,11 @@ def validate(value):
                 raise ValueError("not Chinese text")
             # Only product/platform names may retain Latin letters. A Chinese
             # prefix must not make an otherwise English sentence acceptable.
-            if re.search(r"[A-Za-z]", NAMES.sub("", item)):
+            if re.search(r"[A-Za-z]", TECHNICAL_TERMS.sub("", item)):
                 raise ValueError("English prose")
             if INTERNAL.search(item) or re.search(r"\d+\.\d+", item):
                 raise ValueError("internal content")
-            if re.search(r"[^一-鿿A-Za-z0-9 ，。！？；：（）%、]", item):
+            if re.search(r"[^一-鿿A-Za-z0-9 ，。！？；：、（）《》“”‘’—…%、+/_-]", item):
                 raise ValueError("decoration or non-Chinese punctuation")
             if re.search(r"提升用户体验|优化使用体验|提升使用体验|提升整体体验", item):
                 raise ValueError("generic prose")
@@ -63,17 +69,68 @@ def request_summary(commits, audience, key):
     request = urllib.request.Request("https://api.deepseek.com/chat/completions", data=body,
                                      headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read())["choices"][0]["message"]["content"]
+        payload = json.loads(response.read())
+        content = payload["choices"][0]["message"].get("content")
+        if isinstance(content, dict) and set(content) == set(SECTIONS):
+            return content
+        if isinstance(content, str):
+            return content
+        if isinstance(content, dict):
+            text = content.get("text")
+            if isinstance(text, str):
+                return text
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                    parts.append(part["text"])
+            if parts:
+                return "".join(parts)
+        raise ValueError("empty or unsupported response content")
+
+
+def parse_json_object(content):
+    if isinstance(content, dict):
+        if set(content) == set(SECTIONS):
+            return content
+        if isinstance(content.get("text"), str):
+            content = content["text"]
+        else:
+            raise ValueError("unsupported JSON content")
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+        if not parts:
+            raise ValueError("empty JSON content")
+        content = "".join(parts)
+    if not isinstance(content, str):
+        raise ValueError("unsupported JSON content")
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        return json.loads(text[start:end + 1])
 
 
 def generate(commits, audience, key, request=request_summary):
     if key and commits.strip():
         for _ in range(2):
             try:
-                return render(validate(json.loads(request(commits, audience, key))))
-            except Exception:
+                return render(validate(parse_json_object(request(commits, audience, key))))
+            except Exception as error:
                 # Never print the API response or token into build logs.
-                print("AI 更新说明请求失败或结果不合规。", file=sys.stderr)
+                print(f"AI 更新说明请求失败或结果不合规：{type(error).__name__}。", file=sys.stderr)
     return render({key: [] for key in SECTIONS}, fallback=True)
 
 

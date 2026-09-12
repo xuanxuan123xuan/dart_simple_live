@@ -37,6 +37,22 @@ class ReleaseNotesTest(unittest.TestCase):
             self.assertIn(self.value['fixes'][0], generate('commits', 'TV', 'key', request))
             self.assertEqual(request.call_count, 2)
 
+    def test_accepts_user_visible_technical_terms(self):
+        value = {key: [] for key in SECTIONS}
+        value['fixes'] = ['修复快手 Cookie 播放问题。']
+        value['improvements'] = ['优化 HLS 直播链接切换。']
+        value['engineering'] = ['完善 Windows 与 Android 适配。']
+        validate(value)
+
+    def test_accepts_wrapped_and_structured_response_content(self):
+        value = json.dumps(self.value)
+        for content in [value, f'```json\n{value}\n```',
+                        [{"type": "text", "text": value}],
+                        {"text": value}, json.loads(value)]:
+            request = Mock(return_value=content)
+            result = generate('commits', 'TV', 'key', request)
+            self.assertIn(self.value['fixes'][0], result)
+
     def test_failure_and_missing_key_use_chinese_fallback(self):
         request = Mock(side_effect=OSError('API unavailable'))
         text = generate('English commit title', 'App', 'key', request)
