@@ -1564,6 +1564,142 @@ void main() {
       );
     });
   });
+
+  group('KuaishouSite anonymous page danmaku credentials', () {
+    test('user enter reuses credentials embedded in the anonymous room page',
+        () async {
+      final anonymousDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(
+                    roomId: 'anon-credential-room',
+                    includeDanmakuCredentials: true,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      var authenticatedRequests = 0;
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              authenticatedRequests += 1;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(roomId: 'anon-credential-room'),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: anonymousDio,
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+        searchCoordinator: KuaishouRequestCoordinator(),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        );
+
+      final detail = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.userEnter,
+        () => site.getRoomDetail(roomId: 'anon-credential-room'),
+      );
+      final args = detail.danmakuData;
+
+      // 匿名房间页已带凭证：弹幕可立即连接，无需认证页补抓。
+      expect(args, isA<KuaishouDanmakuArgs>());
+      final danmakuArgs = args as KuaishouDanmakuArgs;
+      expect(danmakuArgs.hasConnectionInfo, isTrue);
+      expect(danmakuArgs.token, 'secret-token');
+      expect(danmakuArgs.liveStreamId, 'stream-anon-credential-room');
+      expect(danmakuArgs.websocketUrls, ['wss://example.com/live']);
+      expect(danmakuArgs.cookie, contains('primary-token'));
+      expect(authenticatedRequests, 0,
+          reason: '页面凭证可用时不应再发认证请求');
+    });
+
+    test('credential resolver succeeds without playback urls on the page',
+        () async {
+      final anonymousDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(
+                    roomId: 'lazy-credential-room',
+                    includePlayback: true,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      // 认证页（Cookie 握手返回的房间页）已确认开播、带凭证，
+      // 但 playUrls 尚未下发（冷启动窗口）。
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(
+                    roomId: 'lazy-credential-room',
+                    includePlayback: false,
+                    includeDanmakuCredentials: true,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: anonymousDio,
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+        searchCoordinator: KuaishouRequestCoordinator(),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        );
+
+      final detail = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.userEnter,
+        () => site.getRoomDetail(roomId: 'lazy-credential-room'),
+      );
+      final args = detail.danmakuData as KuaishouDanmakuArgs;
+      expect(args.hasConnectionInfo, isFalse, reason: '匿名页无凭证走迟解析');
+
+      final resolved = await args.credentialResolver!();
+      expect(resolved, isNotNull);
+      expect(resolved!.hasConnectionInfo, isTrue,
+          reason: '凭证解析不应要求认证页携带 playUrls');
+      expect(resolved.token, 'secret-token');
+    });
+  });
 }
 
 String _kuaishouLivePage({

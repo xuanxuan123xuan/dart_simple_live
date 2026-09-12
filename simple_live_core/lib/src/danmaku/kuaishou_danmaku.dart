@@ -99,6 +99,7 @@ class KuaishouDanmaku extends LiveDanmaku {
     this.credentialCooldownCheck,
     this.maxCredentialRetryAttempts = _kMaxCredentialRetryAttempts,
     this.maxCredentialRetryDuration = _kMaxCredentialRetryDuration,
+    this.autoRefreshEmoji = true,
     DateTime Function()? credentialRetryNow,
   })  : _connector = connector,
         _socketRetryTimerFactory = socketRetryTimerFactory,
@@ -117,14 +118,18 @@ class KuaishouDanmaku extends LiveDanmaku {
   /// "越失败越请求"的正反馈（受限后延长恢复）。这里给自动重试加硬上限：
   ///
   /// 1. 连续解析失败 [maxCredentialRetryAttempts] 次（默认 10）即停止；
-  /// 2. 从首次失败起超过 [maxCredentialRetryDuration]（默认 60s）也停止；
+  /// 2. 从首次失败起超过 [maxCredentialRetryDuration]（默认 180s）也停止；
   ///    达到上限后等待显式触发（重新 start / 房间刷新），不再后台请求。
+  ///
+  /// 时长预算由 60s 放宽到 180s：一次真实失败后的退避重试（5s×次数、
+  /// 封顶 30s）在 60s 内只剩 4~5 次机会，网络稍差或协调器队列繁忙时
+  /// 就会把预算烧光并永久停止，与"有 Cookie 却连不上弹幕"直接相关。
   ///
   /// 另按失败次数线性退避重试间隔（基础 [credentialRetryDelay] × 次数，
   /// 封顶 [_kMaxCredentialRetryBackoffFactor] 倍，默认 30s），保证"播放画面
   /// 已可用而弹幕凭证缺失"时不会继续高频打详情/websocketinfo 接口。
   static const int _kMaxCredentialRetryAttempts = 10;
-  static const Duration _kMaxCredentialRetryDuration = Duration(seconds: 60);
+  static const Duration _kMaxCredentialRetryDuration = Duration(seconds: 180);
   static const int _kMaxCredentialRetryBackoffFactor = 6;
 
   /// 全局只拉取一次最新表情映射（进程内）；cookie 变化（用户登录
@@ -133,6 +138,9 @@ class KuaishouDanmaku extends LiveDanmaku {
   static String? _lastRefreshCookie;
 
   void _maybeRefreshEmoji([String? cookie]) {
+    if (!autoRefreshEmoji) {
+      return;
+    }
     final effective = (cookie == null || cookie.isEmpty) ? null : cookie;
     if (_emojiRefreshStarted && effective == _lastRefreshCookie) {
       return;
@@ -160,6 +168,12 @@ class KuaishouDanmaku extends LiveDanmaku {
   final int maxCredentialRetryAttempts;
   final Duration maxCredentialRetryDuration;
 
+  /// 是否在构造/start 时自动发起表情映射网络刷新。
+  ///
+  /// 默认 true（生产行为不变）。单测传 false 隔离真实网络请求，
+  /// 避免后台拉取与「内置表兜底」断言竞态。
+  final bool autoRefreshEmoji;
+
   /// 凭证重试计时的时钟源（可注入以便测试总时长上限）。
   final DateTime Function() _credentialNow;
 
@@ -171,6 +185,7 @@ class KuaishouDanmaku extends LiveDanmaku {
   bool _credentialRetryNotified = false;
   int _credentialRetryAttempts = 0;
   DateTime? _credentialRetryStartedAt;
+  int _credentialRefreshAfterGiveUp = 0;
 
   static Timer _defaultCredentialRetryTimer(
     Duration delay,
@@ -187,6 +202,7 @@ class KuaishouDanmaku extends LiveDanmaku {
     _credentialRetryNotified = false;
     _credentialRetryAttempts = 0;
     _credentialRetryStartedAt = null;
+    _credentialRefreshAfterGiveUp = 0;
     if (args == null) {
       return;
     }
@@ -232,6 +248,13 @@ class KuaishouDanmaku extends LiveDanmaku {
         await _connect(resolved, generation);
         return;
       }
+    } on KuaishouCooldownError {
+      // 协调器冷却/「等待恢复探针」期间被拒：这不是解析失败，不能消耗
+      // 重试预算（否则冷却结束后的探针等待会在时长预算内把机会烧光，
+      // 弹幕永久停止）。按冷却空转处理，保留本地定时器等下一轮。
+      _credentialRetryStartedAt = _credentialNow();
+      _armCredentialRetryTimer(generation);
+      return;
     } catch (e) {
       CoreLog.error(e);
     }
@@ -327,10 +350,37 @@ class KuaishouDanmaku extends LiveDanmaku {
       onClose: (e) {
         onClose?.call("服务器连接失败$e");
       },
+      onGiveUp: () {
+        _handleConnectionGivenUp(generation);
+      },
       connector: _connector,
       retryTimerFactory: _socketRetryTimerFactory,
     );
     await webScoketUtils?.connect();
+  }
+
+  /// WebSocket 重连耗尽后的兜底：凭证可能已失效（token 过期/会话不匹配/
+  /// 推流重启）。有 resolver 时刷新凭证重建连接，而不是就此放弃。
+  ///
+  /// 刷新次数有上限：凭证真的无效（连接永远建不起来）时不能无限循环
+  /// "连接失败 → 刷新 → 再失败"，超过上限就停止并提示。
+  static const int _kMaxCredentialRefreshAfterGiveUp = 3;
+
+  void _handleConnectionGivenUp(int generation) {
+    if (generation != _startGeneration) {
+      return;
+    }
+    final resolver = _credentialResolver;
+    if (resolver == null ||
+        _credentialRefreshAfterGiveUp >= _kMaxCredentialRefreshAfterGiveUp) {
+      onClose?.call("与弹幕服务器连接失败，已停止自动重连");
+      return;
+    }
+    _credentialRefreshAfterGiveUp += 1;
+    onClose?.call("弹幕连接失败，正在刷新凭证重试");
+    // 复用迟解析链路：重新抓认证房间页/websocketinfo，成功后重连；
+    // 失败则进入带退避与预算的既有重试节奏。
+    unawaited(_resolveCredentials(generation));
   }
 
   @override
@@ -342,6 +392,7 @@ class KuaishouDanmaku extends LiveDanmaku {
     _credentialRetryNotified = false;
     _credentialRetryAttempts = 0;
     _credentialRetryStartedAt = null;
+    _credentialRefreshAfterGiveUp = 0;
     onMessage = null;
     onClose = null;
     onReady = null;
