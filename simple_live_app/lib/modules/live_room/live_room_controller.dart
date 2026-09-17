@@ -29,6 +29,7 @@ import 'package:simple_live_app/modules/live_room/player/ohos_line_failover_poli
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
+import 'package:simple_live_app/modules/live_room/live_room_danmaku_status.dart';
 import 'package:simple_live_app/modules/live_room/live_room_hold_preview.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
@@ -2064,6 +2065,7 @@ class LiveRoomController extends PlayerController
         return;
       }
       final incomingState = roomDetail.resolvedLiveStatus;
+      final previousState = detail.value?.resolvedLiveStatus;
       final decision = _applyRoomLiveState(incomingState);
       if (shouldCommitRoomDetailRefresh(
         incomingState: incomingState,
@@ -2082,6 +2084,11 @@ class LiveRoomController extends PlayerController
         _syncBackgroundPlaybackMetadata(committedDetail);
       }
       if (incomingState == LiveStatusState.live) {
+        if (site.id == Constant.kDouyin &&
+            shouldStartDouyinDanmaku(previousState, incomingState)) {
+          initDanmau();
+          unawaited(liveDanmaku.start(detail.value?.danmakuData));
+        }
         await _bootstrapPlaybackIfNeeded();
       }
     } catch (e) {
@@ -3362,17 +3369,21 @@ class LiveRoomController extends PlayerController
       if (detail.value!.isRecord) {
         addSysMsg("当前主播未开播，正在转播录像");
       }
+      final douyinDanmakuReady = site.id != Constant.kDouyin ||
+          shouldStartDouyinDanmaku(null, initialLiveState);
       if (_kuaishouNoCookie) {
         addSysMsg("快手未登录（无 Cookie），弹幕不可用");
         addSysMsg("可在「我的 → 账号管理」登录快手账号后重试");
-      } else {
+      } else if (douyinDanmakuReady) {
         addSysMsg("正在连接弹幕服务器");
       }
       if (!_isCurrentLoad(loadGeneration)) {
         return;
       }
-      initDanmau();
-      unawaited(liveDanmaku.start(detail.value?.danmakuData));
+      if (douyinDanmakuReady) {
+        initDanmau();
+        unawaited(liveDanmaku.start(detail.value?.danmakuData));
+      }
       startLiveDurationTimer();
     } catch (e, stackTrace) {
       Log.logPrint(e);
@@ -6358,9 +6369,11 @@ class LiveRoomController extends PlayerController
       naviteUrl = "bilibili://live/${detail.value?.roomId}";
       webUrl = "https://live.bilibili.com/${detail.value?.roomId}";
     } else if (site.id == Constant.kDouyin) {
-      var args = detail.value?.danmakuData as DouyinDanmakuArgs;
-      naviteUrl = "snssdk1128://webcast_room?room_id=${args.roomId}";
-      webUrl = "https://live.douyin.com/${args.webRid}";
+      final args = detail.value?.danmakuData;
+      webUrl = "https://live.douyin.com/${detail.value?.roomId ?? roomId}";
+      naviteUrl = args is DouyinDanmakuArgs && args.roomId.isNotEmpty
+          ? "snssdk1128://webcast_room?room_id=${args.roomId}"
+          : webUrl;
     } else if (site.id == Constant.kHuya) {
       var args = detail.value?.danmakuData as HuyaDanmakuArgs;
       naviteUrl =
