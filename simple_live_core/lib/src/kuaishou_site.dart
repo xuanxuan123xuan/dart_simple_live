@@ -1689,7 +1689,11 @@ class KuaishouSite extends LiveSite {
     }
 
     try {
-      final detail = await _getAnonymousRoomDetail(roomId, source: source);
+      final detail = await _getAnonymousRoomDetail(
+        roomId,
+        source: source,
+        danmakuTransport: danmakuTransport,
+      );
       if (extractPlayableUrls(detail.data).isNotEmpty ||
           detail.resolvedLiveStatus == LiveStatusState.offline) {
         return _addLazyDanmakuCredentials(detail, danmakuTransport);
@@ -1721,19 +1725,36 @@ class KuaishouSite extends LiveSite {
       return detail;
     }
 
+    final pageArgs = detail.danmakuData;
+    if (pageArgs is KuaishouDanmakuArgs && pageArgs.hasConnectionInfo) {
+      if (pageArgs.cookie.isNotEmpty) {
+        return detail;
+      }
+      return _withDanmakuData(
+        detail,
+        pageArgs.copyWith(cookie: _currentCookieHeaderFor(transport)),
+      );
+    }
+
     late final KuaishouDanmakuArgs args;
     args = KuaishouDanmakuArgs(
       roomId: detail.roomId,
-      // The anonymous playback response is deliberately kept credential-free.
-      // Resolve the authenticated stream id/token only when danmaku starts.
       liveStreamId: '',
       token: '',
       websocketUrls: const [],
       pageId: _generatePageId(),
       cookie: _currentCookieHeaderFor(transport),
       userAgent: userAgent,
-      credentialResolver: () => _resolveDanmakuCredentials(args, transport),
+      credentialResolver: () =>
+          _resolveDanmakuCredentials(args, transport, forceFresh: true),
     );
+    return _withDanmakuData(detail, args);
+  }
+
+  LiveRoomDetail _withDanmakuData(
+    LiveRoomDetail detail,
+    KuaishouDanmakuArgs args,
+  ) {
     return LiveRoomDetail(
       roomId: detail.roomId,
       title: detail.title,
@@ -1873,7 +1894,12 @@ class KuaishouSite extends LiveSite {
     final stopwatch = Stopwatch()..start();
     activeDetailRequests += 1;
     final source = KuaishouRequestTrace.current;
-    final requirePlayback = source != KuaishouRequestSource.followStatus;
+    // 弹幕凭证解析只需要 liveStreamId/token，不消费播放地址：强制要求
+    // playUrls 会让"认证页已确认开播但地址尚未下发"的冷启动窗口必然
+    // 失败（该来源也不在 allowPlaybackRetry 白名单内），是"有 Cookie 却
+    // 连不上弹幕"的主要成因之一。播放地址由匿名路径独立提供。
+    final requirePlayback = source != KuaishouRequestSource.followStatus &&
+        source != KuaishouRequestSource.danmakuCredential;
     final allowPlaybackRetry = source == KuaishouRequestSource.userEnter ||
         source == KuaishouRequestSource.manual ||
         source == KuaishouRequestSource.multiRoom ||
@@ -2130,6 +2156,16 @@ class KuaishouSite extends LiveSite {
           'reason=stale_session ms=${stopwatch.elapsedMilliseconds}',
         );
         return null;
+      }
+      // 冷却/探针拒绝必须原样上抛：吞掉会让调用方把它误判为解析失败，
+      // 弹幕凭证重试因此白白消耗预算（KuaishouDanmaku 靠这个错误类型
+      // 区分"被治理层拒绝"与"真实解析失败"）。
+      if (e is KuaishouCooldownError) {
+        CoreLog.i(
+          '[ks-request] drop endpoint=room_page room=$maskedRoom '
+          'reason=cooldown ms=${stopwatch.elapsedMilliseconds}',
+        );
+        rethrow;
       }
       final isChallengePage = e is _KuaishouChallengePageException;
       final isCredentialInvalid = e is _KuaishouCredentialInvalidException;
@@ -2438,9 +2474,12 @@ class KuaishouSite extends LiveSite {
           attach: selected["expTag"]?.toString() ?? '',
           cookie: _currentCookieHeaderFor(transport),
           userAgent: userAgent,
+          // resolver 被调用时（凭证缺失的 start、或 WS 连接最终失败后的
+          // 兜底刷新），都应重新抓取认证页面而不是复用当前 args。
           credentialResolver: () => _resolveDanmakuCredentials(
             resolvedArgs,
             transport,
+            forceFresh: true,
           ),
         );
         danmakuArgs = resolvedArgs;
@@ -2484,21 +2523,26 @@ class KuaishouSite extends LiveSite {
       liveStreamId: liveStreamId,
       transport: transport,
     ).timeout(
-      const Duration(seconds: 2),
+      // 协调器串行队列（最小间隔+抖动+排队）本身就可能占用 1s 以上，
+      // 2s 会把正常请求也掐掉；协调器内层已有 5s 超时，这里只兜底。
+      const Duration(seconds: 6),
       onTimeout: _KuaishouWebsocketInfo.empty,
     );
   }
 
   Future<KuaishouDanmakuArgs?> _resolveDanmakuCredentials(
     KuaishouDanmakuArgs initial,
-    _KuaishouAccountTransport transport,
-  ) async {
+    _KuaishouAccountTransport transport, {
+    bool forceFresh = false,
+  }) async {
     var args = initial;
-    if (args.hasConnectionInfo) {
+    if (args.hasConnectionInfo && !forceFresh) {
       return args;
     }
 
-    if (args.liveStreamId.isEmpty) {
+    // forceFresh：WS 连接最终失败后的凭证刷新。初始凭证虽完整，但可能
+    // 已失效（token 过期/会话不匹配/推流重启），必须重新抓认证房间页。
+    if (forceFresh || args.liveStreamId.isEmpty) {
       LiveRoomDetail? freshDetail;
       try {
         freshDetail = await KuaishouRequestTrace.run(
@@ -2509,7 +2553,9 @@ class KuaishouSite extends LiveSite {
             transport: transport,
             requireLive: true,
           ),
-        ).timeout(const Duration(seconds: 4));
+          // 协调器队列 + Cookie 握手 + 房间页串行执行，4s 在队列繁忙时
+          // 必然超时；放宽到 10s（内层各请求仍有独立 5s 超时）。
+        ).timeout(const Duration(seconds: 10));
       } on TimeoutException {
         return null;
       }
@@ -2594,6 +2640,7 @@ class KuaishouSite extends LiveSite {
   Future<LiveRoomDetail> _getAnonymousRoomDetail(
     String roomId, {
     required KuaishouRequestSource source,
+    _KuaishouAccountTransport? danmakuTransport,
   }) {
     return coordinator.coalesce(
       key: 'anonymous_public_detail:$roomId',
@@ -2626,7 +2673,7 @@ class KuaishouSite extends LiveSite {
         final detail = await _parseRoomDetail(
           html,
           roomId,
-          allowDanmaku: false,
+          transport: danmakuTransport,
         );
         if (detail == null) {
           throw CoreError(
@@ -2840,6 +2887,14 @@ class KuaishouSite extends LiveSite {
         );
         return null;
       }
+      // 同 room_page：冷却/探针拒绝原样上抛，供弹幕层识别并暂停预算消耗。
+      if (e is KuaishouCooldownError) {
+        CoreLog.i(
+          '[ks-request] drop endpoint=cookie_handshake room=$maskedRoom '
+          'reason=cooldown ms=${stopwatch.elapsedMilliseconds}',
+        );
+        rethrow;
+      }
       final isChallengePage = e is _KuaishouChallengePageException;
       final isCredentialInvalid = e is _KuaishouCredentialInvalidException;
       final statusCode = isCredentialInvalid
@@ -2960,6 +3015,10 @@ class KuaishouSite extends LiveSite {
     } catch (e) {
       if (sessionEpoch != transport.epoch) {
         throw KuaishouCooldownError('快手 Cookie 会话已重置');
+      }
+      // 冷却/探针拒绝原样上抛（同 room_page / cookie_handshake）。
+      if (e is KuaishouCooldownError) {
+        rethrow;
       }
       final statusCode = e is CoreError
           ? e.statusCode

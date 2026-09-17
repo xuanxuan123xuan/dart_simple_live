@@ -460,6 +460,40 @@ void main() {
       expect(coordinator.inCooldown, isFalse);
     });
 
+    test('冷却到期后弹幕凭证请求也能当探针（用户停留在原房间场景）',
+        () async {
+      var now = DateTime(2026, 1, 1);
+      final coordinator = KuaishouRequestCoordinator(
+        nowProvider: () => now,
+        minInterval: Duration.zero,
+        maxJitter: Duration.zero,
+      );
+      coordinator.beginCooldown(const Duration(minutes: 5));
+      now = now.add(const Duration(minutes: 6));
+
+      // 用户正停留在房间内观看，不会再触发进房请求；若弹幕凭证
+      // 领不到探针，只会在重试预算内反复被拒后永久停止。
+      expect(
+        await coordinator.schedule(
+          priority: KuaishouRequestPriority.danmakuCredential,
+          key: 'danmaku-probe',
+          task: () async => 'probe-ok',
+        ),
+        'probe-ok',
+      );
+      expect(coordinator.inCooldown, isFalse);
+
+      // 探针成功后恢复常规后台流量。
+      expect(
+        await coordinator.schedule(
+          priority: KuaishouRequestPriority.roomStatus,
+          key: 'after-danmaku-probe',
+          task: () async => 'ok',
+        ),
+        'ok',
+      );
+    });
+
     test('cancelScope 只取消同作用域中尚未执行的请求', () async {
       final coordinator = KuaishouRequestCoordinator(
         minInterval: Duration.zero,

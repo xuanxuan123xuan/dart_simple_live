@@ -187,10 +187,14 @@ class KuaishouRequestCoordinator {
   ///
   /// 用户主动进房仍然优先，但后台关注刷新也允许当探针：否则用户只看关注页、
   /// 不点进任何直播间时，冷却到期后关注列表会一直停在「限流」不再恢复。
-  /// 探针始终只有一个名额，所以这不会让恢复阶段产生并发突发。
+  /// 弹幕凭证请求同样允许当探针：冷却结束时用户往往停留在原房间观看，
+  /// 不会再触发进房请求，若弹幕凭证永远领不到探针，它只会在重试预算内
+  /// 反复被「等待恢复探针」拒绝后永久停止（有 Cookie 却连不上弹幕服务器的
+  /// 根因之一）。探针始终只有一个名额，不会让恢复阶段产生并发突发。
   static bool _canClaimProbe(KuaishouRequestPriority priority) =>
       priority == KuaishouRequestPriority.userEnter ||
-      priority == KuaishouRequestPriority.followRefresh;
+      priority == KuaishouRequestPriority.followRefresh ||
+      priority == KuaishouRequestPriority.danmakuCredential;
 
   /// 立即结束冷却。
   void endCooldown() {

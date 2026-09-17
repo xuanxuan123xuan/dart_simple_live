@@ -440,7 +440,10 @@ void main() {
           kww: '',
         );
 
-      await site.getFollowLiveStatusState(roomId: 'before-rebuild');
+      await KuaishouRequestTrace.run(
+        KuaishouRequestSource.followStatus,
+        () => site.getRoomDetail(roomId: 'before-rebuild'),
+      );
       final firstDio = site.authenticatedDioIdentityFor('primary');
       final firstJar = site.cookieJarIdentityFor('primary');
       expect(firstDio, isNotNull);
@@ -451,7 +454,10 @@ void main() {
       expect(site.cookieJarIdentityFor('primary'), isNull);
       expect(site.resetAccountDeviceSession('missing'), isFalse);
 
-      await site.getFollowLiveStatusState(roomId: 'after-rebuild');
+      await KuaishouRequestTrace.run(
+        KuaishouRequestSource.followStatus,
+        () => site.getRoomDetail(roomId: 'after-rebuild'),
+      );
       expect(site.authenticatedDioIdentityFor('primary'), isNot(firstDio));
       expect(site.cookieJarIdentityFor('primary'), isNot(firstJar));
       expect(requestCookies, hasLength(2));
@@ -487,7 +493,7 @@ void main() {
   });
 
   group('KuaishouSite follow status', () {
-    test('uses authenticated detail before anonymous public-page parsing',
+    test('uses anonymous public-page status even when an account is active',
         () async {
       final anonymousHeaders = <Map<String, dynamic>>[];
       final authenticatedHeaders = <Map<String, dynamic>>[];
@@ -537,13 +543,14 @@ void main() {
 
       final state = await site.getFollowLiveStatusState(roomId: 'room-1');
 
-      expect(state, LiveStatusState.live);
-      expect(anonymousHeaders, isEmpty);
-      expect(authenticatedHeaders, hasLength(1));
-      expect(authenticatedHeaders.single['cookie'], contains('secret'));
+      expect(state, LiveStatusState.offline);
+      expect(anonymousHeaders, hasLength(1));
+      expect(anonymousHeaders.single.keys,
+          everyElement(isNot(equalsIgnoringCase('cookie'))));
+      expect(authenticatedHeaders, isEmpty);
     });
 
-    test('follow status falls back to anonymous on ordinary auth parse failure',
+    test('follow status does not touch authenticated detail transport',
         () async {
       var anonymousRequests = 0;
       var authenticatedRequests = 0;
@@ -612,8 +619,8 @@ void main() {
             await site.getFollowLiveStatusState(roomId: 'fallback-room');
 
         expect(state, LiveStatusState.offline);
-        expect(authenticatedRequests, 1);
-        expect(authenticatedPageRequests, 1);
+        expect(authenticatedRequests, 0);
+        expect(authenticatedPageRequests, 0);
         expect(anonymousRequests, 1);
       } finally {
         HttpClient.instance.dio.interceptors
@@ -1226,10 +1233,10 @@ void main() {
       expect(site.coordinator.inCooldown, isTrue);
     });
 
-    test('follow refresh 429 arms global cooldown and pauses later refreshes',
+    test('follow refresh observes global cooldown without issuing a request',
         () async {
       var requests = 0;
-      final authenticatedDio = Dio()
+      final anonymousDio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
             onRequest: (options, handler) {
@@ -1238,60 +1245,31 @@ void main() {
                 Response<String>(
                   requestOptions: options,
                   statusCode: 200,
-                  data: _kuaishouRateLimitedPage(roomId: 'limited-room'),
+                  data: _kuaishouOfflinePage(roomId: 'limited-room'),
                 ),
               );
             },
           ),
         );
-      final accountEvents = <KuaishouAccountHealthEvent>[];
       final site = KuaishouSite(
-        authenticatedDioFactory: () => authenticatedDio,
+        anonymousDio: anonymousDio,
         coordinator: KuaishouRequestCoordinator(
           minInterval: Duration.zero,
           maxJitter: Duration.zero,
         ),
-      )
-        ..activateAccountSession(
-          sessionKey: 'primary',
-          cookie: 'kuaishou.live.web_st=primary-token',
-          kww: '',
-        )
-        ..onAccountSessionHealthEvent = (_, event) {
-          accountEvents.add(event);
-        };
-
-      await expectLater(
-        KuaishouRequestTrace.run(
-          KuaishouRequestSource.followStatus,
-          () => site.getFollowLiveStatusState(roomId: 'limited-room'),
-          scopeId: 'kuaishou:follow-refresh',
-          forceNetwork: true,
-        ),
-        throwsA(
-          isA<CoreError>().having((error) => error.statusCode, 'status', 429),
-        ),
       );
-
-      // Follow refresh has no in-core account failover, so the throttle is
-      // terminal for this attempt and must pause host-wide background traffic.
+      site.coordinator.beginCooldown(const Duration(minutes: 5));
       expect(site.coordinator.inCooldown, isTrue);
-      // A transient device/IP limit is reported for a short account cooldown,
-      // but it is not treated as invalid credentials or a day suspension.
-      expect(accountEvents, [KuaishouAccountHealthEvent.rateLimited]);
 
-      // A later refresh is served entirely from the cooldown gate: the state is
-      // reported as unknown (not a false "offline") and no request is issued.
-      final requestsAfterCooldown = requests;
       final nextState = await KuaishouRequestTrace.run(
         KuaishouRequestSource.followStatus,
-        () => site.getFollowLiveStatusState(roomId: 'another-room'),
+        () => site.getFollowLiveStatusState(roomId: 'limited-room'),
         scopeId: 'kuaishou:follow-refresh',
         forceNetwork: true,
       );
 
       expect(nextState, LiveStatusState.unknown);
-      expect(requests, requestsAfterCooldown,
+      expect(requests, 0,
           reason: 'cooldown must stop further follow-refresh network requests');
     });
 
@@ -1562,6 +1540,142 @@ void main() {
         ),
         isFalse,
       );
+    });
+  });
+
+  group('KuaishouSite anonymous page danmaku credentials', () {
+    test('user enter reuses credentials embedded in the anonymous room page',
+        () async {
+      final anonymousDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(
+                    roomId: 'anon-credential-room',
+                    includeDanmakuCredentials: true,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      var authenticatedRequests = 0;
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              authenticatedRequests += 1;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(roomId: 'anon-credential-room'),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: anonymousDio,
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+        searchCoordinator: KuaishouRequestCoordinator(),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        );
+
+      final detail = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.userEnter,
+        () => site.getRoomDetail(roomId: 'anon-credential-room'),
+      );
+      final args = detail.danmakuData;
+
+      // 匿名房间页已带凭证：弹幕可立即连接，无需认证页补抓。
+      expect(args, isA<KuaishouDanmakuArgs>());
+      final danmakuArgs = args as KuaishouDanmakuArgs;
+      expect(danmakuArgs.hasConnectionInfo, isTrue);
+      expect(danmakuArgs.token, 'secret-token');
+      expect(danmakuArgs.liveStreamId, 'stream-anon-credential-room');
+      expect(danmakuArgs.websocketUrls, ['wss://example.com/live']);
+      expect(danmakuArgs.cookie, contains('primary-token'));
+      expect(authenticatedRequests, 0,
+          reason: '页面凭证可用时不应再发认证请求');
+    });
+
+    test('credential resolver succeeds without playback urls on the page',
+        () async {
+      final anonymousDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(
+                    roomId: 'lazy-credential-room',
+                    includePlayback: true,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      // 认证页（Cookie 握手返回的房间页）已确认开播、带凭证，
+      // 但 playUrls 尚未下发（冷启动窗口）。
+      final authenticatedDio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: _kuaishouLivePage(
+                    roomId: 'lazy-credential-room',
+                    includePlayback: false,
+                    includeDanmakuCredentials: true,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      final site = KuaishouSite(
+        anonymousDio: anonymousDio,
+        authenticatedDioFactory: () => authenticatedDio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+        searchCoordinator: KuaishouRequestCoordinator(),
+      )..activateAccountSession(
+          sessionKey: 'primary',
+          cookie: 'kuaishou.live.web_st=primary-token',
+          kww: '',
+        );
+
+      final detail = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.userEnter,
+        () => site.getRoomDetail(roomId: 'lazy-credential-room'),
+      );
+      final args = detail.danmakuData as KuaishouDanmakuArgs;
+      expect(args.hasConnectionInfo, isFalse, reason: '匿名页无凭证走迟解析');
+
+      final resolved = await args.credentialResolver!();
+      expect(resolved, isNotNull);
+      expect(resolved!.hasConnectionInfo, isTrue,
+          reason: '凭证解析不应要求认证页携带 playUrls');
+      expect(resolved.token, 'secret-token');
     });
   });
 }

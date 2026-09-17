@@ -94,7 +94,8 @@ void main() {
   });
   test('decodes Kuaishou comment feed', () {
     final messages = <LiveMessage>[];
-    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+    final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+      ..onMessage = messages.add;
 
     danmaku.decodeMessage(_socketMessage(_feedPush(), compressionType: 0));
 
@@ -107,7 +108,8 @@ void main() {
 
   test('extracts known kuaishou emoji into image spans', () {
     final messages = <LiveMessage>[];
-    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+    final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+      ..onMessage = messages.add;
 
     danmaku.decodeMessage(
       _socketMessage(
@@ -133,7 +135,8 @@ void main() {
 
   test('unknown bracket tokens stay as plain text', () {
     final messages = <LiveMessage>[];
-    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+    final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+      ..onMessage = messages.add;
 
     danmaku.decodeMessage(
       _socketMessage(
@@ -151,7 +154,8 @@ void main() {
 
   test('mixed multiple emoji and unknown tokens', () {
     final messages = <LiveMessage>[];
-    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+    final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+      ..onMessage = messages.add;
 
     danmaku.decodeMessage(
       _socketMessage(
@@ -175,7 +179,8 @@ void main() {
   group('上游截断的尾部表情残片', () {
     LiveMessage? decodeContent(String content) {
       final messages = <LiveMessage>[];
-      final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+      final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+        ..onMessage = messages.add;
       danmaku.decodeMessage(
         _socketMessage(
           _feedPushWithContent(content),
@@ -285,7 +290,8 @@ void main() {
           '{"data":{"$token":"https://cdn.test/emoji/long.png"}}',
     );
     final messages = <LiveMessage>[];
-    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+    final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+      ..onMessage = messages.add;
 
     danmaku.decodeMessage(
       _socketMessage(
@@ -304,7 +310,8 @@ void main() {
 
   test('decodes gzip-compressed Kuaishou comment feed', () {
     final messages = <LiveMessage>[];
-    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+    final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+      ..onMessage = messages.add;
 
     danmaku.decodeMessage(_socketMessage(_feedPush(), compressionType: 2));
 
@@ -313,7 +320,8 @@ void main() {
 
   test('decrypts and decodes AES-compressed Kuaishou comment feed', () {
     final messages = <LiveMessage>[];
-    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+    final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+      ..onMessage = messages.add;
 
     danmaku.decodeMessage(
       _socketMessage(
@@ -333,7 +341,8 @@ void main() {
 
   test('rejects malformed AES payload without emitting a message', () {
     final messages = <LiveMessage>[];
-    final danmaku = KuaishouDanmaku()..onMessage = messages.add;
+    final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+      ..onMessage = messages.add;
 
     danmaku.decodeMessage(
       _socketMessage(
@@ -353,6 +362,7 @@ void main() {
     var resolverCalls = 0;
     var readyCalls = 0;
     final danmaku = KuaishouDanmaku(
+      autoRefreshEmoji: false,
       connector: (_, __) => connection,
       credentialRetryTimerFactory: (_, callback) {
         final timer = _FakeTimer(callback);
@@ -388,7 +398,8 @@ void main() {
 
   test('anonymous playback without danmaku data stays silent', () async {
     final closeMessages = <String>[];
-    final danmaku = KuaishouDanmaku()..onClose = closeMessages.add;
+    final danmaku = KuaishouDanmaku(autoRefreshEmoji: false)
+      ..onClose = closeMessages.add;
 
     await danmaku.start(null);
 
@@ -400,6 +411,7 @@ void main() {
     final timers = <_FakeTimer>[];
     var resolverCalls = 0;
     final danmaku = KuaishouDanmaku(
+      autoRefreshEmoji: false,
       credentialRetryTimerFactory: (_, callback) {
         final timer = _FakeTimer(callback);
         timers.add(timer);
@@ -430,6 +442,7 @@ void main() {
     final closeMessages = <String>[];
     var resolverCalls = 0;
     final danmaku = KuaishouDanmaku(
+      autoRefreshEmoji: false,
       credentialRetryTimerFactory: (_, callback) {
         final timer = _FakeTimer(callback);
         timers.add(timer);
@@ -471,6 +484,7 @@ void main() {
     var now = DateTime(2026, 1, 1);
     var cooldownActive = false;
     final danmaku = KuaishouDanmaku(
+      autoRefreshEmoji: false,
       credentialRetryTimerFactory: (_, callback) {
         final timer = _FakeTimer(callback);
         timers.add(timer);
@@ -507,6 +521,159 @@ void main() {
     resumeTimer.fire();
     await _flushAsync();
     expect(resolverCalls, 2, reason: '冷却空转时间不应计入时长预算');
+  });
+
+  test('resolver rejected by coordinator cooldown does not burn retry budget',
+      () async {
+    final timers = <_FakeTimer>[];
+    final closeMessages = <String>[];
+    var resolverCalls = 0;
+    var now = DateTime(2026, 1, 1);
+    final danmaku = KuaishouDanmaku(
+      autoRefreshEmoji: false,
+      credentialRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+      maxCredentialRetryAttempts: 10,
+      maxCredentialRetryDuration: const Duration(seconds: 60),
+      credentialRetryNow: () => now,
+    )..onClose = closeMessages.add;
+
+    await danmaku.start(
+      _missingCredentials(
+        resolver: () async {
+          resolverCalls += 1;
+          // 模拟协调器「等待恢复探针」期间的拒绝。
+          throw KuaishouCooldownError('快手请求等待恢复探针');
+        },
+      ),
+    );
+    expect(resolverCalls, 1);
+
+    // 连续多轮被探针拒绝：不消耗次数/时长预算（否则 60s 内就会永久停止）。
+    for (var i = 0; i < 5; i++) {
+      now = now.add(const Duration(seconds: 30));
+      final active = timers.where((t) => t.isActive).toList();
+      expect(active, isNotEmpty, reason: '探针拒绝不应耗尽重试预算');
+      active.first.fire();
+      await _flushAsync();
+    }
+    expect(resolverCalls, 6);
+    expect(closeMessages.any((m) => m.contains('停止自动重试')), isFalse);
+    await danmaku.stop();
+  });
+
+  test('websocket give-up refreshes credentials and reconnects', () async {
+    final timers = <_FakeTimer>[];
+    var resolverCalls = 0;
+    var readyCalls = 0;
+    final initialConnection = _FakeConnection();
+    WebSocketConnection currentConnection = initialConnection;
+    final danmaku = KuaishouDanmaku(
+      autoRefreshEmoji: false,
+      connector: (_, __) => currentConnection,
+      socketRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+      credentialRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    )..onReady = () => readyCalls += 1;
+
+    await danmaku.start(
+      _readyCredentials(
+        resolver: () async {
+          resolverCalls += 1;
+          // 放弃后的凭证刷新成功，换到可用连接。
+          currentConnection = _FakeConnection();
+          return _readyCredentials();
+        },
+      ),
+    );
+    expect(readyCalls, 1);
+    expect(resolverCalls, 0);
+
+    // 连接中断后所有重连都失败（5 次）→ onGiveUp → resolver 刷新 → 重连成功。
+    currentConnection = _FailingConnection(() {});
+    initialConnection.controller.addError(StateError('connection lost'));
+    await _flushAsync();
+
+    var guard = 0;
+    while (readyCalls < 2 && guard < 30) {
+      guard += 1;
+      final active = timers.where((t) => t.isActive).toList();
+      if (active.isEmpty) {
+        await _flushAsync();
+        continue;
+      }
+      active.first.fire();
+      await _flushAsync();
+    }
+
+    expect(readyCalls, 2, reason: '放弃后应刷新凭证并重连');
+    expect(resolverCalls, 1, reason: '放弃后应恰好触发一次凭证刷新');
+    await danmaku.stop();
+  });
+
+  test('websocket give-up stops after refreshing credential limit', () async {
+    final timers = <_FakeTimer>[];
+    final closeMessages = <String>[];
+    var resolverCalls = 0;
+    final initialConnection = _FakeConnection();
+    WebSocketConnection currentConnection = initialConnection;
+    final danmaku = KuaishouDanmaku(
+      autoRefreshEmoji: false,
+      connector: (_, __) => currentConnection,
+      socketRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+      credentialRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    )..onClose = closeMessages.add;
+
+    await danmaku.start(
+      _readyCredentials(
+        resolver: () async {
+          resolverCalls += 1;
+          // 刷新永远"成功"，但连接永远失败：应被刷新上限（3 次）拦住。
+          return _readyCredentials();
+        },
+      ),
+    );
+
+    currentConnection = _FailingConnection(() {});
+    initialConnection.controller.addError(StateError('connection lost'));
+    await _flushAsync();
+
+    var guard = 0;
+    var stopped = false;
+    while (!stopped && guard < 200) {
+      guard += 1;
+      final active = timers.where((t) => t.isActive).toList();
+      if (active.isEmpty) {
+        await _flushAsync();
+        stopped = closeMessages.any((m) => m.contains('停止自动重连'));
+        continue;
+      }
+      active.first.fire();
+      await _flushAsync();
+      stopped = closeMessages.any((m) => m.contains('停止自动重连'));
+    }
+
+    expect(resolverCalls, 3, reason: '刷新次数达到上限（3 次）后不再刷新');
+    expect(stopped, isTrue, reason: '达到上限后应提示停止自动重连');
+    await danmaku.stop();
   });
 
   group('kuaishou emoji refresh', () {
@@ -602,13 +769,16 @@ KuaishouDanmakuArgs _missingCredentials({
   );
 }
 
-KuaishouDanmakuArgs _readyCredentials() {
+KuaishouDanmakuArgs _readyCredentials({
+  KuaishouDanmakuCredentialResolver? resolver,
+}) {
   return KuaishouDanmakuArgs(
     roomId: 'room',
     liveStreamId: 'stream',
     token: 'token',
     websocketUrls: const ['wss://socket.test/ws'],
     pageId: 'page',
+    credentialResolver: resolver,
   );
 }
 
@@ -630,6 +800,28 @@ class _FakeConnection implements WebSocketConnection {
   Future<void> close() async {
     closed = true;
   }
+}
+
+/// 连接立即失败的假实现：ready 抛错，触发重连/放弃链路。
+class _FailingConnection implements WebSocketConnection {
+  _FailingConnection(this.onFailure);
+
+  final void Function() onFailure;
+
+  @override
+  Future<void> get ready {
+    onFailure();
+    throw StateError('connection refused');
+  }
+
+  @override
+  Stream<dynamic> get stream => const Stream.empty();
+
+  @override
+  void add(dynamic message) {}
+
+  @override
+  Future<void> close() async {}
 }
 
 class _FakeTimer implements Timer {
