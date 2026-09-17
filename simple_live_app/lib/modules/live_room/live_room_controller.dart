@@ -2067,6 +2067,7 @@ class LiveRoomController extends PlayerController
         return;
       }
       final incomingState = roomDetail.resolvedLiveStatus;
+      final previousState = detail.value?.resolvedLiveStatus;
       final decision = _applyRoomLiveState(incomingState);
       if (shouldCommitRoomDetailRefresh(
         incomingState: incomingState,
@@ -2085,6 +2086,11 @@ class LiveRoomController extends PlayerController
         _syncBackgroundPlaybackMetadata(committedDetail);
       }
       if (incomingState == LiveStatusState.live) {
+        if (site.id == Constant.kDouyin &&
+            shouldStartDouyinDanmaku(previousState, incomingState)) {
+          initDanmau();
+          unawaited(liveDanmaku.start(detail.value?.danmakuData));
+        }
         await _bootstrapPlaybackIfNeeded();
       }
     } catch (e) {
@@ -3364,9 +3370,12 @@ class LiveRoomController extends PlayerController
         addSysMsg("当前主播未开播，正在转播录像");
       }
       final kuaishouDanmakuReady = _kuaishouDanmakuCookieReady;
+      final douyinDanmakuReady = site.id != Constant.kDouyin ||
+          shouldStartDouyinDanmaku(null, initialLiveState);
       for (final message in liveRoomDanmakuConnectMessages(
         isKuaishou: site.id == Constant.kKuaishou,
         hasKuaishouCookie: kuaishouDanmakuReady,
+        canConnect: douyinDanmakuReady,
       )) {
         addSysMsg(message);
       }
@@ -3374,7 +3383,7 @@ class LiveRoomController extends PlayerController
         return;
       }
       initDanmau();
-      if (kuaishouDanmakuReady) {
+      if (kuaishouDanmakuReady && douyinDanmakuReady) {
         unawaited(liveDanmaku.start(detail.value?.danmakuData));
       }
       startLiveDurationTimer();
@@ -6451,9 +6460,11 @@ class LiveRoomController extends PlayerController
       naviteUrl = "bilibili://live/${detail.value?.roomId}";
       webUrl = "https://live.bilibili.com/${detail.value?.roomId}";
     } else if (site.id == Constant.kDouyin) {
-      var args = detail.value?.danmakuData as DouyinDanmakuArgs;
-      naviteUrl = "snssdk1128://webcast_room?room_id=${args.roomId}";
-      webUrl = "https://live.douyin.com/${args.webRid}";
+      final args = detail.value?.danmakuData;
+      webUrl = "https://live.douyin.com/${detail.value?.roomId ?? roomId}";
+      naviteUrl = args is DouyinDanmakuArgs && args.roomId.isNotEmpty
+          ? "snssdk1128://webcast_room?room_id=${args.roomId}"
+          : webUrl;
     } else if (site.id == Constant.kHuya) {
       var args = detail.value?.danmakuData as HuyaDanmakuArgs;
       naviteUrl =

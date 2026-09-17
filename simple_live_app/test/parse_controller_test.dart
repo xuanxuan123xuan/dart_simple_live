@@ -1,7 +1,34 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dio/dio.dart';
 import 'package:simple_live_app/services/live_room_link_parser.dart';
 
 void main() {
+  test('Douyin short links retain stable and one-time room targets', () async {
+    for (final location in [
+      'https://live.douyin.com/24680',
+      'https://webcast.amemv.com/webcast/reflow/7376429659866598196',
+    ]) {
+      final client = Dio();
+      final requests = <String>[];
+      client.interceptors
+          .add(InterceptorsWrapper(onRequest: (options, handler) {
+        requests.add(options.uri.toString());
+        handler.resolve(Response<dynamic>(
+          requestOptions: options,
+          statusCode: options.uri.host == 'v.douyin.com' ? 302 : 200,
+          headers: Headers.fromMap({
+            'location': [location]
+          }),
+        ));
+      }));
+      final target = await LiveRoomLinkParser(redirectClient: client)
+          .parse('https://v.douyin.com/example/');
+      expect(target?.site.id, 'douyin');
+      expect(target?.roomId, Uri.parse(location).pathSegments.last);
+      expect(requests, ['https://v.douyin.com/example/', location]);
+      client.close();
+    }
+  });
   group('LiveRoomLinkParser.extractHttpUrl', () {
     test('extracts a Douyin short URL from share text', () {
       const shareText =

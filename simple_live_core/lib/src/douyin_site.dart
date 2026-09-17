@@ -621,56 +621,22 @@ class DouyinSite implements LiveSite {
       );
     }
 
-    // 通过房间信息获取WebRid
-    var webRid = room["owner"]["web_rid"].toString();
-
-    // 读取用户唯一ID，用于弹幕连接
-    // 似乎这个参数不是必须的，先随机生成一个
-    //var userUniqueId = await _getUserUniqueId(webRid);
-    var userUniqueId = generateRandomNumber(12).toString();
-
-    var owner = room["owner"];
-    final categoryInfo = _resolveDouyinCategoryInfo(room);
-
-    var status = asT<int?>(room["status"]) ?? 0;
-
-    // roomId是一次性的，用户每次重新开播都会生成一个新的roomId
-    // 所以如果roomId对应的直播间状态不是直播中，就通过webRid获取直播间信息
-    if (status == 4) {
-      var result = await getRoomDetailByWebRid(webRid);
+    final owner = room["owner"];
+    final webRid = owner is Map ? _detailText(owner["web_rid"]) : "";
+    if (!RegExp(r'^\d{1,16}$').hasMatch(webRid) || int.tryParse(webRid) == 0) {
+      throw CoreError("抖音直播间已失效，无法取得主播固定房间号，请通过搜索或主播主页重新进入");
+    }
+    if (_parseDouyinStatus(room["status"]) != 2) {
+      final result = await getRoomDetailByWebRid(webRid);
       _logElapsed("getRoomDetailByRoomId($roomId) redirect", stopwatch);
       return result;
     }
-
-    var roomStatus = status == 2;
-    // 主要是为了获取cookie,用于弹幕websocket连接
-    var danmakuCookie = await _getDanmakuCookie(webRid);
-
-    final detail = LiveRoomDetail(
-      roomId: webRid,
-      title: room["title"].toString(),
-      cover: roomStatus ? room["cover"]["url_list"][0].toString() : "",
-      userName: owner["nickname"].toString(),
-      userAvatar: owner["avatar_thumb"]["url_list"][0].toString(),
-      online: roomStatus
-          ? asT<int?>(room["room_view_stats"]["display_value"]) ?? 0
-          : 0,
-      status: roomStatus,
-      url: "https://live.douyin.com/$webRid",
-      introduction: owner["signature"].toString(),
-      notice: "",
-      categoryId: categoryInfo["categoryId"],
-      categoryName: categoryInfo["categoryName"],
-      categoryParentId: categoryInfo["categoryParentId"],
-      categoryParentName: categoryInfo["categoryParentName"],
-      categoryPic: categoryInfo["categoryPic"],
-      danmakuData: DouyinDanmakuArgs(
-        webRid: webRid,
-        roomId: roomId,
-        userId: userUniqueId,
-        cookie: danmakuCookie,
-      ),
-      data: room["stream_url"],
+    final detail = await _buildRoomDetail(
+      webRid: webRid,
+      room: room,
+      anchor: owner is Map ? owner : const {},
+      status: true,
+      realRoomId: roomId,
     );
     _logElapsed("getRoomDetailByRoomId($roomId)", stopwatch);
     return detail;
@@ -704,54 +670,18 @@ class DouyinSite implements LiveSite {
   /// - 返回直播间信息
   Future<LiveRoomDetail> _getRoomDetailByWebRidApi(String webRid) async {
     final stopwatch = Stopwatch()..start();
-    // 读取房间信息
-    var data = await _getRoomDataByApi(webRid);
-
-    var roomData = data["data"][0];
-    var userData = data["user"];
-    var roomId = roomData["id_str"].toString();
-    final categoryInfo = _resolveDouyinCategoryInfo(roomData);
-
-    // 读取用户唯一ID，用于弹幕连接
-    // 似乎这个参数不是必须的，先随机生成一个
-    //var userUniqueId = await _getUserUniqueId(webRid);
-    var userUniqueId = generateRandomNumber(12).toString();
-
-    var owner = roomData["owner"];
-
-    var roomStatus = (asT<int?>(roomData["status"]) ?? 0) == 2;
-
-    // 主要是为了获取cookie,用于弹幕websocket连接
-    var danmakuCookie = await _getDanmakuCookie(webRid);
-    final detail = LiveRoomDetail(
-      roomId: webRid,
-      title: roomData["title"].toString(),
-      cover: roomStatus ? roomData["cover"]["url_list"][0].toString() : "",
-      userName: roomStatus
-          ? owner["nickname"].toString()
-          : userData["nickname"].toString(),
-      userAvatar: roomStatus
-          ? owner["avatar_thumb"]["url_list"][0].toString()
-          : userData["avatar_thumb"]["url_list"][0].toString(),
-      online: roomStatus
-          ? asT<int?>(roomData["room_view_stats"]["display_value"]) ?? 0
-          : 0,
-      status: roomStatus,
-      url: "https://live.douyin.com/$webRid",
-      introduction: owner?["signature"]?.toString() ?? "",
-      notice: "",
-      categoryId: categoryInfo["categoryId"],
-      categoryName: categoryInfo["categoryName"],
-      categoryParentId: categoryInfo["categoryParentId"],
-      categoryParentName: categoryInfo["categoryParentName"],
-      categoryPic: categoryInfo["categoryPic"],
-      danmakuData: DouyinDanmakuArgs(
-        webRid: webRid,
-        roomId: roomId,
-        userId: userUniqueId,
-        cookie: danmakuCookie,
-      ),
-      data: roomStatus ? roomData["stream_url"] : {},
+    final data = await _getRoomDataByApi(webRid);
+    final rooms = data["data"];
+    final room = rooms is List && rooms.isNotEmpty && rooms.first is Map
+        ? rooms.first as Map
+        : const {};
+    final anchor = _detailAnchor(data["user"], room["owner"]);
+    final status = _detailLiveStatus(room, data, anchor);
+    final detail = await _buildRoomDetail(
+      webRid: webRid,
+      room: room,
+      anchor: status ? _detailAnchor(room["owner"], anchor) : anchor,
+      status: status,
     );
     _logElapsed("_getRoomDetailByWebRidApi($webRid)", stopwatch);
     return detail;
@@ -762,35 +692,86 @@ class DouyinSite implements LiveSite {
   /// - 返回直播间信息
   Future<LiveRoomDetail> _getRoomDetailByWebRidHtml(String webRid) async {
     final stopwatch = Stopwatch()..start();
-    var roomData = await _getRoomDataByHtml(webRid);
-    var roomId = roomData["roomStore"]["roomInfo"]["room"]["id_str"].toString();
-    var userUniqueId = resolveUserUniqueIdFromRoomData(roomData);
+    final roomData = await _getRoomDataByHtml(webRid);
+    final store = roomData["roomStore"];
+    final info = store is Map ? store["roomInfo"] : null;
+    if (info is! Map) {
+      throw CoreError("抖音直播间页面缺少房间信息", kind: CoreErrorKind.response);
+    }
+    final room = info["room"] is Map ? info["room"] as Map : const {};
+    final anchor = _detailAnchor(info["anchor"], room["owner"]);
+    final status = _detailLiveStatus(room, info, anchor);
+    final detail = await _buildRoomDetail(
+      webRid: webRid,
+      room: room,
+      anchor: status ? _detailAnchor(room["owner"], anchor) : anchor,
+      status: status,
+      userUniqueId: status ? resolveUserUniqueIdFromRoomData(roomData) : null,
+    );
+    _logElapsed("_getRoomDetailByWebRidHtml($webRid)", stopwatch);
+    return detail;
+  }
 
-    var room = roomData["roomStore"]["roomInfo"]["room"];
-    var owner = room["owner"];
-    var anchor = roomData["roomStore"]["roomInfo"]["anchor"];
+  String _detailText(dynamic value) => value?.toString().trim() ?? "";
+
+  Map _detailAnchor(dynamic primary, dynamic fallback) {
+    if (primary is Map && _detailText(primary["nickname"]).isNotEmpty) {
+      return primary;
+    }
+    return fallback is Map ? fallback : const {};
+  }
+
+  bool _detailLiveStatus(Map room, Map info, Map anchor) {
+    // Room status and user.live_status are different upstream enums.
+    final rawRoomStatus =
+        room["status"] ?? room["room_status"] ?? info["room_status"];
+    final roomStatus = _parseDouyinStatus(rawRoomStatus);
+    if (roomStatus == 2) return true;
+    if (roomStatus == 4) return false;
+    // An absent room alone is not evidence of an offline anchor.
+    if (rawRoomStatus == null &&
+        _parseDouyinStatus(anchor["live_status"]) == 0) {
+      return false;
+    }
+    throw CoreError("抖音直播间状态不明确，请稍后再试", kind: CoreErrorKind.response);
+  }
+
+  Future<LiveRoomDetail> _buildRoomDetail({
+    required String webRid,
+    required Map room,
+    required Map anchor,
+    required bool status,
+    String? realRoomId,
+    String? userUniqueId,
+  }) async {
+    final name = _detailText(anchor["nickname"]);
+    final anchorId =
+        _detailText(anchor["id_str"] ?? anchor["id"] ?? anchor["sec_uid"]);
+    final anchorWebRid = _detailText(anchor["web_rid"]);
+    if (name.isEmpty ||
+        (!status &&
+            (anchorId.isEmpty || anchorId == "0") &&
+            (anchorWebRid.isEmpty || anchorWebRid != webRid))) {
+      throw CoreError("抖音直播间缺少有效主播信息", kind: CoreErrorKind.response);
+    }
+    final roomId = realRoomId ?? _detailText(room["id_str"] ?? room["id"]);
+    if (status && (roomId.isEmpty || roomId == "0")) {
+      throw CoreError("抖音直播间缺少房间ID", kind: CoreErrorKind.response);
+    }
     final categoryInfo = _resolveDouyinCategoryInfo(room);
-    var roomStatus = (asT<int?>(room["status"]) ?? 0) == 2;
-
-    // 主要是为了获取cookie,用于弹幕websocket连接
-    var danmakuCookie = await _getDanmakuCookie(webRid);
-
-    final detail = LiveRoomDetail(
+    final stats = room["room_view_stats"];
+    return LiveRoomDetail(
       roomId: webRid,
-      title: room["title"].toString(),
-      cover: roomStatus ? room["cover"]["url_list"][0].toString() : "",
-      userName: roomStatus
-          ? owner["nickname"].toString()
-          : anchor["nickname"].toString(),
-      userAvatar: roomStatus
-          ? owner["avatar_thumb"]["url_list"][0].toString()
-          : anchor["avatar_thumb"]["url_list"][0].toString(),
-      online: roomStatus
-          ? asT<int?>(room["room_view_stats"]["display_value"]) ?? 0
+      title: _detailText(room["title"]),
+      cover: status ? _firstImageUrl(room["cover"]) : "",
+      userName: name,
+      userAvatar: _firstImageUrl(anchor["avatar_thumb"]),
+      online: status && stats is Map
+          ? int.tryParse(_detailText(stats["display_value"])) ?? 0
           : 0,
-      status: roomStatus,
+      status: status,
       url: "https://live.douyin.com/$webRid",
-      introduction: owner?["signature"]?.toString() ?? "",
+      introduction: _detailText(anchor["signature"]),
       notice: "",
       categoryId: categoryInfo["categoryId"],
       categoryName: categoryInfo["categoryName"],
@@ -800,13 +781,12 @@ class DouyinSite implements LiveSite {
       danmakuData: DouyinDanmakuArgs(
         webRid: webRid,
         roomId: roomId,
-        userId: userUniqueId,
-        cookie: danmakuCookie,
+        userId:
+            status ? userUniqueId ?? generateRandomNumber(12).toString() : "",
+        cookie: status ? await _getDanmakuCookie(webRid) : "",
       ),
-      data: roomStatus ? room["stream_url"] : {},
+      data: status ? room["stream_url"] : <String, dynamic>{},
     );
-    _logElapsed("_getRoomDetailByWebRidHtml($webRid)", stopwatch);
-    return detail;
   }
 
   String resolveUserUniqueIdFromRoomData(dynamic roomData) {
@@ -1027,7 +1007,7 @@ class DouyinSite implements LiveSite {
       },
     );
     final signStopwatch = Stopwatch()..start();
-    var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
+    var requestUrl = _abogusSigner(uri.toString(), kDefaultUserAgent);
     _logElapsed("_getRoomDataByApi($webRid) a_bogus", signStopwatch);
 
     final requestStopwatch = Stopwatch()..start();
@@ -1041,13 +1021,13 @@ class DouyinSite implements LiveSite {
       throw Exception("抖音接口返回格式异常");
     }
 
+    final statusCode = _parseDouyinStatus(result["status_code"]);
+    if (statusCode != null && statusCode != 0) {
+      throw CoreError("抖音直播间接口访问受限，请稍后再试", statusCode: statusCode);
+    }
     final data = result["data"];
     if (data is! Map) {
       throw CoreError("抖音直播间数据为空，请稍后再试");
-    }
-    final rooms = data["data"];
-    if (rooms is! List || rooms.isEmpty) {
-      throw CoreError("抖音直播间数据为空，可能是房间未开播或被风控限制");
     }
 
     _logElapsed("_getRoomDataByApi($webRid)", stopwatch);
