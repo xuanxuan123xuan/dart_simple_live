@@ -393,6 +393,18 @@ void main() {
     expect(resolverCalls, 2);
     expect(readyCalls, 1);
     expect(connection.sent, hasLength(1));
+    // The register payload must omit proto3 default fields 3 and 4.  The
+    // current Kuaishou endpoint expects the compact 1/2/7 inner message.
+    expect(
+      connection.sent.single,
+      <int>[
+        0x08, 0xc8, 0x01, // SocketMessage.payloadType = CS_ENTER_ROOM (200)
+        0x1a, 0x15, // SocketMessage.payload, 21-byte CSWebEnterRoom
+        0x0a, 0x05, ...utf8.encode('token'),
+        0x12, 0x06, ...utf8.encode('stream'),
+        0x3a, 0x04, ...utf8.encode('page'),
+      ],
+    );
     await danmaku.stop();
   });
 

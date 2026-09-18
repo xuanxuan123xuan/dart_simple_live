@@ -406,11 +406,14 @@ class KuaishouDanmaku extends LiveDanmaku {
     if (args == null) {
       return;
     }
+    // CSWebEnterRoom follows proto3 presence semantics: reconnectCount and
+    // lastErrorCode default to zero and must be omitted from the wire payload.
+    // Kuaishou's current websocket endpoint rejects the otherwise equivalent
+    // explicit zero fields, so keep the initial register frame to the fields
+    // actually populated by the web client (token, liveStreamId, pageId).
     final payload = _KuaishouProtoWriter()
       ..writeString(1, args.token)
       ..writeString(2, args.liveStreamId)
-      ..writeVarintField(3, 0)
-      ..writeVarintField(4, 0)
       ..writeString(5, args.expTag)
       ..writeString(6, args.attach)
       ..writeString(7, args.pageId);
