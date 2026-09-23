@@ -596,9 +596,23 @@ class DouyinSite implements LiveSite {
       // webRid是固定的，用户每次开播都是同一个webRid
       // webRid一般长度为11-12位，例如：416144012050
       // 这里简单进行判断，如果roomId长度小于15，则认为是webRid
+      if (roomId.endsWith('.')) {
+        try {
+          return await getRoomDetailByWebRid(roomId);
+        } catch (error) {
+          if (error is CoreCancelledError ||
+              (error is CoreError && error.statusCode == 444)) {
+            rethrow;
+          }
+          final webRidWithoutDot = roomId.substring(0, roomId.length - 1);
+          _logDebug(
+            "抖音房间号 $roomId 解析失败，移除末尾句点后重试：$webRidWithoutDot",
+          );
+          return await getRoomDetailByWebRid(webRidWithoutDot);
+        }
+      }
       if (roomId.length <= 16) {
-        var webRid = roomId;
-        return await getRoomDetailByWebRid(webRid);
+        return await getRoomDetailByWebRid(roomId);
       }
 
       return await getRoomDetailByRoomId(roomId);

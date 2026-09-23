@@ -36,6 +36,33 @@ void main() {
     expect(responses.requests, hasLength(1));
   });
 
+  test('room ID ending in a dot retries once without the dot on failure',
+      () async {
+    const roomId = 'username.';
+    responses.apiByWebRid[roomId] = {
+      'status_code': 0,
+      'data': <String, dynamic>{},
+    };
+    responses.apiByWebRid['username'] = {
+      'status_code': 0,
+      'data': {'data': [], 'user': _anchor()}
+    };
+
+    final detail = await site.getRoomDetail(roomId: roomId);
+
+    expect(detail.roomId, 'username');
+    expect(detail.userName, '主播');
+    expect(
+      responses.requests
+          .where((request) =>
+              request.uri.path.contains('/web/enter/') &&
+              request.uri.queryParameters.containsKey('web_rid'))
+          .map((request) => request.uri.queryParameters['web_rid'])
+          .toList(),
+      [roomId, 'username'],
+    );
+  });
+
   test(
       'HTML anchor without room survives failed cookie HEAD and preserves identity',
       () async {
@@ -204,6 +231,7 @@ String _page(Map info) =>
 
 class _Responses extends Interceptor {
   Object api = const {};
+  final Map<String, Object> apiByWebRid = {};
   Object reflow = const {};
   String html = '';
   bool failHead = false;
@@ -223,7 +251,7 @@ class _Responses extends Interceptor {
     final isApi = options.uri.path.contains('/web/enter/');
     final isReflow = options.uri.path.contains('/reflow/info/');
     final payload = isApi
-        ? api
+        ? apiByWebRid[options.uri.queryParameters['web_rid']] ?? api
         : isReflow
             ? reflow
             : html;
