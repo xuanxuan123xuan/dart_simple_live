@@ -197,7 +197,7 @@ class LiveRoomLinkParser {
             orElse: () => '',
           )
         : '';
-    final punctuation = douyinRoomId.contains('.')
+    final punctuation = douyinRoomId.endsWith('.')
         ? RegExp(r'[，。！？、；：,;:!?]+$')
         : RegExp(r'[，。！？、；：,.;:!?]+$');
     return url.replaceFirst(punctuation, '');

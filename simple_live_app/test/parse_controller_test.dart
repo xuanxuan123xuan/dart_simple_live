@@ -58,6 +58,12 @@ void main() {
       );
     });
 
+    test('preserves a trailing dot without internal dots in a Douyin room ID',
+        () {
+      const url = 'https://live.douyin.com/username.';
+      expect(LiveRoomLinkParser.extractHttpUrl(url), url);
+    });
+
     test('returns empty text when no URL exists', () {
       expect(LiveRoomLinkParser.extractHttpUrl('没有链接'), isEmpty);
     });
@@ -209,6 +215,14 @@ void main() {
         'Xzh.2022.0323.',
       );
       client.close();
+    });
+
+    test('preserves a trailing dot without internal dots in a Douyin room ID',
+        () async {
+      final target = await LiveRoomLinkParser()
+          .parse('https://live.douyin.com/username.');
+
+      expect(target?.roomId, 'username.');
     });
 
     test('returns a strongly typed target with the matching site', () async {
