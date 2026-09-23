@@ -47,12 +47,12 @@ class HomePage extends GetView<HomeController> {
         ),
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 8),
+            padding: const EdgeInsets.only(right: 12),
             child: SizedBox.square(
-              dimension: 48,
+              dimension: 56,
               child: GlassSurface(
                 role: GlassSurfaceRole.navigation,
-                radius: 24,
+                radius: 28,
                 liveBackdrop: true,
                 fallbackBorder: true,
                 child: IconButton(
