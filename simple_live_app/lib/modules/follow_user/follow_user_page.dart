@@ -48,6 +48,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
               role: GlassSurfaceRole.navigation,
               radius: 22,
               liveBackdrop: true,
+              fallbackBorder: true,
               child: SizedBox.expand(),
             ),
           ),
