@@ -181,13 +181,25 @@ class LiveRoomLinkParser {
   }
 
   static String extractHttpUrl(String text) {
-    return RegExp(
+    final match = RegExp(
           r'https?://[^\s<>\u3000，。！？、；：]+',
           caseSensitive: false,
-        ).firstMatch(text)?.group(0)?.replaceFirst(
-              RegExp(r'[，。！？、；：,.;:!?]+$'),
-              '',
-            ) ??
-        '';
+        ).firstMatch(text);
+    if (match == null) {
+      return '';
+    }
+
+    final url = match.group(0)!;
+    final uri = Uri.tryParse(url);
+    final douyinRoomId = uri?.host.toLowerCase() == 'live.douyin.com'
+        ? uri!.pathSegments.firstWhere(
+            (segment) => segment.isNotEmpty,
+            orElse: () => '',
+          )
+        : '';
+    final punctuation = douyinRoomId.contains('.')
+        ? RegExp(r'[，。！？、；：,;:!?]+$')
+        : RegExp(r'[，。！？、；：,.;:!?]+$');
+    return url.replaceFirst(punctuation, '');
   }
 }

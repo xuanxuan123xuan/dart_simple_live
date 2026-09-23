@@ -49,6 +49,15 @@ void main() {
       );
     });
 
+    test('preserves a trailing dot in a dotted Douyin room ID', () {
+      const url = 'https://live.douyin.com/Xzh.2022.0323.';
+      expect(LiveRoomLinkParser.extractHttpUrl(url), url);
+      expect(
+        LiveRoomLinkParser.extractHttpUrl('直播地址：$url，欢迎观看'),
+        url,
+      );
+    });
+
     test('returns empty text when no URL exists', () {
       expect(LiveRoomLinkParser.extractHttpUrl('没有链接'), isEmpty);
     });
@@ -168,6 +177,38 @@ void main() {
       );
       expect(await parser.parse('https://www.huya.com/room.name'), isNull);
       expect(await parser.parse('https://live.douyin.com/..'), isNull);
+    });
+
+    test('preserves a trailing dot in a Douyin room ID from share text',
+        () async {
+      final parser = LiveRoomLinkParser();
+      final target = await parser.parse(
+        '打开直播间：https://live.douyin.com/Xzh.2022.0323.，快来看看',
+      );
+
+      expect(target?.site.id, 'douyin');
+      expect(target?.roomId, 'Xzh.2022.0323.');
+    });
+
+    test('preserves a trailing dot in a Douyin short-link destination',
+        () async {
+      const shortUrl = 'https://v.douyin.com/example';
+      const destination = 'https://live.douyin.com/Xzh.2022.0323.';
+      final client = Dio();
+      client.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
+        handler.resolve(Response<dynamic>(
+          requestOptions: options,
+          statusCode: options.uri.host == 'v.douyin.com' ? 302 : 200,
+          headers: Headers.fromMap({'location': [destination]}),
+        ));
+      }));
+      final parser = LiveRoomLinkParser(redirectClient: client);
+
+      expect(
+        (await parser.parse(shortUrl))?.roomId,
+        'Xzh.2022.0323.',
+      );
+      client.close();
     });
 
     test('returns a strongly typed target with the matching site', () async {
