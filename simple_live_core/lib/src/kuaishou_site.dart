@@ -762,6 +762,11 @@ class KuaishouSite extends LiveSite {
       categoryId: gameInfo["id"]?.toString(),
       categoryName: gameInfo["name"]?.toString(),
     );
+    _storeAnonymousRoomSnapshot(roomId, detail);
+  }
+
+  /// 按现有 TTL / 容量 / 去重规则写入一条游客房间快照。
+  void _storeAnonymousRoomSnapshot(String roomId, LiveRoomDetail detail) {
     final now = _now();
     _anonymousRoomSnapshots.removeWhere(
       (_, snapshot) => !snapshot.expiresAt.isAfter(now),
@@ -777,6 +782,46 @@ class KuaishouSite extends LiveSite {
     _anonymousRoomSnapshots[roomId] = _KuaishouAnonymousRoomSnapshot(
       detail,
       now.add(_anonymousRoomSnapshotTtl),
+    );
+  }
+
+  /// 把匿名房间页（状态或播放意图）解析出的 live 详情回填为游客快照。
+  ///
+  /// 关注刷新等状态请求解析出的详情若带可播放 URL，此前会被直接丢弃；
+  /// 回填后随后的进房可以直接复用这份游客播放地址。只有 live 且带
+  /// 可播放 URL 的详情才会写入；roomId 为空则跳过。
+  void _rememberAnonymousDetailSnapshot(LiveRoomDetail detail) {
+    if (detail.resolvedLiveStatus != LiveStatusState.live) return;
+    if (extractPlayableUrls(detail.data).isEmpty) return;
+    final roomId = detail.roomId.trim();
+    if (roomId.isEmpty) return;
+    _storeAnonymousRoomSnapshot(roomId, _anonymousSnapshotDetailOf(detail));
+  }
+
+  /// 快照保存无弹幕凭证版本：页面凭证随原始详情返回给调用方，快照仅
+  /// 承载房间元数据与游客播放地址（与列表快照语义一致）。
+  static LiveRoomDetail _anonymousSnapshotDetailOf(LiveRoomDetail detail) {
+    return LiveRoomDetail(
+      roomId: detail.roomId,
+      title: detail.title,
+      cover: detail.cover,
+      userName: detail.userName,
+      userAvatar: detail.userAvatar,
+      online: detail.online,
+      introduction: detail.introduction,
+      notice: detail.notice,
+      status: detail.status,
+      liveStatusState: detail.liveStatusState,
+      data: detail.data,
+      danmakuData: null,
+      url: detail.url,
+      isRecord: detail.isRecord,
+      showTime: detail.showTime,
+      categoryId: detail.categoryId,
+      categoryName: detail.categoryName,
+      categoryParentId: detail.categoryParentId,
+      categoryParentName: detail.categoryParentName,
+      categoryPic: detail.categoryPic,
     );
   }
 
@@ -1681,24 +1726,146 @@ class KuaishouSite extends LiveSite {
     required KuaishouRequestSource source,
     _KuaishouAccountTransport? danmakuTransport,
   }) async {
-    if (!KuaishouRequestTrace.forceNetwork) {
+    final maskedRoom = _maskRoomId(roomId);
+    // playbackRecovery / roomStatusPolling / danmakuCredential 需要
+    // 新鲜响应（roomDetailCacheTtlForSource 返回 null 的来源）：既不读
+    // 游客快照，也不读播放缓存，播放恢复不能拿旧地址糊弄。
+    final skipCache = roomDetailCacheTtlForSource(source) == null;
+    if (!KuaishouRequestTrace.forceNetwork && !skipCache) {
       final snapshot = _readAnonymousRoomSnapshot(roomId);
       if (snapshot != null) {
+        _logAnonymousRoomDetail(
+          room: maskedRoom,
+          source: source,
+          detail: snapshot,
+          cache: 'hit',
+          retry: 0,
+          reason: 'snapshot',
+        );
         return _addLazyDanmakuCredentials(snapshot, danmakuTransport);
       }
     }
 
+    final bypassPlaybackCache = skipCache || KuaishouRequestTrace.forceNetwork;
+    String firstCacheState;
+    if (bypassPlaybackCache) {
+      firstCacheState = 'bypass';
+    } else if (coordinator.logicalCachedValue<LiveRoomDetail>(
+          'anonymous_playback_detail:$roomId',
+        ) !=
+        null) {
+      firstCacheState = 'hit';
+    } else {
+      firstCacheState = 'miss';
+    }
+
+    final detail = await _fetchAnonymousPlaybackDetailAttempt(
+      roomId: roomId,
+      source: source,
+      danmakuTransport: danmakuTransport,
+      room: maskedRoom,
+      cache: firstCacheState,
+      retry: 0,
+    );
+    if (detail != null && _isUsableAnonymousPlaybackDetail(detail)) {
+      _logAnonymousRoomDetail(
+        room: maskedRoom,
+        source: source,
+        detail: detail,
+        cache: firstCacheState,
+        retry: 0,
+        reason: 'ok',
+      );
+      return _addLazyDanmakuCredentials(detail, danmakuTransport);
+    }
+
+    // 首次详情为 live 且无可播放地址（快手冷启动窗口：房间页已确认
+    // 开播但游客地址尚未下发）：用 bypassCache 受控重试一次，不递归、
+    // 不加定时器。unknown 状态与解析失败不重试，保持原有失败语义；
+    // 挑战页、冷却、取消、超时等异常在 _fetchAnonymousPlaybackDetailAttempt
+    // 内原样上抛，同样不触发重试。
+    if (detail?.resolvedLiveStatus == LiveStatusState.live) {
+      _logAnonymousRoomDetail(
+        room: maskedRoom,
+        source: source,
+        detail: detail,
+        cache: firstCacheState,
+        retry: 0,
+        reason: 'playback_missing',
+      );
+      final retried = await KuaishouRequestTrace.run(
+        source,
+        () => _fetchAnonymousPlaybackDetailAttempt(
+          roomId: roomId,
+          source: source,
+          danmakuTransport: danmakuTransport,
+          room: maskedRoom,
+          cache: 'bypass',
+          retry: 1,
+          bypassCache: true,
+        ),
+        scopeId: KuaishouRequestTrace.scopeId,
+        forceNetwork: KuaishouRequestTrace.forceNetwork,
+      );
+      if (retried != null && _isUsableAnonymousPlaybackDetail(retried)) {
+        _logAnonymousRoomDetail(
+          room: maskedRoom,
+          source: source,
+          detail: retried,
+          cache: 'bypass',
+          retry: 1,
+          reason: 'ok',
+        );
+        return _addLazyDanmakuCredentials(retried, danmakuTransport);
+      }
+      if (retried != null) {
+        _logAnonymousRoomDetail(
+          room: maskedRoom,
+          source: source,
+          detail: retried,
+          cache: 'bypass',
+          retry: 1,
+          reason: 'playback_missing',
+        );
+      }
+    }
+
+    throw CoreError(
+      '该快手直播间暂未提供游客播放地址，可登录后重试',
+      kind: CoreErrorKind.response,
+    );
+  }
+
+  /// 播放意图的单次匿名详情请求，统一处理挑战页与错误分类转换。
+  ///
+  /// 返回 null 表示 response 类 CoreError（如匿名页解析失败），调用方
+  /// 按"游客播放地址缺失"兜底；其余异常（冷却、取消、超时、网络错误）
+  /// 原样上抛，不触发受控重试。
+  Future<LiveRoomDetail?> _fetchAnonymousPlaybackDetailAttempt({
+    required String roomId,
+    required KuaishouRequestSource source,
+    required _KuaishouAccountTransport? danmakuTransport,
+    required String room,
+    required String cache,
+    required int retry,
+    bool bypassCache = false,
+  }) async {
     try {
-      final detail = await _getAnonymousRoomDetail(
+      return await _getAnonymousRoomDetail(
         roomId,
         source: source,
         danmakuTransport: danmakuTransport,
+        requirePlayback: true,
+        bypassCache: bypassCache,
       );
-      if (extractPlayableUrls(detail.data).isNotEmpty ||
-          detail.resolvedLiveStatus == LiveStatusState.offline) {
-        return _addLazyDanmakuCredentials(detail, danmakuTransport);
-      }
     } on _KuaishouChallengePageException catch (error) {
+      _logAnonymousRoomDetail(
+        room: room,
+        source: source,
+        cache: cache,
+        retry: retry,
+        reason: 'challenge',
+      );
       throw CoreError(
         '快手返回安全验证页面，请稍后重试',
         statusCode: 403,
@@ -1706,12 +1873,57 @@ class KuaishouSite extends LiveSite {
         cause: error,
       );
     } on CoreError catch (error) {
-      if (error.kind != CoreErrorKind.response) rethrow;
+      if (error.kind != CoreErrorKind.response) {
+        _logAnonymousRoomDetail(
+          room: room,
+          source: source,
+          cache: cache,
+          retry: retry,
+          reason: 'error',
+        );
+        rethrow;
+      }
+      _logAnonymousRoomDetail(
+        room: room,
+        source: source,
+        cache: cache,
+        retry: retry,
+        reason: 'parse_failed',
+      );
+      return null;
+    } on Object catch (error) {
+      _logAnonymousRoomDetail(
+        room: room,
+        source: source,
+        cache: cache,
+        retry: retry,
+        reason: 'error:${error.runtimeType}',
+      );
+      rethrow;
     }
+  }
 
-    throw CoreError(
-      '该快手直播间暂未提供游客播放地址，可登录后重试',
-      kind: CoreErrorKind.response,
+  /// 播放意图下可用的匿名详情：带可播放 URL，或明确下播。
+  static bool _isUsableAnonymousPlaybackDetail(LiveRoomDetail detail) =>
+      extractPlayableUrls(detail.data).isNotEmpty ||
+      detail.resolvedLiveStatus == LiveStatusState.offline;
+
+  /// 匿名房间详情路径的脱敏日志：仅输出掩码房间号、来源、状态、是否
+  /// 有可播放地址与缓存/重试信息；严禁输出 URL、Cookie、Token、DID。
+  void _logAnonymousRoomDetail({
+    required String room,
+    required KuaishouRequestSource source,
+    LiveRoomDetail? detail,
+    required String cache,
+    required int retry,
+    required String reason,
+  }) {
+    CoreLog.i(
+      '[ks-request] endpoint=anonymous_room_detail room=$room '
+      'source=${source.name} '
+      'status=${detail?.resolvedLiveStatus.name ?? 'unknown'} '
+      'playable=${detail != null && extractPlayableUrls(detail.data).isNotEmpty} '
+      'cache=$cache retry=$retry reason=$reason',
     );
   }
 
@@ -1867,6 +2079,32 @@ class KuaishouSite extends LiveSite {
       case KuaishouRequestSource.manual:
       case KuaishouRequestSource.unknown:
         return _detailCacheTtl;
+    }
+  }
+
+  /// 播放意图的匿名详情缓存策略。
+  ///
+  /// - live 且带可播放 URL：60s（沿用 anonymousStatusCacheTtl 时长）；
+  /// - offline：3min；
+  /// - live 无可播放 URL 与 unknown：返回 null，不入播放缓存——这类
+  ///   结果不能堵住随后的进房请求；
+  /// - playbackRecovery / roomStatusPolling / danmakuCredential（
+  ///   roomDetailCacheTtlForSource 返回 null 的来源）：整体不缓存，
+  ///   播放恢复需要新鲜响应，但 pending 合并（single-flight）仍生效。
+  static Duration? anonymousPlaybackCacheTtlForSource(
+    KuaishouRequestSource source,
+    LiveRoomDetail detail,
+  ) {
+    if (roomDetailCacheTtlForSource(source) == null) return null;
+    switch (detail.resolvedLiveStatus) {
+      case LiveStatusState.live:
+        return extractPlayableUrls(detail.data).isNotEmpty
+            ? anonymousStatusCacheTtl(LiveStatusState.live)
+            : null;
+      case LiveStatusState.offline:
+        return anonymousStatusCacheTtl(LiveStatusState.offline);
+      case LiveStatusState.unknown:
+        return null;
     }
   }
 
@@ -2643,16 +2881,38 @@ class KuaishouSite extends LiveSite {
     );
   }
 
+  /// 匿名公共房间页详情。
+  ///
+  /// [requirePlayback] 区分两种消费语义：
+  /// - 状态意图（关注刷新等只关心直播状态）：允许 "live 无播放地址"
+  ///   的合法状态结果进入 `anonymous_public_detail` 状态缓存，TTL 沿用
+  ///   anonymousStatusCacheTtl（live 60s / offline 3min / unknown 30s）；
+  /// - 播放意图（进房 / 播放恢复）：使用独立的
+  ///   `anonymous_playback_detail` 逻辑缓存键，只有 "live 且带可播放
+  ///   URL" 或 "offline" 的结果才入缓存，"live 无 URL" 的结果不得写入
+  ///   播放缓存，避免堵住随后的进房请求。
+  /// 两种意图共用 `http:anonymous_public_detail` 物理请求键，
+  /// single-flight 去重对跨意图的并发请求仍然生效。
   Future<LiveRoomDetail> _getAnonymousRoomDetail(
     String roomId, {
     required KuaishouRequestSource source,
     _KuaishouAccountTransport? danmakuTransport,
+    bool requirePlayback = false,
+    bool bypassCache = false,
   }) {
+    final cacheKey = requirePlayback
+        ? 'anonymous_playback_detail:$roomId'
+        : 'anonymous_public_detail:$roomId';
+    final skipPlaybackCache =
+        requirePlayback && roomDetailCacheTtlForSource(source) == null;
     return coordinator.coalesce(
-      key: 'anonymous_public_detail:$roomId',
-      cacheTtlForValue: (detail) =>
-          anonymousStatusCacheTtl(detail.resolvedLiveStatus),
-      bypassCache: KuaishouRequestTrace.forceNetwork,
+      key: cacheKey,
+      cacheTtlForValue: requirePlayback
+          ? (detail) => anonymousPlaybackCacheTtlForSource(source, detail)
+          : (detail) => anonymousStatusCacheTtl(detail.resolvedLiveStatus),
+      bypassCache: bypassCache ||
+          KuaishouRequestTrace.forceNetwork ||
+          skipPlaybackCache,
       task: () async {
         final url = KuaishouLiveLink.publicRoomUrl(roomId);
         final response = await coordinator.schedule<Response<String>>(
@@ -2691,6 +2951,9 @@ class KuaishouSite extends LiveSite {
             kind: CoreErrorKind.response,
           );
         }
+        // 状态/播放意图解析出的 live 可播放详情回填游客快照，供随后
+        // 的进房复用；无 URL 或非 live 的详情由各意图自行处理。
+        _rememberAnonymousDetailSnapshot(detail);
         return detail;
       },
     );

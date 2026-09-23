@@ -1092,7 +1092,18 @@ class FollowService extends GetxService {
         final item = queue.removeFirst();
         try {
           final site = Sites.allSites[item.siteId]!;
-          final detail = await site.liveSite.getRoomDetail(roomId: item.roomId);
+          // Kuaishou follow-refresh detail requests are status-intent
+          // traffic: mark the source (same scope as _updateLiveStatus) so
+          // the site can skip play-URL work and use the status cache.
+          // Other sites keep the original behavior.
+          final detail = item.siteId == Constant.kKuaishou
+              ? await KuaishouRequestTrace.run(
+                  KuaishouRequestSource.followStatus,
+                  () => site.liveSite.getRoomDetail(roomId: item.roomId),
+                  scopeId: 'kuaishou:follow-refresh',
+                  forceNetwork: true,
+                )
+              : await site.liveSite.getRoomDetail(roomId: item.roomId);
           if (generation != _updateGeneration) {
             return;
           }
