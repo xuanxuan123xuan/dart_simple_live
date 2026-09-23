@@ -647,12 +647,25 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     Log.d("弹幕服务器连接成功");
   }
 
+  /// 读取房间详情。快手请求通过 [KuaishouRequestTrace] 标记为用户进房来源，
+  /// 供 core 侧按来源汇总请求量；其他平台不带来源标记。
+  /// resetRoom 换台后同样经 loadData 走 userEnter 来源（与手机/桌面端语义一致）。
+  Future<LiveRoomDetail> _fetchRoomDetailWithSource() {
+    if (site.id != Constant.kKuaishou) {
+      return site.liveSite.getRoomDetail(roomId: roomId);
+    }
+    return KuaishouRequestTrace.run(
+      KuaishouRequestSource.userEnter,
+      () => site.liveSite.getRoomDetail(roomId: roomId),
+    );
+  }
+
   /// 加载直播间信息
   void loadData() async {
     playbackLoadError.value = "";
     try {
       pageLoadding.value = true;
-      detail.value = await site.liveSite.getRoomDetail(roomId: roomId);
+      detail.value = await _fetchRoomDetailWithSource();
 
       addHistory();
       online.value = detail.value!.online;

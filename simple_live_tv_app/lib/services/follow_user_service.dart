@@ -1520,7 +1520,15 @@ class FollowUserService extends BasePageController<FollowUser> {
         final item = queue.removeFirst();
         try {
           final site = Sites.allSites[item.siteId]!;
-          final detail = await site.liveSite.getRoomDetail(roomId: item.roomId);
+          // 快手详情补齐与状态刷新共用同一 scope，便于页面退出时统一取消。
+          final detail = item.siteId == Constant.kKuaishou
+              ? await KuaishouRequestTrace.run(
+                  KuaishouRequestSource.followStatus,
+                  () => site.liveSite.getRoomDetail(roomId: item.roomId),
+                  scopeId: 'kuaishou:follow-refresh',
+                  forceNetwork: true,
+                )
+              : await site.liveSite.getRoomDetail(roomId: item.roomId);
           if (generation != _updateGeneration) {
             return;
           }
