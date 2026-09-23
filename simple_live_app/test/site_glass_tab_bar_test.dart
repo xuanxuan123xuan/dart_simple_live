@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+import 'package:liquid_glass_widgets/src/widgets/surfaces/tab_bar_bottom_internal.dart';
 import 'package:simple_live_app/app/app_glass_mode.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
@@ -33,20 +34,24 @@ void main() {
 
   tearDown(Get.reset);
 
-  Future<void> pumpBar(
+  Future<TabController> pumpBar(
     WidgetTester tester, {
     required double width,
     required bool iconOnly,
     bool glass = false,
   }) async {
     await tester.binding.setSurfaceSize(Size(width, 200));
+    TabController? controller;
     final tabBar = DefaultTabController(
       length: Sites.supportSites.length,
       child: Builder(
-        builder: (context) => SiteGlassTabBar(
-          controller: DefaultTabController.of(context),
-          iconOnly: iconOnly,
-        ),
+        builder: (context) {
+          controller = DefaultTabController.of(context);
+          return SiteGlassTabBar(
+            controller: controller!,
+            iconOnly: iconOnly,
+          );
+        },
       ),
     );
     await tester.pumpWidget(
@@ -55,6 +60,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    return controller!;
   }
 
   testWidgets('compact icon mode keeps equal slots and semantic names',
@@ -89,10 +95,13 @@ void main() {
   });
 
   testWidgets('glass mode keeps compact tabs icon-only', (tester) async {
-    settings.glassMode.value = AppGlassMode.standard;
+    settings.glassMode.value = AppGlassMode.auto;
     await pumpBar(tester, width: 390, iconOnly: true, glass: true);
 
     expect(find.byKey(const ValueKey('site-glass-tab-bar')), findsOneWidget);
+    final glassBar = find.byKey(const ValueKey('site-glass-tab-bar'));
+    expect(tester.getSize(glassBar).width, 280);
+    expect(tester.getRect(glassBar).center.dx, closeTo(195, 0.5));
     final slotWidths = {
       for (final site in Sites.supportSites)
         tester.getSize(find.bySemanticsLabel(site.name)).width,
@@ -101,6 +110,44 @@ void main() {
     for (final site in Sites.supportSites) {
       expect(find.text(site.name), findsNothing);
       expect(find.bySemanticsLabel(site.name), findsOneWidget);
+    }
+  });
+
+  testWidgets('glass mode keeps the wide bar centered and bounded',
+      (tester) async {
+    settings.glassMode.value = AppGlassMode.auto;
+    await pumpBar(tester, width: 1200, iconOnly: false, glass: true);
+
+    final glassBar = find.byKey(const ValueKey('site-glass-tab-bar'));
+    expect(tester.getSize(glassBar).width, 560);
+    expect(tester.getRect(glassBar).center.dx, closeTo(600, 0.5));
+  });
+
+  testWidgets('auto glass selector follows every tapped tab slot',
+      (tester) async {
+    settings.glassMode.value = AppGlassMode.auto;
+    final controller = await pumpBar(
+      tester,
+      width: 600,
+      iconOnly: false,
+      glass: true,
+    );
+
+    for (var i = 0; i < Sites.supportSites.length; i++) {
+      final barRect = tester.getRect(
+        find.byKey(const ValueKey('site-glass-tab-bar')),
+      );
+      await tester.tapAt(
+        Offset(
+          barRect.left + barRect.width * (i + 0.5) / Sites.supportSites.length,
+          barRect.center.dy,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(controller.index, i);
+      final indicator = tester.widget<TabIndicator>(find.byType(TabIndicator));
+      expect(indicator.indicatorPosition, closeTo(i.toDouble(), 0.001));
     }
   });
 
@@ -147,5 +194,49 @@ void main() {
     expect(controller!.index, 0);
     // tabWidth is 112 (560 / 5 sites), so a quarter slot is +28 px.
     expect(draggedLeft, closeTo(initialLeft + 28, 0.5));
+  });
+
+  testWidgets('auto glass indicator follows a fractional swipe position',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(600, 200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    settings.glassMode.value = AppGlassMode.auto;
+
+    TabController? controller;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LiquidGlassScope(
+          child: DefaultTabController(
+            length: Sites.supportSites.length,
+            child: Builder(
+              builder: (context) {
+                controller = DefaultTabController.of(context);
+                return Center(
+                  child: SizedBox(
+                    width: 560,
+                    height: 60,
+                    child: SiteGlassTabBar(controller: controller!),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester.widget<TabIndicator>(find.byType(TabIndicator)).indicatorPosition,
+      closeTo(0, 0.001),
+    );
+    controller!.offset = 0.25;
+    await tester.pump();
+
+    expect(controller!.index, 0);
+    expect(
+      tester.widget<TabIndicator>(find.byType(TabIndicator)).indicatorPosition,
+      closeTo(0.25, 0.001),
+    );
   });
 }

@@ -5,6 +5,7 @@
 //
 // Do NOT import this file directly — use [GlassTabBar.bottom()] instead.
 
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
@@ -298,7 +299,18 @@ class _TabBarBottomLayoutState extends State<TabBarBottomLayout>
               tabCount: tabs.length,
               maxAvailable: maxTabW,
             );
-            final expandedTabLeft = extraOnLeft ? extraBtnW : 0.0;
+            // A fixed tab width is used by compact floating bars (for
+            // example, the platform selector in the app header). The glass
+            // layer still receives the full parent width, so placing the tab
+            // pill at zero would leave the indicator and its gesture region
+            // visibly pinned to the leading edge. Keep the tab area aligned
+            // with the available space and center a narrower fixed-width pill
+            // inside it. When tabWidth is null, tabPillW already fills the
+            // available area and this resolves to the old zero offset.
+            final safeMaxTabW = math.max(0.0, maxTabW);
+            final tabAreaLeft = extraOnLeft ? extraBtnW : 0.0;
+            final tabPillLeft = tabAreaLeft +
+                math.max(0.0, (safeMaxTabW - tabPillW) / 2);
 
             final content = SizedBox(
               key: _kGestureRegionKey,
@@ -331,7 +343,7 @@ class _TabBarBottomLayoutState extends State<TabBarBottomLayout>
                       : null;
 
                   final tabPill = Positioned(
-                    left: expandedTabLeft,
+                    left: tabPillLeft,
                     top: 0,
                     width: tabPillW,
                     height: widget.barHeight,

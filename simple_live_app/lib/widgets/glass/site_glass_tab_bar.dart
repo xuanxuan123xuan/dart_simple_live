@@ -76,67 +76,80 @@ class SiteGlassTabBar extends StatelessWidget {
     bool iconOnly,
     double position,
   ) {
-    final colors = Theme.of(context).colorScheme;
-    return GlassTabBar.inline(
-      key: const ValueKey<String>('site-glass-tab-bar'),
-      tabs: [
-        for (final site in Sites.supportSites)
-          GlassTab(
-            icon: Image.asset(site.logo, width: 21, height: 21),
-            label: iconOnly ? null : site.name,
-            semanticLabel: site.name,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final metrics = _metricsFor(constraints, iconOnly: iconOnly);
+        final colors = Theme.of(context).colorScheme;
+        return Align(
+          alignment: Alignment.center,
+          child: SizedBox(
+            width: metrics.barWidth,
+            child: GlassTabBar.inline(
+              key: const ValueKey<String>('site-glass-tab-bar'),
+              tabs: [
+                for (final site in Sites.supportSites)
+                  GlassTab(
+                    icon: Image.asset(site.logo, width: 21, height: 21),
+                    label: iconOnly ? null : site.name,
+                    semanticLabel: site.name,
+                  ),
+              ],
+              selectedIndex: controller.index,
+              // GlassTabBar expects an absolute tab position (0..tabCount - 1),
+              // matching TabController.animation.value during a swipe.
+              indicatorPosition: position,
+              onTabSelected: controller.animateTo,
+              backgroundKey: LiquidGlassScope.of(context),
+              quality: quality,
+              barHeight: iconOnly ? 56 : 48,
+              barBorderRadius: iconOnly ? 28 : 24,
+              tabWidth: metrics.tabWidth,
+              iconSize: iconOnly ? 24 : 21,
+              labelFontSize: 13,
+              iconLabelSpacing: iconOnly ? 0 : 6,
+              tabPadding: iconOnly
+                  ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
+                  : const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              indicatorExpansion: iconOnly
+                  ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
+                  : const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+              indicatorBorderRadius: iconOnly ? 26 : 20,
+              indicatorPinchStrength: 0.55,
+              magnification: iconOnly ? 1.02 : 1.04,
+              pressScale: 1.025,
+              settings: LiquidGlassSettings(
+                glassColor:
+                    colors.surface.withAlpha(appearance.navigationTintAlpha),
+                thickness: 24,
+                blur: 10,
+                refractiveIndex: 1.24,
+                chromaticAberration: 0.012,
+                lightIntensity: 0.62,
+                saturation: 1.35,
+                ambientRim: 0.16,
+              ),
+              indicatorColor: colors.primaryContainer
+                  .withAlpha(appearance.indicatorTintAlpha),
+              indicatorSettings: LiquidGlassSettings(
+                glassColor: colors.primaryContainer
+                    .withAlpha(appearance.indicatorGlassTintAlpha),
+                thickness: 34,
+                blur: 7,
+                refractiveIndex: 1.38,
+                chromaticAberration: 0.018,
+                lightIntensity: 0.78,
+                saturation: 1.48,
+                ambientRim: 0.28,
+              ),
+              selectedLabelColor: colors.onPrimaryContainer,
+              unselectedLabelColor: colors.onSurfaceVariant,
+              selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
+              unselectedLabelStyle:
+                  const TextStyle(fontWeight: FontWeight.w500),
+            ),
           ),
-      ],
-      selectedIndex: controller.index,
-      // GlassTabBar expects an absolute tab position (0..tabCount - 1),
-      // matching TabController.animation.value during a swipe.
-      indicatorPosition: position,
-      onTabSelected: controller.animateTo,
-      backgroundKey: LiquidGlassScope.of(context),
-      quality: quality,
-      barHeight: iconOnly ? 56 : 48,
-      barBorderRadius: iconOnly ? 28 : 24,
-      tabWidth: iconOnly ? 56 : 112,
-      iconSize: iconOnly ? 24 : 21,
-      labelFontSize: 13,
-      iconLabelSpacing: iconOnly ? 0 : 6,
-      tabPadding: iconOnly
-          ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
-          : const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      indicatorExpansion: iconOnly
-          ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
-          : const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
-      indicatorBorderRadius: iconOnly ? 26 : 20,
-      indicatorPinchStrength: 0.55,
-      magnification: iconOnly ? 1.02 : 1.04,
-      pressScale: 1.025,
-      settings: LiquidGlassSettings(
-        glassColor: colors.surface.withAlpha(appearance.navigationTintAlpha),
-        thickness: 24,
-        blur: 10,
-        refractiveIndex: 1.24,
-        chromaticAberration: 0.012,
-        lightIntensity: 0.62,
-        saturation: 1.35,
-        ambientRim: 0.16,
-      ),
-      indicatorColor:
-          colors.primaryContainer.withAlpha(appearance.indicatorTintAlpha),
-      indicatorSettings: LiquidGlassSettings(
-        glassColor: colors.primaryContainer
-            .withAlpha(appearance.indicatorGlassTintAlpha),
-        thickness: 34,
-        blur: 7,
-        refractiveIndex: 1.38,
-        chromaticAberration: 0.018,
-        lightIntensity: 0.78,
-        saturation: 1.48,
-        ambientRim: 0.28,
-      ),
-      selectedLabelColor: colors.onPrimaryContainer,
-      unselectedLabelColor: colors.onSurfaceVariant,
-      selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
-      unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
+        );
+      },
     );
   }
 
@@ -154,13 +167,9 @@ class SiteGlassTabBar extends StatelessWidget {
         position.round().clamp(0, Sites.supportSites.length - 1);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final availableWidth = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : Sites.supportSites.length * (iconOnly ? 56.0 : 112.0);
-        final maxTabWidth = iconOnly ? 56.0 : 112.0;
-        final tabWidth = (availableWidth / Sites.supportSites.length)
-            .clamp(0.0, maxTabWidth);
-        final barWidth = tabWidth * Sites.supportSites.length;
+        final metrics = _metricsFor(constraints, iconOnly: iconOnly);
+        final tabWidth = metrics.tabWidth;
+        final barWidth = metrics.barWidth;
         final indicatorLeft = tabWidth * position + 2;
         final indicatorWidth =
             math.max(0.0, tabWidth - 4).toDouble();
@@ -278,4 +287,28 @@ class SiteGlassTabBar extends StatelessWidget {
       },
     );
   }
+
+  _SiteTabBarMetrics _metricsFor(
+    BoxConstraints constraints, {
+    required bool iconOnly,
+  }) {
+    final maxTabWidth = iconOnly ? 56.0 : 112.0;
+    final availableWidth = constraints.maxWidth.isFinite
+        ? constraints.maxWidth
+        : Sites.supportSites.length * maxTabWidth;
+    final tabWidth = (availableWidth / Sites.supportSites.length)
+        .clamp(0.0, maxTabWidth)
+        .toDouble();
+    return _SiteTabBarMetrics(
+      tabWidth: tabWidth,
+      barWidth: tabWidth * Sites.supportSites.length,
+    );
+  }
+}
+
+class _SiteTabBarMetrics {
+  const _SiteTabBarMetrics({required this.tabWidth, required this.barWidth});
+
+  final double tabWidth;
+  final double barWidth;
 }

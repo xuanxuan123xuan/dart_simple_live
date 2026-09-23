@@ -71,6 +71,41 @@ void main() {
         expect(selections.last, 1);
       },
     );
+
+    testWidgets(
+      '${placement.name} fixed-width pill stays centered in its parent',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(400, 200));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: LiquidGlassScope(
+              child: Center(
+                child: SizedBox(
+                  width: 400,
+                  child: placement.buildBar(
+                    selectedIndex: 0,
+                    onSelected: (_) {},
+                    quality: GlassQuality.standard,
+                    tabWidth: 56,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gestureRegion = tester.getRect(find.byKey(gestureRegionKey));
+        expect(gestureRegion.width, closeTo(400, 0.5));
+        expect(gestureRegion.center.dx, closeTo(200, 0.5));
+
+        final indicator = tester.getRect(find.byType(TabIndicator));
+        expect(indicator.width, closeTo(224, 0.5));
+        expect(indicator.center.dx, closeTo(200, 0.5));
+      },
+    );
   }
 }
 
@@ -111,6 +146,8 @@ enum _TestPlacement {
   Widget buildBar({
     required int selectedIndex,
     required ValueChanged<int> onSelected,
+    GlassQuality quality = GlassQuality.minimal,
+    double? tabWidth,
   }) {
     const tabs = [
       GlassTab(icon: Icon(Icons.home), label: 'Home'),
@@ -125,7 +162,8 @@ enum _TestPlacement {
           tabs: tabs,
           selectedIndex: selectedIndex,
           onTabSelected: onSelected,
-          quality: GlassQuality.minimal,
+          quality: quality,
+          tabWidth: tabWidth,
           horizontalPadding: 0,
           verticalPadding: 0,
         );
@@ -134,7 +172,8 @@ enum _TestPlacement {
           tabs: tabs,
           selectedIndex: selectedIndex,
           onTabSelected: onSelected,
-          quality: GlassQuality.minimal,
+          quality: quality,
+          tabWidth: tabWidth,
           horizontalPadding: 0,
           verticalPadding: 0,
         );
