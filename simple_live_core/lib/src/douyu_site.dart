@@ -34,6 +34,18 @@ class _DouyuPlayUrlAttempt {
 }
 
 class DouyuSite implements LiveSite {
+  /// Optional authenticated web cookie. Empty preserves anonymous behavior.
+  String cookie = "";
+
+  Map<String, dynamic> _roomHeaders(String roomId) {
+    final headers = <String, dynamic>{
+      'referer': 'https://www.douyu.com/$roomId',
+      'user-agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43',
+    };
+    if (cookie.trim().isNotEmpty) headers['Cookie'] = cookie.trim();
+    return headers;
+  }
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
     return await getLiveStatus(roomId: roomId)
@@ -123,6 +135,7 @@ class DouyuSite implements LiveSite {
     var result = await HttpClient.instance.postJson(
       "https://www.douyu.com/lapi/live/getH5Play/${detail.roomId}",
       data: data,
+      header: _roomHeaders(detail.roomId),
       formUrlEncoded: true,
     );
 
@@ -237,6 +250,7 @@ class DouyuSite implements LiveSite {
       "https://www.douyu.com/swf_api/homeH5Enc?rids=$roomId",
       queryParameters: {},
       header: {
+        if (cookie.trim().isNotEmpty) 'Cookie': cookie.trim(),
         'referer': 'https://www.douyu.com/$roomId',
         'user-agent':
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
@@ -285,6 +299,7 @@ class DouyuSite implements LiveSite {
       "https://www.douyu.com/swf_api/h5room/$roomId",
       queryParameters: {},
       header: {
+        if (cookie.trim().isNotEmpty) 'Cookie': cookie.trim(),
         'referer': 'https://www.douyu.com/$roomId',
         'user-agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43',
@@ -296,6 +311,7 @@ class DouyuSite implements LiveSite {
       "https://www.douyu.com/swf_api/homeH5Enc?rids=$roomId",
       queryParameters: {},
       header: {
+        if (cookie.trim().isNotEmpty) 'Cookie': cookie.trim(),
         'referer': 'https://www.douyu.com/$roomId',
         'user-agent':
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
@@ -415,6 +431,7 @@ class DouyuSite implements LiveSite {
       "https://www.douyu.com/betard/$roomId",
       queryParameters: {},
       header: {
+        if (cookie.trim().isNotEmpty) 'Cookie': cookie.trim(),
         'referer': 'https://www.douyu.com/$roomId',
         'user-agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43',
