@@ -194,6 +194,18 @@ class DouyuSite implements LiveSite {
     int rate,
     String cdn,
   ) async {
+    // The signed arguments in LiveRoomDetail expire. Always fetch the current
+    // room script before requesting a playback URL instead of reusing args.
+    final freshArgs = await _getFreshPlayArgs(roomId);
+    return _requestPlayUrl(roomId, freshArgs, rate, cdn);
+  }
+
+  Future<String> _requestPlayUrl(
+    String roomId,
+    String args,
+    int rate,
+    String cdn,
+  ) async {
     args += "&cdn=$cdn&rate=$rate";
     var result = await HttpClient.instance.postJson(
       "https://www.douyu.com/lapi/live/getH5Play/$roomId",
@@ -206,7 +218,38 @@ class DouyuSite implements LiveSite {
       formUrlEncoded: true,
     );
 
-    return "${result["data"]["rtmp_url"]}/${HtmlUnescape().convert(result["data"]["rtmp_live"].toString())}";
+    if (result is! Map || result["data"] is! Map) {
+      throw CoreError("斗鱼取流响应格式错误", kind: CoreErrorKind.response);
+    }
+    final data = result["data"] as Map;
+    final baseUrl = data["rtmp_url"]?.toString().trim() ?? "";
+    final streamName = HtmlUnescape()
+        .convert(data["rtmp_live"]?.toString() ?? "")
+        .trim();
+    if (baseUrl.isEmpty || streamName.isEmpty) {
+      throw CoreError("斗鱼取流响应缺少可播放地址", kind: CoreErrorKind.response);
+    }
+    return "${baseUrl.replaceFirst(RegExp(r'/+$'), '')}/$streamName";
+  }
+
+  Future<String> _getFreshPlayArgs(String roomId) async {
+    final jsEncResult = await HttpClient.instance.getText(
+      "https://www.douyu.com/swf_api/homeH5Enc?rids=$roomId",
+      queryParameters: {},
+      header: {
+        'referer': 'https://www.douyu.com/$roomId',
+        'user-agent':
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
+      },
+    );
+    final decoded = json.decode(jsEncResult);
+    final roomScript = decoded is Map && decoded["data"] is Map
+        ? (decoded["data"] as Map)["room$roomId"]
+        : null;
+    if (roomScript == null || roomScript.toString().isEmpty) {
+      throw CoreError("斗鱼签名脚本响应格式错误", kind: CoreErrorKind.response);
+    }
+    return DouyuSign.getSign(roomScript.toString(), roomId);
   }
 
   @override
