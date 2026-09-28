@@ -94,6 +94,48 @@ bool shouldAcceptOfflineRoomRefresh({
   return !playbackActive && consecutiveOfflineReports >= requiredReports;
 }
 
+/// 从当前房间之后开始环绕查找，最多核验 [maxChecks] 个不同的候选房间。
+/// 关注列表的直播状态可能已经过期，因此只有实时确认开播才允许切入。
+@visibleForTesting
+Future<T?> findNextConfirmedLiveRoom<T>({
+  required List<T> rooms,
+  required bool Function(T room) isCurrent,
+  required Future<LiveStatusState> Function(T room) checkStatus,
+  int maxChecks = 3,
+  bool Function()? shouldContinue,
+}) async {
+  if (rooms.isEmpty || maxChecks <= 0) {
+    return null;
+  }
+  final currentIndex = rooms.indexWhere(isCurrent);
+  var checked = 0;
+  for (var offset = 1; offset <= rooms.length && checked < maxChecks; offset++) {
+    if (shouldContinue != null && !shouldContinue()) {
+      return null;
+    }
+    final index = currentIndex < 0
+        ? offset - 1
+        : (currentIndex + offset) % rooms.length;
+    final candidate = rooms[index];
+    if (isCurrent(candidate)) {
+      continue;
+    }
+    checked++;
+    try {
+      final status = await checkStatus(candidate);
+      if (shouldContinue != null && !shouldContinue()) {
+        return null;
+      }
+      if (status == LiveStatusState.live) {
+        return candidate;
+      }
+    } catch (_) {
+      // 单个房间状态查询失败不应阻断后续候选。
+    }
+  }
+  return null;
+}
+
 /// 在线状态轮询的退避间隔（S2-T1）。
 ///
 /// [state] 为当前房间直播状态，[failures] 为连续失败（unknown）次数。
@@ -4427,30 +4469,51 @@ class LiveRoomController extends PlayerController
     }
 
     final currentId = "${site.id}_$roomId";
-    final currentIndex =
-        liveChannels.indexWhere((item) => item.id == currentId);
-    final candidates =
-        liveChannels.where((item) => item.id != currentId).toList();
-    if (candidates.isEmpty) {
+    if (liveChannels.every((item) => item.id == currentId)) {
       return;
     }
 
-    FollowUser target;
-    if (currentIndex < 0 || currentIndex >= liveChannels.length - 1) {
-      target = candidates.first;
-    } else {
-      target = liveChannels[currentIndex + 1];
-      if (target.id == currentId) {
-        target = candidates.first;
-      }
-    }
-
     _autoSwitchingRoom = true;
+    final generation = _loadGeneration;
     try {
+      final target = await findNextConfirmedLiveRoom<FollowUser>(
+        rooms: liveChannels,
+        isCurrent: (item) => item.id == currentId,
+        shouldContinue: () => !_roomDisposed &&
+            generation == _loadGeneration &&
+            "${site.id}_$roomId" == currentId,
+        checkStatus: (item) async {
+          final candidateSite = Sites.allSites[item.siteId];
+          if (candidateSite == null) {
+            return LiveStatusState.unknown;
+          }
+          final liveSite = candidateSite.liveSite;
+          final statusRequest = item.siteId == Constant.kKuaishou
+              ? KuaishouRequestTrace.run(
+                  KuaishouRequestSource.followStatus,
+                  () => (liveSite as KuaishouSite)
+                      .getFollowLiveStatusState(roomId: item.roomId),
+                  scopeId: 'kuaishou:auto-switch',
+                  forceNetwork: true,
+                )
+              : liveSite.getLiveStatusState(roomId: item.roomId);
+          return statusRequest.timeout(const Duration(seconds: 12));
+        },
+      );
+      if (target == null ||
+          _roomDisposed ||
+          generation != _loadGeneration ||
+          "${site.id}_$roomId" != currentId) {
+        return;
+      }
+      final targetSite = Sites.allSites[target.siteId];
+      if (targetSite == null) {
+        return;
+      }
+      await resetRoom(targetSite, target.roomId);
       SmartDialog.showToast(
         reason == "live_end" ? "当前直播已结束，已切换到下一个直播间" : "当前直播播放失败，已切换到下一个直播间",
       );
-      resetRoom(Sites.allSites[target.siteId]!, target.roomId);
     } finally {
       _autoSwitchingRoom = false;
     }

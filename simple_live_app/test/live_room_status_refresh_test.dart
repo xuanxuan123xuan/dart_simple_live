@@ -3,6 +3,43 @@ import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 void main() {
+  group('auto switch candidate confirmation', () {
+    test('skips offline and failed candidates before selecting a live room', () async {
+      final checked = <String>[];
+      final result = await findNextConfirmedLiveRoom<String>(
+        rooms: const ['current', 'offline', 'failed', 'live'],
+        isCurrent: (room) => room == 'current',
+        maxChecks: 3,
+        checkStatus: (room) async {
+          checked.add(room);
+          if (room == 'failed') {
+            throw StateError('temporary status failure');
+          }
+          return room == 'live'
+              ? LiveStatusState.live
+              : LiveStatusState.offline;
+        },
+      );
+      expect(result, 'live');
+      expect(checked, ['offline', 'failed', 'live']);
+    });
+
+    test('stops after the bounded number of checks', () async {
+      var checks = 0;
+      final result = await findNextConfirmedLiveRoom<String>(
+        rooms: const ['current', 'offline-a', 'offline-b', 'live'],
+        isCurrent: (room) => room == 'current',
+        maxChecks: 2,
+        checkStatus: (_) async {
+          checks++;
+          return LiveStatusState.offline;
+        },
+      );
+      expect(result, isNull);
+      expect(checks, 2);
+    });
+  });
+
   test('Kuaishou recovery countdown uses minute-second format', () {
     expect(formatKuaishouRecoveryCountdown(300), '5:00');
     expect(formatKuaishouRecoveryCountdown(61), '1:01');
