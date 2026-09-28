@@ -11,6 +11,8 @@ import 'package:simple_live_core/src/model/tars/huya_user_id.dart';
 import 'package:tars_dart/tars/net/base_tars_http.dart';
 
 class HuyaSite implements LiveSite {
+  static const int _huyaSearchPageSize = 100;
+
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
     return await getLiveStatus(roomId: roomId)
@@ -600,8 +602,8 @@ class HuyaSite implements LiveSite {
         "v": 4,
         "typ": -5,
         "livestate": 0,
-        "rows": 20,
-        "start": (page - 1) * 20,
+        "rows": _huyaSearchPageSize,
+        "start": (page - 1) * _huyaSearchPageSize,
       },
       cancellation: cancellation,
     );
@@ -659,8 +661,8 @@ class HuyaSite implements LiveSite {
         "v": 1,
         "typ": -5,
         "livestate": 0,
-        "rows": 20,
-        "start": (page - 1) * 20,
+        "rows": _huyaSearchPageSize,
+        "start": (page - 1) * _huyaSearchPageSize,
       },
       cancellation: cancellation,
     );
@@ -734,9 +736,14 @@ class HuyaSite implements LiveSite {
     }
 
     final parsedDocs = <Map<dynamic, dynamic>>[];
+    final seenRoomIds = <String>{};
     for (final doc in docs) {
       if (doc is! Map) {
         throw _invalidHuyaSearchResponse(searchType);
+      }
+      final roomId = doc["room_id"]?.toString().trim() ?? "";
+      if (roomId.isNotEmpty && !seenRoomIds.add(roomId)) {
+        continue;
       }
       parsedDocs.add(doc);
     }
@@ -744,7 +751,9 @@ class HuyaSite implements LiveSite {
       docs: parsedDocs,
       total: total,
       continuation:
-          total > page * 20 ? SearchContinuation.more : SearchContinuation.done,
+          total > page * _huyaSearchPageSize
+              ? SearchContinuation.more
+              : SearchContinuation.done,
     );
   }
 
