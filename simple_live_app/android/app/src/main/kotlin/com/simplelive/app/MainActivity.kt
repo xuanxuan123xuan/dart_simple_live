@@ -4,8 +4,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
@@ -15,7 +18,17 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var appWindowChannel: MethodChannel? = null
+    private var backgroundPlaybackChannel: MethodChannel? = null
     private var lastWindowState: Map<String, Any>? = null
+    private var backgroundReceiverRegistered = false
+
+    private val backgroundControlReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val control = intent?.getStringExtra(BackgroundPlaybackService.EXTRA_CONTROL)
+                ?: return
+            backgroundPlaybackChannel?.invokeMethod(control, null)
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -31,10 +44,11 @@ class MainActivity : FlutterActivity() {
             }
         }
         emitWindowState(force = true)
-        MethodChannel(
+        backgroundPlaybackChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "simple_live/background_playback",
-        ).setMethodCallHandler { call, result ->
+        )
+        backgroundPlaybackChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "start" -> {
                     startService()
@@ -46,9 +60,42 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
+                "updateMetadata" -> {
+                    startBackgroundServiceCommand(
+                        BackgroundPlaybackService.ACTION_UPDATE_METADATA,
+                    ) { intent ->
+                        intent.putExtra(
+                            BackgroundPlaybackService.EXTRA_TITLE,
+                            call.argument<String>("title"),
+                        )
+                        intent.putExtra(
+                            BackgroundPlaybackService.EXTRA_ARTIST,
+                            call.argument<String>("artist"),
+                        )
+                        intent.putExtra(
+                            BackgroundPlaybackService.EXTRA_ALBUM,
+                            call.argument<String>("album"),
+                        )
+                    }
+                    result.success(null)
+                }
+
+                "setPlaybackState" -> {
+                    startBackgroundServiceCommand(
+                        BackgroundPlaybackService.ACTION_UPDATE_PLAYBACK_STATE,
+                    ) { intent ->
+                        intent.putExtra(
+                            BackgroundPlaybackService.EXTRA_PLAYING,
+                            call.argument<Boolean>("playing") ?: false,
+                        )
+                    }
+                    result.success(null)
+                }
+
                 else -> result.notImplemented()
             }
         }
+        registerBackgroundControlReceiver()
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "simple_live/live_notifications",
@@ -89,6 +136,26 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         emitWindowState()
+    }
+
+    override fun onDestroy() {
+        if (backgroundReceiverRegistered) {
+            unregisterReceiver(backgroundControlReceiver)
+            backgroundReceiverRegistered = false
+        }
+        super.onDestroy()
+    }
+
+    private fun registerBackgroundControlReceiver() {
+        if (backgroundReceiverRegistered) return
+        val filter = IntentFilter(BackgroundPlaybackService.ACTION_CONTROL)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(backgroundControlReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(backgroundControlReceiver, filter)
+        }
+        backgroundReceiverRegistered = true
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -179,6 +246,19 @@ class MainActivity : FlutterActivity() {
     private fun startService() {
         val intent = Intent(this, BackgroundPlaybackService::class.java)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun startBackgroundServiceCommand(
+        action: String,
+        configure: (Intent) -> Unit,
+    ) {
+        val intent = Intent(this, BackgroundPlaybackService::class.java).setAction(action)
+        configure(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {
             startService(intent)
