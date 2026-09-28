@@ -87,6 +87,13 @@ class LiveRoomLinkParser {
     if (host == 'live.douyin.com') {
       return _target(Constant.kDouyin, _firstPathSegment(uri));
     }
+    // 抖音网页端直播间：www.douyin.com/live/<roomId> 与
+    // www.douyin.com/follow/live/<roomId>。其余 www 页面（搜索、用户、
+    // 视频）一律不当作直播间。
+    if (host == 'www.douyin.com' || host == 'douyin.com') {
+      final roomId = _douyinWebRoomId(uri);
+      return roomId == null ? null : _target(Constant.kDouyin, roomId);
+    }
     if (host == 'webcast.amemv.com') {
       final reflowIndex = uri.pathSegments.indexOf('reflow');
       final roomId =
@@ -121,6 +128,25 @@ class LiveRoomLinkParser {
         ? RegExp(r'^[A-Za-z0-9_.-]+$')
         : RegExp(r'^[A-Za-z0-9_-]+$');
     return pattern.hasMatch(roomId) && RegExp(r'[A-Za-z0-9]').hasMatch(roomId);
+  }
+
+  /// 从 www.douyin.com 的路径里取直播间 id。
+  ///
+  /// 仅接受 /live/<id> 与 /follow/live/<id>；其余路径返回 null，避免把
+  /// 搜索页、用户页、普通视频页误识别成直播间。
+  static String? _douyinWebRoomId(Uri uri) {
+    final segments = uri.pathSegments
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    if (segments.length < 2 || segments.last == 'live') {
+      return null;
+    }
+    final liveIndex = segments.indexOf('live');
+    if (liveIndex < 0 || liveIndex + 1 != segments.length - 1) {
+      return null;
+    }
+    return segments.last;
   }
 
   static String _firstPathSegment(Uri uri) {
