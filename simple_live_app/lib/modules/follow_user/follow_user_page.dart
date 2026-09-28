@@ -962,6 +962,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
                 controller: tagEditController,
                 minLines: 1,
                 maxLines: 1,
+                maxLength: 8,
                 decoration: InputDecoration(
                   border: const OutlineInputBorder(),
                   contentPadding: AppStyle.edgeInsetsA12,
@@ -972,13 +973,15 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   ),
                 ),
                 onSubmitted: (_) {
-                  upMode
+                  final submitted = upMode
                       ? controller.addTag(tagEditController.text)
                       : controller.updateTagName(
                           followUserTag!,
                           tagEditController.text,
                         );
-                  Get.back();
+                  if (submitted) {
+                    Get.back();
+                  }
                 },
               ),
               Container(
@@ -995,13 +998,15 @@ class _FollowUserPageState extends State<FollowUserPage> {
                     ),
                     TextButton(
                       onPressed: () {
-                        upMode
+                        final submitted = upMode
                             ? controller.addTag(tagEditController.text)
                             : controller.updateTagName(
                                 followUserTag!,
                                 tagEditController.text,
                               );
-                        Get.back();
+                        if (submitted) {
+                          Get.back();
+                        }
                       },
                       child: const Text('是'),
                     ),
