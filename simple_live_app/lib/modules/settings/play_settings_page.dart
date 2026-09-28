@@ -9,6 +9,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
+import 'package:simple_live_app/modules/settings/background_playback_guide_page.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:simple_live_app/services/ohos_playback_capabilities_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
@@ -152,6 +153,20 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     },
                   ),
                 ),
+                if (supportsBackgroundPlaybackGuide) ...[
+                  AppStyle.divider,
+                  ListTile(
+                    title: const Text('后台播放保活指南'),
+                    subtitle: const Text('查看电池优化、自启动和通知设置建议'),
+                    trailing: const Icon(Icons.chevron_right),
+                    contentPadding: AppStyle.edgeInsetsL16.copyWith(right: 8),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const BackgroundPlaybackGuidePage(),
+                      ),
+                    ),
+                  ),
+                ],
                 if (Utils.isOhos) ...[
                   AppStyle.divider,
                   Obx(

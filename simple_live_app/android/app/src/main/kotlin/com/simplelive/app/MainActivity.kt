@@ -11,7 +11,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -93,6 +95,23 @@ class MainActivity : FlutterActivity() {
                 }
 
                 else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "simple_live/background_playback_guide",
+        ).setMethodCallHandler { call, result ->
+            val opened = when (call.method) {
+                "openBatteryOptimization" -> openBatteryOptimizationSettings()
+                "openAppBatteryManagement" -> openAppDetailsSettings()
+                "openAutostart" -> openAutostartSettings()
+                "openNotifications" -> openNotificationSettings()
+                else -> null
+            }
+            if (opened == null) {
+                result.notImplemented()
+            } else {
+                result.success(opened)
             }
         }
         registerBackgroundControlReceiver()
@@ -262,6 +281,64 @@ class MainActivity : FlutterActivity() {
             startForegroundService(intent)
         } else {
             startService(intent)
+        }
+    }
+
+    private fun openBatteryOptimizationSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return openAppDetailsSettings()
+        }
+        return openSettingsIntent(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+    }
+
+    private fun openAppDetailsSettings(): Boolean {
+        return openSettingsIntent(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            },
+        )
+    }
+
+    private fun openNotificationSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return openAppDetailsSettings()
+        }
+        return openSettingsIntent(
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            },
+        )
+    }
+
+    private fun openAutostartSettings(): Boolean {
+        val vendorIntents = listOf(
+            Intent("miui.intent.action.OP_AUTO_START").setPackage("com.miui.securitycenter"),
+            Intent("com.coloros.safecenter.action.STARTUP_SETTING")
+                .setPackage("com.coloros.safecenter"),
+            Intent("com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity")
+                .setPackage("com.iqoo.secure"),
+            Intent("huawei.intent.action.HSM_BOOTAPP_MANAGER")
+                .setPackage("com.huawei.systemmanager"),
+            Intent("com.meizu.safe.security.SHOW_APPSEC").setPackage("com.meizu.safe"),
+        )
+        for (intent in vendorIntents) {
+            if (openSettingsIntent(intent)) {
+                return true
+            }
+        }
+        return openAppDetailsSettings()
+    }
+
+    private fun openSettingsIntent(intent: Intent): Boolean {
+        return try {
+            if (intent.resolveActivity(packageManager) == null) {
+                false
+            } else {
+                startActivity(intent)
+                true
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 
