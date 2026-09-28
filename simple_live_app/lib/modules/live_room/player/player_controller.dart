@@ -295,6 +295,44 @@ mixin PlayerMixin {
     // media_kit 仓库更新导致的问题，临时解决办法
     if (Platform.isAndroid) {
       await nativePlayer.setProperty('force-seekable', 'yes');
+      BackgroundPlaybackService.instance.setAndroidControlHandler(
+        _handleAndroidBackgroundControl,
+      );
+    }
+  }
+
+  bool _androidAudioDucked = false;
+
+  Future<void> _handleAndroidBackgroundControl(String control) async {
+    if (!Platform.isAndroid || Utils.isOhos) return;
+    switch (control) {
+      case 'play':
+      case 'resume':
+        await player.play();
+        break;
+      case 'pause':
+        await player.pause();
+        break;
+      case 'stop':
+        await player.stop();
+        await BackgroundPlaybackService.instance.stop();
+        break;
+      case 'duck':
+        if (!_androidAudioDucked) {
+          final current = player.state.volume.clamp(0.0, 100.0).toDouble();
+          await player.setVolume(current * 0.2);
+          _androidAudioDucked = true;
+        }
+        break;
+      case 'unduck':
+        if (_androidAudioDucked) {
+          final restore = AppSettingsController.instance.playerVolume.value
+              .clamp(0.0, 100.0)
+              .toDouble();
+          await player.setVolume(restore);
+          _androidAudioDucked = false;
+        }
+        break;
     }
   }
 
@@ -3708,6 +3746,7 @@ class PlayerController extends BaseController
     if (playing &&
         AppSettingsController.instance.allowBackgroundPlayback.value) {
       await BackgroundPlaybackService.instance.start();
+      await BackgroundPlaybackService.instance.updatePlaybackState(playing: true);
     } else if (!playing ||
         !AppSettingsController.instance.allowBackgroundPlayback.value) {
       await BackgroundPlaybackService.instance.stop();
@@ -3981,6 +4020,7 @@ class PlayerController extends BaseController
       return;
     }
     await stopBackgroundPlaybackService();
+    BackgroundPlaybackService.instance.setAndroidControlHandler(null);
     await stopLiveLatencyChase();
     await player.stop();
     if (smallWindowState.value) {
