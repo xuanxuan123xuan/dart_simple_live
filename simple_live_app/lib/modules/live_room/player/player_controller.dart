@@ -295,6 +295,8 @@ mixin PlayerMixin {
     // media_kit 仓库更新导致的问题，临时解决办法
     if (Platform.isAndroid) {
       await nativePlayer.setProperty('force-seekable', 'yes');
+    }
+    if (Platform.isAndroid || Platform.isIOS) {
       BackgroundPlaybackService.instance.setAndroidControlHandler(
         _handleAndroidBackgroundControl,
       );
@@ -304,7 +306,7 @@ mixin PlayerMixin {
   bool _androidAudioDucked = false;
 
   Future<void> _handleAndroidBackgroundControl(String control) async {
-    if (!Platform.isAndroid || Utils.isOhos) return;
+    if ((!Platform.isAndroid && !Platform.isIOS) || Utils.isOhos) return;
     switch (control) {
       case 'play':
       case 'resume':
@@ -3740,7 +3742,7 @@ class PlayerController extends BaseController
   }
 
   Future<void> _syncBackgroundPlaybackService(bool playing) async {
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isIOS) {
       return;
     }
     if (playing &&

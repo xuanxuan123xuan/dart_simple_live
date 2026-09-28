@@ -1,10 +1,17 @@
 import UIKit
 import Flutter
 import UserNotifications
+import AVFoundation
+import MediaPlayer
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private var iosMenuChannel: FlutterMethodChannel?
+  private var backgroundPlaybackChannel: FlutterMethodChannel?
+  private var nowPlayingInfo: [String: Any] = [:]
+  private var backgroundPlaybackIsPlaying = false
+  private var wasPlayingBeforeInterruption = false
+  private var remoteCommandsConfigured = false
 
   override func application(
     _ application: UIApplication,
@@ -24,6 +31,7 @@ import UserNotifications
         name: "simple_live/ios_menu",
         binaryMessenger: controller.binaryMessenger
       )
+      configureBackgroundPlayback(controller: controller)
       channel.setMethodCallHandler { call, result in
         if call.method == "showLiveStart" {
           let args = call.arguments as? [String: Any]
@@ -101,6 +109,187 @@ import UserNotifications
       }
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  private func configureBackgroundPlayback(controller: FlutterViewController) {
+    let channel = FlutterMethodChannel(
+      name: "simple_live/background_playback",
+      binaryMessenger: controller.binaryMessenger
+    )
+    backgroundPlaybackChannel = channel
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(FlutterError(code: "APP_DELEGATE_UNAVAILABLE", message: nil, details: nil))
+        return
+      }
+      switch call.method {
+      case "start":
+        do {
+          try self.activateAudioSession()
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "AUDIO_SESSION_START_FAILED",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      case "updateMetadata":
+        self.updateNowPlayingInfo(call.arguments as? [String: Any])
+        result(nil)
+      case "setPlaybackState":
+        let args = call.arguments as? [String: Any]
+        self.backgroundPlaybackIsPlaying = args?["playing"] as? Bool ?? false
+        self.updateNowPlayingPlaybackState()
+        result(nil)
+      case "stop", "release":
+        self.backgroundPlaybackIsPlaying = false
+        self.clearNowPlayingInfo()
+        self.deactivateAudioSession()
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    configureAudioSessionNotifications()
+    configureRemoteCommands()
+  }
+
+  private func activateAudioSession() throws {
+    let session = AVAudioSession.sharedInstance()
+    try session.setCategory(.playback, mode: .moviePlayback, options: [.allowBluetoothA2DP])
+    try session.setActive(true)
+    UIApplication.shared.beginReceivingRemoteControlEvents()
+  }
+
+  private func deactivateAudioSession() {
+    do {
+      try AVAudioSession.sharedInstance().setActive(
+        false,
+        options: [.notifyOthersOnDeactivation]
+      )
+    } catch {
+      // The session can already be inactive when a room is closed.
+    }
+    UIApplication.shared.endReceivingRemoteControlEvents()
+  }
+
+  private func configureAudioSessionNotifications() {
+    let center = NotificationCenter.default
+    center.addObserver(
+      self,
+      selector: #selector(handleAudioSessionInterruption(_:)),
+      name: AVAudioSession.interruptionNotification,
+      object: AVAudioSession.sharedInstance()
+    )
+    center.addObserver(
+      self,
+      selector: #selector(handleAudioSessionRouteChange(_:)),
+      name: AVAudioSession.routeChangeNotification,
+      object: AVAudioSession.sharedInstance()
+    )
+  }
+
+  private func configureRemoteCommands() {
+    guard !remoteCommandsConfigured else { return }
+    remoteCommandsConfigured = true
+    let commandCenter = MPRemoteCommandCenter.shared()
+    commandCenter.playCommand.isEnabled = true
+    commandCenter.pauseCommand.isEnabled = true
+    commandCenter.stopCommand.isEnabled = true
+    commandCenter.playCommand.addTarget { [weak self] _ in
+      guard let self else { return .commandFailed }
+      self.backgroundPlaybackIsPlaying = true
+      self.sendPlaybackControl("play")
+      self.updateNowPlayingPlaybackState()
+      return .success
+    }
+    commandCenter.pauseCommand.addTarget { [weak self] _ in
+      guard let self else { return .commandFailed }
+      self.backgroundPlaybackIsPlaying = false
+      self.sendPlaybackControl("pause")
+      self.updateNowPlayingPlaybackState()
+      return .success
+    }
+    commandCenter.stopCommand.addTarget { [weak self] _ in
+      guard let self else { return .commandFailed }
+      self.backgroundPlaybackIsPlaying = false
+      self.sendPlaybackControl("stop")
+      self.clearNowPlayingInfo()
+      self.deactivateAudioSession()
+      return .success
+    }
+  }
+
+  private func sendPlaybackControl(_ control: String) {
+    backgroundPlaybackChannel?.invokeMethod(control, arguments: nil)
+  }
+
+  private func updateNowPlayingInfo(_ arguments: [String: Any]?) {
+    guard let arguments else { return }
+    if let title = arguments["title"] as? String, !title.isEmpty {
+      nowPlayingInfo[MPMediaItemPropertyTitle] = title
+    }
+    if let artist = arguments["artist"] as? String, !artist.isEmpty {
+      nowPlayingInfo[MPMediaItemPropertyArtist] = artist
+    }
+    if let album = arguments["album"] as? String, !album.isEmpty {
+      nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = album
+    }
+    updateNowPlayingPlaybackState()
+  }
+
+  private func updateNowPlayingPlaybackState() {
+    nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = backgroundPlaybackIsPlaying ? 1.0 : 0.0
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo.isEmpty ? nil : nowPlayingInfo
+  }
+
+  private func clearNowPlayingInfo() {
+    nowPlayingInfo.removeAll()
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+  }
+
+  @objc private func handleAudioSessionInterruption(_ notification: Notification) {
+    guard
+      let userInfo = notification.userInfo,
+      let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+      let type = AVAudioSession.InterruptionType(rawValue: typeValue)
+    else { return }
+    switch type {
+    case .began:
+      wasPlayingBeforeInterruption = backgroundPlaybackIsPlaying
+      if wasPlayingBeforeInterruption {
+        backgroundPlaybackIsPlaying = false
+        sendPlaybackControl("pause")
+        updateNowPlayingPlaybackState()
+      }
+    case .ended:
+      guard
+        wasPlayingBeforeInterruption,
+        let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt,
+        AVAudioSession.InterruptionOptions(rawValue: optionsValue).contains(.shouldResume)
+      else { return }
+      wasPlayingBeforeInterruption = false
+      do { try activateAudioSession() } catch { return }
+      backgroundPlaybackIsPlaying = true
+      sendPlaybackControl("play")
+      updateNowPlayingPlaybackState()
+    @unknown default:
+      break
+    }
+  }
+
+  @objc private func handleAudioSessionRouteChange(_ notification: Notification) {
+    guard
+      let userInfo = notification.userInfo,
+      let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+      let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
+      reason == .oldDeviceUnavailable,
+      backgroundPlaybackIsPlaying
+    else { return }
+    backgroundPlaybackIsPlaying = false
+    sendPlaybackControl("pause")
+    updateNowPlayingPlaybackState()
   }
 
   override func buildMenu(with builder: UIMenuBuilder) {

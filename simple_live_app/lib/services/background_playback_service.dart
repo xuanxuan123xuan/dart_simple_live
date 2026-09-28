@@ -28,7 +28,8 @@ class BackgroundPlaybackService {
   static final BackgroundPlaybackService instance =
       BackgroundPlaybackService._();
 
-  static bool _defaultIsSupported() => Platform.isAndroid || Utils.isOhos;
+  static bool _defaultIsSupported() =>
+      Platform.isAndroid || Platform.isIOS || Utils.isOhos;
   static bool _defaultIsOhos() => Utils.isOhos;
 
   final MethodChannel _channel;
