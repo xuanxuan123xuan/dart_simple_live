@@ -64,6 +64,7 @@ class AppLiveCategory extends LiveCategory {
     required super.id,
     required super.name,
     required super.children,
+    super.pic,
   }) {
     showAll.value = children.length < 19;
   }
@@ -75,6 +76,7 @@ class AppLiveCategory extends LiveCategory {
       children: item.children,
       id: item.id,
       name: item.name,
+      pic: item.pic,
     );
   }
 }
