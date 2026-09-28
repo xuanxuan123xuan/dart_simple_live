@@ -688,6 +688,58 @@ void main() {
     await danmaku.stop();
   });
 
+  test('server error frame tears down the stale socket and reconnects',
+      () async {
+    final timers = <_FakeTimer>[];
+    final closeMessages = <String>[];
+    final attempts = <_FakeConnection>[];
+    var connections = 0;
+    final danmaku = KuaishouDanmaku(
+      autoRefreshEmoji: false,
+      connector: (_, __) {
+        connections += 1;
+        final connection = _FakeConnection();
+        attempts.add(connection);
+        return connection;
+      },
+      socketRetryTimerFactory: (_, callback) {
+        final timer = _FakeTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    )..onClose = closeMessages.add;
+
+    await danmaku.start(_readyCredentials());
+    expect(connections, 1);
+    final staleConnection = attempts.single;
+    expect(staleConnection.closed, isFalse);
+
+    // SC_ERROR 帧：外层字段 1 = payloadType(103)、字段 3 = 错误 payload；
+    // 错误 payload 内层字段 1 = 错误码、字段 2 = 错误消息。
+    final errorPayload = (_ProtoWriter()
+          ..writeVarint(1, 4001)
+          ..writeString(2, '房间已关闭'))
+        .takeBytes();
+    danmaku.decodeMessage(
+      (_ProtoWriter()
+            ..writeVarint(1, 103)
+            ..writeBytes(3, errorPayload))
+          .takeBytes(),
+    );
+    await _flushAsync();
+
+    expect(closeMessages, isNotEmpty);
+    expect(closeMessages.first, contains('房间已关闭'));
+    expect(staleConnection.closed, isTrue, reason: '半开连接必须被显式拆除');
+    expect(timers, hasLength(1), reason: 'SC_ERROR 后应安排一次重连');
+
+    timers.single.fire();
+    await _flushAsync();
+
+    expect(connections, 2, reason: '重连定时器应触发新的连接尝试');
+    expect(attempts.last.closed, isFalse);
+    await danmaku.stop();
+  });
   group('kuaishou emoji refresh', () {
     test('移动端词库兜底：未刷新时命中内置映射', () {
       expect(

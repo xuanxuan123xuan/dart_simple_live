@@ -452,6 +452,11 @@ class KuaishouDanmaku extends LiveDanmaku {
           final error = _decodeError(payload);
           if (error.isNotEmpty) {
             onClose?.call(error);
+            // SC_ERROR can arrive while the transport is still marked
+            // connected. Explicitly close that stream before scheduling the
+            // retry, otherwise the socket remains half-open and no further
+            // messages are delivered.
+            webScoketUtils?.reconnect();
           }
           break;
         case 310:

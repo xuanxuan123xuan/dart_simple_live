@@ -363,6 +363,18 @@ class WebScoketUtils {
     if (_manuallyClosed) {
       return;
     }
-    _scheduleReconnect();
+    // A caller may request a retry while the stream is still open (for
+    // example, after a server-level error frame). Tear down the old stream
+    // first so the retry cannot leave a half-open connection behind.
+    if (_disconnectHandled) {
+      return;
+    }
+    _disconnectHandled = true;
+    status = SocketStatus.failed;
+    unawaited(
+      _teardownConnection(invalidateGeneration: false).then((_) {
+        _scheduleReconnect();
+      }),
+    );
   }
 }

@@ -1699,6 +1699,105 @@ void main() {
           reason: '凭证解析不应要求认证页携带 playUrls');
       expect(resolved.token, 'secret-token');
     });
+
+    test('normalizes websocket URL shapes and filters invalid entries',
+        () async {
+      final dio = Dio()
+        ..interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
+          handler.resolve(Response<String>(
+            requestOptions: options,
+            statusCode: 200,
+            data:
+                '''<script>window.__INITIAL_STATE__={"liveroom":{"token":"room-token","webSocketUrls":"wss://one.example/live","webSocketInfo":{"webSocketAddresses":["wss://one.example/live","ws://two.example/live","https://bad.example/live","not-a-url"]},"playList":[{"isLiving":true,"author":{"id":"shape-room","name":"主播"},"liveStream":{"id":"stream-shape-room","playUrls":{"h264":{"url":"https://example.com/live.flv"}}}}]}};</script>''',
+          ));
+        }));
+      // 进房走匿名房间页优先路径：凭证与地址形状必须全部来自该页面；
+      // authenticatedDioFactory 复用同一个假 Dio，避免真实网络请求。
+      final site = KuaishouSite(
+        anonymousDio: dio,
+        authenticatedDioFactory: () => dio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )..activateAccountSession(
+          sessionKey: 'test',
+          cookie: 'kuaishou.live.web_st=test-token',
+          kww: '',
+        );
+
+      final detail = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.userEnter,
+        () => site.getRoomDetail(roomId: 'shape-room'),
+      );
+      final args = detail.danmakuData as KuaishouDanmakuArgs;
+      expect(args.websocketUrls, [
+        'wss://one.example/live',
+        'ws://two.example/live',
+      ]);
+    });
+
+    test('parses websocketinfo response through the shared resolver', () async {
+      final dio = Dio()
+        ..interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
+          handler.resolve(Response<String>(
+            requestOptions: options,
+            statusCode: 200,
+            // 页面带可播放地址但不带弹幕凭证：迟解析链路才会挂上
+            // credentialResolver，再由 websocketinfo 补齐 token 与地址。
+            data: _kuaishouLivePage(roomId: 'api-room'),
+          ));
+        }));
+      // websocketinfo 走 HttpClient.instance（不是站点 Dio），必须单独拦截，
+      // 否则该请求会真正打到线上。
+      final websocketInfoInterceptor = InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (!options.uri.path.contains('websocketinfo')) {
+            handler.next(options);
+            return;
+          }
+          handler.resolve(Response<Map<String, dynamic>>(
+            requestOptions: options,
+            statusCode: 200,
+            data: {
+              'data': {
+                'token': 'api-token',
+                'webSocketAddresses': 'wss://api.example/live',
+              },
+            },
+          ));
+        },
+      );
+      HttpClient.instance.dio.interceptors.add(websocketInfoInterceptor);
+      addTearDown(
+        () => HttpClient.instance.dio.interceptors
+            .remove(websocketInfoInterceptor),
+      );
+      final site = KuaishouSite(
+        anonymousDio: dio,
+        authenticatedDioFactory: () => dio,
+        coordinator: KuaishouRequestCoordinator(
+          minInterval: Duration.zero,
+          maxJitter: Duration.zero,
+        ),
+      )..activateAccountSession(
+          sessionKey: 'test',
+          cookie: 'kuaishou.live.web_st=test-token',
+          kww: '',
+        );
+
+      final detail = await KuaishouRequestTrace.run(
+        KuaishouRequestSource.userEnter,
+        () => site.getRoomDetail(roomId: 'api-room'),
+      );
+      final args = detail.danmakuData as KuaishouDanmakuArgs;
+      expect(args.hasConnectionInfo, isFalse, reason: '匿名页无凭证走迟解析');
+
+      final resolved = await args.credentialResolver!();
+      expect(resolved, isNotNull);
+      expect(resolved!.token, 'api-token');
+      expect(resolved.websocketUrls, ['wss://api.example/live']);
+    });
   });
 }
 

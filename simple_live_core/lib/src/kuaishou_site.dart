@@ -2671,30 +2671,20 @@ class KuaishouSite extends LiveSite {
       final liveStreamId = liveStream["id"]?.toString().trim() ?? '';
       final playUrls = liveStream["playUrls"] ?? selected["playUrls"];
 
-      var websocketUrls = <String>[];
-      void addWebsocketUrls(dynamic values) {
-        if (values is! Iterable) return;
-        for (final item in values) {
-          final websocketUrl = item?.toString().trim() ?? '';
-          if (websocketUrl.isNotEmpty &&
-              !websocketUrls.contains(websocketUrl)) {
-            websocketUrls.add(websocketUrl);
-          }
-        }
-      }
-
-      addWebsocketUrls(liveroom["websocketUrls"]);
+      final websocketUrls = _extractWebsocketUrls(<dynamic>[
+        liveroom,
+        selected,
+      ]);
       var danmakuToken = liveroom["token"]?.toString().trim() ?? '';
-      final embeddedWebsocketInfo = selected["websocketInfo"] is Map
-          ? selected["websocketInfo"] as Map
-          : const {};
       if (danmakuToken.isEmpty) {
-        danmakuToken = embeddedWebsocketInfo["token"]?.toString().trim() ?? '';
+        danmakuToken = _extractDanmakuToken(<dynamic>[liveroom, selected]);
       }
-      if (websocketUrls.isEmpty) {
-        addWebsocketUrls(
-          embeddedWebsocketInfo["websocketUrls"] ??
-              embeddedWebsocketInfo["webSocketAddresses"],
+      if (danmakuToken.isEmpty || websocketUrls.isEmpty) {
+        CoreLog.i(
+          '[ks-danmaku] room_page empty room=${_maskRoomId(roomId)} '
+          'token=${danmakuToken.isNotEmpty} urls=${websocketUrls.length} '
+          'rateLimit=${looksLikeExplicitRateLimitText(resultText)} '
+          'challenge=${looksLikeChallengePage(resultText)}',
         );
       }
 
@@ -2755,6 +2745,83 @@ class KuaishouSite extends LiveSite {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Extract websocket endpoints from the different payload shapes returned
+  /// by the room page and websocketinfo endpoint.  The API has used all of
+  /// these spellings over time, sometimes nested under websocketInfo.
+  static List<String> _extractWebsocketUrls(Iterable<dynamic> roots) {
+    final urls = <String>[];
+    final seen = <String>{};
+    final visited = <Object>{};
+    const keys = {
+      'websocketurls',
+      'websocketaddresses',
+      'websocketinfo',
+    };
+    void add(dynamic value) {
+      if (value is String) {
+        final candidate = value.trim();
+        final uri = Uri.tryParse(candidate);
+        if (uri != null &&
+            (uri.scheme.toLowerCase() == 'ws' ||
+                uri.scheme.toLowerCase() == 'wss') &&
+            uri.host.isNotEmpty &&
+            seen.add(candidate)) {
+          urls.add(candidate);
+        }
+        return;
+      }
+      if (value is Iterable) {
+        for (final item in value) {
+          add(item);
+        }
+        return;
+      }
+      if (value is! Map || !visited.add(value)) return;
+      for (final entry in value.entries) {
+        final key = entry.key.toString().toLowerCase();
+        if (keys.contains(key)) {
+          add(entry.value);
+        } else if (entry.value is Map || entry.value is Iterable) {
+          add(entry.value);
+        }
+      }
+    }
+    for (final root in roots) {
+      add(root);
+    }
+    return urls;
+  }
+
+  static String _extractDanmakuToken(Iterable<dynamic> roots) {
+    final visited = <Object>{};
+    const keys = {'token', 'websockettoken', 'wstoken'};
+    String? found;
+    void walk(dynamic value) {
+      if (found != null) return;
+      if (value is String) return;
+      if (value is Iterable) {
+        for (final item in value) {
+          walk(item);
+        }
+        return;
+      }
+      if (value is! Map || !visited.add(value)) return;
+      for (final entry in value.entries) {
+        final key = entry.key.toString().toLowerCase();
+        if (keys.contains(key) && entry.value is String &&
+            entry.value.toString().trim().isNotEmpty) {
+          found = entry.value.toString().trim();
+          return;
+        }
+        if (entry.value is Map || entry.value is Iterable) walk(entry.value);
+      }
+    }
+    for (final root in roots) {
+      walk(root);
+    }
+    return found ?? '';
   }
 
   Future<_KuaishouWebsocketInfo> _getWebsocketInfoWithRetry({
@@ -3268,20 +3335,26 @@ class KuaishouSite extends LiveSite {
       _recordEndpointSuccess('websocket_info', transport, sessionEpoch);
       final data = result["data"];
       if (data is! Map) {
+        CoreLog.i(
+          '[ks-danmaku] websocket_info empty room=${_maskRoomId(roomId)} '
+          'reason=missing_data',
+        );
         return _KuaishouWebsocketInfo.empty();
       }
-      final urls = <String>[];
-      final websocketUrls = data["websocketUrls"] ??
-          data["webSocketAddresses"] ??
-          const <dynamic>[];
-      for (final item in websocketUrls) {
-        final url = item?.toString() ?? '';
-        if (url.isNotEmpty) {
-          urls.add(url);
-        }
+      final urls = _extractWebsocketUrls(<dynamic>[data]);
+      final token = _extractDanmakuToken(<dynamic>[data]);
+      if (token.isEmpty || urls.isEmpty) {
+        final keys = data.keys.map((key) => key.toString()).take(20).join(',');
+        final responseText = jsonEncode(data);
+        CoreLog.i(
+          '[ks-danmaku] websocket_info empty room=${_maskRoomId(roomId)} '
+          'token=${token.isNotEmpty} urls=${urls.length} '
+          'rateLimit=${looksLikeExplicitRateLimitText(responseText)} '
+          'challenge=${looksLikeChallengePage(responseText)} keys=$keys',
+        );
       }
       return _KuaishouWebsocketInfo(
-        token: data["token"]?.toString() ?? '',
+        token: token,
         websocketUrls: urls,
       );
     } catch (e) {
