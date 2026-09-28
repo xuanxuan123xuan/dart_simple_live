@@ -43,8 +43,9 @@ class MpvOptionsService {
     // Profile/custom/advanced/conf options are merged afterwards and can
     // override these defaults.
     "network-timeout": "10",
-    "reconnect-streamed": "yes",
-    "reconnect-delay-max": "2",
+    // FFmpeg HTTP reconnect settings must be passed through mpv's lavf
+    // option bridge; they are not standalone mpv properties.
+    "stream-lavf-o": "reconnect=1,reconnect_streamed=1,reconnect_delay_max=2",
   };
 
   /// Option keys whose accepted values depend on the platform's libmpv build.
