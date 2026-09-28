@@ -63,7 +63,7 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
     final children = controller.subCategory.children;
     // 上级分类插入的自身副本会与本页重复，这里过滤掉。
     final subCategories = children
-        .where((item) => item.id != controller.subCategory.id && item.hasChildren)
+        .where((item) => item.id != controller.subCategory.id)
         .toList();
     final crossAxisCount =
         (MediaQuery.sizeOf(context).width ~/ 96).clamp(1, 12).toInt();
