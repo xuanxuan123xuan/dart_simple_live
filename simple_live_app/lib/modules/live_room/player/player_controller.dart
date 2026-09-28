@@ -22,6 +22,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_tracker.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/player/player_volume_session_policy.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
@@ -834,6 +835,39 @@ mixin PlayerMixin {
   /// Whether the current source is actually taller than it is wide.
   final RxBool isVertical = false.obs;
 
+  bool _douyinLayoutEnabled = false;
+  double? _douyinStreamAspectRatioHint;
+
+  bool get douyinLayoutEnabled => _douyinLayoutEnabled;
+
+  double? get douyinVideoAspectRatio {
+    if (!_douyinLayoutEnabled) {
+      return null;
+    }
+    return AppSettingsController
+            .instance.dualScreenLayoutMode.value.forcedAspectRatio ??
+        parseLivePlayerAspectRatio(
+          decodedVideoWidth.value,
+          decodedVideoHeight.value,
+        ) ??
+        _douyinStreamAspectRatioHint;
+  }
+
+  void setDouyinLayoutHint({required bool enabled, double? aspectRatio}) {
+    _douyinLayoutEnabled = enabled;
+    _douyinStreamAspectRatioHint = aspectRatio;
+    resetDecodedVideoSize();
+  }
+
+  /// Dimensions reported for the currently opened media source.
+  final RxInt decodedVideoWidth = 0.obs;
+  final RxInt decodedVideoHeight = 0.obs;
+
+  void resetDecodedVideoSize() {
+    decodedVideoWidth.value = 0;
+    decodedVideoHeight.value = 0;
+  }
+
   VideoPlayerController? get ohosVideoController => _ohosVideoController;
 
   void attachOhosVideoController(VideoPlayerController controller) {
@@ -1103,8 +1137,31 @@ mixin PlayerStateMixin on PlayerMixin {
     }
     var boxFit = BoxFit.contain;
     double? aspectRatio;
-    if (player.state.width != null && player.state.height != null) {
-      aspectRatio = player.state.width! / player.state.height!;
+    aspectRatio = parseLivePlayerAspectRatio(
+      decodedVideoWidth.value,
+      decodedVideoHeight.value,
+    );
+
+    if (douyinLayoutEnabled) {
+      // The selected dual-screen ratio sizes the surrounding viewport. Keep
+      // the decoded video at its native ratio so a manual 9:16/16:9 choice
+      // cannot stretch the composited source.
+      final scaleMode = AppSettingsController.instance.scaleMode.value;
+      aspectRatio = scaleMode == 3
+          ? 16 / 9
+          : scaleMode == 4
+              ? 4 / 3
+              : null;
+      boxFit = scaleMode == 1
+          ? BoxFit.fill
+          : scaleMode == 2
+              ? BoxFit.cover
+              : BoxFit.contain;
+      globalPlayerKey.currentState?.update(
+        aspectRatio: aspectRatio,
+        fit: boxFit,
+      );
+      return;
     }
 
     if (AppSettingsController.instance.scaleMode.value == 0) {
@@ -2772,6 +2829,12 @@ class PlayerController extends BaseController
         PlayerDanmakuMixin,
         PlayerSystemMixin,
         PlayerGestureControlMixin {
+  void setDualScreenLayoutMode(LivePlayerLayoutMode mode) {
+    AppSettingsController.instance.setDualScreenLayoutMode(mode);
+    updateScaleMode();
+    update();
+  }
+
   @override
   void onInit() {
     if (Utils.isOhos) {
@@ -3142,6 +3205,9 @@ class PlayerController extends BaseController
         return;
       }
 
+      decodedVideoWidth.value = event;
+      updateScaleMode();
+
       isVertical.value =
           (player.state.height ?? 9) > (player.state.width ?? 16);
       unawaited(_syncAndroidExternalWindowLandscapeOrientation());
@@ -3158,6 +3224,9 @@ class PlayerController extends BaseController
         }
         return;
       }
+
+      decodedVideoHeight.value = event;
+      updateScaleMode();
 
       isVertical.value =
           (player.state.height ?? 9) > (player.state.width ?? 16);

@@ -50,6 +50,151 @@ class DouyinSite implements LiveSite {
 
   final DouyinAbogusSigner _abogusSigner;
 
+  /// Resolves the aspect ratio advertised by a Douyin live stream.
+  ///
+  /// Douyin has returned the dimensions in two different places over time:
+  /// older room responses put them in `stream_url.extra`, while newer
+  /// responses put a `resolution` string in the JSON encoded
+  /// `live_core_sdk_data.pull_data.stream_data` payload.  The stream remains
+  /// a single, already-composited video in both cases, so callers only need
+  /// the ratio.  A missing or malformed hint returns `null` and lets the
+  /// player use its normal fallback.
+  static double? resolveStreamAspectRatio(dynamic streamUrl) {
+    final stream = _asMap(streamUrl);
+    if (stream == null) return null;
+
+    // `extra` is the authoritative value in the legacy room response.  It
+    // can itself be a map, a JSON string, or (in a few responses) a compact
+    // resolution string.
+    final fromExtra = _aspectRatioFromValue(stream["extra"]);
+    if (fromExtra != null) return fromExtra;
+
+    final liveCore = _asMap(stream["live_core_sdk_data"]);
+    final pullData = _asMap(liveCore?["pull_data"]);
+    final streamData = _decodeJsonMap(pullData?["stream_data"]);
+    if (streamData == null) {
+      return _aspectRatioFromOrientation(stream["stream_orientation"]);
+    }
+
+    // sdk_params has appeared under both the stream_data root and its
+    // `common` object. Search only this decoded payload so unrelated room
+    // metadata cannot accidentally win.
+    final sdkParams = _findMapValue(streamData, "sdk_params");
+    return _aspectRatioFromValue(sdkParams) ??
+        _aspectRatioFromOrientation(stream["stream_orientation"]);
+  }
+
+  static double? _aspectRatioFromOrientation(dynamic value) {
+    final text = value?.toString().trim().toLowerCase() ?? "";
+    if (text.contains("portrait") ||
+        text.contains("vertical") ||
+        text.contains("竖")) {
+      return 9 / 16;
+    }
+    if (text.contains("landscape") ||
+        text.contains("horizontal") ||
+        text.contains("横")) {
+      return 16 / 9;
+    }
+    return null;
+  }
+
+  static Map<dynamic, dynamic>? _asMap(dynamic value) {
+    return value is Map ? value : null;
+  }
+
+  static dynamic _decodeJson(dynamic value) {
+    if (value is! String) return value;
+    final text = value.trim();
+    if (text.isEmpty) return null;
+    try {
+      return json.decode(text);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Map<dynamic, dynamic>? _decodeJsonMap(dynamic value) {
+    final decoded = _decodeJson(value);
+    final map = _asMap(decoded);
+    if (map != null) return map;
+    // Some responses double-encode stream_data or sdk_params.
+    final nested = _decodeJson(decoded);
+    return _asMap(nested);
+  }
+
+  static dynamic _findMapValue(dynamic value, String key) {
+    final map = _asMap(value);
+    if (map != null) {
+      if (map.containsKey(key)) return map[key];
+      for (final child in map.values) {
+        final found = _findMapValue(child, key);
+        if (found != null) return found;
+      }
+    }
+    if (value is Iterable) {
+      for (final child in value) {
+        final found = _findMapValue(child, key);
+        if (found != null) return found;
+      }
+    }
+    return null;
+  }
+
+  static double? _aspectRatioFromValue(dynamic value) {
+    if (value == null) return null;
+    final decoded = _decodeJson(value);
+    if (!identical(decoded, value)) {
+      final parsed = _aspectRatioFromValue(decoded);
+      if (parsed != null) return parsed;
+    }
+
+    final map = _asMap(value);
+    if (map != null) {
+      final width = _positiveNumber(map["width"]);
+      final height = _positiveNumber(map["height"]);
+      if (width != null && height != null) {
+        return _validAspectRatio(width / height);
+      }
+      for (final key in const ["resolution", "video_resolution", "size"]) {
+        final parsed = _aspectRatioFromValue(map[key]);
+        if (parsed != null) return parsed;
+      }
+      return null;
+    }
+
+    if (value is! String) return null;
+    final text = value.trim();
+    if (text.isEmpty) return null;
+    // Accept the formats seen in room payloads: 1080x1920, 1080*1920,
+    // 1080×1920 and the conventional 9:16 notation.
+    final match = RegExp(r"^(\d+(?:\.\d+)?)\s*[xX×*:：]\s*(\d+(?:\.\d+)?)$")
+        .firstMatch(text);
+    if (match == null) return null;
+    final width = double.tryParse(match.group(1)!);
+    final height = double.tryParse(match.group(2)!);
+    if (width == null || height == null || width <= 0 || height <= 0) {
+      return null;
+    }
+    return _validAspectRatio(width / height);
+  }
+
+  static double? _positiveNumber(dynamic value) {
+    if (value is num) {
+      return value > 0 ? value.toDouble() : null;
+    }
+    if (value is String) {
+      final parsed = double.tryParse(value.trim());
+      return parsed != null && parsed > 0 ? parsed : null;
+    }
+    return null;
+  }
+
+  static double? _validAspectRatio(double ratio) {
+    if (!ratio.isFinite || ratio <= 0 || ratio > 20) return null;
+    return ratio;
+  }
+
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
     return await getLiveStatus(roomId: roomId)

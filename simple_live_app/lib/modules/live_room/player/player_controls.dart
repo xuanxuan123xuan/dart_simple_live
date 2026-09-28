@@ -13,6 +13,7 @@ import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_room_quick_access_panel.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
 import 'package:simple_live_app/widgets/glass/glass_surface.dart';
@@ -981,6 +982,38 @@ void showPlayerSettings(LiveRoomController controller) {
       () => ListView(
         padding: AppStyle.edgeInsetsV12,
         children: [
+          if (controller.supportsDouyinDualScreenLayout) ...[
+            Padding(
+              padding: AppStyle.edgeInsetsH16.copyWith(top: 8, bottom: 4),
+              child: const Text(
+                "抖音双屏布局",
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            RadioGroup<LivePlayerLayoutMode>(
+              groupValue: AppSettingsController
+                  .instance.dualScreenLayoutMode.value,
+              onChanged: (mode) {
+                if (mode != null) {
+                  controller.setDualScreenLayoutMode(mode);
+                }
+              },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: LivePlayerLayoutMode.values
+                    .map(
+                      (mode) => RadioListTile<LivePlayerLayoutMode>(
+                        value: mode,
+                        contentPadding: AppStyle.edgeInsetsH4,
+                        title: Text(mode.label),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+            AppStyle.divider,
+          ],
           Padding(
             padding: AppStyle.edgeInsetsH16,
             child: Text(

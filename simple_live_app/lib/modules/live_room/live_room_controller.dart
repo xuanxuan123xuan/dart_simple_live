@@ -28,6 +28,7 @@ import 'package:simple_live_app/modules/live_room/player/ohos_playback_signal_ad
 import 'package:simple_live_app/modules/live_room/player/ohos_line_failover_policy.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/live_room_danmaku_status.dart';
 import 'package:simple_live_app/modules/live_room/live_room_hold_preview.dart';
@@ -654,6 +655,8 @@ class LiveRoomController extends PlayerController
         Constant.kDouyu,
         Constant.kDouyin,
       }.contains(site.id);
+
+  bool get supportsDouyinDualScreenLayout => site.id == Constant.kDouyin;
 
   void toggleDesktopSidePanel() {
     desktopSidePanelCollapsed.value = !desktopSidePanelCollapsed.value;
@@ -3343,6 +3346,13 @@ class LiveRoomController extends PlayerController
         return;
       }
       detail.value = roomDetail;
+      setDouyinLayoutHint(
+        enabled: site.id == Constant.kDouyin,
+        aspectRatio: site.id == Constant.kDouyin
+            ? DouyinSite.resolveStreamAspectRatio(roomDetail.data)
+            : null,
+      );
+      updateScaleMode();
       addSysMsg("直播间信息读取完成");
       _syncBackgroundPlaybackMetadata(roomDetail);
 
@@ -3961,6 +3971,7 @@ class LiveRoomController extends PlayerController
     // A previous room/line may have been a portrait stream. Reset the hint
     // for every backend until the newly opened source reports its dimensions.
     isVertical.value = false;
+    resetDecodedVideoSize();
     if (Utils.isOhos) {
       currentLineInfo.value = lineDisplayName(currentLineIndex);
       errorMsg.value = "";
@@ -4858,7 +4869,40 @@ class LiveRoomController extends PlayerController
           child: ListView(
             shrinkWrap: true,
             padding: AppStyle.edgeInsetsV12,
-            children: const [
+            children: [
+              if (supportsDouyinDualScreenLayout) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      "抖音双屏布局",
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                RadioGroup<LivePlayerLayoutMode>(
+                  groupValue: AppSettingsController
+                      .instance.dualScreenLayoutMode.value,
+                  onChanged: (mode) {
+                    if (mode != null) {
+                      setDualScreenLayoutMode(mode);
+                    }
+                  },
+                  child: Column(
+                    children: LivePlayerLayoutMode.values
+                        .map(
+                          (mode) => RadioListTile<LivePlayerLayoutMode>(
+                            value: mode,
+                            title: Text(mode.label),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+                const Divider(),
+              ],
               RadioListTile(
                 value: 0,
                 title: Text("适应"),

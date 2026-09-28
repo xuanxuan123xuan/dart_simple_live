@@ -7,6 +7,8 @@ class LocalStorageService extends GetxService {
 
   static const String kFirstRun = "FirstRun";
   static const String kPlayerScaleMode = "ScaleMode";
+  static const String kPlayerDualScreenLayoutMode =
+      "PlayerDualScreenLayoutMode";
   static const String kSiteSort = "SiteSort";
   static const String kHomeSort = "HomeSort";
   static const String kLiveRoomTabSort = "LiveRoomTabSort";

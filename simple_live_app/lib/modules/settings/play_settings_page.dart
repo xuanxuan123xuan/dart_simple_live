@@ -7,6 +7,7 @@ import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:simple_live_app/services/ohos_playback_capabilities_service.dart';
@@ -103,6 +104,19 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     onChanged: (e) {
                       controller.setScaleMode(e);
                     },
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
+                  () => SettingsMenu<LivePlayerLayoutMode>(
+                    title: "抖音双屏布局",
+                    subtitle: "自动按直播流比例显示，或手动指定方向",
+                    value: controller.dualScreenLayoutMode.value,
+                    valueMap: {
+                      for (final mode in LivePlayerLayoutMode.values)
+                        mode: mode.label,
+                    },
+                    onChanged: controller.setDualScreenLayoutMode,
                   ),
                 ),
                 AppStyle.divider,

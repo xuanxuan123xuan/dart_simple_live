@@ -502,9 +502,13 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       );
       return Column(
         children: [
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: buildMediaPlayer(),
+          Obx(
+            () => AspectRatio(
+              aspectRatio: controller.douyinLayoutEnabled
+                  ? (controller.douyinVideoAspectRatio ?? 16 / 9)
+                  : 16 / 9,
+              child: buildMediaPlayer(),
+            ),
           ),
           if (glassOff) const SizedBox(height: 8),
           if (glassOff)
@@ -1178,7 +1182,19 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   Widget _buildMediaPlayerContent() {
     var boxFit = BoxFit.contain;
     double? aspectRatio;
-    if (AppSettingsController.instance.scaleMode.value == 0) {
+    if (controller.douyinLayoutEnabled) {
+      final scaleMode = AppSettingsController.instance.scaleMode.value;
+      boxFit = scaleMode == 1
+          ? BoxFit.fill
+          : scaleMode == 2
+              ? BoxFit.cover
+              : BoxFit.contain;
+      aspectRatio = scaleMode == 3
+          ? 16 / 9
+          : scaleMode == 4
+              ? 4 / 3
+              : null;
+    } else if (AppSettingsController.instance.scaleMode.value == 0) {
       boxFit = BoxFit.contain;
     } else if (AppSettingsController.instance.scaleMode.value == 1) {
       boxFit = BoxFit.fill;

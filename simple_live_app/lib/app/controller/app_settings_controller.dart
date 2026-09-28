@@ -12,6 +12,7 @@ import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/app_icon_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -267,6 +268,15 @@ class AppSettingsController extends GetxController {
     scaleMode.value = LocalStorageService.instance.getValue(
       LocalStorageService.kPlayerScaleMode,
       0,
+    );
+
+    dualScreenLayoutMode.value = LivePlayerLayoutMode.fromStorage(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kPlayerDualScreenLayoutMode,
+        LivePlayerLayoutMode.values.indexOf(
+          LivePlayerLayoutMode.defaultMode,
+        ),
+      ),
     );
 
     playerVolume.value = LocalStorageService.instance.getValue(
@@ -1987,6 +1997,26 @@ class AppSettingsController extends GetxController {
       LocalStorageService.kPlayerScaleMode,
       value,
     );
+  }
+
+  /// The preferred layout for Douyin streams that contain two composited
+  /// views. The automatic mode remains the default for existing installs.
+  var dualScreenLayoutMode = LivePlayerLayoutMode.defaultMode.obs;
+
+  /// Alias for player-facing callers that use the longer setting name.
+  Rx<LivePlayerLayoutMode> get playerDualScreenLayoutMode =>
+      dualScreenLayoutMode;
+
+  void setDualScreenLayoutMode(LivePlayerLayoutMode mode) {
+    dualScreenLayoutMode.value = mode;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kPlayerDualScreenLayoutMode,
+      LivePlayerLayoutMode.values.indexOf(mode),
+    );
+  }
+
+  void setPlayerDualScreenLayoutMode(LivePlayerLayoutMode mode) {
+    setDualScreenLayoutMode(mode);
   }
 
   RxList<String> siteSort = RxList<String>();
