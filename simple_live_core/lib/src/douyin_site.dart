@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:simple_live_core/simple_live_core.dart';
-import 'package:simple_live_core/src/common/convert_helper.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:simple_live_core/src/douyin_partition_images.dart';
 import 'package:simple_live_core/src/scripts/douyin_sign.dart';
@@ -367,25 +366,23 @@ class DouyinSite implements LiveSite {
     for (var item in categoryData) {
       List<LiveSubCategory> subs = [];
       var id = '${item["partition"]["id_str"]},${item["partition"]["type"]}';
+      var name = _partitionTitle(item["partition"]) ?? "";
+      var pic = _pickPartitionImageUrl(item["partition"]) ??
+          _partitionImageFallback('${item["partition"]["id_str"]}');
+
+      // 递归解析所有子分类（抖音游戏分区存在三级）。
       for (var subItem in item["sub_partition"]) {
-        var subCategory = LiveSubCategory(
-          id: '${subItem["partition"]["id_str"]},${subItem["partition"]["type"]}',
-          name: asT<String?>(subItem["partition"]["title"]) ?? "",
-          parentId: id,
-          pic: _pickPartitionImageUrl(subItem["partition"]) ??
-              _pickPartitionImageUrl(item["partition"]) ??
-              _partitionImageFallback(
-                '${subItem["partition"]["id_str"]}',
-              ) ??
-              _partitionImageFallback('${item["partition"]["id_str"]}'),
-        );
-        subs.add(subCategory);
+        final subCategory = _parseSubCategory(subItem, id);
+        if (subCategory != null) {
+          subs.add(subCategory);
+        }
       }
 
       var category = LiveCategory(
         children: subs,
         id: id,
-        name: asT<String?>(item["partition"]["title"]) ?? "",
+        name: name,
+        pic: pic,
       );
       subs.insert(
         0,
@@ -393,13 +390,59 @@ class DouyinSite implements LiveSite {
           id: category.id,
           name: category.name,
           parentId: category.id,
-          pic: _pickPartitionImageUrl(item["partition"]) ??
-              _partitionImageFallback('${item["partition"]["id_str"]}'),
+          pic: category.pic,
         ),
       );
       categories.add(category);
     }
     return categories;
+  }
+
+  /// 递归解析分区；任意层级数据异常时返回 null，由调用方跳过该节点。
+  LiveSubCategory? _parseSubCategory(dynamic item, String parentId) {
+    if (item is! Map) {
+      return null;
+    }
+    final partition = item["partition"];
+    if (partition is! Map) {
+      return null;
+    }
+    final idStr = partition["id_str"] ?? partition["id"];
+    final type = partition["type"];
+    final id = '$idStr,$type';
+    final name = _partitionTitle(partition);
+    if (idStr == null || type == null || name == null) {
+      return null;
+    }
+
+    final children = <LiveSubCategory>[];
+    final subPartitions = item["sub_partition"];
+    if (subPartitions is List) {
+      for (final subItem in subPartitions) {
+        final child = _parseSubCategory(subItem, id);
+        if (child != null) {
+          children.add(child);
+        }
+      }
+    }
+
+    return LiveSubCategory(
+      id: id,
+      name: name,
+      parentId: parentId,
+      pic: _pickPartitionImageUrl(partition) ??
+          _partitionImageFallback('$idStr'),
+      children: children,
+    );
+  }
+
+  /// 分区标题，抖音不同接口用 title / name 两种字段。
+  String? _partitionTitle(dynamic partition) {
+    if (partition is! Map) {
+      return null;
+    }
+    final title = (partition["title"] ?? partition["name"])?.toString().trim();
+    return (title == null || title.isEmpty) ? null : title;
   }
 
   /// 抖音分区无官方图片，用 [douyinPartitionImages] 静态映射兜底
