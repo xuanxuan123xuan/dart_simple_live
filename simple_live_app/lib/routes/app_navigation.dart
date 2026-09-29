@@ -27,6 +27,7 @@ typedef RoomSelectionCallback = void Function(Site site, String roomId);
 class AppNavigator {
   static final Map<String, DateTime> _lastLiveRoomOpenAt = {};
   static bool _kuaishouLoginRecommendationShowing = false;
+  static int _categoryDetailSequence = 0;
 
   /// 跳转至观看记录
   static Future<dynamic> toHistory({
@@ -49,11 +50,14 @@ class AppNavigator {
       required LiveSubCategory category,
       RoomSelectionCallback? onRoomSelected,
       String? excludedRoomId}) {
+    final controllerTag =
+        "${site.id}:${category.id}:${++_categoryDetailSequence}";
     Get.toNamed(
       RoutePath.kCategoryDetail,
       arguments: {
         "site": site,
         "category": category,
+        "controllerTag": controllerTag,
         if (onRoomSelected != null) "onRoomSelected": onRoomSelected,
         if (excludedRoomId != null) "excludedRoomId": excludedRoomId,
       },

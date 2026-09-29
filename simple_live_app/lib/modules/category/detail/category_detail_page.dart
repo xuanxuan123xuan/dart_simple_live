@@ -14,7 +14,12 @@ import 'package:simple_live_app/widgets/shadow_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class CategoryDetailPage extends GetView<CategoryDetailController> {
-  const CategoryDetailPage({Key? key}) : super(key: key);
+  final String? controllerTag;
+
+  const CategoryDetailPage({this.controllerTag, Key? key}) : super(key: key);
+
+  @override
+  String? get tag => controllerTag;
 
   @override
   Widget build(BuildContext context) {
