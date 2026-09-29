@@ -257,4 +257,29 @@ void main() {
     expect(categories.map((item) => item.name), ['游戏', '聊天']);
     expect(categories.every((item) => item.children.length == 1), isTrue);
   });
+
+  test('深层分区继承父分区的平替图片', () async {
+    final interceptor = InterceptorsWrapper(
+      onRequest: (options, handler) {
+        handler.resolve(
+          Response<String>(
+            requestOptions: options,
+            statusCode: 200,
+            data:
+                r'''<script>\"categoryData\":[{"partition":{"id_str":"103","type":4,"title":"游戏"},"sub_partition":[{"partition":{"id_str":"999","type":1,"title":"具体游戏"},"sub_partition":[{"partition":{"id_str":"999001","type":1,"title":"叶子分区"},"sub_partition":[]}]}]}]</script>''',
+          ),
+        );
+      },
+    );
+    HttpClient.instance.dio.interceptors.add(interceptor);
+    addTearDown(() => HttpClient.instance.dio.interceptors.remove(interceptor));
+
+    final category = (await DouyinSite().getCategores()).single;
+    final fallbackPic = category.pic;
+    final child = category.children[1];
+
+    expect(fallbackPic, isNotNull);
+    expect(child.pic, fallbackPic);
+    expect(child.children.single.pic, fallbackPic);
+  });
 }

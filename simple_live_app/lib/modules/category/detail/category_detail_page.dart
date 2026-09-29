@@ -62,9 +62,8 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
   Widget _buildChildCategories(BuildContext context) {
     final children = controller.subCategory.children;
     // 上级分类插入的自身副本会与本页重复，这里过滤掉。
-    final subCategories = children
-        .where((item) => item.id != controller.subCategory.id)
-        .toList();
+    final subCategories =
+        children.where((item) => item.id != controller.subCategory.id).toList();
     final crossAxisCount =
         (MediaQuery.sizeOf(context).width ~/ 96).clamp(1, 12).toInt();
     return Scaffold(
@@ -85,7 +84,7 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
             return _buildChildTile(
               context,
               name: "全部",
-              pic: null,
+              pic: controller.subCategory.pic,
               icon: Icons.grid_view_rounded,
               onTap: () {
                 AppNavigator.toCategoryDetail(
