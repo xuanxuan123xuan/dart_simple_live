@@ -57,6 +57,9 @@ class AppNavigator {
         if (onRoomSelected != null) "onRoomSelected": onRoomSelected,
         if (excludedRoomId != null) "excludedRoomId": excludedRoomId,
       },
+      // Nested category pages reuse the same named route. GetX otherwise
+      // treats the second tap as a duplicate and silently returns null.
+      preventDuplicates: false,
     );
   }
 
