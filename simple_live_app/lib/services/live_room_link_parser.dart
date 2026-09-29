@@ -139,14 +139,15 @@ class LiveRoomLinkParser {
         .map((segment) => segment.trim())
         .where((segment) => segment.isNotEmpty)
         .toList();
-    if (segments.length < 2 || segments.last == 'live') {
-      return null;
+    if (segments.length == 2 && segments[0] == 'live') {
+      return segments[1];
     }
-    final liveIndex = segments.indexOf('live');
-    if (liveIndex < 0 || liveIndex + 1 != segments.length - 1) {
-      return null;
+    if (segments.length == 3 &&
+        segments[0] == 'follow' &&
+        segments[1] == 'live') {
+      return segments[2];
     }
-    return segments.last;
+    return null;
   }
 
   static String _firstPathSegment(Uri uri) {
@@ -208,9 +209,9 @@ class LiveRoomLinkParser {
 
   static String extractHttpUrl(String text) {
     final match = RegExp(
-          r'https?://[^\s<>\u3000，。！？、；：]+',
-          caseSensitive: false,
-        ).firstMatch(text);
+      r'https?://[^\s<>\u3000，。！？、；：]+',
+      caseSensitive: false,
+    ).firstMatch(text);
     if (match == null) {
       return '';
     }

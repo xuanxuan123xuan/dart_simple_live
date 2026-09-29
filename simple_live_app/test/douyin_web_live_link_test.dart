@@ -70,6 +70,8 @@ void main() {
         'https://www.douyin.com/video/7300000000000000000',
         'https://www.douyin.com/discover',
         'https://www.douyin.com/follow',
+        'https://www.douyin.com/foo/live/24680',
+        'https://www.douyin.com/follow/foo/live/24680',
       ]) {
         expect(await parser.parse(url), isNull, reason: url);
       }
