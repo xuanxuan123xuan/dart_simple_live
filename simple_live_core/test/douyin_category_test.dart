@@ -5,14 +5,6 @@ import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:test/test.dart';
 
-/// 抖音首页 categoryData 的真实形状（三级）：一级「游戏」→ 二级「射击游戏」
-/// → 三级「绝地求生」。这里按抓取到的字段结构缩简。
-Map<String, dynamic> _partition(String idStr, int type, String title) => {
-      'id_str': idStr,
-      'type': type,
-      'title': title,
-    };
-
 void main() {
   group('LiveSubCategory 多级嵌套', () {
     test('三级 JSON 逐级嵌套且 parentId 指向父 id', () {
