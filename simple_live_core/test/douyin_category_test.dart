@@ -261,12 +261,49 @@ void main() {
   test('深层分区按同名平台分区匹配平替图片', () async {
     final interceptor = InterceptorsWrapper(
       onRequest: (options, handler) {
+        if (options.uri.path.contains('/frontend/finger/spi')) {
+          handler.resolve(
+            Response<Map<String, dynamic>>(
+              requestOptions: options,
+              statusCode: 200,
+              data: {
+                'data': {'b_3': '', 'b_4': ''},
+              },
+            ),
+          );
+          return;
+        }
+        if (options.uri.path.contains('/room/v1/Area/getList')) {
+          handler.resolve(
+            Response<Map<String, dynamic>>(
+              requestOptions: options,
+              statusCode: 200,
+              data: {
+                'data': [
+                  {
+                    'id': 1,
+                    'name': '游戏',
+                    'list': [
+                      {
+                        'id': 101,
+                        'name': '绝地求生',
+                        'parent_id': 1,
+                        'pic': 'https://bili.example/pubg.png',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ),
+          );
+          return;
+        }
         handler.resolve(
           Response<String>(
             requestOptions: options,
             statusCode: 200,
             data:
-                r'''<script>\"categoryData\":[{"partition":{"id_str":"103","type":4,"title":"游戏"},"sub_partition":[{"partition":{"id_str":"999","type":1,"title":"射击游戏"},"sub_partition":[{"partition":{"id_str":"999001","type":1,"title":"竞技游戏"},"sub_partition":[]}]}]}]</script>''',
+                r'''<script>\"categoryData\":[{"partition":{"id_str":"103","type":4,"title":"游戏"},"sub_partition":[{"partition":{"id_str":"999","type":1,"title":"射击游戏"},"sub_partition":[{"partition":{"id_str":"999001","type":1,"title":"绝地求生"},"sub_partition":[]}]}]}]</script>''',
           ),
         );
       },
@@ -280,10 +317,7 @@ void main() {
 
     expect(fallbackPic, isNotNull);
     expect(child.pic, contains('34de48c290b2565ed9d5dbf1dba56105788040f6'));
-    expect(
-      child.children.single.pic,
-      contains('0e808167886ad2299971ea49aade69b3663db9b9'),
-    );
+    expect(child.children.single.pic, 'https://bili.example/pubg.png@100w.png');
     expect(child.children.single.pic, isNot(fallbackPic));
   });
 }

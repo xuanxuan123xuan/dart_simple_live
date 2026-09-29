@@ -48,6 +48,7 @@ class DouyinSite implements LiveSite {
       : _abogusSigner = abogusSigner ?? DouyinSign.getAbogusUrl;
 
   final DouyinAbogusSigner _abogusSigner;
+  Future<Map<String, String>>? _partitionImagesFuture;
 
   /// Resolves the aspect ratio advertised by a Douyin live stream.
   ///
@@ -362,6 +363,7 @@ class DouyinSite implements LiveSite {
 
     final renderDataJson = _extractCategoryRenderData(result);
     final categoryData = (renderDataJson["categoryData"] as List?) ?? const [];
+    final externalImages = await _loadExternalPartitionImages();
 
     for (final rawItem in categoryData) {
       if (rawItem is! Map) {
@@ -380,7 +382,7 @@ class DouyinSite implements LiveSite {
       List<LiveSubCategory> subs = [];
       final id = '$idStr,$type';
       final pic = _pickPartitionImageUrl(partition) ??
-          _partitionImageFallback('$idStr', name);
+          _partitionImageFallback('$idStr', name, externalImages);
 
       // 递归解析所有子分类（抖音游戏分区存在三级）。
       final subPartitions = rawItem["sub_partition"];
@@ -389,6 +391,7 @@ class DouyinSite implements LiveSite {
           final subCategory = _parseSubCategory(
             subItem,
             id,
+            externalImages: externalImages,
           );
           if (subCategory != null) {
             subs.add(subCategory);
@@ -419,8 +422,9 @@ class DouyinSite implements LiveSite {
   /// 递归解析分区；任意层级数据异常时返回 null，由调用方跳过该节点。
   LiveSubCategory? _parseSubCategory(
     dynamic item,
-    String parentId,
-  ) {
+    String parentId, {
+    required Map<String, String> externalImages,
+  }) {
     if (item is! Map) {
       return null;
     }
@@ -443,6 +447,7 @@ class DouyinSite implements LiveSite {
         final child = _parseSubCategory(
           subItem,
           id,
+          externalImages: externalImages,
         );
         if (child != null) {
           children.add(child);
@@ -455,9 +460,43 @@ class DouyinSite implements LiveSite {
       name: name,
       parentId: parentId,
       pic: _pickPartitionImageUrl(partition) ??
-          _partitionImageFallback('$idStr', name),
+          _partitionImageFallback('$idStr', name, externalImages),
       children: children,
     );
+  }
+
+  Future<Map<String, String>> _loadExternalPartitionImages() {
+    final cached = _partitionImagesFuture;
+    if (cached != null) {
+      return cached;
+    }
+    final future = _queryBilibiliPartitionImages()
+        .timeout(const Duration(seconds: 2), onTimeout: () => const {})
+        .then((images) => {
+              ...douyinPartitionImagesByName,
+              ...images,
+            });
+    _partitionImagesFuture = future;
+    return future;
+  }
+
+  Future<Map<String, String>> _queryBilibiliPartitionImages() async {
+    try {
+      final categories = await BiliBiliSite().getCategores();
+      final images = <String, String>{};
+      for (final category in categories) {
+        for (final child in category.children) {
+          final name = child.name.trim();
+          final pic = child.pic?.trim() ?? '';
+          if (name.isNotEmpty && isHttpImageUrl(pic)) {
+            images[name] = pic;
+          }
+        }
+      }
+      return images;
+    } catch (_) {
+      return const {};
+    }
   }
 
   /// 分区标题，抖音不同接口用 title / name 两种字段。
@@ -471,9 +510,12 @@ class DouyinSite implements LiveSite {
 
   /// 抖音分区无官方图片，用 [douyinPartitionImages] 静态映射兜底
   /// （借 B站分区封面，key 为分区 id_str）。
-  String? _partitionImageFallback(String partitionIdStr, [String? title]) =>
-      douyinPartitionImages[partitionIdStr] ??
-      douyinPartitionImagesByName[title?.trim()];
+  String? _partitionImageFallback(
+    String partitionIdStr,
+    String? title,
+    Map<String, String> externalImages,
+  ) =>
+      douyinPartitionImages[partitionIdStr] ?? externalImages[title?.trim()];
 
   String? _pickPartitionImageUrl(dynamic data) {
     if (data == null) {
