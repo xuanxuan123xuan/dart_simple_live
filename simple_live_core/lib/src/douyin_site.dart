@@ -363,18 +363,33 @@ class DouyinSite implements LiveSite {
     final renderDataJson = _extractCategoryRenderData(result);
     final categoryData = (renderDataJson["categoryData"] as List?) ?? const [];
 
-    for (var item in categoryData) {
+    for (final rawItem in categoryData) {
+      if (rawItem is! Map) {
+        continue;
+      }
+      final partition = rawItem["partition"];
+      if (partition is! Map) {
+        continue;
+      }
+      final idStr = partition["id_str"] ?? partition["id"];
+      final type = partition["type"];
+      final name = _partitionTitle(partition);
+      if (idStr == null || type == null || name == null) {
+        continue;
+      }
       List<LiveSubCategory> subs = [];
-      var id = '${item["partition"]["id_str"]},${item["partition"]["type"]}';
-      var name = _partitionTitle(item["partition"]) ?? "";
-      var pic = _pickPartitionImageUrl(item["partition"]) ??
-          _partitionImageFallback('${item["partition"]["id_str"]}');
+      final id = '$idStr,$type';
+      final pic = _pickPartitionImageUrl(partition) ??
+          _partitionImageFallback('$idStr');
 
       // 递归解析所有子分类（抖音游戏分区存在三级）。
-      for (var subItem in item["sub_partition"]) {
-        final subCategory = _parseSubCategory(subItem, id);
-        if (subCategory != null) {
-          subs.add(subCategory);
+      final subPartitions = rawItem["sub_partition"];
+      if (subPartitions is List) {
+        for (final subItem in subPartitions) {
+          final subCategory = _parseSubCategory(subItem, id);
+          if (subCategory != null) {
+            subs.add(subCategory);
+          }
         }
       }
 

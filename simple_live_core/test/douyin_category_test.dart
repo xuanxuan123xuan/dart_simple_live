@@ -1,6 +1,8 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:test/test.dart';
 
 /// 抖音首页 categoryData 的真实形状（三级）：一级「游戏」→ 二级「射击游戏」
@@ -240,5 +242,27 @@ void main() {
       expect(json['id'], '101,4');
       expect(json['parentId'], '101,4');
     });
+  });
+
+  test('异常顶层 sub_partition 不会阻止其余分类解析', () async {
+    final interceptor = InterceptorsWrapper(
+      onRequest: (options, handler) {
+        handler.resolve(
+          Response<String>(
+            requestOptions: options,
+            statusCode: 200,
+            data:
+                r'''<script>\"categoryData\":[{"partition":{"id_str":"1","type":4,"title":"游戏"},"sub_partition":null},{"partition":{"id_str":"2","type":4,"title":"聊天"},"sub_partition":"invalid"},null]</script>''',
+          ),
+        );
+      },
+    );
+    HttpClient.instance.dio.interceptors.add(interceptor);
+    addTearDown(() => HttpClient.instance.dio.interceptors.remove(interceptor));
+
+    final categories = await DouyinSite().getCategores();
+
+    expect(categories.map((item) => item.name), ['游戏', '聊天']);
+    expect(categories.every((item) => item.children.length == 1), isTrue);
   });
 }
