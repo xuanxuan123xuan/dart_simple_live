@@ -17,6 +17,9 @@ void main() {
     for (final scale in [1.0, 1.08]) {
       testWidgets('glass premium=$premium pixels follow translation $translation and scale $scale',
           (tester) async {
+        if (premium && !ui.ImageFilter.isShaderFilterSupported) {
+          return;
+        }
         final captureKey = GlobalKey();
         final glassKey = GlobalKey();
         await tester.runAsync(GlassEffect.preWarm);
