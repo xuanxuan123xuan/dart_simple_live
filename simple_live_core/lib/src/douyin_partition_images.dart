@@ -63,7 +63,22 @@ const Map<String, String> douyinPartitionImagesByName = {
       'https://i0.hdslb.com/bfs/vc/32a5b7da3e79feb394f538c9d95a858fea97b113.png',
   '策略卡牌':
       'https://i0.hdslb.com/bfs/vc/ce83319ab4ebc2f0c357fc101f20c785c655f9e6.png',
+  'CS2':
+      'https://i0.hdslb.com/bfs/live/34de48c290b2565ed9d5dbf1dba56105788040f6.png',
+  '绝地求生':
+      'https://i0.hdslb.com/bfs/vc/43ca83fdcd10505eaeef1b76cf8ce642a53b94da.png',
 };
+
+/// 不同平台对同一款游戏使用的分区名称。仅列出明确的同游戏别名，
+/// 避免用模糊文本匹配把相似但不同的游戏分区混在一起。
+const List<List<String>> douyinPartitionImageNameAliases = [
+  ['CSGO', 'CS:GO', 'CS2', '反恐精英2'],
+  ['PUBG', '绝地求生'],
+  ['LOL', '英雄联盟'],
+  ['DOTA2', 'DOTA 2', '刀塔2'],
+  ['VALORANT', '无畏契约'],
+  ['APEX', 'Apex英雄', 'APEX英雄'],
+];
 
 /// 判断字符串是否为可加载的 http(s) 图片地址。
 ///

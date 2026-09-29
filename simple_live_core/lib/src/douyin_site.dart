@@ -473,7 +473,8 @@ class DouyinSite implements LiveSite {
     final future = _queryBilibiliPartitionImages()
         .timeout(const Duration(seconds: 2), onTimeout: () => const {})
         .then((images) => {
-              ...douyinPartitionImagesByName,
+              for (final entry in douyinPartitionImagesByName.entries)
+                entry.key.trim().toLowerCase(): entry.value,
               ...images,
             });
     _partitionImagesFuture = future;
@@ -489,7 +490,7 @@ class DouyinSite implements LiveSite {
           final name = child.name.trim();
           final pic = child.pic?.trim() ?? '';
           if (name.isNotEmpty && isHttpImageUrl(pic)) {
-            images[name] = pic;
+            images[name.toLowerCase()] = pic;
           }
         }
       }
@@ -514,8 +515,28 @@ class DouyinSite implements LiveSite {
     String partitionIdStr,
     String? title,
     Map<String, String> externalImages,
-  ) =>
-      douyinPartitionImages[partitionIdStr] ?? externalImages[title?.trim()];
+  ) {
+    final byId = douyinPartitionImages[partitionIdStr];
+    if (byId != null || title == null) {
+      return byId;
+    }
+    final name = title.trim().toLowerCase();
+    final exact = externalImages[name];
+    if (exact != null) {
+      return exact;
+    }
+    for (final aliases in douyinPartitionImageNameAliases) {
+      if (aliases.any((alias) => alias.toLowerCase() == name)) {
+        for (final alias in aliases) {
+          final image = externalImages[alias.toLowerCase()];
+          if (image != null) {
+            return image;
+          }
+        }
+      }
+    }
+    return null;
+  }
 
   String? _pickPartitionImageUrl(dynamic data) {
     if (data == null) {

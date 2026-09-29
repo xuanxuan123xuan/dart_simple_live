@@ -290,6 +290,12 @@ void main() {
                         'parent_id': 1,
                         'pic': 'https://bili.example/pubg.png',
                       },
+                      {
+                        'id': 102,
+                        'name': 'CS2',
+                        'parent_id': 1,
+                        'pic': 'https://bili.example/cs2.png',
+                      },
                     ],
                   },
                 ],
@@ -303,7 +309,7 @@ void main() {
             requestOptions: options,
             statusCode: 200,
             data:
-                r'''<script>\"categoryData\":[{"partition":{"id_str":"103","type":4,"title":"游戏"},"sub_partition":[{"partition":{"id_str":"999","type":1,"title":"射击游戏"},"sub_partition":[{"partition":{"id_str":"999001","type":1,"title":"绝地求生"},"sub_partition":[]}]}]}]</script>''',
+                r'''<script>\"categoryData\":[{"partition":{"id_str":"103","type":4,"title":"游戏"},"sub_partition":[{"partition":{"id_str":"999","type":1,"title":"射击游戏"},"sub_partition":[{"partition":{"id_str":"999001","type":1,"title":"PUBG"},"sub_partition":[]},{"partition":{"id_str":"999002","type":1,"title":"CSGO"},"sub_partition":[]},{"partition":{"id_str":"999003","type":1,"title":"绝地求生"},"sub_partition":[]}]}]}]</script>''',
           ),
         );
       },
@@ -317,7 +323,10 @@ void main() {
 
     expect(fallbackPic, isNotNull);
     expect(child.pic, contains('34de48c290b2565ed9d5dbf1dba56105788040f6'));
-    expect(child.children.single.pic, 'https://bili.example/pubg.png@100w.png');
-    expect(child.children.single.pic, isNot(fallbackPic));
+    expect(child.children.map((item) => item.name), ['PUBG', 'CSGO', '绝地求生']);
+    expect(child.children[0].pic, 'https://bili.example/pubg.png@100w.png');
+    expect(child.children[1].pic, 'https://bili.example/cs2.png@100w.png');
+    expect(child.children[2].pic, 'https://bili.example/pubg.png@100w.png');
+    expect(child.children[0].pic, isNot(fallbackPic));
   });
 }
