@@ -105,7 +105,7 @@ class BackgroundPlaybackService {
     required String album,
     String? artwork,
   }) async {
-    if (!_isSupported()) return;
+    if (!_isOhos()) return;
     return _enqueue(() async {
       await _channel.invokeMethod('updateMetadata', {
         'assetId': assetId,
