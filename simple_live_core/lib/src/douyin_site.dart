@@ -470,34 +470,80 @@ class DouyinSite implements LiveSite {
     if (cached != null) {
       return cached;
     }
-    final future = _queryBilibiliPartitionImages()
-        .timeout(const Duration(seconds: 2), onTimeout: () => const {})
-        .then((images) => {
-              for (final entry in douyinPartitionImagesByName.entries)
-                entry.key.trim().toLowerCase(): entry.value,
-              ...images,
-            });
+    final future = Future.wait<Map<String, String>>([
+      _queryExternalPartitionImages(_queryBilibiliPartitionImages),
+      _queryExternalPartitionImages(_queryDouyuPartitionImages),
+      _queryExternalPartitionImages(_queryHuyaPartitionImages),
+    ]).then((sources) {
+      final images = <String, String>{};
+      // Keep the first result when platforms share a title. The order gives
+      // the existing Bilibili mapping priority, while other platforms fill
+      // in titles that Bilibili does not expose.
+      for (final source in sources) {
+        for (final entry in source.entries) {
+          images.putIfAbsent(entry.key, () => entry.value);
+        }
+      }
+      for (final entry in douyinPartitionImagesByName.entries) {
+        images.putIfAbsent(entry.key.trim().toLowerCase(), () => entry.value);
+      }
+      return images;
+    });
     _partitionImagesFuture = future;
     return future;
+  }
+
+  Future<Map<String, String>> _queryExternalPartitionImages(
+    Future<Map<String, String>> Function() query,
+  ) async {
+    try {
+      return await query().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      return const {};
+    }
   }
 
   Future<Map<String, String>> _queryBilibiliPartitionImages() async {
     try {
       final categories = await BiliBiliSite().getCategores();
-      final images = <String, String>{};
-      for (final category in categories) {
-        for (final child in category.children) {
-          final name = child.name.trim();
-          final pic = child.pic?.trim() ?? '';
-          if (name.isNotEmpty && isHttpImageUrl(pic)) {
-            images[name.toLowerCase()] = pic;
-          }
-        }
-      }
-      return images;
+      return _partitionImagesFromCategories(categories);
     } catch (_) {
       return const {};
     }
+  }
+
+  Future<Map<String, String>> _queryDouyuPartitionImages() async {
+    try {
+      final categories = await DouyuSite().getCategores();
+      return _partitionImagesFromCategories(categories);
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<Map<String, String>> _queryHuyaPartitionImages() async {
+    try {
+      final categories = await HuyaSite().getCategores();
+      return _partitionImagesFromCategories(categories);
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Map<String, String> _partitionImagesFromCategories(
+    List<LiveCategory> categories,
+  ) {
+    final images = <String, String>{};
+    for (final category in categories) {
+      for (final child in category.children) {
+        final name = child.name.trim();
+        final pic = child.pic?.trim() ?? '';
+        if (name.isNotEmpty && isHttpImageUrl(pic)) {
+          images.putIfAbsent(name.toLowerCase(), () => pic);
+        }
+      }
+    }
+    return images;
   }
 
   /// 分区标题，抖音不同接口用 title / name 两种字段。

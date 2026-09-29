@@ -329,4 +329,91 @@ void main() {
     expect(child.children[2].pic, 'https://bili.example/pubg.png@100w.png');
     expect(child.children[0].pic, isNot(fallbackPic));
   });
+
+  test('图标候选池会从斗鱼和虎牙补足别名分区', () async {
+    final interceptor = InterceptorsWrapper(
+      onRequest: (options, handler) {
+        if (options.uri.path.contains('/frontend/finger/spi')) {
+          handler.resolve(
+            Response<Map<String, dynamic>>(
+              requestOptions: options,
+              statusCode: 200,
+              data: {
+                'data': {'b_3': '', 'b_4': ''},
+              },
+            ),
+          );
+          return;
+        }
+        if (options.uri.path.contains('/room/v1/Area/getList')) {
+          handler.resolve(
+            Response<Map<String, dynamic>>(
+              requestOptions: options,
+              statusCode: 200,
+              data: {'data': []},
+            ),
+          );
+          return;
+        }
+        if (options.uri.path.contains('/api/cate/list')) {
+          handler.resolve(
+            Response<Map<String, dynamic>>(
+              requestOptions: options,
+              statusCode: 200,
+              data: {
+                'data': {
+                  'cate1Info': [
+                    {'cate1Id': 1, 'cate1Name': '游戏'},
+                  ],
+                  'cate2Info': [
+                    {
+                      'cate1Id': 1,
+                      'cate2Id': 10,
+                      'cate2Name': 'CSGO',
+                      'icon': 'https://douyu.example/csgo.png',
+                    },
+                  ],
+                },
+              },
+            ),
+          );
+          return;
+        }
+        if (options.uri.path.contains('/liveconfig/game/bussLive')) {
+          handler.resolve(
+            Response<Map<String, dynamic>>(
+              requestOptions: options,
+              statusCode: 200,
+              data: {
+                'data': [
+                  {
+                    'gid': 80,
+                    'gameFullName': '绝地求生',
+                  },
+                ],
+              },
+            ),
+          );
+          return;
+        }
+        handler.resolve(
+          Response<String>(
+            requestOptions: options,
+            statusCode: 200,
+            data:
+                r'''<script>\"categoryData\":[{"partition":{"id_str":"103","type":4,"title":"游戏"},"sub_partition":[{"partition":{"id_str":"999","type":1,"title":"射击游戏"},"sub_partition":[{"partition":{"id_str":"999001","type":1,"title":"CSGO"},"sub_partition":[]},{"partition":{"id_str":"999002","type":1,"title":"PUBG"},"sub_partition":[]}]}]}]</script>''',
+          ),
+        );
+      },
+    );
+    HttpClient.instance.dio.interceptors.add(interceptor);
+    addTearDown(() => HttpClient.instance.dio.interceptors.remove(interceptor));
+
+    final category = (await DouyinSite().getCategores()).single;
+    final child = category.children[1];
+
+    expect(child.children[0].pic, 'https://douyu.example/csgo.png');
+    expect(child.children[1].pic,
+        'https://huyaimg.msstatic.com/cdnimage/game/80-MS.jpg');
+  });
 }
