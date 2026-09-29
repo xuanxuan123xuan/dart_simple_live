@@ -380,7 +380,7 @@ class DouyinSite implements LiveSite {
       List<LiveSubCategory> subs = [];
       final id = '$idStr,$type';
       final pic = _pickPartitionImageUrl(partition) ??
-          _partitionImageFallback('$idStr');
+          _partitionImageFallback('$idStr', name);
 
       // 递归解析所有子分类（抖音游戏分区存在三级）。
       final subPartitions = rawItem["sub_partition"];
@@ -389,7 +389,6 @@ class DouyinSite implements LiveSite {
           final subCategory = _parseSubCategory(
             subItem,
             id,
-            fallbackPic: pic,
           );
           if (subCategory != null) {
             subs.add(subCategory);
@@ -420,9 +419,8 @@ class DouyinSite implements LiveSite {
   /// 递归解析分区；任意层级数据异常时返回 null，由调用方跳过该节点。
   LiveSubCategory? _parseSubCategory(
     dynamic item,
-    String parentId, {
-    String? fallbackPic,
-  }) {
+    String parentId,
+  ) {
     if (item is! Map) {
       return null;
     }
@@ -445,7 +443,6 @@ class DouyinSite implements LiveSite {
         final child = _parseSubCategory(
           subItem,
           id,
-          fallbackPic: _pickPartitionImageUrl(partition) ?? fallbackPic,
         );
         if (child != null) {
           children.add(child);
@@ -458,8 +455,7 @@ class DouyinSite implements LiveSite {
       name: name,
       parentId: parentId,
       pic: _pickPartitionImageUrl(partition) ??
-          _partitionImageFallback('$idStr') ??
-          fallbackPic,
+          _partitionImageFallback('$idStr', name),
       children: children,
     );
   }
@@ -475,8 +471,9 @@ class DouyinSite implements LiveSite {
 
   /// 抖音分区无官方图片，用 [douyinPartitionImages] 静态映射兜底
   /// （借 B站分区封面，key 为分区 id_str）。
-  String? _partitionImageFallback(String partitionIdStr) =>
-      douyinPartitionImages[partitionIdStr];
+  String? _partitionImageFallback(String partitionIdStr, [String? title]) =>
+      douyinPartitionImages[partitionIdStr] ??
+      douyinPartitionImagesByName[title?.trim()];
 
   String? _pickPartitionImageUrl(dynamic data) {
     if (data == null) {
