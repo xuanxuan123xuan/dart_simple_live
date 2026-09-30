@@ -18,7 +18,7 @@ import java.util.Objects;
 
 import io.flutter.view.TextureRegistry;
 
-public class VideoOutput {
+public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
     private static final String TAG = "VideoOutput";
     private static final Method newGlobalObjectRef;
     private static final Method deleteGlobalObjectRef;
@@ -53,11 +53,10 @@ public class VideoOutput {
         this.textureUpdateCallback = textureUpdateCallback;
 
         surfaceProducer = textureRegistryReference.createSurfaceProducer();
-        // Flutter 3.22 的 TextureRegistry.SurfaceProducer 没有 Callback/setCallback
-        // （3.24+ 才有），surface 创建/销毁由本类手动管理（setSurfaceSize/dispose）。
-
-        // By default, android.graphics.SurfaceTexture has a size of 1x1.
-        setSurfaceSize(1, 1, true);
+        // Flutter 3.44+ reports real SurfaceProducer lifecycle changes. This
+        // prevents stale native surfaces from being reused after a surface
+        // recreation and lets the texture bridge release old references.
+        surfaceProducer.setCallback(this);
     }
 
     public void dispose() {
@@ -72,7 +71,7 @@ public class VideoOutput {
             } catch (Throwable e) {
                 Log.e(TAG, "dispose", e);
             }
-            onSurfaceDestroyed();
+            onSurfaceCleanup();
         }
     }
 
@@ -87,25 +86,27 @@ public class VideoOutput {
                     return;
                 }
                 surfaceProducer.setSize(width, height);
-                onSurfaceCreated();
+                onSurfaceAvailable();
             } catch (Throwable e) {
                 Log.e(TAG, "setSurfaceSize", e);
             }
         }
     }
 
-    public void onSurfaceCreated() {
+    @Override
+    public void onSurfaceAvailable() {
         synchronized (lock) {
-            Log.i(TAG, "onSurfaceCreated");
+            Log.i(TAG, "onSurfaceAvailable");
             id = surfaceProducer.id();
             wid = newGlobalObjectRef(surfaceProducer.getSurface());
             textureUpdateCallback.onTextureUpdate(id, wid, surfaceProducer.getWidth(), surfaceProducer.getHeight());
         }
     }
 
-    public void onSurfaceDestroyed() {
+    @Override
+    public void onSurfaceCleanup() {
         synchronized (lock) {
-            Log.i(TAG, "onSurfaceDestroyed");
+            Log.i(TAG, "onSurfaceCleanup");
             textureUpdateCallback.onTextureUpdate(id, 0, surfaceProducer.getWidth(), surfaceProducer.getHeight());
             if (wid != 0) {
                 final long widReference = wid;
