@@ -52,7 +52,13 @@ class AppNavigator {
       String? excludedRoomId}) {
     final controllerTag =
         "${site.id}:${category.id}:${++_categoryDetailSequence}";
-    Get.toNamed(
+    // A child category replaces the current detail route. Keeping every
+    // drill-down as a push leaves an unbounded stack of identical routes and
+    // makes the back gesture traverse stale category pages.
+    final navigate = Get.currentRoute == RoutePath.kCategoryDetail
+        ? Get.offNamed
+        : Get.toNamed;
+    navigate(
       RoutePath.kCategoryDetail,
       arguments: {
         "site": site,
@@ -61,8 +67,6 @@ class AppNavigator {
         if (onRoomSelected != null) "onRoomSelected": onRoomSelected,
         if (excludedRoomId != null) "excludedRoomId": excludedRoomId,
       },
-      // Nested category pages reuse the same named route. GetX otherwise
-      // treats the second tap as a duplicate and silently returns null.
       preventDuplicates: false,
     );
   }

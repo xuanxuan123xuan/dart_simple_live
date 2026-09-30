@@ -50,7 +50,7 @@ class IndexedPage extends GetView<IndexedController> {
                   heightFactor: 1,
                   child: SizedBox(
                     width: width,
-                    child: _BottomNavigationBar(
+                    child: IndexedBottomNavigationBar(
                       items: controller.items,
                       selectedIndex: controller.index,
                       onDestinationSelected: controller.setIndex,
@@ -87,8 +87,8 @@ class _IndexedPageStack extends StatelessWidget {
   }
 }
 
-class _BottomNavigationBar extends StatelessWidget {
-  const _BottomNavigationBar({
+class IndexedBottomNavigationBar extends StatelessWidget {
+  const IndexedBottomNavigationBar({
     required this.items,
     required this.selectedIndex,
     required this.onDestinationSelected,
