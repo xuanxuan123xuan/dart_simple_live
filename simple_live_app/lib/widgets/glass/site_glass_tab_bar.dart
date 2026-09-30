@@ -95,9 +95,6 @@ class SiteGlassTabBar extends StatelessWidget {
                   ),
               ],
               selectedIndex: controller.index,
-              // GlassTabBar expects an absolute tab position (0..tabCount - 1),
-              // matching TabController.animation.value during a swipe.
-              indicatorPosition: position,
               onTabSelected: controller.animateTo,
               backgroundKey: LiquidGlassScope.of(context),
               quality: quality,

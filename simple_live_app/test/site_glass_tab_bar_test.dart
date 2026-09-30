@@ -147,7 +147,7 @@ void main() {
 
       expect(controller.index, i);
       final indicator = tester.widget<TabIndicator>(find.byType(TabIndicator));
-      expect(indicator.indicatorPosition, closeTo(i.toDouble(), 0.001));
+      expect(indicator.indicatorPosition, isNull);
     }
   });
 
@@ -196,7 +196,7 @@ void main() {
     expect(draggedLeft, closeTo(initialLeft + 28, 0.5));
   });
 
-  testWidgets('auto glass indicator follows a fractional swipe position',
+  testWidgets('auto glass indicator uses the settled selected tab position',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(600, 200));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -228,7 +228,7 @@ void main() {
 
     expect(
       tester.widget<TabIndicator>(find.byType(TabIndicator)).indicatorPosition,
-      closeTo(0, 0.001),
+      isNull,
     );
     controller!.offset = 0.25;
     await tester.pump();
@@ -236,7 +236,7 @@ void main() {
     expect(controller!.index, 0);
     expect(
       tester.widget<TabIndicator>(find.byType(TabIndicator)).indicatorPosition,
-      closeTo(0.25, 0.001),
+      isNull,
     );
   });
 }
