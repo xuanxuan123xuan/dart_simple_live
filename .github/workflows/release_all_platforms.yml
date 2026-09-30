@@ -40,7 +40,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: "3.41.x"
+  # Flutter 3.44.7 includes the Android external-texture fence leak fix.
+  FLUTTER_VERSION: "3.44.7"
   # iOS 当前构建已验证通过 Xcode 26.0；macOS 的 Icon Composer 资源使用
   # 与 macOS 26 主机匹配的较新工具链，避免 AssetCatalogAgent 崩溃。
   APPLE_XCODE_VERSION: "26.0"
