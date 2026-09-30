@@ -502,7 +502,7 @@ jobs:
   windows:
     name: Windows EXE 与 ZIP
     needs: prepare
-    # Flutter 3.41 支持 VS 2022/2026；保留 windows-2022 镜像稳定构建。
+    # Flutter 3.44 支持 VS 2022/2026；保留 windows-2022 镜像稳定构建。
     runs-on: windows-2022
     timeout-minutes: 75
     steps:
