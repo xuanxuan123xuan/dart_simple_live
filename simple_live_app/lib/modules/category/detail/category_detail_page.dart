@@ -3,8 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
+import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/modules/category/detail/category_detail_controller.dart';
+import 'package:simple_live_app/modules/indexed/indexed_controller.dart';
+import 'package:simple_live_app/modules/indexed/indexed_page.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
+import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/live_room_card.dart';
 import 'package:simple_live_app/widgets/live_room_grid_layout.dart';
@@ -32,6 +36,8 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
       detailsExtent: 0,
     );
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      extendBody: true,
       appBar: AppBar(
         title: Text(controller.subCategory.name),
       ),
@@ -61,6 +67,7 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
           },
         ),
       ),
+      bottomNavigationBar: _buildPersistentNavigation(context),
     );
   }
 
@@ -72,6 +79,8 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
     final crossAxisCount =
         (MediaQuery.sizeOf(context).width ~/ 96).clamp(1, 12).toInt();
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      extendBody: true,
       appBar: AppBar(
         title: Text(controller.subCategory.name),
       ),
@@ -122,6 +131,29 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
             },
           );
         },
+      ),
+      bottomNavigationBar: _buildPersistentNavigation(context),
+    );
+  }
+
+  Widget? _buildPersistentNavigation(BuildContext context) {
+    if (!PlatformUtils.isMobileApp ||
+        MediaQuery.sizeOf(context).shortestSide < 600) {
+      return null;
+    }
+    final indexed = Get.find<IndexedController>();
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: IndexedBottomNavigationBar(
+        items: indexed.items,
+        selectedIndex: indexed.index,
+        onDestinationSelected: (index) {
+          Get.until((route) => route.settings.name == RoutePath.kIndex);
+          indexed.setIndex(index);
+        },
+        glassEnabled: true,
+        backgroundKey: null,
       ),
     );
   }
