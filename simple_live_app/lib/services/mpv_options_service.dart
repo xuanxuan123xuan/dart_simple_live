@@ -251,7 +251,11 @@ class MpvOptionsService {
     }
     return VideoControllerConfiguration(
       vo: options["vo"],
-      hwdec: options["hwdec"],
+      hwdec: resolveAndroidVideoControllerHwdec(
+        effectiveOptions,
+        hardwareDecode: settings.hardwareDecode.value,
+        customPlayerOutput: settings.customPlayerOutput.value,
+      ),
       enableHardwareAcceleration: settings.hardwareDecode.value,
       // Fix Issue #57: 安卓全屏后画面卡死 - 延迟attach避免surface race condition
       androidAttachSurfaceAfterVideoParameters: true,
@@ -389,7 +393,23 @@ class MpvOptionsService {
     return options.options["hwdec"];
   }
 
+  static String? resolveAndroidVideoControllerHwdec(
+    MpvEffectiveOptions options, {
+    required bool hardwareDecode,
+    required bool customPlayerOutput,
+  }) {
+    // The profile supplies an explicit `auto-safe` hwdec value on Android.
+    // That prevents media_kit from consulting enableHardwareAcceleration, so
+    // the user-facing switch must override the default/profile value. Custom
+    // player output is an explicit advanced override and keeps its hwdec.
+    if (!hardwareDecode && !customPlayerOutput) {
+      return "no";
+    }
+    return options.options["hwdec"];
+  }
+
   static String diagnosticsSummary() {
+    final settings = AppSettingsController.instance;
     final effectiveOptions = effectiveOptionsWithSource();
     final options = effectiveOptions.options;
     String value(String key) {
@@ -404,10 +424,22 @@ class MpvOptionsService {
     final ignored = effectiveOptions.ignored.entries
         .map((e) => "${e.key}=${e.value}")
         .join(" ");
+    final compatMode = settings.playerCompatMode.value && Platform.isAndroid;
+    final actualVo = compatMode ? "mediacodec_embed" : value("vo");
+    final actualHwdec = compatMode
+        ? "mediacodec"
+        : (Platform.isAndroid
+              ? (resolveAndroidVideoControllerHwdec(
+                  effectiveOptions,
+                  hardwareDecode: settings.hardwareDecode.value,
+                  customPlayerOutput: settings.customPlayerOutput.value,
+                ) ?? "default")
+              : value("hwdec"));
     return "profile=${AppSettingsController.instance.mpvProfile.value}, "
-        "hardwareDecode=${AppSettingsController.instance.hardwareDecode.value}, "
-        "liveLatency=${AppSettingsController.instance.mpvLiveLatencyMode.value}, "
-        "vo=${value("vo")}, hwdec=${value("hwdec")}, ao=${value("ao")}, "
+        "hardwareDecode=${settings.hardwareDecode.value}, "
+        "compatMode=${settings.playerCompatMode.value}, "
+        "liveLatency=${settings.mpvLiveLatencyMode.value}, "
+        "vo=$actualVo, hwdec=$actualHwdec, ao=${value("ao")}, "
         "mpvOptions=${options.length}"
         "${ignored.isEmpty ? "" : ", ignored[$ignored]"}";
   }
