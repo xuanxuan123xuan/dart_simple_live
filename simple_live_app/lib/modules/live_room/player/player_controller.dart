@@ -24,6 +24,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_tracker.dart';
 import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/player/player_volume_session_policy.dart';
+import 'package:simple_live_app/services/android_resource_diagnostics.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart';
@@ -219,6 +220,7 @@ mixin PlayerMixin {
   int? _livePlaybackSamplingGeneration;
   int? _liveLatencyChaseServiceGeneration;
   DateTime? _nextLivePlaybackHealthSampleAt;
+  DateTime? _nextAndroidResourceDiagnosticAt;
   DateTime? _lastLiveLatencyChaseAudioUnderrunAt;
   DateTime? _latestLivePlaybackCacheSampledAt;
   double? _latestLivePlaybackCacheDurationSeconds;
@@ -638,9 +640,26 @@ mixin PlayerMixin {
   }
 
   void _recordLiveLinkHealthSample(LiveLinkHealthSample sample) {
+    _recordAndroidResourceDiagnostics(sample.sampledAt);
     final summary = _liveLinkHealthCollector.addSample(sample);
     if (summary != null) {
       Log.writeLog(summary);
+    }
+  }
+
+  void _recordAndroidResourceDiagnostics(DateTime sampledAt) {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    final nextAt = _nextAndroidResourceDiagnosticAt;
+    if (nextAt != null && sampledAt.isBefore(nextAt)) {
+      return;
+    }
+    _nextAndroidResourceDiagnosticAt =
+        sampledAt.add(const Duration(seconds: 60));
+    final snapshot = AndroidResourceDiagnostics.read();
+    if (snapshot != null) {
+      Log.writeLog(AndroidResourceDiagnostics.format(snapshot));
     }
   }
 
@@ -679,6 +698,7 @@ mixin PlayerMixin {
   Future<void> _cancelLivePlaybackSamplingInfrastructure() async {
     _liveLatencyChaseSamplingLoop.stop();
     _nextLivePlaybackHealthSampleAt = null;
+    _nextAndroidResourceDiagnosticAt = null;
     await _livePlaybackBufferingSubscription?.cancel();
     _livePlaybackBufferingSubscription = null;
     _livePlaybackBuffering = null;
