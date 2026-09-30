@@ -145,4 +145,44 @@ void main() {
       expect(MpvOptionsService.isValueSupportedOn('auto', 'windows'), isTrue);
     });
   });
+
+  group('MpvOptionsService.resolveAndroidVideoControllerHwdec', () {
+    const options = MpvEffectiveOptions(
+      {'hwdec': 'auto-safe'},
+      {'hwdec': 'profile:balancedDesktop'},
+    );
+
+    test('forces software decoding when the switch is off', () {
+      expect(
+        MpvOptionsService.resolveAndroidVideoControllerHwdec(
+          options,
+          hardwareDecode: false,
+          customPlayerOutput: false,
+        ),
+        'no',
+      );
+    });
+
+    test('keeps the selected decoder when hardware decoding is enabled', () {
+      expect(
+        MpvOptionsService.resolveAndroidVideoControllerHwdec(
+          options,
+          hardwareDecode: true,
+          customPlayerOutput: false,
+        ),
+        'auto-safe',
+      );
+    });
+
+    test('keeps an explicit custom output decoder', () {
+      expect(
+        MpvOptionsService.resolveAndroidVideoControllerHwdec(
+          options,
+          hardwareDecode: false,
+          customPlayerOutput: true,
+        ),
+        'auto-safe',
+      );
+    });
+  });
 }
