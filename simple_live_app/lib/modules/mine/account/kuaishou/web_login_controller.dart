@@ -43,10 +43,28 @@ class KuaishouWebLoginController extends BaseController {
   bool _closing = false;
   final _freshSession = KuaishouFreshLoginSessionCoordinator();
 
-  late final KuaishouAccountSlot targetSlot =
-      Get.arguments is KuaishouAccountSlot
-          ? Get.arguments as KuaishouAccountSlot
-          : KuaishouAccountSlot.primary;
+  late final KuaishouAccountSlot targetSlot = _readTargetSlot();
+
+  bool get isChallengeFlow =>
+      Get.arguments is Map && Get.arguments['challenge'] == true;
+
+  String get initialUrl {
+    final args = Get.arguments;
+    if (args is Map && args['url'] is String) {
+      final value = (args['url'] as String).trim();
+      if (value.isNotEmpty) return value;
+    }
+    return _loginUrl;
+  }
+
+  KuaishouAccountSlot _readTargetSlot() {
+    final args = Get.arguments;
+    if (args is KuaishouAccountSlot) return args;
+    if (args is Map && args['slot'] is KuaishouAccountSlot) {
+      return args['slot'] as KuaishouAccountSlot;
+    }
+    return KuaishouAccountSlot.primary;
+  }
 
   String get targetSlotName =>
       targetSlot == KuaishouAccountSlot.primary ? "主账号" : "备用账号";
@@ -55,7 +73,7 @@ class KuaishouWebLoginController extends BaseController {
       requiresFreshKuaishouLoginSession(targetSlot);
 
   bool get _usesManagedFreshSession =>
-      requiresFreshSession && !Utils.isOhos;
+      requiresFreshSession && !Utils.isOhos && !isChallengeFlow;
 
   @override
   void onInit() {
@@ -66,7 +84,7 @@ class KuaishouWebLoginController extends BaseController {
     _sessionPollTimer = Timer.periodic(
       const Duration(seconds: 2),
       (_) {
-        if (_loginPageReady) {
+        if (_loginPageReady && !isChallengeFlow) {
           unawaited(_tryAutoCompleteLogin());
         }
       },
@@ -127,13 +145,15 @@ class KuaishouWebLoginController extends BaseController {
       return;
     }
     try {
-      if (requiresFreshSession && !_freshOhosSessionPrepared) {
+      if (requiresFreshSession &&
+          !isChallengeFlow &&
+          !_freshOhosSessionPrepared) {
         await _ohosWebCookieChannel.invokeMethod<void>('clearCookies');
         _freshOhosSessionPrepared = true;
         _freshOhosStorageResetPending = true;
       }
       errorMessage.value = '';
-      await controller.loadRequest(Uri.parse(_loginUrl));
+      await controller.loadRequest(Uri.parse(initialUrl));
       _ohosLoginRequestLoaded = true;
     } catch (e) {
       progress.value = 1;
@@ -146,14 +166,16 @@ class KuaishouWebLoginController extends BaseController {
   Future<void> _handleOhosPageFinished() async {
     progress.value = 1;
     final controller = ohosWebViewController;
-    if (_freshOhosStorageResetPending && controller != null) {
+    if (_freshOhosStorageResetPending &&
+        !isChallengeFlow &&
+        controller != null) {
       try {
         await controller.runJavaScript(
           'window.localStorage.clear(); window.sessionStorage.clear();',
         );
         _freshOhosStorageResetPending = false;
         _loginPageReady = false;
-        await controller.loadRequest(Uri.parse(_loginUrl));
+        await controller.loadRequest(Uri.parse(initialUrl));
       } catch (e) {
         errorMessage.value = '无法清理主账号网页登录状态';
         Log.e('清理鸿蒙快手主账号网页登录状态失败：$e', StackTrace.current);
@@ -183,8 +205,11 @@ class KuaishouWebLoginController extends BaseController {
         }
       }
       errorMessage.value = "";
+      if (isChallengeFlow) {
+        await _seedStoredCookie();
+      }
       await controller.loadUrl(
-        urlRequest: URLRequest(url: WebUri(_loginUrl)),
+        urlRequest: URLRequest(url: WebUri(initialUrl)),
       );
     } catch (e) {
       _loginPageReady = false;
@@ -231,7 +256,9 @@ class KuaishouWebLoginController extends BaseController {
       return;
     }
     _loginPageReady = true;
-    await _tryAutoCompleteLogin();
+    if (!isChallengeFlow) {
+      await _tryAutoCompleteLogin();
+    }
   }
 
   void onReceivedError(
@@ -322,7 +349,7 @@ class KuaishouWebLoginController extends BaseController {
         kww: kww,
         expiresAt: snapshot.expiresAt,
       );
-      if (!saved) {
+      if (!saved && !isChallengeFlow) {
         if (!silent || autoClose) {
           SmartDialog.showToast("主账号和备用账号不能使用相同 Cookie 或 UID");
         }
@@ -343,7 +370,7 @@ class KuaishouWebLoginController extends BaseController {
         SmartDialog.showToast("快手$targetSlotName Cookie 已保存，可用于搜索和弹幕");
       }
       if (autoClose) {
-        Get.back();
+        Get.back(result: isChallengeFlow);
       }
     } catch (e) {
       Log.e("保存快手 Cookie 失败：$e", StackTrace.current);
@@ -352,6 +379,27 @@ class KuaishouWebLoginController extends BaseController {
       }
     } finally {
       checking.value = false;
+    }
+  }
+
+  Future<void> _seedStoredCookie() async {
+    if (Utils.isOhos) return;
+    final cookie = KuaishouAccountService.instance.sessionFor(targetSlot).cookie;
+    final manager = cookieManager ??= CookieManager.instance();
+    for (final part in cookie.split(';')) {
+      final item = part.trim();
+      final separator = item.indexOf('=');
+      if (separator <= 0) continue;
+      final name = item.substring(0, separator).trim();
+      final value = item.substring(separator + 1).trim();
+      if (name.isEmpty || value.isEmpty) continue;
+      await manager.setCookie(
+        url: WebUri(_loginUrl),
+        name: name,
+        value: value,
+        domain: '.kuaishou.com',
+        path: '/',
+      );
     }
   }
 
@@ -388,7 +436,8 @@ class KuaishouWebLoginController extends BaseController {
   }
 
   Future<void> _tryAutoCompleteLogin() async {
-    if (checking.value ||
+    if (isChallengeFlow ||
+        checking.value ||
         _autoChecking ||
         _freshOhosStorageResetPending ||
         _closing ||

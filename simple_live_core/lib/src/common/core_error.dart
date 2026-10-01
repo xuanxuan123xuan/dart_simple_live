@@ -51,6 +51,29 @@ class CoreError extends Error {
   }
 }
 
+/// 快手返回了需要用户在网页中完成的滑块验证。
+///
+/// 这是可恢复的会话状态，不应被当作普通 403、限流或凭据失效处理；
+/// 调用方可以用 [roomId] 和 [sessionKey] 在应用内打开对应网页并恢复会话。
+class KuaishouVerificationRequiredError extends CoreError {
+  KuaishouVerificationRequiredError({
+    required this.roomId,
+    this.sessionKey,
+    Object? cause,
+  }) : super(
+          '请在快手页面完成滑块验证或安全验证后重试',
+          statusCode: 403,
+          kind: CoreErrorKind.http,
+          cause: cause,
+        );
+
+  final String roomId;
+  final String? sessionKey;
+
+  @override
+  String toString() => message;
+}
+
 class CoreCancelledError extends CoreError {
   CoreCancelledError({Object? cause})
       : super(

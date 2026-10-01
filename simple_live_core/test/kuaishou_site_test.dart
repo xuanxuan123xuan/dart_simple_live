@@ -1555,6 +1555,14 @@ void main() {
       );
     });
 
+    test('detects slider verification from structured initial state', () {
+      const html = '''
+        <script>
+          window.__INITIAL_STATE__={"liveroom":{"playList":[{"errorType":{"type":400002,"title":"请完成滑块验证","content":""}}]}};
+        </script>
+      ''';
+      expect(KuaishouSite.looksLikeChallengePage(html), isTrue);
+    });
     test('does not classify a normal room page as challenge', () {
       expect(
         KuaishouSite.looksLikeChallengePage(

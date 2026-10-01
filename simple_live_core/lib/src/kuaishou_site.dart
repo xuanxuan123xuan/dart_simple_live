@@ -294,6 +294,32 @@ class KuaishouSite extends LiveSite {
     _anonymousMode = false;
   }
 
+  /// Applies the full Cookie observed after an in-app verification page.
+  ///
+  /// Portable credentials intentionally omit device-scoped fields. Keep those
+  /// fields in the active transport only so the just-verified browser session
+  /// can be reused without persisting them as account credentials.
+  void restoreVerifiedAccountSession({
+    required String sessionKey,
+    required String cookie,
+    required String kww,
+  }) {
+    final transport = _transportFor(sessionKey);
+    final credentialCookie = sanitizeKuaishouCredentialCookie(cookie);
+    if (transport.customCookie != credentialCookie ||
+        transport.customKww != kww) {
+      transport.resetCredential(cookie: credentialCookie, kww: kww);
+    }
+    final values = _parseCookieHeader(cookie);
+    transport.cookieObj = values;
+    transport.cookie = _formatCookieHeader(values);
+    transport.hardBlocked = false;
+    transport.cooldownUntil = null;
+    transport.lastHealthEvent = null;
+    _activeAccountSessionKey = sessionKey;
+    _anonymousMode = false;
+  }
+
   void activateAnonymousMode() {
     _activeAccountSessionKey = _legacySessionKey;
     _anonymousMode = true;
@@ -1866,10 +1892,8 @@ class KuaishouSite extends LiveSite {
         retry: retry,
         reason: 'challenge',
       );
-      throw CoreError(
-        '快手返回安全验证页面，请稍后重试',
-        statusCode: 403,
-        kind: CoreErrorKind.http,
+      throw KuaishouVerificationRequiredError(
+        roomId: roomId,
         cause: error,
       );
     } on CoreError catch (error) {
@@ -2371,6 +2395,13 @@ class KuaishouSite extends LiveSite {
       );
       _ensureCurrentSession(transport, sessionEpoch);
       _throwIfExplicitRateLimit(resultText);
+      // A verification page can still contain a syntactically valid
+      // __INITIAL_STATE__. Check the semantic error payload before parsing it
+      // as an empty/offline room, otherwise the caller cannot offer an
+      // in-app slider flow.
+      if (looksLikeChallengePage(resultText)) {
+        throw const _KuaishouChallengePageException();
+      }
       if (authenticated && looksLikeCredentialInvalidPage(resultText)) {
         throw const _KuaishouCredentialInvalidException();
       }
@@ -2380,9 +2411,6 @@ class KuaishouSite extends LiveSite {
         roomId,
         transport: transport,
       );
-      if (detail == null && looksLikeChallengePage(resultText)) {
-        throw const _KuaishouChallengePageException();
-      }
       if (detail != null) {
         _recordEndpointSuccess('room_page', transport, sessionEpoch);
       }
@@ -2470,7 +2498,36 @@ class KuaishouSite extends LiveSite {
   }
 
   static bool looksLikeChallengePage(String html) {
-    if (html.contains('window.__INITIAL_STATE__')) {
+    final initialState = RegExp(
+      r"window\.__INITIAL_STATE__\s*=\s*(.*?);",
+      multiLine: false,
+    ).firstMatch(html)?.group(1);
+    if (initialState != null) {
+      try {
+        final decoded = jsonDecode(initialState.replaceAll('undefined', 'null'));
+        final liveroom = decoded is Map ? decoded['liveroom'] : null;
+        final playList = liveroom is Map ? liveroom['playList'] : null;
+        final errorType = playList is List && playList.isNotEmpty &&
+                playList.first is Map
+            ? (playList.first as Map)['errorType']
+            : null;
+        if (errorType is Map) {
+          final type = errorType['type'];
+          final text = '${errorType['title'] ?? ''} '
+              '${errorType['content'] ?? ''}';
+          if (type == 400002 ||
+              text.contains('滑块验证') ||
+              text.contains('安全验证') ||
+              text.toLowerCase().contains('captcha')) {
+            return true;
+          }
+        }
+      } catch (_) {
+        // Fall through to the plain-text markers below.
+      }
+      // Normal room pages may include captcha-related JavaScript bundles. Once
+      // structured state is present without a verification error, those strings
+      // are not evidence of a challenge.
       return false;
     }
     final lower = html.toLowerCase();
@@ -2932,10 +2989,8 @@ class KuaishouSite extends LiveSite {
             );
             return detail.resolvedLiveStatus;
           } on _KuaishouChallengePageException catch (e) {
-            throw CoreError(
-              '快手返回安全验证页面，请稍后重试',
-              statusCode: 403,
-              kind: CoreErrorKind.http,
+            throw KuaishouVerificationRequiredError(
+              roomId: roomId,
               cause: e,
             );
           } catch (_) {
@@ -3265,8 +3320,15 @@ class KuaishouSite extends LiveSite {
           statusCode == 401 ||
           statusCode == 403 ||
           statusCode == 429) {
+        if (isChallengePage) {
+          throw KuaishouVerificationRequiredError(
+            roomId: roomId,
+            sessionKey: transport.sessionKey,
+            cause: e,
+          );
+        }
         throw CoreError(
-          isChallengePage ? '快手返回安全验证页面，请稍后重试' : '快手 Cookie 握手被服务端拒绝',
+          '快手 Cookie 握手被服务端拒绝',
           statusCode: statusCode,
           kind: CoreErrorKind.http,
           cause: e,

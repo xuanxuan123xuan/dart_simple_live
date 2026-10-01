@@ -16,7 +16,9 @@ class KuaishouWebLoginPage extends GetView<KuaishouWebLoginController> {
       onWillPop: controller.prepareToClose,
       child: Scaffold(
         appBar: AppBar(
-          title: Text("快手${controller.targetSlotName}网页登录"),
+          title: Text(controller.isChallengeFlow
+              ? "完成快手安全验证"
+              : "快手${controller.targetSlotName}网页登录"),
           actions: [
             IconButton(
               tooltip: "刷新",
@@ -26,7 +28,7 @@ class KuaishouWebLoginPage extends GetView<KuaishouWebLoginController> {
             TextButton.icon(
               onPressed: () => controller.saveCookie(),
               icon: const Icon(Icons.save_outlined),
-              label: const Text("保存"),
+              label: Text(controller.isChallengeFlow ? "完成验证" : "保存"),
             ),
           ],
           bottom: PreferredSize(
@@ -44,10 +46,12 @@ class KuaishouWebLoginPage extends GetView<KuaishouWebLoginController> {
           children: [
             Material(
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: const ListTile(
+              child: ListTile(
                 dense: true,
                 leading: Icon(Icons.cookie_outlined),
-                title: Text("完成快手网页登录后会自动保存并返回；右上角保存可用于手动重试。"),
+                title: Text(controller.isChallengeFlow
+                    ? "请在页面内完成滑块验证，完成后点击右上角“完成验证”。"
+                    : "完成快手网页登录后会自动保存并返回；右上角保存可用于手动重试。"),
               ),
             ),
             Obx(() {

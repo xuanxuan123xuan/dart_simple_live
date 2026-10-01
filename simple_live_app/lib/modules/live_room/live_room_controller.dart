@@ -1021,6 +1021,7 @@ class LiveRoomController extends PlayerController
   int _kuaishouRecoverySessionRevision = 0;
   bool _autoQualityWarmupStartedForRoom = false;
   Future<void>? _kuaishouRecoveryFuture;
+  bool _kuaishouChallengeFlowOpen = false;
 
   /// 连续轮询失败（含 unknown/offline）次数，用于指数退避。
   int _onlineRefreshFailures = 0;
@@ -3028,6 +3029,39 @@ class LiveRoomController extends PlayerController
     _startKuaishouDeviceRecoveryCountdown(rateLimitError.cooldownUntil);
   }
 
+  bool _isKuaishouChallengeError(Object error) {
+    return error is KuaishouVerificationRequiredError ||
+        (error is CoreError &&
+            error.statusCode == 403 &&
+            (error.message.contains('安全验证') ||
+                error.message.contains('滑块验证')));
+  }
+
+  Future<void> _openKuaishouChallengeFlow(int loadGeneration) async {
+    if (_kuaishouChallengeFlowOpen || _roomDisposed) return;
+    _kuaishouChallengeFlowOpen = true;
+    try {
+      final account = Get.isRegistered<KuaishouAccountService>()
+          ? KuaishouAccountService.instance
+          : null;
+      final slot = account?.activeSession?.slot ?? KuaishouAccountSlot.primary;
+      final result = await Get.toNamed(
+        RoutePath.kKuaishouWebLogin,
+        arguments: <String, dynamic>{
+          'slot': slot,
+          'url': KuaishouLiveLink.publicRoomUrl(roomId),
+          'challenge': true,
+        },
+      );
+      if (result == true && _isCurrentLoad(loadGeneration)) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        loadData();
+      }
+    } finally {
+      _kuaishouChallengeFlowOpen = false;
+    }
+  }
+
   void _configureKuaishouDeviceRecovery(Object caughtError) {
     _cancelKuaishouDeviceRecoveryTimer(clearState: true);
     if (caughtError is! KuaishouRateLimitError ||
@@ -3441,6 +3475,13 @@ class LiveRoomController extends PlayerController
       startLiveDurationTimer();
     } catch (e, stackTrace) {
       Log.logPrint(e);
+      if (site.id == Constant.kKuaishou && _isKuaishouChallengeError(e)) {
+        if (_isCurrentLoad(loadGeneration)) {
+          addSysMsg("快手需要完成滑块验证，正在打开验证页面");
+          await _openKuaishouChallengeFlow(loadGeneration);
+        }
+        return;
+      }
       //SmartDialog.showToast(e.toString());
       if (!_isCurrentLoad(loadGeneration)) {
         return;
