@@ -327,6 +327,14 @@ class KuaishouAccountService extends GetxService {
     _persist();
     _syncLegacyObservables();
     setSite();
+    final site = _site;
+    if (site != null) {
+      site.restoreVerifiedAccountSession(
+        sessionKey: slot.name,
+        cookie: cookie,
+        kww: kww ?? target.kww,
+      );
+    }
     return true;
   }
 
