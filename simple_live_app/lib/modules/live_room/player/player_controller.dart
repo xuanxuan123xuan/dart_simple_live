@@ -39,6 +39,7 @@ import 'package:simple_live_app/services/ios_video_output_size.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:simple_live_app/services/windows_fullscreen_service.dart';
 import 'package:video_player/video_player.dart';
 
 const _ohosMediaChannel = MethodChannel('simple_live/ohos_media');
@@ -1510,18 +1511,15 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         }
         Log.d('Desktop fullscreen: enter start');
         try {
-          _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
           final entered = await _setWindowsFullScreenState(true);
           if (!entered) {
             fullScreenState.value = false;
             return;
           }
-          // Let window_manager finish the native Win32 resize before moving
-          // the Video widget into the fullscreen layout. Changing both at the
-          // same time can stall the Windows texture/surface during a double
-          // click transition.
+          // Let the native Win32 resize reach Flutter before moving the Video
+          // widget into the fullscreen layout.
+          await WidgetsBinding.instance.endOfFrame;
           fullScreenState.value = true;
-          await Future.delayed(const Duration(milliseconds: 32));
           Log.d('Desktop fullscreen: enter complete');
         } catch (e, stackTrace) {
           fullScreenState.value = false;
@@ -1649,11 +1647,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         try {
           final exited = await _setWindowsFullScreenState(false);
           if (exited) {
-            await _refreshWindowsWindowBounds();
-            if (_windowMaximizedBeforeFullScreen) {
-              await windowManager.maximize();
-              await _waitForWindowMaximizedState(true);
-            }
+            await WidgetsBinding.instance.endOfFrame;
           } else {
             Log.d('Desktop fullscreen: exit settled without native confirmation');
           }
@@ -1661,7 +1655,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         } catch (e, stackTrace) {
           Log.e('Desktop fullscreen: exit failed: $e', stackTrace);
         } finally {
-          _windowMaximizedBeforeFullScreen = false;
           fullScreenState.value = false;
         }
       });
@@ -1708,7 +1701,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   Size? _lastWindowSize;
   Offset? _lastWindowPosition;
   Future<void>? _desktopWindowModeTransition;
-  bool _windowMaximizedBeforeFullScreen = false;
   bool _windowMaximizedBeforeSmallWindow = false;
 
   Future<void> _serializeDesktopWindowModeTransition(
@@ -1734,29 +1726,13 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
 
     try {
-      await windowManager
-          .setFullScreen(value)
+      return await WindowsFullscreenService.setFullScreen(value)
           .timeout(const Duration(seconds: 2));
     } catch (e, stackTrace) {
-      Log.d('Desktop fullscreen: setFullScreen($value) timed out or failed: $e');
-      Log.e('Desktop fullscreen: setFullScreen($value) failed', stackTrace);
+      Log.d('Desktop fullscreen: native transition($value) timed out or failed: $e');
+      Log.e('Desktop fullscreen: native transition($value) failed', stackTrace);
     }
-    final actualState = await _readWindowsFullScreenState();
-    return actualState ?? value;
-  }
-
-  Future<bool?> _readWindowsFullScreenState() async {
-    if (!Platform.isWindows) {
-      return null;
-    }
-    try {
-      return await windowManager
-          .isFullScreen()
-          .timeout(const Duration(milliseconds: 500));
-    } catch (e) {
-      Log.d('Desktop fullscreen: read isFullScreen failed: $e');
-      return null;
-    }
+    return false;
   }
 
   Future<void> _waitForWindowMaximizedState(bool value) async {
