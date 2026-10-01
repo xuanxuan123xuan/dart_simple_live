@@ -16,6 +16,23 @@ void main() {
     expect(runner, isNot(contains('RestoreWindowChrome')));
   });
 
+  test('Windows fullscreen uses the app-owned method channel', () {
+    final controller = File(
+      'lib/modules/live_room/player/player_controller.dart',
+    ).readAsStringSync();
+    final service = File(
+      'lib/services/windows_fullscreen_service.dart',
+    ).readAsStringSync();
+    final runner = File('windows/runner/flutter_window.cpp').readAsStringSync();
+
+    expect(controller, contains('WindowsFullscreenService.setFullScreen'));
+    expect(controller, isNot(contains('windowManager.setFullScreen(value)')));
+    expect(service, contains("simple_live/windows_fullscreen"));
+    expect(runner, contains('windows_fullscreen_channel_'));
+    expect(runner, contains('windows_fullscreen_.Enter(GetHandle())'));
+    expect(runner, contains('windows_fullscreen_.Exit(GetHandle())'));
+  });
+
   test('desktop layout changes only after native fullscreen settles', () {
     final source = File(
       'lib/modules/live_room/player/player_controller.dart',

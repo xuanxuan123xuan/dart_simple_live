@@ -47,6 +47,7 @@ import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
+import 'package:simple_live_app/services/windows_fullscreen_service.dart';
 import 'package:simple_live_app/widgets/guide_overlay.dart';
 import 'package:simple_live_app/widgets/glass/glass_route_background.dart';
 import 'package:simple_live_app/widgets/status/app_loadding_widget.dart';
@@ -336,8 +337,10 @@ final _desktopWindowLifecycle = _DesktopWindowLifecycle();
 
 Future<bool> _isDesktopFullScreen() async {
   try {
-    return await windowManager
-        .isFullScreen()
+    final isWindows = Platform.isWindows;
+    return await (isWindows
+            ? WindowsFullscreenService.isFullScreen()
+            : windowManager.isFullScreen())
         .timeout(const Duration(milliseconds: 500));
   } catch (e) {
     Log.d('桌面窗口读取全屏状态失败：$e');
@@ -347,7 +350,10 @@ Future<bool> _isDesktopFullScreen() async {
 
 Future<void> _exitDesktopFullScreen() async {
   try {
-    await windowManager.setFullScreen(false).timeout(const Duration(seconds: 2));
+    final operation = Platform.isWindows
+        ? WindowsFullscreenService.setFullScreen(false)
+        : windowManager.setFullScreen(false);
+    await operation.timeout(const Duration(seconds: 2));
   } catch (e, stackTrace) {
     Log.e('桌面窗口退出全屏失败：$e', stackTrace);
   }
@@ -485,7 +491,7 @@ class _DesktopWindowLifecycle with WindowListener {
           ? Get.find<LiveRoomController>()
           : null;
       if (liveRoom?.smallWindowState.value == true ||
-          await windowManager.isFullScreen()) {
+          await _isDesktopFullScreen()) {
         return;
       }
       final maximized = await windowManager.isMaximized();
