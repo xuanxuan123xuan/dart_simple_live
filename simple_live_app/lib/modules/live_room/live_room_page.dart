@@ -1629,49 +1629,51 @@ class LiveRoomPage extends GetView<LiveRoomController> {
 
   Widget buildChatList() {
     return Builder(
-      builder: (context) => Stack(
-        children: [
-          ScrollConfiguration(
-            behavior:
-                ScrollConfiguration.of(context).copyWith(scrollbars: false),
-            child: RawScrollbar(
-              controller: controller.scrollController,
-              thumbVisibility: _isDesktop,
-              thickness: 4,
-              radius: const Radius.circular(4),
-              mainAxisMargin: 8,
-              crossAxisMargin: 6,
-              child: ListView.separated(
+      builder: (context) => Obx(
+        () => Stack(
+          children: [
+            ScrollConfiguration(
+              behavior:
+                  ScrollConfiguration.of(context).copyWith(scrollbars: false),
+              child: RawScrollbar(
                 controller: controller.scrollController,
-                reverse: false,
-                separatorBuilder: (_, i) => SizedBox(
-                  // *2与原来的EdgeInsets.symmetric(vertical: )做兼容
-                  height: AppSettingsController.instance.chatTextGap.value * 2,
+                thumbVisibility: _isDesktop,
+                thickness: 4,
+                radius: const Radius.circular(4),
+                mainAxisMargin: 8,
+                crossAxisMargin: 6,
+                child: ListView.separated(
+                  controller: controller.scrollController,
+                  reverse: false,
+                  separatorBuilder: (_, i) => SizedBox(
+                    // *2与原来的EdgeInsets.symmetric(vertical: )做兼容
+                    height: AppSettingsController.instance.chatTextGap.value * 2,
+                  ),
+                  padding: AppStyle.edgeInsetsA12.copyWith(right: 18),
+                  itemCount: controller.messages.length,
+                  itemBuilder: (_, i) {
+                    var item = controller.messages[i];
+                    return buildMessageItem(item);
+                  },
                 ),
-                padding: AppStyle.edgeInsetsA12.copyWith(right: 18),
-                itemCount: controller.messages.length,
-                itemBuilder: (_, i) {
-                  var item = controller.messages[i];
-                  return buildMessageItem(item);
-                },
               ),
             ),
-          ),
-          Visibility(
-            visible: controller.disableAutoScroll.value,
-            child: Positioned(
-              right: 12,
-              bottom: 12,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  controller.forceChatScrollToBottom();
-                },
-                icon: const Icon(Icons.expand_more),
-                label: const Text("最新"),
+            Visibility(
+              visible: controller.disableAutoScroll.value,
+              child: Positioned(
+                right: 12,
+                bottom: 12,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    controller.forceChatScrollToBottom();
+                  },
+                  icon: const Icon(Icons.expand_more),
+                  label: const Text("最新"),
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
