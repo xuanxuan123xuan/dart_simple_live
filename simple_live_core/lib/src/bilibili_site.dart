@@ -216,24 +216,36 @@ class BiliBiliSite implements LiveSite {
         "room_id": detail.roomId,
         "protocol": "0,1",
         "format": "0,2",
-        "codec": "0",
+        "codec": "0,1",
         "platform": "web",
         "qn": quality.data,
       },
     );
-    var streamList = result["data"]["playurl_info"]["playurl"]["stream"];
-    for (var streamItem in streamList) {
-      var formatList = streamItem["format"];
-      for (var formatItem in formatList) {
-        var codecList = formatItem["codec"];
-        for (var codecItem in codecList) {
-          var urlList = codecItem["url_info"];
-          var baseUrl = codecItem["base_url"].toString();
-          for (var urlItem in urlList) {
-            urls.add("${urlItem["host"]}$baseUrl${urlItem["extra"]}");
+    final playUrl = _readBilibiliPlayUrl(result, detail.roomId);
+    final streamList = _mapList(playUrl["stream"]);
+    for (final streamItem in streamList) {
+      final formatList = _mapList(streamItem["format"]);
+      for (final formatItem in formatList) {
+        final codecList = _mapList(formatItem["codec"]);
+        for (final codecItem in codecList) {
+          final baseUrl = codecItem["base_url"];
+          if (baseUrl is! String || baseUrl.isEmpty) {
+            continue;
+          }
+          final urlList = _mapList(codecItem["url_info"]);
+          for (final urlItem in urlList) {
+            final host = urlItem["host"];
+            final extra = urlItem["extra"];
+            if (host is String && extra is String) {
+              urls.add("$host$baseUrl$extra");
+            }
           }
         }
       }
+    }
+    if (urls.isEmpty) {
+      CoreLog.w("B站播放信息未返回可用地址：roomId=${detail.roomId}");
+      throw CoreError("B站暂时无法获取播放地址，请稍后重试");
     }
     // 对链接进行排序，包含mcdn的在后
     // 比较器需满足一致性：两个 URL 同时含或不含 mcdn 时返回 0
@@ -250,6 +262,13 @@ class BiliBiliSite implements LiveSite {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188",
       },
     );
+  }
+
+  List<Map> _mapList(dynamic value) {
+    if (value is! List) {
+      return const [];
+    }
+    return value.whereType<Map>().toList();
   }
 
   Future<dynamic> _getRoomPlayInfo({
