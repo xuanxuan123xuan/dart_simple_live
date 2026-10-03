@@ -505,10 +505,20 @@ jobs:
     # Flutter 3.44 支持 VS 2022/2026；保留 windows-2022 镜像稳定构建。
     runs-on: windows-2022
     timeout-minutes: 75
+    env:
+      PUB_CACHE: "D:\\pub-cache"
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: 启用 Git 长路径并固定 Pub 缓存
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-Item -ItemType Directory -Force -Path $env:PUB_CACHE | Out-Null
+          Write-Host "Git core.longpaths=$((git config --global --get core.longpaths))"
+          Write-Host "PUB_CACHE=$env:PUB_CACHE"
 
       - uses: subosito/flutter-action@v2
         with:
