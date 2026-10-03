@@ -67,4 +67,24 @@ void main() {
       lessThan(desktopEnter.indexOf('fullScreenState.value = true')),
     );
   });
+
+  test('native fullscreen transition suppresses the old window frame', () {
+    final fullscreen = File(
+      'windows/runner/windows_fullscreen.cpp',
+    ).readAsStringSync();
+    final runner = File(
+      'windows/runner/flutter_window.cpp',
+    ).readAsStringSync();
+
+    expect(fullscreen, contains('SWP_FRAMECHANGED'));
+    expect(fullscreen, contains('SWP_NOOWNERZORDER'));
+    expect(fullscreen, contains('SWP_NOACTIVATE'));
+    expect(fullscreen, contains('RedrawWindow'));
+    expect(fullscreen, contains('DwmGetWindowAttribute'));
+    expect(fullscreen, contains('DwmSetWindowAttribute'));
+    expect(fullscreen, contains('kDwmTransitionsForcedDisabled'));
+    expect(fullscreen, contains('SetWindowPlacement'));
+    expect(runner, contains('WM_NCCALCSIZE'));
+    expect(runner, contains('windows_fullscreen_.IsActive()'));
+  });
 }
