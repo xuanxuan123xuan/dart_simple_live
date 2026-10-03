@@ -106,6 +106,15 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // Returning zero for a proposed non-client recalculation keeps the client
+  // area equal to the full window while the native fullscreen transition is
+  // in progress. This prevents one frame of the old title-bar border from
+  // reaching the Flutter child window.
+  if (message == WM_NCCALCSIZE && wparam != FALSE &&
+      windows_fullscreen_.IsActive()) {
+    return 0;
+  }
+
   switch (message) {
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
