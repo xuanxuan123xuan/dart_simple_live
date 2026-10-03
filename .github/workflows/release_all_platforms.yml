@@ -534,6 +534,7 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --yes --no-progress
+          pwsh -NoProfile -File .github/scripts/install_inno_setup_chinese.ps1
           dart pub global activate fastforge $env:FASTFORGE_VERSION
           $pubBin = Join-Path $env:LOCALAPPDATA "Pub\Cache\bin"
           $pubBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
