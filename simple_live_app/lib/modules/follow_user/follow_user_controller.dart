@@ -26,6 +26,29 @@ enum FollowGroupMode {
   platform,
 }
 
+/// Returns the canonical form of a user-defined follow tag name.
+///
+/// Keeping this rule in one place makes the add and rename paths behave the
+/// same way. A null result means the input is empty after trimming or exceeds
+/// the storage/UI limit.
+String? normalizeFollowUserTagName(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty || normalized.length > 8) {
+    return null;
+  }
+  return normalized;
+}
+
+bool hasDuplicateFollowUserTagName(
+  String normalizedName,
+  Iterable<FollowUserTag> tags, {
+  String? ignoreId,
+}) {
+  return tags.any(
+    (item) => item.id != ignoreId && item.tag.trim() == normalizedName,
+  );
+}
+
 class FollowGroupOption {
   final String id;
   final String title;
@@ -87,7 +110,10 @@ class FollowUserController extends BasePageController<FollowUser> {
   Future<void> _loadInitialData() async {
     await refreshData(forceStatus: false);
     if (AppSettingsController.instance.followRefreshOnEnter.value &&
-        FollowService.instance.followList.isNotEmpty) {
+        FollowService.instance.followList.isNotEmpty &&
+        // 快照仍新鲜时复用上次结果，快速重开 App 不再重复全量刷新。
+        !FollowService.instance
+            .hasFreshStatusSnapshotFor(FollowService.instance.followList)) {
       unawaited(
         FollowService.instance.startUpdateStatus(force: false).then((_) {
           filterData();
@@ -584,10 +610,22 @@ class FollowUserController extends BasePageController<FollowUser> {
     Log.i('删除tag${tag.tag}');
   }
 
-  void addTag(String tag) async {
+  bool addTag(String tag) {
+    final normalizedTag = normalizeFollowUserTagName(tag);
+    if (normalizedTag == null) {
+      SmartDialog.showToast(
+        tag.trim().isEmpty ? "标签名不能为空" : "标签名不能超过8个字符",
+      );
+      return false;
+    }
+    if (hasDuplicateFollowUserTagName(normalizedTag, tagList)) {
+      SmartDialog.showToast("标签名重复，添加失败");
+      return false;
+    }
     FollowService.instance
-        .addFollowUserTag(tag)
+        .addFollowUserTag(normalizedTag)
         .then((value) => updateTagList());
+    return true;
   }
 
   void updateTag(FollowUserTag followUserTag) {
@@ -597,28 +635,40 @@ class FollowUserController extends BasePageController<FollowUser> {
     FollowService.instance.updateFollowUserTag(followUserTag);
   }
 
-  void updateTagName(FollowUserTag followUserTag, String newTagName) {
+  bool updateTagName(FollowUserTag followUserTag, String newTagName) {
+    final normalizedTagName = normalizeFollowUserTagName(newTagName);
+    if (normalizedTagName == null) {
+      SmartDialog.showToast(
+        newTagName.trim().isEmpty ? "标签名不能为空" : "标签名不能超过8个字符",
+      );
+      return false;
+    }
     // 未操作
-    if (followUserTag.tag == newTagName) {
-      return;
+    if (followUserTag.tag == normalizedTagName) {
+      return true;
     }
     // 避免重名
-    if (tagList.any((item) => item.tag == newTagName)) {
+    if (hasDuplicateFollowUserTagName(
+      normalizedTagName,
+      tagList,
+      ignoreId: followUserTag.id,
+    )) {
       SmartDialog.showToast("标签名重复，修改失败");
-      return;
+      return false;
     }
-    final FollowUserTag newTag = followUserTag.copyWith(tag: newTagName);
+    final FollowUserTag newTag = followUserTag.copyWith(tag: normalizedTagName);
     updateTag(newTag);
     // update item's tag when update tagName
     for (var i in newTag.userId) {
       var follow = DBService.instance.followBox.get(i);
       if (follow != null) {
-        follow.tag = newTagName;
+        follow.tag = normalizedTagName;
         updateItem(follow);
       }
     }
     SmartDialog.showToast("标签名修改成功");
     updateTagList();
+    return true;
   }
 
   // 调整标签顺序

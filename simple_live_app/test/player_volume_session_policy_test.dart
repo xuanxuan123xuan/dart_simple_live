@@ -56,6 +56,19 @@ void main() {
       expect(volume, 28);
     });
 
+    test('unmute always becomes audible when nothing audible is remembered',
+        () {
+      // Desktop gestures/shortcuts persist volume 0, and a fresh launch starts
+      // with no remembered audible volume. Pressing unmute must still produce
+      // sound instead of silently restoring 0.
+      final volume = PlayerVolumeSessionPolicy.volumeToRestoreAfterMute(
+        lastAudibleVolume: 0,
+        userIntentVolume: 0,
+      );
+
+      expect(volume, greaterThan(0));
+    });
+
     test('volume inputs are clamped to the supported range', () {
       expect(PlayerVolumeSessionPolicy.normalize(-2), 0);
       expect(PlayerVolumeSessionPolicy.normalize(140), 100);

@@ -26,6 +26,11 @@ class AnchorCard extends StatelessWidget {
   final bool playing;
   final bool showLiveCover;
   final Function()? onTap;
+  final Function()? onLongPress;
+  final FocusOnKeyDownCallback? onUpKey;
+  final FocusOnKeyDownCallback? onDownKey;
+  final FocusOnKeyDownCallback? onLeftKey;
+  final FocusOnKeyDownCallback? onRightKey;
   final AppFocusNode? focusNode;
   final AnchorCardDisplayStyle displayStyle;
 
@@ -42,6 +47,11 @@ class AnchorCard extends StatelessWidget {
     this.showLiveCover = false,
     this.focusNode,
     this.onTap,
+    this.onLongPress,
+    this.onUpKey,
+    this.onDownKey,
+    this.onLeftKey,
+    this.onRightKey,
     this.displayStyle = AnchorCardDisplayStyle.defaultList,
     super.key,
   });
@@ -56,6 +66,11 @@ class AnchorCard extends StatelessWidget {
             () {
               AppNavigator.toLiveRoomDetail(site: site, roomId: roomId);
             },
+        onLongPress: onLongPress,
+        onUpKey: onUpKey,
+        onDownKey: onDownKey,
+        onLeftKey: onLeftKey,
+        onRightKey: onRightKey,
         focusNode: focusNode,
         autofocus: autofocus,
         borderRadius: AppStyle.radius16,
@@ -269,73 +284,63 @@ class AnchorCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
+          AspectRatio(
+            aspectRatio: 16 / 9,
             child: _buildCover(site, focused),
           ),
-          Padding(
-            padding: EdgeInsets.all(14.w),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                NetImage(
-                  face,
-                  width: 42.w,
-                  height: 42.w,
-                  borderRadius: 21.w,
-                  cacheWidth: 80,
-                ),
-                AppStyle.hGap12,
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name,
-                        maxLines: 1,
-                        style: TextStyle(
-                          fontSize: 24.w,
-                          fontWeight: FontWeight.w600,
-                          color: focused ? Colors.black : Colors.white,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      SizedBox(height: 4.w),
-                      Text(
-                        _displayTitle,
-                        maxLines: 2,
-                        style: TextStyle(
-                          fontSize: 20.w,
-                          color: focused ? Colors.black87 : Colors.white70,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      SizedBox(height: 8.w),
-                      Row(
-                        children: [
-                          Image.asset(site.logo, width: 20.w),
-                          SizedBox(width: 6.w),
-                          Expanded(
-                            child: Text(
-                              site.name,
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: 18.w,
-                                color:
-                                    focused ? Colors.black87 : Colors.white70,
+          SizedBox(
+            height: 96.w,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.w),
+              child: Row(
+                children: [
+                  NetImage(
+                    face,
+                    width: 40.w,
+                    height: 40.w,
+                    borderRadius: 20.w,
+                    cacheWidth: 80,
+                  ),
+                  AppStyle.hGap12,
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                name,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 22.w,
+                                  fontWeight: FontWeight.w600,
+                                  color:
+                                      focused ? Colors.black : Colors.white,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             ),
+                            SizedBox(width: 6.w),
+                            Image.asset(site.logo, width: 18.w),
+                          ],
+                        ),
+                        SizedBox(height: 6.w),
+                        Text(
+                          _displayTitle,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 18.w,
+                            color: focused ? Colors.black87 : Colors.white70,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          _buildBadge(
-                            text: _statusText,
-                            active: liveStatus == 2,
-                            focused: focused,
-                          ),
-                        ],
-                      ),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],

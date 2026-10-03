@@ -35,6 +35,7 @@ import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/services/local_storage_service.dart';
 import 'package:simple_live_tv_app/services/profile_backup_service.dart';
 import 'package:simple_live_tv_app/services/sync_service.dart';
+import 'package:simple_live_tv_app/services/tv_app_update_service.dart';
 import 'package:window_manager/window_manager.dart';
 
 void main(List<String> args) async {
@@ -258,6 +259,7 @@ Future initServices() async {
   }
 
   Get.put(FollowUserService());
+  Get.put(TvAppUpdateService());
 }
 
 class MyApp extends StatelessWidget {
@@ -310,6 +312,11 @@ class MyApp extends StatelessWidget {
             ),
           ),
           onReady: () {
+            if (!AppSettingsController.instance.firstRun) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                unawaited(TvAppUpdateService.instance.checkAtStartup());
+              });
+            }
             if (startupRoom == null ||
                 AppSettingsController.instance.firstRun) {
               unawaited(

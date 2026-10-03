@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:simple_live_core/simple_live_core.dart';
-import 'package:simple_live_core/src/common/convert_helper.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:simple_live_core/src/douyin_partition_images.dart';
 import 'package:simple_live_core/src/scripts/douyin_sign.dart';
@@ -49,6 +48,152 @@ class DouyinSite implements LiveSite {
       : _abogusSigner = abogusSigner ?? DouyinSign.getAbogusUrl;
 
   final DouyinAbogusSigner _abogusSigner;
+  Future<Map<String, String>>? _partitionImagesFuture;
+
+  /// Resolves the aspect ratio advertised by a Douyin live stream.
+  ///
+  /// Douyin has returned the dimensions in two different places over time:
+  /// older room responses put them in `stream_url.extra`, while newer
+  /// responses put a `resolution` string in the JSON encoded
+  /// `live_core_sdk_data.pull_data.stream_data` payload.  The stream remains
+  /// a single, already-composited video in both cases, so callers only need
+  /// the ratio.  A missing or malformed hint returns `null` and lets the
+  /// player use its normal fallback.
+  static double? resolveStreamAspectRatio(dynamic streamUrl) {
+    final stream = _asMap(streamUrl);
+    if (stream == null) return null;
+
+    // `extra` is the authoritative value in the legacy room response.  It
+    // can itself be a map, a JSON string, or (in a few responses) a compact
+    // resolution string.
+    final fromExtra = _aspectRatioFromValue(stream["extra"]);
+    if (fromExtra != null) return fromExtra;
+
+    final liveCore = _asMap(stream["live_core_sdk_data"]);
+    final pullData = _asMap(liveCore?["pull_data"]);
+    final streamData = _decodeJsonMap(pullData?["stream_data"]);
+    if (streamData == null) {
+      return _aspectRatioFromOrientation(stream["stream_orientation"]);
+    }
+
+    // sdk_params has appeared under both the stream_data root and its
+    // `common` object. Search only this decoded payload so unrelated room
+    // metadata cannot accidentally win.
+    final sdkParams = _findMapValue(streamData, "sdk_params");
+    return _aspectRatioFromValue(sdkParams) ??
+        _aspectRatioFromOrientation(stream["stream_orientation"]);
+  }
+
+  static double? _aspectRatioFromOrientation(dynamic value) {
+    final text = value?.toString().trim().toLowerCase() ?? "";
+    if (text.contains("portrait") ||
+        text.contains("vertical") ||
+        text.contains("竖")) {
+      return 9 / 16;
+    }
+    if (text.contains("landscape") ||
+        text.contains("horizontal") ||
+        text.contains("横")) {
+      return 16 / 9;
+    }
+    return null;
+  }
+
+  static Map<dynamic, dynamic>? _asMap(dynamic value) {
+    return value is Map ? value : null;
+  }
+
+  static dynamic _decodeJson(dynamic value) {
+    if (value is! String) return value;
+    final text = value.trim();
+    if (text.isEmpty) return null;
+    try {
+      return json.decode(text);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Map<dynamic, dynamic>? _decodeJsonMap(dynamic value) {
+    final decoded = _decodeJson(value);
+    final map = _asMap(decoded);
+    if (map != null) return map;
+    // Some responses double-encode stream_data or sdk_params.
+    final nested = _decodeJson(decoded);
+    return _asMap(nested);
+  }
+
+  static dynamic _findMapValue(dynamic value, String key) {
+    final map = _asMap(value);
+    if (map != null) {
+      if (map.containsKey(key)) return map[key];
+      for (final child in map.values) {
+        final found = _findMapValue(child, key);
+        if (found != null) return found;
+      }
+    }
+    if (value is Iterable) {
+      for (final child in value) {
+        final found = _findMapValue(child, key);
+        if (found != null) return found;
+      }
+    }
+    return null;
+  }
+
+  static double? _aspectRatioFromValue(dynamic value) {
+    if (value == null) return null;
+    final decoded = _decodeJson(value);
+    if (!identical(decoded, value)) {
+      final parsed = _aspectRatioFromValue(decoded);
+      if (parsed != null) return parsed;
+    }
+
+    final map = _asMap(value);
+    if (map != null) {
+      final width = _positiveNumber(map["width"]);
+      final height = _positiveNumber(map["height"]);
+      if (width != null && height != null) {
+        return _validAspectRatio(width / height);
+      }
+      for (final key in const ["resolution", "video_resolution", "size"]) {
+        final parsed = _aspectRatioFromValue(map[key]);
+        if (parsed != null) return parsed;
+      }
+      return null;
+    }
+
+    if (value is! String) return null;
+    final text = value.trim();
+    if (text.isEmpty) return null;
+    // Accept the formats seen in room payloads: 1080x1920, 1080*1920,
+    // 1080×1920 and the conventional 9:16 notation.
+    final match = RegExp(r"^(\d+(?:\.\d+)?)\s*[xX×*:：]\s*(\d+(?:\.\d+)?)$")
+        .firstMatch(text);
+    if (match == null) return null;
+    final width = double.tryParse(match.group(1)!);
+    final height = double.tryParse(match.group(2)!);
+    if (width == null || height == null || width <= 0 || height <= 0) {
+      return null;
+    }
+    return _validAspectRatio(width / height);
+  }
+
+  static double? _positiveNumber(dynamic value) {
+    if (value is num) {
+      return value > 0 ? value.toDouble() : null;
+    }
+    if (value is String) {
+      final parsed = double.tryParse(value.trim());
+      return parsed != null && parsed > 0 ? parsed : null;
+    }
+    return null;
+  }
+
+  static double? _validAspectRatio(double ratio) {
+    if (!ratio.isFinite || ratio <= 0 || ratio > 20) return null;
+    return ratio;
+  }
 
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
@@ -218,29 +363,47 @@ class DouyinSite implements LiveSite {
 
     final renderDataJson = _extractCategoryRenderData(result);
     final categoryData = (renderDataJson["categoryData"] as List?) ?? const [];
+    final externalImages = await _loadExternalPartitionImages();
 
-    for (var item in categoryData) {
+    for (final rawItem in categoryData) {
+      if (rawItem is! Map) {
+        continue;
+      }
+      final partition = rawItem["partition"];
+      if (partition is! Map) {
+        continue;
+      }
+      final idStr = partition["id_str"] ?? partition["id"];
+      final type = partition["type"];
+      final name = _partitionTitle(partition);
+      if (idStr == null || type == null || name == null) {
+        continue;
+      }
       List<LiveSubCategory> subs = [];
-      var id = '${item["partition"]["id_str"]},${item["partition"]["type"]}';
-      for (var subItem in item["sub_partition"]) {
-        var subCategory = LiveSubCategory(
-          id: '${subItem["partition"]["id_str"]},${subItem["partition"]["type"]}',
-          name: asT<String?>(subItem["partition"]["title"]) ?? "",
-          parentId: id,
-          pic: _pickPartitionImageUrl(subItem["partition"]) ??
-              _pickPartitionImageUrl(item["partition"]) ??
-              _partitionImageFallback(
-                '${subItem["partition"]["id_str"]}',
-              ) ??
-              _partitionImageFallback('${item["partition"]["id_str"]}'),
-        );
-        subs.add(subCategory);
+      final id = '$idStr,$type';
+      final pic = _pickPartitionImageUrl(partition) ??
+          _partitionImageFallback('$idStr', name, externalImages);
+
+      // 递归解析所有子分类（抖音游戏分区存在三级）。
+      final subPartitions = rawItem["sub_partition"];
+      if (subPartitions is List) {
+        for (final subItem in subPartitions) {
+          final subCategory = _parseSubCategory(
+            subItem,
+            id,
+            externalImages: externalImages,
+          );
+          if (subCategory != null) {
+            subs.add(subCategory);
+          }
+        }
       }
 
       var category = LiveCategory(
         children: subs,
         id: id,
-        name: asT<String?>(item["partition"]["title"]) ?? "",
+        name: name,
+        pic: pic,
       );
       subs.insert(
         0,
@@ -248,8 +411,7 @@ class DouyinSite implements LiveSite {
           id: category.id,
           name: category.name,
           parentId: category.id,
-          pic: _pickPartitionImageUrl(item["partition"]) ??
-              _partitionImageFallback('${item["partition"]["id_str"]}'),
+          pic: category.pic,
         ),
       );
       categories.add(category);
@@ -257,10 +419,170 @@ class DouyinSite implements LiveSite {
     return categories;
   }
 
+  /// 递归解析分区；任意层级数据异常时返回 null，由调用方跳过该节点。
+  LiveSubCategory? _parseSubCategory(
+    dynamic item,
+    String parentId, {
+    required Map<String, String> externalImages,
+  }) {
+    if (item is! Map) {
+      return null;
+    }
+    final partition = item["partition"];
+    if (partition is! Map) {
+      return null;
+    }
+    final idStr = partition["id_str"] ?? partition["id"];
+    final type = partition["type"];
+    final id = '$idStr,$type';
+    final name = _partitionTitle(partition);
+    if (idStr == null || type == null || name == null) {
+      return null;
+    }
+
+    final children = <LiveSubCategory>[];
+    final subPartitions = item["sub_partition"];
+    if (subPartitions is List) {
+      for (final subItem in subPartitions) {
+        final child = _parseSubCategory(
+          subItem,
+          id,
+          externalImages: externalImages,
+        );
+        if (child != null) {
+          children.add(child);
+        }
+      }
+    }
+
+    return LiveSubCategory(
+      id: id,
+      name: name,
+      parentId: parentId,
+      pic: _pickPartitionImageUrl(partition) ??
+          _partitionImageFallback('$idStr', name, externalImages),
+      children: children,
+    );
+  }
+
+  Future<Map<String, String>> _loadExternalPartitionImages() {
+    final cached = _partitionImagesFuture;
+    if (cached != null) {
+      return cached;
+    }
+    final future = Future.wait<Map<String, String>>([
+      _queryExternalPartitionImages(_queryBilibiliPartitionImages),
+      _queryExternalPartitionImages(_queryDouyuPartitionImages),
+      _queryExternalPartitionImages(_queryHuyaPartitionImages),
+    ]).then((sources) {
+      final images = <String, String>{};
+      // Keep the first result when platforms share a title. The order gives
+      // the existing Bilibili mapping priority, while other platforms fill
+      // in titles that Bilibili does not expose.
+      for (final source in sources) {
+        for (final entry in source.entries) {
+          images.putIfAbsent(entry.key, () => entry.value);
+        }
+      }
+      for (final entry in douyinPartitionImagesByName.entries) {
+        images.putIfAbsent(entry.key.trim().toLowerCase(), () => entry.value);
+      }
+      return images;
+    });
+    _partitionImagesFuture = future;
+    return future;
+  }
+
+  Future<Map<String, String>> _queryExternalPartitionImages(
+    Future<Map<String, String>> Function() query,
+  ) async {
+    try {
+      return await query().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<Map<String, String>> _queryBilibiliPartitionImages() async {
+    try {
+      final categories = await BiliBiliSite().getCategores();
+      return _partitionImagesFromCategories(categories);
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<Map<String, String>> _queryDouyuPartitionImages() async {
+    try {
+      final categories = await DouyuSite().getCategores();
+      return _partitionImagesFromCategories(categories);
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<Map<String, String>> _queryHuyaPartitionImages() async {
+    try {
+      final categories = await HuyaSite().getCategores();
+      return _partitionImagesFromCategories(categories);
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Map<String, String> _partitionImagesFromCategories(
+    List<LiveCategory> categories,
+  ) {
+    final images = <String, String>{};
+    for (final category in categories) {
+      for (final child in category.children) {
+        final name = child.name.trim();
+        final pic = child.pic?.trim() ?? '';
+        if (name.isNotEmpty && isHttpImageUrl(pic)) {
+          images.putIfAbsent(name.toLowerCase(), () => pic);
+        }
+      }
+    }
+    return images;
+  }
+
+  /// 分区标题，抖音不同接口用 title / name 两种字段。
+  String? _partitionTitle(dynamic partition) {
+    if (partition is! Map) {
+      return null;
+    }
+    final title = (partition["title"] ?? partition["name"])?.toString().trim();
+    return (title == null || title.isEmpty) ? null : title;
+  }
+
   /// 抖音分区无官方图片，用 [douyinPartitionImages] 静态映射兜底
   /// （借 B站分区封面，key 为分区 id_str）。
-  String? _partitionImageFallback(String partitionIdStr) =>
-      douyinPartitionImages[partitionIdStr];
+  String? _partitionImageFallback(
+    String partitionIdStr,
+    String? title,
+    Map<String, String> externalImages,
+  ) {
+    final byId = douyinPartitionImages[partitionIdStr];
+    if (byId != null || title == null) {
+      return byId;
+    }
+    final name = title.trim().toLowerCase();
+    final exact = externalImages[name];
+    if (exact != null) {
+      return exact;
+    }
+    for (final aliases in douyinPartitionImageNameAliases) {
+      if (aliases.any((alias) => alias.toLowerCase() == name)) {
+        for (final alias in aliases) {
+          final image = externalImages[alias.toLowerCase()];
+          if (image != null) {
+            return image;
+          }
+        }
+      }
+    }
+    return null;
+  }
 
   String? _pickPartitionImageUrl(dynamic data) {
     if (data == null) {
@@ -596,9 +918,23 @@ class DouyinSite implements LiveSite {
       // webRid是固定的，用户每次开播都是同一个webRid
       // webRid一般长度为11-12位，例如：416144012050
       // 这里简单进行判断，如果roomId长度小于15，则认为是webRid
+      if (roomId.endsWith('.')) {
+        try {
+          return await getRoomDetailByWebRid(roomId);
+        } catch (error) {
+          if (error is CoreCancelledError ||
+              (error is CoreError && error.statusCode == 444)) {
+            rethrow;
+          }
+          final webRidWithoutDot = roomId.substring(0, roomId.length - 1);
+          _logDebug(
+            "抖音房间号 $roomId 解析失败，移除末尾句点后重试：$webRidWithoutDot",
+          );
+          return await getRoomDetailByWebRid(webRidWithoutDot);
+        }
+      }
       if (roomId.length <= 16) {
-        var webRid = roomId;
-        return await getRoomDetailByWebRid(webRid);
+        return await getRoomDetailByWebRid(roomId);
       }
 
       return await getRoomDetailByRoomId(roomId);
@@ -616,59 +952,27 @@ class DouyinSite implements LiveSite {
     var roomData = await _getRoomDataByRoomId(roomId);
     final room = roomData["data"]?["room"];
     if (room is! Map) {
-      throw CoreError("抖音直播间数据为空，可能是房间不存在、未开播或被风控限制");
+      throw CoreError(
+        "抖音直播间数据为空：该房间可能已失效（房间号为一次性ID，主播下播或重新开播后即失效），请通过搜索或主播主页重新进入",
+      );
     }
 
-    // 通过房间信息获取WebRid
-    var webRid = room["owner"]["web_rid"].toString();
-
-    // 读取用户唯一ID，用于弹幕连接
-    // 似乎这个参数不是必须的，先随机生成一个
-    //var userUniqueId = await _getUserUniqueId(webRid);
-    var userUniqueId = generateRandomNumber(12).toString();
-
-    var owner = room["owner"];
-    final categoryInfo = _resolveDouyinCategoryInfo(room);
-
-    var status = asT<int?>(room["status"]) ?? 0;
-
-    // roomId是一次性的，用户每次重新开播都会生成一个新的roomId
-    // 所以如果roomId对应的直播间状态不是直播中，就通过webRid获取直播间信息
-    if (status == 4) {
-      var result = await getRoomDetailByWebRid(webRid);
+    final owner = room["owner"];
+    final webRid = owner is Map ? _detailText(owner["web_rid"]) : "";
+    if (!RegExp(r'^\d{1,16}$').hasMatch(webRid) || int.tryParse(webRid) == 0) {
+      throw CoreError("抖音直播间已失效，无法取得主播固定房间号，请通过搜索或主播主页重新进入");
+    }
+    if (_parseDouyinStatus(room["status"]) != 2) {
+      final result = await getRoomDetailByWebRid(webRid);
       _logElapsed("getRoomDetailByRoomId($roomId) redirect", stopwatch);
       return result;
     }
-
-    var roomStatus = status == 2;
-    // 主要是为了获取cookie,用于弹幕websocket连接
-    var danmakuCookie = await _getDanmakuCookie(webRid);
-
-    final detail = LiveRoomDetail(
-      roomId: webRid,
-      title: room["title"].toString(),
-      cover: roomStatus ? room["cover"]["url_list"][0].toString() : "",
-      userName: owner["nickname"].toString(),
-      userAvatar: owner["avatar_thumb"]["url_list"][0].toString(),
-      online: roomStatus
-          ? asT<int?>(room["room_view_stats"]["display_value"]) ?? 0
-          : 0,
-      status: roomStatus,
-      url: "https://live.douyin.com/$webRid",
-      introduction: owner["signature"].toString(),
-      notice: "",
-      categoryId: categoryInfo["categoryId"],
-      categoryName: categoryInfo["categoryName"],
-      categoryParentId: categoryInfo["categoryParentId"],
-      categoryParentName: categoryInfo["categoryParentName"],
-      categoryPic: categoryInfo["categoryPic"],
-      danmakuData: DouyinDanmakuArgs(
-        webRid: webRid,
-        roomId: roomId,
-        userId: userUniqueId,
-        cookie: danmakuCookie,
-      ),
-      data: room["stream_url"],
+    final detail = await _buildRoomDetail(
+      webRid: webRid,
+      room: room,
+      anchor: owner is Map ? owner : const {},
+      status: true,
+      realRoomId: roomId,
     );
     _logElapsed("getRoomDetailByRoomId($roomId)", stopwatch);
     return detail;
@@ -702,54 +1006,18 @@ class DouyinSite implements LiveSite {
   /// - 返回直播间信息
   Future<LiveRoomDetail> _getRoomDetailByWebRidApi(String webRid) async {
     final stopwatch = Stopwatch()..start();
-    // 读取房间信息
-    var data = await _getRoomDataByApi(webRid);
-
-    var roomData = data["data"][0];
-    var userData = data["user"];
-    var roomId = roomData["id_str"].toString();
-    final categoryInfo = _resolveDouyinCategoryInfo(roomData);
-
-    // 读取用户唯一ID，用于弹幕连接
-    // 似乎这个参数不是必须的，先随机生成一个
-    //var userUniqueId = await _getUserUniqueId(webRid);
-    var userUniqueId = generateRandomNumber(12).toString();
-
-    var owner = roomData["owner"];
-
-    var roomStatus = (asT<int?>(roomData["status"]) ?? 0) == 2;
-
-    // 主要是为了获取cookie,用于弹幕websocket连接
-    var danmakuCookie = await _getDanmakuCookie(webRid);
-    final detail = LiveRoomDetail(
-      roomId: webRid,
-      title: roomData["title"].toString(),
-      cover: roomStatus ? roomData["cover"]["url_list"][0].toString() : "",
-      userName: roomStatus
-          ? owner["nickname"].toString()
-          : userData["nickname"].toString(),
-      userAvatar: roomStatus
-          ? owner["avatar_thumb"]["url_list"][0].toString()
-          : userData["avatar_thumb"]["url_list"][0].toString(),
-      online: roomStatus
-          ? asT<int?>(roomData["room_view_stats"]["display_value"]) ?? 0
-          : 0,
-      status: roomStatus,
-      url: "https://live.douyin.com/$webRid",
-      introduction: owner?["signature"]?.toString() ?? "",
-      notice: "",
-      categoryId: categoryInfo["categoryId"],
-      categoryName: categoryInfo["categoryName"],
-      categoryParentId: categoryInfo["categoryParentId"],
-      categoryParentName: categoryInfo["categoryParentName"],
-      categoryPic: categoryInfo["categoryPic"],
-      danmakuData: DouyinDanmakuArgs(
-        webRid: webRid,
-        roomId: roomId,
-        userId: userUniqueId,
-        cookie: danmakuCookie,
-      ),
-      data: roomStatus ? roomData["stream_url"] : {},
+    final data = await _getRoomDataByApi(webRid);
+    final rooms = data["data"];
+    final room = rooms is List && rooms.isNotEmpty && rooms.first is Map
+        ? rooms.first as Map
+        : const {};
+    final anchor = _detailAnchor(data["user"], room["owner"]);
+    final status = _detailLiveStatus(room, data, anchor);
+    final detail = await _buildRoomDetail(
+      webRid: webRid,
+      room: room,
+      anchor: status ? _detailAnchor(room["owner"], anchor) : anchor,
+      status: status,
     );
     _logElapsed("_getRoomDetailByWebRidApi($webRid)", stopwatch);
     return detail;
@@ -760,35 +1028,86 @@ class DouyinSite implements LiveSite {
   /// - 返回直播间信息
   Future<LiveRoomDetail> _getRoomDetailByWebRidHtml(String webRid) async {
     final stopwatch = Stopwatch()..start();
-    var roomData = await _getRoomDataByHtml(webRid);
-    var roomId = roomData["roomStore"]["roomInfo"]["room"]["id_str"].toString();
-    var userUniqueId = resolveUserUniqueIdFromRoomData(roomData);
+    final roomData = await _getRoomDataByHtml(webRid);
+    final store = roomData["roomStore"];
+    final info = store is Map ? store["roomInfo"] : null;
+    if (info is! Map) {
+      throw CoreError("抖音直播间页面缺少房间信息", kind: CoreErrorKind.response);
+    }
+    final room = info["room"] is Map ? info["room"] as Map : const {};
+    final anchor = _detailAnchor(info["anchor"], room["owner"]);
+    final status = _detailLiveStatus(room, info, anchor);
+    final detail = await _buildRoomDetail(
+      webRid: webRid,
+      room: room,
+      anchor: status ? _detailAnchor(room["owner"], anchor) : anchor,
+      status: status,
+      userUniqueId: status ? resolveUserUniqueIdFromRoomData(roomData) : null,
+    );
+    _logElapsed("_getRoomDetailByWebRidHtml($webRid)", stopwatch);
+    return detail;
+  }
 
-    var room = roomData["roomStore"]["roomInfo"]["room"];
-    var owner = room["owner"];
-    var anchor = roomData["roomStore"]["roomInfo"]["anchor"];
+  String _detailText(dynamic value) => value?.toString().trim() ?? "";
+
+  Map _detailAnchor(dynamic primary, dynamic fallback) {
+    if (primary is Map && _detailText(primary["nickname"]).isNotEmpty) {
+      return primary;
+    }
+    return fallback is Map ? fallback : const {};
+  }
+
+  bool _detailLiveStatus(Map room, Map info, Map anchor) {
+    // Room status and user.live_status are different upstream enums.
+    final rawRoomStatus =
+        room["status"] ?? room["room_status"] ?? info["room_status"];
+    final roomStatus = _parseDouyinStatus(rawRoomStatus);
+    if (roomStatus == 2) return true;
+    if (roomStatus == 4) return false;
+    // An absent room alone is not evidence of an offline anchor.
+    if (rawRoomStatus == null &&
+        _parseDouyinStatus(anchor["live_status"]) == 0) {
+      return false;
+    }
+    throw CoreError("抖音直播间状态不明确，请稍后再试", kind: CoreErrorKind.response);
+  }
+
+  Future<LiveRoomDetail> _buildRoomDetail({
+    required String webRid,
+    required Map room,
+    required Map anchor,
+    required bool status,
+    String? realRoomId,
+    String? userUniqueId,
+  }) async {
+    final name = _detailText(anchor["nickname"]);
+    final anchorId =
+        _detailText(anchor["id_str"] ?? anchor["id"] ?? anchor["sec_uid"]);
+    final anchorWebRid = _detailText(anchor["web_rid"]);
+    if (name.isEmpty ||
+        (!status &&
+            (anchorId.isEmpty || anchorId == "0") &&
+            (anchorWebRid.isEmpty || anchorWebRid != webRid))) {
+      throw CoreError("抖音直播间缺少有效主播信息", kind: CoreErrorKind.response);
+    }
+    final roomId = realRoomId ?? _detailText(room["id_str"] ?? room["id"]);
+    if (status && (roomId.isEmpty || roomId == "0")) {
+      throw CoreError("抖音直播间缺少房间ID", kind: CoreErrorKind.response);
+    }
     final categoryInfo = _resolveDouyinCategoryInfo(room);
-    var roomStatus = (asT<int?>(room["status"]) ?? 0) == 2;
-
-    // 主要是为了获取cookie,用于弹幕websocket连接
-    var danmakuCookie = await _getDanmakuCookie(webRid);
-
-    final detail = LiveRoomDetail(
+    final stats = room["room_view_stats"];
+    return LiveRoomDetail(
       roomId: webRid,
-      title: room["title"].toString(),
-      cover: roomStatus ? room["cover"]["url_list"][0].toString() : "",
-      userName: roomStatus
-          ? owner["nickname"].toString()
-          : anchor["nickname"].toString(),
-      userAvatar: roomStatus
-          ? owner["avatar_thumb"]["url_list"][0].toString()
-          : anchor["avatar_thumb"]["url_list"][0].toString(),
-      online: roomStatus
-          ? asT<int?>(room["room_view_stats"]["display_value"]) ?? 0
+      title: _detailText(room["title"]),
+      cover: status ? _firstImageUrl(room["cover"]) : "",
+      userName: name,
+      userAvatar: _firstImageUrl(anchor["avatar_thumb"]),
+      online: status && stats is Map
+          ? int.tryParse(_detailText(stats["display_value"])) ?? 0
           : 0,
-      status: roomStatus,
+      status: status,
       url: "https://live.douyin.com/$webRid",
-      introduction: owner?["signature"]?.toString() ?? "",
+      introduction: _detailText(anchor["signature"]),
       notice: "",
       categoryId: categoryInfo["categoryId"],
       categoryName: categoryInfo["categoryName"],
@@ -798,13 +1117,12 @@ class DouyinSite implements LiveSite {
       danmakuData: DouyinDanmakuArgs(
         webRid: webRid,
         roomId: roomId,
-        userId: userUniqueId,
-        cookie: danmakuCookie,
+        userId:
+            status ? userUniqueId ?? generateRandomNumber(12).toString() : "",
+        cookie: status ? await _getDanmakuCookie(webRid) : "",
       ),
-      data: roomStatus ? room["stream_url"] : {},
+      data: status ? room["stream_url"] : <String, dynamic>{},
     );
-    _logElapsed("_getRoomDetailByWebRidHtml($webRid)", stopwatch);
-    return detail;
   }
 
   String resolveUserUniqueIdFromRoomData(dynamic roomData) {
@@ -1025,7 +1343,7 @@ class DouyinSite implements LiveSite {
       },
     );
     final signStopwatch = Stopwatch()..start();
-    var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
+    var requestUrl = _abogusSigner(uri.toString(), kDefaultUserAgent);
     _logElapsed("_getRoomDataByApi($webRid) a_bogus", signStopwatch);
 
     final requestStopwatch = Stopwatch()..start();
@@ -1039,13 +1357,13 @@ class DouyinSite implements LiveSite {
       throw Exception("抖音接口返回格式异常");
     }
 
+    final statusCode = _parseDouyinStatus(result["status_code"]);
+    if (statusCode != null && statusCode != 0) {
+      throw CoreError("抖音直播间接口访问受限，请稍后再试", statusCode: statusCode);
+    }
     final data = result["data"];
     if (data is! Map) {
       throw CoreError("抖音直播间数据为空，请稍后再试");
-    }
-    final rooms = data["data"];
-    if (rooms is! List || rooms.isEmpty) {
-      throw CoreError("抖音直播间数据为空，可能是房间不存在、未开播或被风控限制");
     }
 
     _logElapsed("_getRoomDataByApi($webRid)", stopwatch);

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:simple_live_app/app/constant.dart';
+import 'package:simple_live_app/app/app_glass_mode.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
@@ -11,6 +12,7 @@ import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/app_icon_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -85,10 +87,16 @@ class AppSettingsController extends GetxController {
   void _loadFromStorage() {
     themeMode.value = LocalStorageService.instance
         .getValue(LocalStorageService.kThemeMode, 0);
+    glassMode.value = AppGlassMode.fromStorage(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kGlassMode,
+        AppGlassMode.defaultMode.storageValue,
+      ),
+    );
     appIconVariant.value = AppIconVariant.fromStorage(
       LocalStorageService.instance.getValue(
         LocalStorageService.kAppIconVariant,
-        AppIconVariant.classic.storageValue,
+        AppIconVariant.modern.storageValue,
       ),
     ).storageValue;
     firstRun = LocalStorageService.instance
@@ -149,6 +157,12 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kOhosAutoQualityDegrade, true);
     ohosNetworkFluctuationNotice.value = LocalStorageService.instance
         .getValue(LocalStorageService.kOhosNetworkFluctuationNotice, true);
+    ohosPlaybackProfile.value = _normalizeOhosPlaybackProfile(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kOhosPlaybackProfile,
+        kOhosPlaybackProfileStable,
+      ),
+    );
 
     autoExitEnable.value = LocalStorageService.instance
         .getValue(LocalStorageService.kAutoExitEnable, false);
@@ -185,6 +199,8 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kAutoFullScreen, false);
     autoPipOnExit.value = LocalStorageService.instance
         .getValue(LocalStorageService.kAutoPipOnExit, false);
+    liveRoomHoldPreviewAudio.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kLiveRoomHoldPreviewAudio, false);
     playershowSuperChat.value = LocalStorageService.instance
         .getValue(LocalStorageService.kPlayerShowSuperChat, false);
     playerShowPlayUrl.value = LocalStorageService.instance
@@ -252,6 +268,15 @@ class AppSettingsController extends GetxController {
     scaleMode.value = LocalStorageService.instance.getValue(
       LocalStorageService.kPlayerScaleMode,
       0,
+    );
+
+    dualScreenLayoutMode.value = LivePlayerLayoutMode.fromStorage(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kPlayerDualScreenLayoutMode,
+        LivePlayerLayoutMode.values.indexOf(
+          LivePlayerLayoutMode.defaultMode,
+        ),
+      ),
     );
 
     playerVolume.value = LocalStorageService.instance.getValue(
@@ -515,7 +540,7 @@ class AppSettingsController extends GetxController {
 
     final enabledRaw = LocalStorageService.instance.getValue(
       LocalStorageService.kLiveRoomQuickAccessEnabled,
-      keys.join(","),
+      keys.where((key) => key != "network_diagnostics").join(","),
     );
     final enabled =
         enabledRaw.split(",").where((item) => keys.contains(item)).toSet();
@@ -616,7 +641,25 @@ class AppSettingsController extends GetxController {
     Get.changeThemeMode(mode);
   }
 
-  var appIconVariant = AppIconVariant.classic.storageValue.obs;
+  /// Selected quality for liquid-glass surfaces. The renderer may still cap
+  /// this value according to platform capabilities; this is only the user's
+  /// persisted preference.
+  var glassMode = AppGlassMode.defaultMode.obs;
+
+  /// Alias kept for callers that use the full setting name.
+  Rx<AppGlassMode> get appGlassMode => glassMode;
+
+  void setGlassMode(AppGlassMode mode) {
+    glassMode.value = mode;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kGlassMode,
+      mode.storageValue,
+    );
+  }
+
+  void setAppGlassMode(AppGlassMode mode) => setGlassMode(mode);
+
+  var appIconVariant = AppIconVariant.modern.storageValue.obs;
   var appIconChanging = false.obs;
 
   Future<String?> setAppIconVariant(String value) async {
@@ -979,6 +1022,27 @@ class AppSettingsController extends GetxController {
         .setValue(LocalStorageService.kOhosNetworkFluctuationNotice, value);
   }
 
+  static const String kOhosPlaybackProfileStable = "stable";
+  static const String kOhosPlaybackProfileLowLatencyExperimental =
+      "lowLatencyExperimental";
+
+  String _normalizeOhosPlaybackProfile(String value) {
+    if (value == kOhosPlaybackProfileLowLatencyExperimental) {
+      return value;
+    }
+    return kOhosPlaybackProfileStable;
+  }
+
+  var ohosPlaybackProfile = kOhosPlaybackProfileStable.obs;
+  void setOhosPlaybackProfile(String value) {
+    final normalized = _normalizeOhosPlaybackProfile(value);
+    ohosPlaybackProfile.value = normalized;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kOhosPlaybackProfile,
+      normalized,
+    );
+  }
+
   var autoExitEnable = false.obs;
   Future<void> setAutoExitEnable(bool e) async {
     autoExitEnable.value = e;
@@ -1084,6 +1148,16 @@ class AppSettingsController extends GetxController {
     autoPipOnExit.value = e;
     LocalStorageService.instance
         .setValue(LocalStorageService.kAutoPipOnExit, e);
+  }
+
+  /// 长按关注项预览时是否允许预览播放器临时接管声音。
+  var liveRoomHoldPreviewAudio = false.obs;
+  void setLiveRoomHoldPreviewAudio(bool value) {
+    liveRoomHoldPreviewAudio.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kLiveRoomHoldPreviewAudio,
+      value,
+    );
   }
 
   var playershowSuperChat = false.obs;
@@ -1923,6 +1997,26 @@ class AppSettingsController extends GetxController {
       LocalStorageService.kPlayerScaleMode,
       value,
     );
+  }
+
+  /// The preferred layout for Douyin streams that contain two composited
+  /// views. The automatic mode remains the default for existing installs.
+  var dualScreenLayoutMode = LivePlayerLayoutMode.defaultMode.obs;
+
+  /// Alias for player-facing callers that use the longer setting name.
+  Rx<LivePlayerLayoutMode> get playerDualScreenLayoutMode =>
+      dualScreenLayoutMode;
+
+  void setDualScreenLayoutMode(LivePlayerLayoutMode mode) {
+    dualScreenLayoutMode.value = mode;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kPlayerDualScreenLayoutMode,
+      LivePlayerLayoutMode.values.indexOf(mode),
+    );
+  }
+
+  void setPlayerDualScreenLayoutMode(LivePlayerLayoutMode mode) {
+    setDualScreenLayoutMode(mode);
   }
 
   RxList<String> siteSort = RxList<String>();

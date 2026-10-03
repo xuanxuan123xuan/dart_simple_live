@@ -25,21 +25,36 @@ IosVideoOutputSize? calculateIosVideoOutputSize({
   required int sourceHeight,
   required double screenPhysicalWidth,
   required double screenPhysicalHeight,
+}) =>
+    calculateIosVideoOutputSizeWithinBounds(
+      sourceWidth: sourceWidth,
+      sourceHeight: sourceHeight,
+      maxPhysicalWidth: screenPhysicalWidth,
+      maxPhysicalHeight: screenPhysicalHeight,
+    );
+
+/// Calculates an even-sized video texture which fits an arbitrary physical
+/// pixel boundary while preserving the source aspect ratio.
+IosVideoOutputSize? calculateIosVideoOutputSizeWithinBounds({
+  required int sourceWidth,
+  required int sourceHeight,
+  required double maxPhysicalWidth,
+  required double maxPhysicalHeight,
 }) {
   if (sourceWidth < 2 ||
       sourceHeight < 2 ||
-      !screenPhysicalWidth.isFinite ||
-      !screenPhysicalHeight.isFinite ||
-      screenPhysicalWidth < 2 ||
-      screenPhysicalHeight < 2) {
+      !maxPhysicalWidth.isFinite ||
+      !maxPhysicalHeight.isFinite ||
+      maxPhysicalWidth < 2 ||
+      maxPhysicalHeight < 2) {
     return null;
   }
 
   final scale = math.min(
     1.0,
     math.min(
-      screenPhysicalWidth / sourceWidth,
-      screenPhysicalHeight / sourceHeight,
+      maxPhysicalWidth / sourceWidth,
+      maxPhysicalHeight / sourceHeight,
     ),
   );
 

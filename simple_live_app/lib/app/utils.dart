@@ -13,6 +13,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 
 typedef TextValidate = bool Function(String text);
 
@@ -121,6 +122,43 @@ class Utils {
     return result ?? false;
   }
 
+  /// 右侧面板的最终视觉宽度。
+  ///
+  /// 横屏手机（短边 < 600dp）上按屏宽的 2/5 收敛：`width` 的硬编码值
+  /// （320/400/420）在 800-900dp 的横屏上会占到近一半屏幕，挡住画面。
+  /// 平板与桌面（短边 >= 600dp）保持调用方给的宽度，2/5 在那里反而过宽。
+  /// 竖屏只做兜底约束，避免窄机型上面板超出屏幕。
+  @visibleForTesting
+  static double rightDialogPanelWidth({
+    required double requestedWidth,
+    required Size screenSize,
+  }) {
+    final screenWidth = screenSize.width;
+    final landscape = screenWidth > screenSize.height;
+    final compact = screenSize.shortestSide < 600;
+    if (!landscape || !compact) {
+      return requestedWidth.clamp(0.0, screenWidth * 0.9).toDouble();
+    }
+    // 2/5 屏宽，但不小于 280dp（列表项文字可读的下限），
+    // 也不超过调用方要求的宽度。
+    final target = screenWidth * 0.4;
+    final floor = requestedWidth < 280.0 ? requestedWidth : 280.0;
+    return target
+        .clamp(floor, requestedWidth)
+        .clamp(0.0, screenWidth)
+        .toDouble();
+  }
+
+  /// 当前可见右侧面板实际占用的宽度；没有活动面板时返回 0。
+  static double activeRightDialogPanelWidth(Size screenSize) {
+    final route = _rightDialogRoute;
+    if (route is! _RightSideDialogRoute || !route.isActive) return 0;
+    return rightDialogPanelWidth(
+      requestedWidth: route.width,
+      screenSize: screenSize,
+    );
+  }
+
   static void showRightDialog({
     required String title,
     Function()? onDismiss,
@@ -128,6 +166,7 @@ class Utils {
     double width = 320,
     bool useSystem = false,
     bool clickMaskDismiss = true,
+    bool showHeader = true,
   }) {
     // `useSystem` is kept for source compatibility with existing callers.
     // Right-side panels are always Navigator routes now, so they cannot leak
@@ -145,6 +184,7 @@ class Utils {
           child: child,
           width: width,
           clickMaskDismiss: clickMaskDismiss,
+          showHeader: showHeader,
         ),
       );
     });
@@ -158,6 +198,7 @@ class Utils {
     required Widget child,
     required double width,
     required bool clickMaskDismiss,
+    required bool showHeader,
   }) async {
     await _dismissRightDialog();
     if (request != _rightDialogRequest) return;
@@ -169,6 +210,7 @@ class Utils {
       title: title,
       width: width,
       clickOutsideDismiss: clickMaskDismiss,
+      showHeader: showHeader,
       onHeaderBack: () async {
         Log.d('RightSideDialogRoute: onHeaderBack title=$title');
         await _dismissRightDialog();
@@ -179,7 +221,8 @@ class Utils {
     );
     _rightDialogRoute = route;
     _rightDialogNavigator = navigator;
-    Log.d('RightSideDialogRoute: opened title=$title request=$request\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: opened title=$title request=$request\n${StackTrace.current}');
     final routeFuture = navigator.push<void>(route);
     // 前 1000ms 禁用 barrier 点击（拦截触摸穿透，重复事件约 300-400ms 延迟），
     // 之后启用正常遮罩关闭。Timer 可取消，route dispose 时避免跨测试残留。
@@ -204,7 +247,8 @@ class Utils {
     _rightDialogNavigator = null;
     _rightDialogFuture = null;
     if (route == null || navigator == null) return;
-    Log.d('RightSideDialogRoute: dismiss called (isCurrent=${route.isCurrent}, isActive=${route.isActive})\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: dismiss called (isCurrent=${route.isCurrent}, isActive=${route.isActive})\n${StackTrace.current}');
     if (route.isCurrent) {
       navigator.pop<void>();
     } else if (route.isActive) {
@@ -217,7 +261,8 @@ class Utils {
 
   static void hideRightDialog() {
     _rightDialogRequest += 1;
-    Log.d('RightSideDialogRoute: hideRightDialog called\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: hideRightDialog called\n${StackTrace.current}');
     unawaited(_dismissRightDialog());
   }
 
@@ -236,7 +281,8 @@ class Utils {
     FutureOr<void> Function() openNext,
   ) async {
     _rightDialogRequest += 1;
-    Log.d('RightSideDialogRoute: switchRightDialog called\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: switchRightDialog called\n${StackTrace.current}');
     await _dismissRightDialog();
     await Future.delayed(const Duration(milliseconds: 220));
     await openNext();
@@ -247,6 +293,7 @@ class Utils {
     required Widget child,
     double maxWidth = 600,
     double? maxHeightFactor,
+    bool showHeader = true,
   }) async {
     final context = Get.context;
     if (context == null) return null;
@@ -256,6 +303,7 @@ class Utils {
       child: child,
       maxWidth: maxWidth,
       maxHeightFactor: maxHeightFactor,
+      showHeader: showHeader,
     );
     // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透），
     // 与右侧弹窗同一套防护。
@@ -644,6 +692,38 @@ class Utils {
   }
 }
 
+/// 弹窗实际压住的水平安全区。
+///
+/// `ListTile` 等 Material 组件内部会包一层
+/// `SafeArea(minimum: contentPadding)`，直接读 `MediaQuery.padding`。
+/// 外层若已经补过 inset，内容会被缩进两次（横屏导航条一侧多出一大段死区），
+/// 所以补 inset 的同时必须把水平 padding 从 MediaQuery 里摘掉，
+/// 见 [MediaQuery.removePadding] 的调用点。
+///
+/// [left]/[right] 是弹窗盒子与屏幕两侧安全区真正重叠的部分：弹窗没盖到
+/// 导航条时不需要让开，铺满屏宽时才补满。
+class _HorizontalInsets {
+  const _HorizontalInsets(this.left, this.right);
+
+  final double left;
+  final double right;
+
+  /// [freeLeft]/[freeRight] 是弹窗盒子外侧剩余的空白宽度：
+  /// 这段空白已经能容纳安全区时，弹窗内容不必再让。
+  factory _HorizontalInsets.forBox({
+    required EdgeInsets padding,
+    required double freeLeft,
+    required double freeRight,
+  }) {
+    return _HorizontalInsets(
+      (padding.left - freeLeft).clamp(0.0, double.infinity),
+      (padding.right - freeRight).clamp(0.0, double.infinity),
+    );
+  }
+
+  EdgeInsets get asPadding => EdgeInsets.only(left: left, right: right);
+}
+
 /// A route-local right-side panel.
 ///
 /// Keeping this panel in the Navigator avoids adding it to SmartDialog's
@@ -654,6 +734,7 @@ class _RightSideDialogRoute extends PopupRoute<void> {
     required this.title,
     required this.width,
     required this.clickOutsideDismiss,
+    required this.showHeader,
     required this.onHeaderBack,
     required this.onCovered,
     required this.child,
@@ -662,6 +743,7 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   final String title;
   final double width;
   final bool clickOutsideDismiss;
+  final bool showHeader;
   final Future<void> Function() onHeaderBack;
   final Future<void> Function() onCovered;
   final Widget child;
@@ -698,33 +780,38 @@ class _RightSideDialogRoute extends PopupRoute<void> {
   void dispose() {
     _barrierTimer?.cancel();
     _disposed = true;
-    Log.d('RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)\n${StackTrace.current}');
     super.dispose();
   }
 
   @override
   void didComplete(void result) {
-    Log.d('RightSideDialogRoute: didComplete title=$title (pop 完成)\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: didComplete title=$title (pop 完成)\n${StackTrace.current}');
     super.didComplete(result);
   }
 
   @override
   void onPopInvokedWithResult(bool didPop, dynamic result) {
-    Log.d('RightSideDialogRoute: onPopInvoked title=$title didPop=$didPop\n${StackTrace.current}');
+    Log.d(
+        'RightSideDialogRoute: onPopInvoked title=$title didPop=$didPop\n${StackTrace.current}');
     // PopupRoute<void> 的 result 是 void?，只能传 null。
     super.onPopInvokedWithResult(didPop, null);
   }
 
   @override
   void didPopNext(Route<dynamic> nextRoute) {
-    Log.d('RightSideDialogRoute: didPopNext title=$title next=${nextRoute.runtimeType}');
+    Log.d(
+        'RightSideDialogRoute: didPopNext title=$title next=${nextRoute.runtimeType}');
     super.didPopNext(nextRoute);
   }
 
   @override
   void didChangeNext(Route<dynamic>? nextRoute) {
     super.didChangeNext(nextRoute);
-    Log.d('RightSideDialogRoute: didChangeNext title=$title next=${nextRoute?.runtimeType} completed=${animation?.isCompleted} isCurrent=$isCurrent isActive=$isActive');
+    Log.d(
+        'RightSideDialogRoute: didChangeNext title=$title next=${nextRoute?.runtimeType} completed=${animation?.isCompleted} isCurrent=$isCurrent isActive=$isActive');
     if (nextRoute == null) return;
     // 只响应真正的页面导航（PageRoute）。SmartDialog toast、Get.bottomSheet
     // 等浮层（PopupRoute）覆盖时不应关闭右侧面板——否则弹窗打开瞬间若有
@@ -737,7 +824,8 @@ class _RightSideDialogRoute extends PopupRoute<void> {
     // settles so it cannot contaminate the destination or reappear on return.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (isActive && !isCurrent) {
-        Log.d('RightSideDialogRoute: covered by ${nextRoute.runtimeType}, dismissing');
+        Log.d(
+            'RightSideDialogRoute: covered by ${nextRoute.runtimeType}, dismissing');
         unawaited(onCovered());
       }
     });
@@ -762,48 +850,57 @@ class _RightSideDialogRoute extends PopupRoute<void> {
     Animation<double> secondaryAnimation,
   ) {
     final mediaQuery = MediaQuery.of(context);
-    final panelWidth = (width + mediaQuery.padding.right)
-        .clamp(0.0, mediaQuery.size.width)
-        .toDouble();
+    // `width` is the panel's final visual width. Keep the system-safe inset
+    // inside that width; adding it here makes Android landscape panels wider
+    // whenever the navigation bar occupies the right edge.
+    final panelWidth = Utils.rightDialogPanelWidth(
+      requestedWidth: width,
+      screenSize: mediaQuery.size,
+    );
+    // 面板贴屏幕右缘：右侧安全区全额让开，左缘落在屏幕内部时不用让。
+    final insets = _HorizontalInsets.forBox(
+      padding: mediaQuery.padding,
+      freeLeft: mediaQuery.size.width - panelWidth,
+      freeRight: 0,
+    );
     return Align(
       alignment: Alignment.centerRight,
       child: SizedBox(
+        key: const ValueKey<String>('right-side-dialog-panel'),
         width: panelWidth,
         height: mediaQuery.size.height,
-        child: Material(
-          color: Theme.of(context).cardColor,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(4),
-              bottomLeft: Radius.circular(4),
-            ),
-          ),
-          clipBehavior: Clip.antiAlias,
+        child: GlassOverlaySurface(
+          radius: 12,
+          liveBackdrop: true,
           child: Padding(
-            padding: EdgeInsets.only(right: mediaQuery.padding.right),
-            child: SafeArea(
-              left: false,
-              right: false,
-              child: Column(
-                children: [
-                  ListTile(
-                    visualDensity: VisualDensity.compact,
-                    contentPadding: EdgeInsets.zero,
-                    leading: IconButton(
-                      onPressed: () => unawaited(onHeaderBack()),
-                      icon: const Icon(Icons.arrow_back),
-                    ),
-                    title: Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  Divider(
-                    height: 1,
-                    color: Colors.grey.withAlpha(25),
-                  ),
-                  Expanded(child: child),
-                ],
+            padding: insets.asPadding,
+            // 水平 inset 已在上面补过，摘掉它避免 ListTile 内部的
+            // SafeArea 再缩一次（横屏导航条一侧会多出一段死区）。
+            child: MediaQuery.removePadding(
+              context: context,
+              removeLeft: true,
+              removeRight: true,
+              child: SafeArea(
+                left: false,
+                right: false,
+                child: Column(
+                  children: [
+                    if (showHeader)
+                      ListTile(
+                        visualDensity: VisualDensity.compact,
+                        contentPadding: EdgeInsets.zero,
+                        leading: IconButton(
+                          onPressed: () => unawaited(onHeaderBack()),
+                          icon: const Icon(Icons.arrow_back),
+                        ),
+                        title: Text(
+                          title,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    Expanded(child: child),
+                  ],
+                ),
               ),
             ),
           ),
@@ -842,12 +939,14 @@ class _RightSideSheetRoute extends PopupRoute<void> {
     required this.child,
     required this.maxWidth,
     required this.maxHeightFactor,
+    required this.showHeader,
   });
 
   final String title;
   final Widget child;
   final double maxWidth;
   final double? maxHeightFactor;
+  final bool showHeader;
 
   bool _barrierEnabled = false;
   bool _disposed = false;
@@ -887,6 +986,16 @@ class _RightSideSheetRoute extends PopupRoute<void> {
     final maxHeight = heightFactor == null
         ? double.infinity
         : mediaQuery.size.height * heightFactor;
+    // 弹窗居中且受 maxWidth 限制，两侧留白各占剩余宽度的一半；只有留白不足
+    // 时才需要让开安全区（横屏导航条/挖孔）。
+    final sheetWidth =
+        maxWidth < mediaQuery.size.width ? maxWidth : mediaQuery.size.width;
+    final freeSide = (mediaQuery.size.width - sheetWidth) / 2;
+    final insets = _HorizontalInsets.forBox(
+      padding: mediaQuery.padding,
+      freeLeft: freeSide,
+      freeRight: freeSide,
+    );
     return Align(
       alignment: Alignment.bottomCenter,
       child: Container(
@@ -894,31 +1003,43 @@ class _RightSideSheetRoute extends PopupRoute<void> {
           maxWidth: maxWidth,
           maxHeight: maxHeight,
         ),
-        decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(12),
-            topRight: Radius.circular(12),
-          ),
-        ),
-        child: SafeArea(
-          top: true,
-          bottom: false,
+        // 可读性玻璃层内部提供 Material：内容多为 ListTile，缺少 Material
+        // 祖先时 debug 断言会直接抛，同时高不透明填充避免背景干扰文字。
+        child: GlassOverlaySurface(
+          radius: 16,
+          liveBackdrop: true,
           child: Padding(
-            padding: AppStyle.bottomSheetPadding(),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  contentPadding: const EdgeInsets.only(left: 12),
-                  title: Text(title),
-                  trailing: IconButton(
-                    onPressed: Get.back,
-                    icon: const Icon(Remix.close_line),
+            padding: insets.asPadding,
+            // 与右侧面板同理：水平 inset 由这里补一次，摘掉 MediaQuery 里的
+            // 值，避免 ListTile 内部 SafeArea 重复缩进。
+            child: MediaQuery.removePadding(
+              context: context,
+              removeLeft: true,
+              removeRight: true,
+              child: SafeArea(
+                top: true,
+                bottom: false,
+                left: false,
+                right: false,
+                child: Padding(
+                  padding: AppStyle.bottomSheetPadding(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (showHeader)
+                        ListTile(
+                          contentPadding: const EdgeInsets.only(left: 12),
+                          title: Text(title),
+                          trailing: IconButton(
+                            onPressed: Get.back,
+                            icon: const Icon(Remix.close_line),
+                          ),
+                        ),
+                      Flexible(child: child),
+                    ],
                   ),
                 ),
-                Flexible(child: child),
-              ],
+              ),
             ),
           ),
         ),
@@ -1016,49 +1137,106 @@ class _SafeBottomSheetRoute<T> extends PopupRoute<T> {
     final maxHeight = isScrollControlled
         ? mediaQuery.size.height * 0.9
         : mediaQuery.size.height * 0.5;
-    return Align(
-      alignment: alignment,
-      child: Container(
-        // 不做键盘避让（不按 viewInsets 上移）：输入框在屏幕中间，
-        // 键盘一般比它矮不会遮挡，保持位置稳定。
-        constraints: BoxConstraints(
-          maxWidth: constraints?.maxWidth ?? double.infinity,
-          maxHeight: maxHeight,
-        ),
-        decoration: ShapeDecoration(
-          color: backgroundColor ?? Theme.of(context).scaffoldBackgroundColor,
-          shape: shape ??
-              const RoundedRectangleBorder(
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(12),
-                  topRight: Radius.circular(12),
-                ),
-              ),
-        ),
-        child: SafeArea(
-          top: useSafeArea,
-          bottom: useSafeArea,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (showDragHandle)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8, bottom: 4),
-                  child: Center(
-                    child: Container(
-                      width: 32,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey,
-                        borderRadius: BorderRadius.circular(2),
+    // 与 _RightSideSheetRoute 同理：受 maxWidth 约束居中时两侧本就有留白，
+    // 够躲开安全区就不必再让，否则内容白缩一截（横屏导航条那侧尤其明显）。
+    final isCenteredDialog = alignment == Alignment.center;
+    final maxSheetWidth =
+        constraints?.maxWidth ?? (isCenteredDialog ? 560.0 : double.infinity);
+    final sheetWidth = maxSheetWidth < mediaQuery.size.width
+        ? maxSheetWidth
+        : mediaQuery.size.width;
+    final freeSide = (mediaQuery.size.width - sheetWidth) / 2;
+    final insets = _HorizontalInsets.forBox(
+      padding: mediaQuery.padding,
+      freeLeft: freeSide,
+      freeRight: freeSide,
+    );
+    final useGlassSurface = !Utils.isOhos &&
+        (backgroundColor == null || backgroundColor == Colors.transparent);
+    final contentTheme = useGlassSurface
+        ? Theme.of(context).copyWith(
+            dialogTheme: const DialogThemeData(
+              backgroundColor: Colors.transparent,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+            ),
+          )
+        : Theme.of(context);
+    final panelContent = Material(
+      type: MaterialType.transparency,
+      child: Padding(
+        padding: insets.asPadding,
+        child: MediaQuery.removePadding(
+          context: context,
+          removeLeft: true,
+          removeRight: true,
+          child: SafeArea(
+            top: useSafeArea,
+            bottom: useSafeArea,
+            left: false,
+            right: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showDragHandle)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8, bottom: 4),
+                    child: Center(
+                      child: Container(
+                        width: 32,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              Flexible(child: Builder(builder: builder)),
-            ],
+                if (isCenteredDialog)
+                  Theme(
+                    data: contentTheme,
+                    child: Builder(builder: builder),
+                  )
+                else
+                  Flexible(
+                    child: Theme(
+                      data: contentTheme,
+                      child: Builder(builder: builder),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
+      ),
+    );
+    final panel = useGlassSurface
+        ? GlassOverlaySurface(
+            radius: alignment == Alignment.center ? 20 : 16,
+            child: panelContent,
+          )
+        : DecoratedBox(
+            decoration: ShapeDecoration(
+              color:
+                  backgroundColor ?? Theme.of(context).scaffoldBackgroundColor,
+              shape: shape ??
+                  const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
+                    ),
+                  ),
+            ),
+            child: panelContent,
+          );
+    return Align(
+      alignment: alignment,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxSheetWidth,
+          maxHeight: maxHeight,
+        ),
+        child: panel,
       ),
     );
   }

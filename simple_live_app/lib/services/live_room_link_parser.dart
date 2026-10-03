@@ -53,7 +53,7 @@ class LiveRoomLinkParser {
     }
     if (KuaishouLiveLink.isShortLink(extractedUrl)) {
       final location = _locationResolver != null
-          ? await _locationResolver!(extractedUrl)
+          ? await _locationResolver(extractedUrl)
           : await _resolveLocation(
               extractedUrl,
               isAllowed: KuaishouLiveLink.isTrustedRedirectTarget,
@@ -86,6 +86,13 @@ class LiveRoomLinkParser {
     }
     if (host == 'live.douyin.com') {
       return _target(Constant.kDouyin, _firstPathSegment(uri));
+    }
+    // 抖音网页端直播间：www.douyin.com/live/<roomId> 与
+    // www.douyin.com/follow/live/<roomId>。其余 www 页面（搜索、用户、
+    // 视频）一律不当作直播间。
+    if (host == 'www.douyin.com' || host == 'douyin.com') {
+      final roomId = _douyinWebRoomId(uri);
+      return roomId == null ? null : _target(Constant.kDouyin, roomId);
     }
     if (host == 'webcast.amemv.com') {
       final reflowIndex = uri.pathSegments.indexOf('reflow');
@@ -121,6 +128,26 @@ class LiveRoomLinkParser {
         ? RegExp(r'^[A-Za-z0-9_.-]+$')
         : RegExp(r'^[A-Za-z0-9_-]+$');
     return pattern.hasMatch(roomId) && RegExp(r'[A-Za-z0-9]').hasMatch(roomId);
+  }
+
+  /// 从 www.douyin.com 的路径里取直播间 id。
+  ///
+  /// 仅接受 /live/<id> 与 /follow/live/<id>；其余路径返回 null，避免把
+  /// 搜索页、用户页、普通视频页误识别成直播间。
+  static String? _douyinWebRoomId(Uri uri) {
+    final segments = uri.pathSegments
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    if (segments.length == 2 && segments[0] == 'live') {
+      return segments[1];
+    }
+    if (segments.length == 3 &&
+        segments[0] == 'follow' &&
+        segments[1] == 'live') {
+      return segments[2];
+    }
+    return null;
   }
 
   static String _firstPathSegment(Uri uri) {
@@ -181,13 +208,25 @@ class LiveRoomLinkParser {
   }
 
   static String extractHttpUrl(String text) {
-    return RegExp(
-          r'https?://[^\s<>\u3000，。！？、；：]+',
-          caseSensitive: false,
-        ).firstMatch(text)?.group(0)?.replaceFirst(
-              RegExp(r'[，。！？、；：,.;:!?]+$'),
-              '',
-            ) ??
-        '';
+    final match = RegExp(
+      r'https?://[^\s<>\u3000，。！？、；：]+',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (match == null) {
+      return '';
+    }
+
+    final url = match.group(0)!;
+    final uri = Uri.tryParse(url);
+    final douyinRoomId = uri?.host.toLowerCase() == 'live.douyin.com'
+        ? uri!.pathSegments.firstWhere(
+            (segment) => segment.isNotEmpty,
+            orElse: () => '',
+          )
+        : '';
+    final punctuation = douyinRoomId.endsWith('.')
+        ? RegExp(r'[，。！？、；：,;:!?]+$')
+        : RegExp(r'[，。！？、；：,.;:!?]+$');
+    return url.replaceFirst(punctuation, '');
   }
 }

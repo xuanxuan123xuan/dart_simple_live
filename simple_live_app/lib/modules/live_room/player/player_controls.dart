@@ -8,12 +8,15 @@ import 'package:get/get.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
-import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
+import 'package:simple_live_app/modules/live_room/widgets/live_room_quick_access_panel.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/superchat_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
@@ -108,13 +111,12 @@ Widget buildFullControls(
 Widget buildLockButton(LiveRoomController controller) {
   return Obx(
     () => Center(
-      child: InkWell(
+      child: GlassSurface(
+        role: GlassSurfaceRole.platformViewControl,
+        radius: 12,
+        disablePlatformViewBackdrop: true,
         onTap: controller.setLockState,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.black45,
-            borderRadius: AppStyle.radius8,
-          ),
+        child: SizedBox(
           width: 40,
           height: 40,
           child: Center(
@@ -337,96 +339,78 @@ Widget _buildFullTopBar(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {},
-        child: Container(
+        child: SizedBox(
           height: 48 + padding.top,
-          padding: EdgeInsets.only(
-            left: padding.left + 32,
-            right: padding.right + 32,
-            top: padding.top,
-          ),
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: [
-                Colors.transparent,
-                Colors.black87,
-              ],
+          child: ColoredBox(
+            color: Colors.transparent,
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: padding.left + 32,
+                right: padding.right + 32,
+                top: padding.top,
+              ),
+              child: Row(
+                children: [
+                  _buildFullscreenGlassIconButton(
+                    tooltip: "退出全屏",
+                    icon: Icons.arrow_back,
+                    onPressed: () {
+                      if (controller.smallWindowState.value) {
+                        controller.exitSmallWindow();
+                      } else {
+                        controller.exitFull();
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      displayTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _buildFullscreenGlassIconButton(
+                    tooltip: "截图",
+                    onPressed: controller.saveScreenshot,
+                    icon: Icons.camera_alt_outlined,
+                  ),
+                  const SizedBox(width: 4),
+                  _buildFullscreenGlassIconButton(
+                    tooltip: "快捷入口",
+                    onPressed: () => showQuickAccess(controller),
+                    icon: Remix.play_list_2_line,
+                  ),
+                  if (controller.canStartInlineMultiRoom) ...[
+                    const SizedBox(width: 4),
+                    _buildFullscreenGlassIconButton(
+                      tooltip: "添加直播间并进入多开",
+                      onPressed: controller.showAddToMultiRoomPanel,
+                      icon: Remix.play_list_add_line,
+                    ),
+                  ],
+                  if (Platform.isAndroid || Utils.isOhos) ...[
+                    const SizedBox(width: 4),
+                    _buildFullscreenGlassIconButton(
+                      tooltip: "画中画",
+                      onPressed: controller.enablePIP,
+                      icon: Icons.picture_in_picture,
+                    ),
+                  ],
+                  const SizedBox(width: 4),
+                  _buildFullscreenGlassIconButton(
+                    tooltip: "播放器设置",
+                    onPressed: () => showPlayerSettings(controller),
+                    icon: Icons.more_horiz,
+                  ),
+                ],
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              IconButton(
-                onPressed: () {
-                  if (controller.smallWindowState.value) {
-                    controller.exitSmallWindow();
-                  } else {
-                    controller.exitFull();
-                  }
-                },
-                icon: const Icon(
-                  Icons.arrow_back,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              AppStyle.hGap12,
-              Expanded(
-                child: Text(
-                  displayTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              AppStyle.hGap12,
-              IconButton(
-                onPressed: controller.saveScreenshot,
-                icon: const Icon(
-                  Icons.camera_alt_outlined,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              IconButton(
-                onPressed: () => showQuickAccess(controller),
-                icon: const Icon(
-                  Remix.play_list_2_line,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              if (controller.canStartInlineMultiRoom)
-                IconButton(
-                  tooltip: "添加直播间并进入多开",
-                  onPressed: controller.showAddToMultiRoomPanel,
-                  icon: const Icon(
-                    Remix.play_list_add_line,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-              if (Platform.isAndroid || Utils.isOhos)
-                IconButton(
-                  onPressed: controller.enablePIP,
-                  icon: const Icon(
-                    Icons.picture_in_picture,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-              IconButton(
-                onPressed: () => showPlayerSettings(controller),
-                icon: const Icon(
-                  Icons.more_horiz,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-            ],
           ),
         ),
       ),
@@ -453,100 +437,161 @@ Widget _buildFullBottomBar(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {},
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.transparent,
-                Colors.black87,
+        child: ColoredBox(
+          color: Colors.transparent,
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: padding.left + 32,
+              right: padding.right + 32,
+              bottom: padding.bottom,
+            ),
+            child: Row(
+              children: [
+                _buildFullscreenGlassIconButton(
+                  tooltip: "刷新直播间",
+                  onPressed: controller.refreshRoom,
+                  icon: Remix.refresh_line,
+                ),
+                const SizedBox(width: 4),
+                _buildFullscreenGlassIconButton(
+                  tooltip: showDanmaku ? "关闭弹幕" : "开启弹幕",
+                  onPressed: () {
+                    controller.setDanmakuVisible(
+                      !controller.showDanmakuState.value,
+                    );
+                  },
+                  icon: ImageIcon(
+                    AssetImage(
+                      showDanmaku
+                          ? 'assets/icons/icon_danmaku_close.png'
+                          : 'assets/icons/icon_danmaku_open.png',
+                    ),
+                    size: 24,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                _buildFullscreenGlassIconButton(
+                  tooltip: "弹幕设置",
+                  onPressed: () => showDanmakuSettings(controller),
+                  icon: const ImageIcon(
+                    AssetImage('assets/icons/icon_danmaku_setting.png'),
+                    size: 24,
+                    color: Colors.white,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Text(
+                    controller.liveDuration.value,
+                    style: const TextStyle(fontSize: 14, color: Colors.white),
+                  ),
+                ),
+                const Expanded(child: SizedBox()),
+                _buildFullscreenGlassIconButton(
+                  key: volumeButtonKey,
+                  tooltip: controller.mutedState.value ? "取消静音" : "调节音量",
+                  onPressed: () {
+                    if (controller.mutedState.value) {
+                      unawaited(controller.toggleMute());
+                      return;
+                    }
+                    final context = volumeButtonKey.currentContext;
+                    if (context == null) {
+                      return;
+                    }
+                    controller.showVolumeSlider(context, keepAlive: true);
+                  },
+                  icon: Icon(
+                    controller.mutedState.value
+                        ? Icons.volume_off
+                        : Icons.volume_up,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                _buildFullscreenGlassTextButton(
+                  text: controller.currentQualityInfo.value,
+                  onPressed: () => showQualitesInfo(controller),
+                ),
+                const SizedBox(width: 4),
+                _buildFullscreenGlassTextButton(
+                  text: controller.currentLineInfo.value,
+                  onPressed: () => showLinesInfo(controller),
+                ),
+                const SizedBox(width: 4),
+                _buildFullscreenGlassIconButton(
+                  tooltip: "退出全屏",
+                  onPressed: () {
+                    if (controller.smallWindowState.value) {
+                      controller.exitSmallWindow();
+                    } else {
+                      controller.exitFull();
+                    }
+                  },
+                  icon: Remix.fullscreen_exit_fill,
+                ),
               ],
             ),
-          ),
-          padding: EdgeInsets.only(
-            left: padding.left + 32,
-            right: padding.right + 32,
-            bottom: padding.bottom,
-          ),
-          child: Row(
-            children: [
-              IconButton(
-                onPressed: controller.refreshRoom,
-                icon: const Icon(
-                  Remix.refresh_line,
-                  color: Colors.white,
-                ),
-              ),
-              IconButton(
-                onPressed: () {
-                  controller.setDanmakuVisible(
-                    !controller.showDanmakuState.value,
-                  );
-                },
-                icon: ImageIcon(
-                  AssetImage(
-                    showDanmaku
-                        ? 'assets/icons/icon_danmaku_close.png'
-                        : 'assets/icons/icon_danmaku_open.png',
-                  ),
-                  size: 24,
-                  color: Colors.white,
-                ),
-              ),
-              IconButton(
-                onPressed: () => showDanmakuSettings(controller),
-                icon: const ImageIcon(
-                  AssetImage('assets/icons/icon_danmaku_setting.png'),
-                  size: 24,
-                  color: Colors.white,
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Text(
-                  controller.liveDuration.value,
-                  style: const TextStyle(fontSize: 14, color: Colors.white),
-                ),
-              ),
-              const Expanded(child: SizedBox()),
-              _buildCompactVolumeButton(
-                controller,
-                volumeButtonKey: volumeButtonKey,
-              ),
-              TextButton(
-                onPressed: () => showQualitesInfo(controller),
-                child: Text(
-                  controller.currentQualityInfo.value,
-                  style: const TextStyle(color: Colors.white, fontSize: 15),
-                ),
-              ),
-              TextButton(
-                onPressed: () => showLinesInfo(controller),
-                child: Text(
-                  controller.currentLineInfo.value,
-                  style: const TextStyle(color: Colors.white, fontSize: 15),
-                ),
-              ),
-              IconButton(
-                onPressed: () {
-                  if (controller.smallWindowState.value) {
-                    controller.exitSmallWindow();
-                  } else {
-                    controller.exitFull();
-                  }
-                },
-                icon: const Icon(
-                  Remix.fullscreen_exit_fill,
-                  color: Colors.white,
-                ),
-              ),
-            ],
           ),
         ),
       ),
     );
   });
+}
+
+Widget _buildFullscreenGlassIconButton({
+  Key? key,
+  required String tooltip,
+  required Object icon,
+  required VoidCallback onPressed,
+}) {
+  final iconWidget = icon is IconData
+      ? Icon(icon, color: Colors.white, size: 22)
+      : icon as Widget;
+  return Tooltip(
+    message: tooltip,
+    child: GlassSurface(
+      role: GlassSurfaceRole.platformViewControl,
+      radius: 18,
+      disablePlatformViewBackdrop: true,
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: IconButton(
+          key: key,
+          tooltip: tooltip,
+          onPressed: onPressed,
+          icon: iconWidget,
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _buildFullscreenGlassTextButton({
+  required String text,
+  required VoidCallback onPressed,
+}) {
+  return GlassSurface(
+    role: GlassSurfaceRole.platformViewControl,
+    radius: 18,
+    disablePlatformViewBackdrop: true,
+    child: TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        minimumSize: const Size(48, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+      ),
+    ),
+  );
 }
 
 Widget _buildNormalBottomBar(
@@ -561,17 +606,8 @@ Widget _buildNormalBottomBar(
       right: 0,
       bottom: controller.showControlsState.value ? 0 : -48,
       duration: const Duration(milliseconds: 200),
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.transparent,
-              Colors.black87,
-            ],
-          ),
-        ),
+      child: ColoredBox(
+        color: Colors.black,
         child: Row(
           children: [
             IconButton(
@@ -946,6 +982,38 @@ void showPlayerSettings(LiveRoomController controller) {
       () => ListView(
         padding: AppStyle.edgeInsetsV12,
         children: [
+          if (controller.supportsDouyinDualScreenLayout) ...[
+            Padding(
+              padding: AppStyle.edgeInsetsH16.copyWith(top: 8, bottom: 4),
+              child: const Text(
+                "抖音双屏布局",
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            RadioGroup<LivePlayerLayoutMode>(
+              groupValue: AppSettingsController
+                  .instance.dualScreenLayoutMode.value,
+              onChanged: (mode) {
+                if (mode != null) {
+                  controller.setDualScreenLayoutMode(mode);
+                }
+              },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: LivePlayerLayoutMode.values
+                    .map(
+                      (mode) => RadioListTile<LivePlayerLayoutMode>(
+                        value: mode,
+                        contentPadding: AppStyle.edgeInsetsH4,
+                        title: Text(mode.label),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+            AppStyle.divider,
+          ],
           Padding(
             padding: AppStyle.edgeInsetsH16,
             child: Text(
@@ -1023,50 +1091,62 @@ void showPlayerSettings(LiveRoomController controller) {
   );
 }
 
-void showQuickAccess(LiveRoomController controller) {
+void showQuickAccess(
+  LiveRoomController controller, {
+  bool openDiagnostics = false,
+}) {
   final keys = controller.enabledQuickAccessKeys;
-  if (keys.isEmpty) {
+  if (!openDiagnostics && keys.isEmpty) {
     SmartDialog.showToast("没有东西可展示");
     return;
   }
-  if (keys.length == 1) {
+  if (!openDiagnostics &&
+      keys.length == 1 &&
+      keys.single != "network_diagnostics") {
     _openQuickAccessItem(controller, keys.single);
     return;
   }
+  final panel = LiveRoomQuickAccessPanel(
+    controller: controller,
+    initialDiagnostics: openDiagnostics,
+    onOpenItem: (key) => _openQuickAccessItemFromPanel(controller, key),
+    onClose: controller.useBottomSheetPlayerMenus
+        ? () => Get.back()
+        : Utils.hideRightDialog,
+    isBottomSheet: controller.useBottomSheetPlayerMenus,
+  );
   if (controller.useBottomSheetPlayerMenus) {
-    controller.showQuickAccessSheet();
+    Utils.showBottomSheet(
+      title: "快捷入口",
+      maxHeightFactor: 0.85,
+      showHeader: false,
+      child: panel,
+    );
     return;
   }
 
   Utils.showRightDialog(
     title: "快捷入口",
-    width: 320,
+    width: 420,
     useSystem: false,
-    child: ListView(
-      padding: AppStyle.edgeInsetsV12,
-      children:
-          keys.map((key) => _buildQuickAccessTile(controller, key)).toList(),
-    ),
+    showHeader: false,
+    child: panel,
   );
 }
 
-Widget _buildQuickAccessTile(LiveRoomController controller, String key) {
-  final item = Constant.allLiveRoomQuickAccess[key]!;
-  final enabled =
-      key != "recommendation" || controller.hasCategoryRecommendation;
-  return ListTile(
-    leading: Icon(item.iconData),
-    title: Text(controller.quickAccessTitle(key)),
-    subtitle: Text(controller.quickAccessSubtitle(key)),
-    enabled: enabled,
-    onTap: !enabled
-        ? null
-        : () async {
-            await Utils.switchRightDialog(() async {
-              _openQuickAccessItem(controller, key);
-            });
-          },
-  );
+Future<void> _openQuickAccessItemFromPanel(
+  LiveRoomController controller,
+  String key,
+) async {
+  if (controller.useBottomSheetPlayerMenus) {
+    Get.back();
+    await Future<void>.delayed(Duration.zero);
+    _openQuickAccessItem(controller, key);
+    return;
+  }
+  await Utils.switchRightDialog(() async {
+    _openQuickAccessItem(controller, key);
+  });
 }
 
 void _openQuickAccessItem(LiveRoomController controller, String key) {
@@ -1099,6 +1179,7 @@ void showFollowUser(LiveRoomController controller) {
     child: controller.buildFollowUserSelection(
       onClose: Utils.hideRightDialog,
       scrollController: controller.liveRoomFollowDialogScrollController,
+      enableHoldPreview: true,
     ),
   );
 }

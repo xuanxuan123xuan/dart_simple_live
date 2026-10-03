@@ -12,6 +12,7 @@ import 'package:simple_live_app/routes/account_route_target.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/kuaishou_private_browser_launcher.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -118,6 +119,45 @@ class AccountController extends GetxController {
 
   void douyinTap() async {
     douyinLogin();
+  }
+
+  void douyuTap() {
+    final account = DouyuAccountService.instance;
+    final controller = TextEditingController(text: account.cookie);
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
+        title: const Text("配置斗鱼 Cookie"),
+        content: TextField(
+          controller: controller,
+          maxLines: 5,
+          decoration: const InputDecoration(
+            labelText: "Cookie（可选）",
+            hintText: "粘贴 www.douyu.com 的完整 Cookie",
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text("取消")),
+          TextButton(
+            onPressed: () {
+              account.setCookie(controller.text);
+              Get.back();
+              SmartDialog.showToast(
+                account.hasCookie.value ? "斗鱼 Cookie 已保存" : "已清除斗鱼 Cookie",
+              );
+            },
+            child: const Text("保存"),
+          ),
+        ],
+      ),
+    ).whenComplete(controller.dispose);
+  }
+
+  String getDouyuCookieSummaryText() {
+    final account = DouyuAccountService.instance;
+    account.hasCookie.value;
+    return account.hasCookie.value ? "已配置 Cookie" : "未配置 Cookie（可选）";
   }
 
   void kuaishouTap() {

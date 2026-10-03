@@ -10,7 +10,9 @@ class BackgroundPlaybackService {
   BackgroundPlaybackService._()
       : _channel = const MethodChannel('simple_live/background_playback'),
         _isSupported = _defaultIsSupported,
-        _isOhos = _defaultIsOhos;
+        _isOhos = _defaultIsOhos {
+    _channel.setMethodCallHandler(_handleNativeControl);
+  }
 
   @visibleForTesting
   BackgroundPlaybackService.test({
@@ -19,17 +21,21 @@ class BackgroundPlaybackService {
     bool ohos = true,
   })  : _channel = channel,
         _isSupported = (() => supported),
-        _isOhos = (() => ohos);
+        _isOhos = (() => ohos) {
+    _channel.setMethodCallHandler(_handleNativeControl);
+  }
 
   static final BackgroundPlaybackService instance =
       BackgroundPlaybackService._();
 
-  static bool _defaultIsSupported() => Platform.isAndroid || Utils.isOhos;
+  static bool _defaultIsSupported() =>
+      Platform.isAndroid || Platform.isIOS || Utils.isOhos;
   static bool _defaultIsOhos() => Utils.isOhos;
 
   final MethodChannel _channel;
   final bool Function() _isSupported;
   final bool Function() _isOhos;
+  Future<void> Function(String control)? _androidControlHandler;
 
   bool _running = false;
   VideoPlayerController? _ohosController;
@@ -37,16 +43,11 @@ class BackgroundPlaybackService {
 
   void attachOhosController(VideoPlayerController controller) {
     _ohosController = controller;
-    _channel.setMethodCallHandler(_handleNativeControl);
   }
 
   void detachOhosController(VideoPlayerController controller) {
     if (identical(_ohosController, controller)) {
       _ohosController = null;
-      // Stop routing native notification-bar play/pause events once the
-      // controller is detached; leaving the handler registered would keep
-      // firing _handleNativeControl even though there is nothing to control.
-      _channel.setMethodCallHandler(null);
     }
   }
 
@@ -61,6 +62,11 @@ class BackgroundPlaybackService {
   }
 
   Future<void> _handleNativeControl(MethodCall call) async {
+    final androidHandler = _androidControlHandler;
+    if (androidHandler != null && !_isOhos()) {
+      await androidHandler(call.method);
+      return;
+    }
     final controller = _ohosController;
     if (controller == null || !controller.value.isInitialized) return;
     if (call.method == 'play') {
@@ -68,6 +74,15 @@ class BackgroundPlaybackService {
     } else if (call.method == 'pause') {
       await controller.pause();
     }
+  }
+
+  /// Registers the callback used by Android notification and media-session
+  /// controls. The callback is intentionally owned by the player layer so
+  /// this service remains usable with both media_kit and video_player.
+  void setAndroidControlHandler(
+    Future<void> Function(String control)? handler,
+  ) {
+    _androidControlHandler = handler;
   }
 
   Future<void> start() async {
@@ -102,6 +117,13 @@ class BackgroundPlaybackService {
         if (artwork != null && artwork.trim().isNotEmpty)
           'artwork': artwork.trim(),
       });
+    });
+  }
+
+  Future<void> updatePlaybackState({required bool playing}) async {
+    if (!_isSupported()) return;
+    return _enqueue(() async {
+      await _channel.invokeMethod('setPlaybackState', {'playing': playing});
     });
   }
 

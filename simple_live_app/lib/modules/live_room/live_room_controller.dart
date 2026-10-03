@@ -26,10 +26,17 @@ import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_playback_signal_adapter.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_line_failover_policy.dart';
+import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
+import 'package:simple_live_app/modules/live_room/live_room_danmaku_status.dart';
+import 'package:simple_live_app/modules/live_room/live_room_hold_preview.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_playback_recovery.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
+import 'package:simple_live_app/modules/multi_room/player_mutation_queue.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
@@ -37,6 +44,7 @@ import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart'
@@ -61,8 +69,13 @@ import 'package:window_manager/window_manager.dart';
 
 export 'live_room_auto_quality_buffer_tracker.dart'
     show LiveRoomAutoQualityBufferTracker;
+export 'ohos_playback_degrade_evidence.dart' show OhosPlaybackDegradeEvidence;
+export 'ohos_reconnect_confirmation.dart'
+    show OhosReconnectConfirmation, OhosReconnectOutcome;
 
 import 'live_room_auto_quality_buffer_tracker.dart';
+import 'ohos_playback_degrade_evidence.dart';
+import 'ohos_reconnect_confirmation.dart';
 import 'kuaishou_playback_recovery_tracker.dart';
 
 @visibleForTesting
@@ -80,6 +93,48 @@ bool shouldAcceptOfflineRoomRefresh({
   int requiredReports = 3,
 }) {
   return !playbackActive && consecutiveOfflineReports >= requiredReports;
+}
+
+/// 从当前房间之后开始环绕查找，最多核验 [maxChecks] 个不同的候选房间。
+/// 关注列表的直播状态可能已经过期，因此只有实时确认开播才允许切入。
+@visibleForTesting
+Future<T?> findNextConfirmedLiveRoom<T>({
+  required List<T> rooms,
+  required bool Function(T room) isCurrent,
+  required Future<LiveStatusState> Function(T room) checkStatus,
+  int maxChecks = 3,
+  bool Function()? shouldContinue,
+}) async {
+  if (rooms.isEmpty || maxChecks <= 0) {
+    return null;
+  }
+  final currentIndex = rooms.indexWhere(isCurrent);
+  var checked = 0;
+  for (var offset = 1; offset <= rooms.length && checked < maxChecks; offset++) {
+    if (shouldContinue != null && !shouldContinue()) {
+      return null;
+    }
+    final index = currentIndex < 0
+        ? offset - 1
+        : (currentIndex + offset) % rooms.length;
+    final candidate = rooms[index];
+    if (isCurrent(candidate)) {
+      continue;
+    }
+    checked++;
+    try {
+      final status = await checkStatus(candidate);
+      if (shouldContinue != null && !shouldContinue()) {
+        return null;
+      }
+      if (status == LiveStatusState.live) {
+        return candidate;
+      }
+    } catch (_) {
+      // 单个房间状态查询失败不应阻断后续候选。
+    }
+  }
+  return null;
 }
 
 /// 在线状态轮询的退避间隔（S2-T1）。
@@ -124,6 +179,26 @@ int resolveOnlineRefreshFailureCount({
     return currentFailures + 1;
   }
   return currentFailures;
+}
+
+String formatKuaishouRecoveryCountdown(int totalSeconds) {
+  final seconds = totalSeconds < 0 ? 0 : totalSeconds;
+  final minutesPart = seconds ~/ 60;
+  final secondsPart = seconds % 60;
+  return '$minutesPart:${secondsPart.toString().padLeft(2, '0')}';
+}
+
+@visibleForTesting
+bool shouldAutoRetryKuaishouDeviceRecovery({
+  required bool roomDisposed,
+  required bool armed,
+  required String? recoveryRoomKey,
+  required String currentRoomKey,
+}) {
+  return !roomDisposed &&
+      armed &&
+      recoveryRoomKey != null &&
+      recoveryRoomKey == currentRoomKey;
 }
 
 /// Returns the minute-scale Kuaishou recheck interval while playback is
@@ -423,6 +498,107 @@ bool isCurrentLiveRoomPlaybackRequest({
       requestRevision == latestRequestRevision;
 }
 
+/// The small state machine used by OHOS' post-first-frame line selection.
+///
+/// This is deliberately separate from the playback state machine.  It only
+/// decides whether a result from a background TCP probe may still be applied;
+/// source assignment, recovery and native player lifecycle remain owned by the
+/// playback controller.
+enum OhosAutoLineSelectionStatus {
+  idle,
+  measuring,
+  switched,
+  skipped,
+  stale,
+  failed,
+}
+
+@immutable
+class OhosAutoLineSelectionDiagnostic {
+  const OhosAutoLineSelectionDiagnostic({
+    required this.status,
+    required this.reason,
+    required this.roomGeneration,
+    required this.playbackRequestRevision,
+    required this.playerGeneration,
+    required this.manualLineSelectionRevision,
+    required this.candidateCount,
+    this.initialLineIndex,
+    this.selectedLineIndex,
+    this.measuredLineIndex,
+  });
+
+  final OhosAutoLineSelectionStatus status;
+  final String reason;
+  final int roomGeneration;
+  final int playbackRequestRevision;
+  final int playerGeneration;
+  final int manualLineSelectionRevision;
+  final int candidateCount;
+  final int? initialLineIndex;
+  final int? selectedLineIndex;
+
+  /// Candidate-relative result returned by the TCP probe. This is deliberately
+  /// an index, never a URL or host name.
+  final int? measuredLineIndex;
+}
+
+/// Returns lines in the same protocol family as the active line.
+///
+/// The URL values stay in the caller's private list; this helper only returns
+/// indexes so diagnostics can remain URL-free. Matching the active protocol
+/// prevents a background probe from changing the user's explicitly selected
+/// protocol family.
+@visibleForTesting
+List<int> resolveOhosAutoLineCandidateIndices({
+  required List<String> urls,
+  required int currentLineIndex,
+}) {
+  if (currentLineIndex < 0 || currentLineIndex >= urls.length) {
+    return const [];
+  }
+  final activeProtocol = classifyLiveStreamProtocol(urls[currentLineIndex]);
+  return [
+    for (var index = 0; index < urls.length; index += 1)
+      if (classifyLiveStreamProtocol(urls[index]) == activeProtocol) index,
+  ];
+}
+
+/// Accepts a completed OHOS line probe only while every captured playback
+/// identity still points at the same room and native player.
+@visibleForTesting
+bool shouldAcceptOhosAutoLineSelection({
+  required int roomGeneration,
+  required int expectedRoomGeneration,
+  required int playbackRequestRevision,
+  required int latestPlaybackRequestRevision,
+  required int playerGeneration,
+  required int currentPlayerGeneration,
+  required int manualLineSelectionRevision,
+  required int latestManualLineSelectionRevision,
+  required bool hasActivePlaybackSession,
+  required bool playerRecovering,
+  required bool autoLineSwitchAlreadyCompleted,
+}) {
+  return roomGeneration == expectedRoomGeneration &&
+      playbackRequestRevision == latestPlaybackRequestRevision &&
+      playerGeneration == currentPlayerGeneration &&
+      manualLineSelectionRevision == latestManualLineSelectionRevision &&
+      hasActivePlaybackSession &&
+      !playerRecovering &&
+      !autoLineSwitchAlreadyCompleted;
+}
+
+class _HoldPreviewAudioSnapshot {
+  const _HoldPreviewAudioSnapshot({
+    required this.volume,
+    required this.muted,
+  });
+
+  final double volume;
+  final bool muted;
+}
+
 class LiveRoomController extends PlayerController
     with WidgetsBindingObserver, WindowListener {
   @override
@@ -480,6 +656,8 @@ class LiveRoomController extends PlayerController
         Constant.kDouyin,
       }.contains(site.id);
 
+  bool get supportsDouyinDualScreenLayout => site.id == Constant.kDouyin;
+
   void toggleDesktopSidePanel() {
     desktopSidePanelCollapsed.value = !desktopSidePanelCollapsed.value;
   }
@@ -501,6 +679,41 @@ class LiveRoomController extends PlayerController
   final ScrollController liveRoomRecommendationScrollController =
       ScrollController();
 
+  static const Duration _holdPreviewLingerDuration = Duration(seconds: 3);
+  static const Duration _holdPreviewLoadTimeout = Duration(seconds: 10);
+  static const bool _holdPreviewEnabledOnIos = bool.fromEnvironment(
+    "SL_ENABLE_IOS_HOLD_PREVIEW",
+    defaultValue: true,
+  );
+  final PlayerMutationQueue _holdPreviewMutations = PlayerMutationQueue();
+  final MultiRoomPlaybackRecoveryCoordinator _holdPreviewRecovery =
+      const MultiRoomPlaybackRecoveryCoordinator();
+
+  // 关闭路径专用：预览播放器销毁对音频会话的中断是必现的，首轮直接
+  // pause/play 重建原生输出，并收紧验证窗口以缩短声音交接的无声期。
+  final MultiRoomPlaybackRecoveryCoordinator _holdPreviewCloseRecovery =
+      const MultiRoomPlaybackRecoveryCoordinator(
+        forceRestartOnFirstAttempt: true,
+        maxAttempts: 4,
+        confirmTimeout: Duration(milliseconds: 400),
+        retryDelay: Duration(milliseconds: 100),
+      );
+  final List<Timer> _holdPreviewAudioWatchdogTimers = [];
+  int _holdPreviewAudioWatchdogGeneration = 0;
+  MultiRoomPlayerController? _holdPreviewPlayer;
+  String? _holdPreviewPlayerTag;
+  MultiRoomItem? _holdPreviewItem;
+  OverlayEntry? _holdPreviewOverlay;
+  Timer? _holdPreviewLingerTimer;
+  DateTime? _holdPreviewLingerDeadline;
+  LiveRoomHoldPreviewPhase _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+  _HoldPreviewAudioSnapshot? _holdPreviewAudioSnapshot;
+  bool _holdPreviewOwnsAudio = false;
+  bool _holdPreviewMainWasPlaying = false;
+  bool _holdPreviewPromotingMain = false;
+  bool _holdPreviewClosing = false;
+  int _holdPreviewRevision = 0;
+
   /// 聊天消息列表
   RxList<LiveMessage> messages = RxList<LiveMessage>();
 
@@ -517,11 +730,19 @@ class LiveRoomController extends PlayerController
 
   void markQualitySelectionAsManual() {
     _qualitySelectionRevision += 1;
+    // Invalidate a probe immediately, before the asynchronous quality request
+    // starts.  The request revision is still advanced again by getPlayUrl.
+    if (Utils.isOhos) {
+      _playbackRequestRevision += 1;
+    }
   }
 
   /// 选"自动"：解锁画质，回到按 qualityLevel 设置的自动档。
   Future<void> useAutomaticQuality() async {
     final selectionRevision = ++_qualitySelectionRevision;
+    if (Utils.isOhos) {
+      _playbackRequestRevision += 1;
+    }
     qualityLocked.value = false;
     saveQualityMemory();
     _autoQualityBufferTracker.reset();
@@ -623,6 +844,32 @@ class LiveRoomController extends PlayerController
   /// Rebuilds the native HarmonyOS player when the URL or line changes.
   final RxInt ohosPlayerRevision = 0.obs;
 
+  /// Room generation passed to the OHOS player profile and line-selection
+  /// callbacks. It changes only when the room changes.
+  int get ohosPlaybackSessionGeneration => _loadGeneration;
+
+  final RxString ohosPlaybackProfileStatus = 'stable'.obs;
+  final RxString ohosPlaybackProfileReason = 'stableRequested'.obs;
+
+  void updateOhosPlaybackProfileDecision(
+    int sessionGeneration,
+    int playerGeneration,
+    OhosPlaybackProfileDecision decision,
+  ) {
+    if (!Utils.isOhos ||
+        _roomDisposed ||
+        sessionGeneration != _loadGeneration ||
+        playerGeneration != ohosPlayerRevision.value) {
+      return;
+    }
+    ohosPlaybackProfileStatus.value = decision.profile.name;
+    ohosPlaybackProfileReason.value = decision.reason.name;
+  }
+
+  @override
+  String get ohosPlaybackProfileDiagnostic =>
+      '${ohosPlaybackProfileStatus.value} (${ohosPlaybackProfileReason.value})';
+
   /// 当前播放线路索引
   var currentLineIndex = -1;
   var currentLineInfo = "".obs;
@@ -676,6 +923,47 @@ class LiveRoomController extends PlayerController
   var loadError = false.obs;
   Object? error;
   StackTrace? errorStackTrace;
+  final kuaishouRecoveryRemainingSeconds = 0.obs;
+  final kuaishouDeviceRecoveryAvailable = false.obs;
+  final kuaishouDeviceRecoveryArmed = false.obs;
+  Timer? _kuaishouDeviceRecoveryTimer;
+  String? _kuaishouDeviceRecoveryRoomKey;
+  KuaishouAccountSlot? _kuaishouDeviceRecoverySlot;
+
+  bool get showKuaishouDeviceRecovery =>
+      error is KuaishouRateLimitError &&
+      (kuaishouDeviceRecoveryAvailable.value ||
+          kuaishouDeviceRecoveryArmed.value);
+
+  bool get kuaishouRefreshBlocked =>
+      error is KuaishouRateLimitError &&
+      kuaishouRecoveryRemainingSeconds.value > 0;
+
+  String get kuaishouRecoveryHint {
+    final remaining = kuaishouRecoveryRemainingSeconds.value;
+    if (kuaishouDeviceRecoveryArmed.value && remaining > 0) {
+      return '设备会话已重建，${formatKuaishouRecoveryCountdown(remaining)} 后自动重试';
+    }
+    if (remaining > 0) {
+      return '请求冷却中，剩余 ${formatKuaishouRecoveryCountdown(remaining)}';
+    }
+    if (error is KuaishouRateLimitError &&
+        !kuaishouDeviceRecoveryAvailable.value) {
+      return '今天已重建过设备会话，请稍后再试或重新登录';
+    }
+    return '';
+  }
+
+  /// 快手弹幕需要可用 Cookie；未配置或当前会话不可用时视为未登录。
+  ///
+  /// 无 Cookie（匿名模式）时 `KuaishouSite.getDanmaku()` 返回空的
+  /// `LiveDanmaku`、详情 `danmakuData` 为 null，`start(null)` 是 no-op，
+  /// 否则会一直卡在"正在连接弹幕服务器"。检测到无可用 Cookie 就改为
+  /// 直接提示未登录，不发起连接。
+  bool get _kuaishouDanmakuCookieReady =>
+      site.id != Constant.kKuaishou ||
+      !Get.isRegistered<KuaishouAccountService>() ||
+      KuaishouAccountService.instance.activeSession != null;
 
   // 开播时长展示状态
   var liveDuration = "00:00:00".obs;
@@ -694,6 +982,24 @@ class LiveRoomController extends PlayerController
   int _loadGeneration = 0;
   int _playbackRequestRevision = 0;
   int _manualLineSelectionRevision = 0;
+  int? _ohosPlayerLoadGeneration;
+  int? _ohosPlayerRequestRevision;
+  bool _ohosPlayerStartedDuringRecovery = false;
+  bool _ohosAutoLineSelectionConsumed = false;
+  bool _ohosAutoLineSwitchCompleted = false;
+  int? _ohosAutoLineSelectionScheduledPlayerGeneration;
+  final Rx<OhosAutoLineSelectionDiagnostic> ohosAutoLineSelectionDiagnostic =
+      Rx<OhosAutoLineSelectionDiagnostic>(
+    const OhosAutoLineSelectionDiagnostic(
+      status: OhosAutoLineSelectionStatus.idle,
+      reason: 'not_started',
+      roomGeneration: -1,
+      playbackRequestRevision: -1,
+      playerGeneration: -1,
+      manualLineSelectionRevision: -1,
+      candidateCount: 0,
+    ),
+  );
   final Set<String> _superChatFingerprints = <String>{};
   LiveRepeatedDanmuAggregator _liveEventFlowAggregator =
       LiveRepeatedDanmuAggregator();
@@ -715,11 +1021,18 @@ class LiveRoomController extends PlayerController
   int _kuaishouRecoverySessionRevision = 0;
   bool _autoQualityWarmupStartedForRoom = false;
   Future<void>? _kuaishouRecoveryFuture;
+  bool _kuaishouChallengeFlowOpen = false;
 
   /// 连续轮询失败（含 unknown/offline）次数，用于指数退避。
   int _onlineRefreshFailures = 0;
   DateTime? _ohosHealthyPlaybackSince;
   Duration _lastOhosPlaybackPosition = Duration.zero;
+
+  /// 最近一次原生心跳到达的时间。
+  ///
+  /// 鸿蒙 AVPlayer 对部分直播源不暴露时间轴（currentTime 恒为 -1），此时
+  /// position 永远不前进。心跳“有没有来”成为唯一可用的存活证据。
+  DateTime? _ohosLastHeartbeatAt;
   bool _autoPipAttempting = false;
 
   @override
@@ -759,10 +1072,28 @@ class LiveRoomController extends PlayerController
 
   final LiveRoomAutoQualityBufferTracker _autoQualityBufferTracker =
       LiveRoomAutoQualityBufferTracker();
+
+  /// 鸿蒙专用的降级证据门槛。
+  ///
+  /// 鸿蒙走这条更严格的判定，而不是 [_autoQualityBufferTracker] 的两次边沿：
+  /// AVPlayer 在 HTTP-FLV 直播下会发出很短的 buffering 脉冲，按边沿计数会每隔
+  /// 一两分钟就切一次线路，而每次切线路都会重建播放器、整屏转圈。
+  final OhosPlaybackDegradeEvidence _ohosDegradeEvidence =
+      OhosPlaybackDegradeEvidence();
   final KuaishouPlaybackRecoveryTracker _kuaishouPlaybackRecoveryTracker =
       KuaishouPlaybackRecoveryTracker();
   final OhosPlaybackSignalAdapter _ohosPlaybackSignalAdapter =
       OhosPlaybackSignalAdapter();
+
+  /// 鸿蒙自动重连的确认配对器。
+  ///
+  /// 鸿蒙的重开只是同步请求 widget 重建，必须等原生播放确认才算重连完成，
+  /// 否则恢复耗时只反映"请求发出"。见 [OhosReconnectConfirmation]。
+  final OhosReconnectConfirmation _ohosReconnectConfirmation =
+      OhosReconnectConfirmation();
+
+  /// 待确认重连的超时兜底。原生确认到达即取消。
+  Timer? _ohosReconnectConfirmationTimer;
   DateTime? _lastAutoQualityDownAt;
   final Set<int> _ohosFailedLineIndices = <int>{};
   StreamSubscription<bool>? _autoQualityBufferingSubscription;
@@ -792,10 +1123,19 @@ class LiveRoomController extends PlayerController
       return;
     }
     final now = DateTime.now();
-    final shouldDegrade = _autoQualityBufferTracker.update(
-      buffering: buffering,
-      now: now,
-    );
+    // 鸿蒙用证据门槛，其他平台保持原有的边沿计数不变。
+    final bool shouldDegrade;
+    if (Utils.isOhos) {
+      shouldDegrade =
+          _ohosDegradeEvidence.update(buffering: buffering, now: now);
+      if (shouldDegrade) {
+        // update 命中后会清空证据，所以这里读的是清空前记下的快照。
+        Log.d('[ohos-degrade] 缓冲证据达标，准备切换线路/降画质');
+      }
+    } else {
+      shouldDegrade =
+          _autoQualityBufferTracker.update(buffering: buffering, now: now);
+    }
     if (!shouldDegrade) {
       return;
     }
@@ -885,11 +1225,74 @@ class LiveRoomController extends PlayerController
     _kuaishouPlaybackRecoveryTracker.reset();
   }
 
+  void _resetOhosAutoLineSelectionSession() {
+    _ohosPlayerLoadGeneration = null;
+    _ohosPlayerRequestRevision = null;
+    _ohosPlayerStartedDuringRecovery = false;
+    _ohosAutoLineSelectionConsumed = false;
+    _ohosAutoLineSwitchCompleted = false;
+    _ohosAutoLineSelectionScheduledPlayerGeneration = null;
+    ohosAutoLineSelectionDiagnostic.value = OhosAutoLineSelectionDiagnostic(
+      status: OhosAutoLineSelectionStatus.idle,
+      reason: 'room_session_started',
+      roomGeneration: _loadGeneration,
+      playbackRequestRevision: _playbackRequestRevision,
+      playerGeneration: ohosPlayerRevision.value,
+      manualLineSelectionRevision: _manualLineSelectionRevision,
+      candidateCount: 0,
+    );
+  }
+
+  void _updateOhosAutoLineSelectionDiagnostic({
+    required OhosAutoLineSelectionStatus status,
+    required String reason,
+    int? roomGeneration,
+    int? playbackRequestRevision,
+    int? playerGeneration,
+    int? manualLineSelectionRevision,
+    int candidateCount = 0,
+    int? initialLineIndex,
+    int? selectedLineIndex,
+    int? measuredLineIndex,
+  }) {
+    final diagnostic = OhosAutoLineSelectionDiagnostic(
+      status: status,
+      reason: reason,
+      roomGeneration: roomGeneration ?? _loadGeneration,
+      playbackRequestRevision:
+          playbackRequestRevision ?? _playbackRequestRevision,
+      playerGeneration: playerGeneration ?? ohosPlayerRevision.value,
+      manualLineSelectionRevision:
+          manualLineSelectionRevision ?? _manualLineSelectionRevision,
+      candidateCount: candidateCount,
+      initialLineIndex: initialLineIndex,
+      selectedLineIndex: selectedLineIndex,
+      measuredLineIndex: measuredLineIndex,
+    );
+    ohosAutoLineSelectionDiagnostic.value = diagnostic;
+    Log.d(
+      '[ohos-auto-line] status=${diagnostic.status.name} '
+      'reason=${diagnostic.reason} '
+      'roomGeneration=${diagnostic.roomGeneration} '
+      'playbackRequestRevision=${diagnostic.playbackRequestRevision} '
+      'playerGeneration=${diagnostic.playerGeneration} '
+      'manualLineRevision=${diagnostic.manualLineSelectionRevision} '
+      'candidateCount=${diagnostic.candidateCount} '
+      'initialLine=${diagnostic.initialLineIndex ?? "none"} '
+      'selectedLine=${diagnostic.selectedLineIndex ?? "none"} '
+      'measuredLine=${diagnostic.measuredLineIndex ?? "none"}',
+    );
+  }
+
   void _resetPlaybackHealthSession() {
     if (!Utils.isOhos) {
       resetAutoNetworkDiagnosisSession();
     }
     _autoQualityBufferTracker.reset();
+    _ohosDegradeEvidence.reset();
+    _ohosReconnectConfirmationTimer?.cancel();
+    _ohosReconnectConfirmationTimer = null;
+    _ohosReconnectConfirmation.reset();
     _autoQualityWarmupStartedForRoom = false;
     _lastAutoQualityDownAt = null;
     _ohosFailedLineIndices.clear();
@@ -1332,6 +1735,7 @@ class LiveRoomController extends PlayerController
     Utils.showBottomSheet(
       title: value,
       child: ListView(
+        shrinkWrap: true,
         children: [
           if (remark != null && remark.isNotEmpty)
             ListTile(
@@ -1709,6 +2113,7 @@ class LiveRoomController extends PlayerController
         return;
       }
       final incomingState = roomDetail.resolvedLiveStatus;
+      final previousState = detail.value?.resolvedLiveStatus;
       final decision = _applyRoomLiveState(incomingState);
       if (shouldCommitRoomDetailRefresh(
         incomingState: incomingState,
@@ -1727,6 +2132,11 @@ class LiveRoomController extends PlayerController
         _syncBackgroundPlaybackMetadata(committedDetail);
       }
       if (incomingState == LiveStatusState.live) {
+        if (site.id == Constant.kDouyin &&
+            shouldStartDouyinDanmaku(previousState, incomingState)) {
+          initDanmau();
+          unawaited(liveDanmaku.start(detail.value?.danmakuData));
+        }
         await _bootstrapPlaybackIfNeeded();
       }
     } catch (e) {
@@ -1819,20 +2229,133 @@ class LiveRoomController extends PlayerController
       _lastOhosPlaybackPosition = value.position;
       return;
     }
-    if (!didOhosPlaybackTimelineProgress(
+    final now = DateTime.now();
+    final positionProgressed = didOhosPlaybackTimelineProgress(
       current: value.position,
       previous: _lastOhosPlaybackPosition,
-    )) {
+    );
+    if (positionProgressed) {
+      _lastOhosPlaybackPosition = value.position;
+    } else if (!_ohosHeartbeatLooksAlive(now)) {
+      // 时间轴不前进、心跳也没来：不能认定为健康播放。
       return;
     }
-    _lastOhosPlaybackPosition = value.position;
-    final now = DateTime.now();
     _ohosHealthyPlaybackSince ??= now;
     if (mediaErrorRetryCount > 0 &&
         now.difference(_ohosHealthyPlaybackSince!) >=
             const Duration(seconds: 20)) {
       Log.d("鸿蒙播放器已稳定播放，重置错误重试计数");
       mediaErrorRetryCount = 0;
+    }
+  }
+
+  /// 原生心跳是否表明播放器仍在推进。
+  ///
+  /// 心跳约每秒一次，这里给足容忍窗口，避免一次调度抖动就被判成不活。
+  bool _ohosHeartbeatLooksAlive(DateTime now) {
+    final lastHeartbeatAt = _ohosLastHeartbeatAt;
+    return lastHeartbeatAt != null &&
+        now.difference(lastHeartbeatAt) < ohosHeartbeatStallTimeout;
+  }
+
+  /// 挂起一次鸿蒙自动重连，等原生播放确认后再写入健康事件。
+  ///
+  /// 与 mpv 侧的差别：mpv 的 `player.open()` resolve 时链路已经建立，
+  /// 所以那边在重开返回处直接记账；鸿蒙的重开返回只代表请求已发出。
+  ///
+  /// 调用时机要求：必须在 `initPlaylist` 推进 [ohosPlayerRevision] 之后、
+  /// 且在下一帧 widget 重建之前调用（当前两者之间没有 await，成立）。
+  /// 万一将来插入 await 使 initialized 先到，心跳与 15s 超时仍会兜住这次重连，
+  /// 只是恢复耗时会偏长——次数不会丢。
+  void _armOhosReconnect({
+    required LiveReconnectReason reason,
+    required bool? hostChanged,
+    required DateTime? startedAt,
+  }) {
+    final now = DateTime.now();
+    final displaced = _ohosReconnectConfirmation.arm(
+      reason: reason,
+      hostChanged: hostChanged,
+      startedAt: startedAt,
+      now: now,
+      playerGeneration: ohosPlayerRevision.value,
+    );
+    if (displaced != null) {
+      _recordOhosReconnectOutcome(displaced);
+    }
+    _ohosReconnectConfirmationTimer?.cancel();
+    _ohosReconnectConfirmationTimer = Timer(
+      _ohosReconnectConfirmation.confirmationTimeout,
+      () {
+        if (_roomDisposed) {
+          return;
+        }
+        final expired = _ohosReconnectConfirmation.flushIfExpired(
+          DateTime.now(),
+        );
+        if (expired != null) {
+          _recordOhosReconnectOutcome(expired);
+        }
+      },
+    );
+  }
+
+  /// 原生播放确认到达（initialized / 首帧 / 心跳任一），定稿待确认重连。
+  void _confirmOhosReconnect(int playerGeneration) {
+    if (_ohosReconnectConfirmation.pending == null) {
+      return;
+    }
+    final outcome = _ohosReconnectConfirmation.confirm(
+      playerGeneration: playerGeneration,
+      now: DateTime.now(),
+    );
+    if (outcome == null) {
+      return;
+    }
+    _ohosReconnectConfirmationTimer?.cancel();
+    _ohosReconnectConfirmationTimer = null;
+    _recordOhosReconnectOutcome(outcome);
+  }
+
+  void _recordOhosReconnectOutcome(OhosReconnectOutcome outcome) {
+    Log.d(
+      '鸿蒙自动重连记账 reason=${outcome.reason.name} '
+      'confirmed=${outcome.confirmed} '
+      'hostChanged=${outcome.hostChanged} '
+      'recovery=${outcome.recoveryDuration?.inMilliseconds ?? "unknown"}ms '
+      'playerGeneration=${outcome.playerGeneration}',
+    );
+    recordLiveLinkHealthEvent(
+      LiveLinkEventType.cdnReconnect,
+      at: outcome.occurredAt,
+      reconnectReason: outcome.reason,
+      reconnectHostChanged: outcome.hostChanged,
+      reconnectRecoveryDuration: outcome.recoveryDuration,
+    );
+  }
+
+  /// 接收鸿蒙播放器的原生遥测（心跳与缓存深度）。
+  void updateOhosTelemetryForGeneration(
+    int playerGeneration,
+    OhosPlaybackTelemetry telemetry,
+  ) {
+    if (!Utils.isOhos ||
+        _roomDisposed ||
+        playerGeneration != ohosPlayerRevision.value) {
+      return;
+    }
+    // 只有原生时钟跳动算心跳。缓存事件不带 heartbeatAt，避免"缓冲还在报深度"
+    // 被当成"播放器还活着"。
+    final heartbeatAt = telemetry.heartbeatAt;
+    if (heartbeatAt != null) {
+      _ohosLastHeartbeatAt = heartbeatAt;
+      recordOhosNativeHeartbeat(heartbeatAt);
+      // 兜底确认路径：有些直播源 currentTime 恒为 -1，首帧/进度可能都不来，
+      // 心跳是唯一能证明这代播放器真的活了的信号。
+      _confirmOhosReconnect(playerGeneration);
+    }
+    if (telemetry.cacheDuration != null) {
+      recordOhosDemuxerCacheDuration(telemetry.cacheDuration);
     }
   }
 
@@ -1868,16 +2391,15 @@ class LiveRoomController extends PlayerController
           );
           break;
         case OhosPlaybackSignalType.firstFrame:
-        case OhosPlaybackSignalType.nativeError:
         case OhosPlaybackSignalType.initialized:
+          _logOhosPlaybackSignal(signal);
+          // AVPlayer 已接受地址并报出尺寸/时长，或已经出画：
+          // 这才是"重开真的成功了"，可以给待确认重连定稿。
+          _confirmOhosReconnect(signal.playerGeneration);
+          break;
+        case OhosPlaybackSignalType.nativeError:
         case OhosPlaybackSignalType.sourceReopened:
-          Log.d(
-            'OHOS playback signal=${signal.type.name} '
-            'roomGeneration=${signal.roomGeneration} '
-            'playerGeneration=${signal.playerGeneration} '
-            'source=${signal.sourceFingerprint} '
-            'error=${signal.nativeErrorCode ?? "none"}',
-          );
+          _logOhosPlaybackSignal(signal);
           break;
         case OhosPlaybackSignalType.playing:
         case OhosPlaybackSignalType.positionAdvanced:
@@ -1896,25 +2418,330 @@ class LiveRoomController extends PlayerController
     updateOhosVideoState(value);
   }
 
+  void _logOhosPlaybackSignal(OhosPlaybackSignal signal) {
+    Log.d(
+      'OHOS playback signal=${signal.type.name} '
+      'roomGeneration=${signal.roomGeneration} '
+      'playerGeneration=${signal.playerGeneration} '
+      'source=${signal.sourceFingerprint} '
+      'error=${signal.nativeErrorCode ?? "none"}',
+    );
+  }
+
   void updateOhosFirstFrameForGeneration(int playerGeneration) {
     if (!Utils.isOhos ||
         _roomDisposed ||
         playerGeneration != ohosPlayerRevision.value) {
       return;
     }
+    // 首帧是最强的播放确认，即使 markFirstFrame 已去重也要走确认。
+    _confirmOhosReconnect(playerGeneration);
     final signal = _ohosPlaybackSignalAdapter.markFirstFrame(
       roomGeneration: _loadGeneration,
       playerGeneration: playerGeneration,
     );
     if (signal == null) {
+      // The value callback may already have de-duplicated the signal.  This
+      // method is still the real native first-frame callback and is therefore
+      // the only place where post-first-frame line selection is scheduled.
+    } else {
+      _logOhosPlaybackSignal(signal);
+    }
+    _scheduleOhosAutoSelectFastestLineAfterFirstFrame(playerGeneration);
+  }
+
+  bool get _ohosPlayerRecoveryInFlight {
+    return _roomSwitching ||
+        _playerReopenCompleter != null ||
+        _ohosPlayerStartedDuringRecovery ||
+        _ohosReconnectConfirmation.pending != null;
+  }
+
+  void _scheduleOhosAutoSelectFastestLineAfterFirstFrame(
+    int playerGeneration,
+  ) {
+    final loadGeneration = _ohosPlayerLoadGeneration;
+    final requestRevision = _ohosPlayerRequestRevision;
+    if (loadGeneration == null || requestRevision == null) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'missing_player_snapshot',
+        playerGeneration: playerGeneration,
+      );
       return;
     }
-    Log.d(
-      'OHOS playback signal=${signal.type.name} '
-      'roomGeneration=${signal.roomGeneration} '
-      'playerGeneration=${signal.playerGeneration} '
-      'source=${signal.sourceFingerprint}',
+    if (_ohosAutoLineSelectionScheduledPlayerGeneration == playerGeneration) {
+      return;
+    }
+    // Native callbacks may be delivered more than once.  Reserve this player
+    // generation before any await so duplicate first-frame callbacks cannot
+    // start another probe.
+    _ohosAutoLineSelectionScheduledPlayerGeneration = playerGeneration;
+
+    final manualLineSelectionRevision = _manualLineSelectionRevision;
+    final candidateIndices = resolveOhosAutoLineCandidateIndices(
+      urls: playUrls,
+      currentLineIndex: currentLineIndex,
     );
+    final initialLineIndex = currentLineIndex;
+    if (!AppSettingsController.instance.autoSelectFastestLine.value) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'setting_disabled',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (!_ohosCurrentPlayerSnapshotIsCurrent(
+      loadGeneration: loadGeneration,
+      requestRevision: requestRevision,
+      playerGeneration: playerGeneration,
+    )) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.stale,
+        reason: 'snapshot_changed_before_measurement',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (!_ohosPlayerAutoLineSelectionAllowed) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'user_playback_operation',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (_ohosPlayerStartedDuringRecovery || _ohosPlayerRecoveryInFlight) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'player_recovery_in_flight',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (_ohosAutoLineSelectionConsumed) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'session_already_evaluated',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+    if (candidateIndices.length <= 1) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'single_protocol_tier_line',
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidateIndices.length,
+        initialLineIndex: initialLineIndex,
+      );
+      return;
+    }
+
+    final candidates = [
+      for (final index in candidateIndices) playUrls[index],
+    ];
+    // One room playback session gets one background decision.  Mark the
+    // decision consumed before yielding to the network so a later recovery
+    // cannot launch a second probe or switch twice.
+    _ohosAutoLineSelectionConsumed = true;
+    _updateOhosAutoLineSelectionDiagnostic(
+      status: OhosAutoLineSelectionStatus.measuring,
+      reason: 'first_frame_received',
+      roomGeneration: loadGeneration,
+      playbackRequestRevision: requestRevision,
+      playerGeneration: playerGeneration,
+      manualLineSelectionRevision: manualLineSelectionRevision,
+      candidateCount: candidates.length,
+      initialLineIndex: initialLineIndex,
+    );
+    unawaited(
+      _selectFastestOhosLineAfterFirstFrame(
+        roomGeneration: loadGeneration,
+        playbackRequestRevision: requestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        initialLineIndex: initialLineIndex,
+        candidateIndices: candidateIndices,
+        candidates: candidates,
+      ),
+    );
+  }
+
+  bool _ohosCurrentPlayerSnapshotIsCurrent({
+    required int loadGeneration,
+    required int requestRevision,
+    required int playerGeneration,
+  }) {
+    return !_roomDisposed &&
+        playerGeneration == ohosPlayerRevision.value &&
+        loadGeneration == _loadGeneration &&
+        requestRevision == _playbackRequestRevision;
+  }
+
+  bool get _ohosPlayerAutoLineSelectionAllowed =>
+      _ohosPlayerStartedDuringRecovery == false &&
+      _ohosCurrentPlayerAllowsAutoLineSelection;
+
+  bool _ohosCurrentPlayerAllowsAutoLineSelection = true;
+
+  Future<void> _selectFastestOhosLineAfterFirstFrame({
+    required int roomGeneration,
+    required int playbackRequestRevision,
+    required int playerGeneration,
+    required int manualLineSelectionRevision,
+    required int initialLineIndex,
+    required List<int> candidateIndices,
+    required List<String> candidates,
+  }) async {
+    int fastest;
+    try {
+      fastest = await NetworkDiagnoseService.findFastestLine(candidates);
+    } catch (e) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.failed,
+        reason: 'measurement_error_${e.runtimeType}',
+        roomGeneration: roomGeneration,
+        playbackRequestRevision: playbackRequestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidates.length,
+        initialLineIndex: initialLineIndex,
+      );
+      // Do not include exception text: network errors may contain a source
+      // URL on some platform implementations.
+      Log.d(
+        '[ohos-auto-line] measurement failed '
+        'errorType=${e.runtimeType} roomGeneration=$roomGeneration '
+        'playbackRequestRevision=$playbackRequestRevision '
+        'playerGeneration=$playerGeneration',
+      );
+      return;
+    }
+
+    final candidateIndex = fastest.clamp(0, candidates.length - 1).toInt();
+
+    final isCurrent = shouldAcceptOhosAutoLineSelection(
+      roomGeneration: roomGeneration,
+      expectedRoomGeneration: _loadGeneration,
+      playbackRequestRevision: playbackRequestRevision,
+      latestPlaybackRequestRevision: _playbackRequestRevision,
+      playerGeneration: playerGeneration,
+      currentPlayerGeneration: ohosPlayerRevision.value,
+      manualLineSelectionRevision: manualLineSelectionRevision,
+      latestManualLineSelectionRevision: _manualLineSelectionRevision,
+      hasActivePlaybackSession: _hasActivePlaybackSession,
+      playerRecovering: _ohosPlayerRecoveryInFlight,
+      autoLineSwitchAlreadyCompleted: _ohosAutoLineSwitchCompleted,
+    );
+    if (!isCurrent) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.stale,
+        reason: 'snapshot_changed_after_measurement',
+        roomGeneration: roomGeneration,
+        playbackRequestRevision: playbackRequestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidates.length,
+        initialLineIndex: initialLineIndex,
+        measuredLineIndex: candidateIndex,
+      );
+      return;
+    }
+
+    final selectedLineIndex = candidateIndices[candidateIndex];
+    if (selectedLineIndex == currentLineIndex) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.skipped,
+        reason: 'current_line_is_fastest',
+        roomGeneration: roomGeneration,
+        playbackRequestRevision: playbackRequestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidates.length,
+        initialLineIndex: initialLineIndex,
+        selectedLineIndex: selectedLineIndex,
+        measuredLineIndex: candidateIndex,
+      );
+      return;
+    }
+
+    // Re-check the active index immediately before changing it.  This closes
+    // the small synchronous gap between the acceptance guard and the call into
+    // the playback state machine.
+    if (currentLineIndex != initialLineIndex ||
+        !_ohosCurrentPlayerSnapshotIsCurrent(
+          loadGeneration: roomGeneration,
+          requestRevision: playbackRequestRevision,
+          playerGeneration: playerGeneration,
+        ) ||
+        _ohosPlayerRecoveryInFlight ||
+        _manualLineSelectionRevision != manualLineSelectionRevision) {
+      _updateOhosAutoLineSelectionDiagnostic(
+        status: OhosAutoLineSelectionStatus.stale,
+        reason: 'selection_changed_before_switch',
+        roomGeneration: roomGeneration,
+        playbackRequestRevision: playbackRequestRevision,
+        playerGeneration: playerGeneration,
+        manualLineSelectionRevision: manualLineSelectionRevision,
+        candidateCount: candidates.length,
+        initialLineIndex: initialLineIndex,
+        selectedLineIndex: selectedLineIndex,
+        measuredLineIndex: candidateIndex,
+      );
+      return;
+    }
+
+    _ohosAutoLineSwitchCompleted = true;
+    _updateOhosAutoLineSelectionDiagnostic(
+      status: OhosAutoLineSelectionStatus.switched,
+      reason: 'fastest_line_selected',
+      roomGeneration: roomGeneration,
+      playbackRequestRevision: playbackRequestRevision,
+      playerGeneration: playerGeneration,
+      manualLineSelectionRevision: manualLineSelectionRevision,
+      candidateCount: candidates.length,
+      initialLineIndex: initialLineIndex,
+      selectedLineIndex: selectedLineIndex,
+      measuredLineIndex: candidateIndex,
+    );
+    Log.i(
+      '[ohos-auto-line] switch requested '
+      'fromLine=${initialLineIndex + 1} toLine=${selectedLineIndex + 1} '
+      'roomGeneration=$roomGeneration '
+      'playbackRequestRevision=$playbackRequestRevision '
+      'playerGeneration=$playerGeneration',
+    );
+    await changePlayLine(selectedLineIndex, persist: false);
   }
 
   void _refreshDanmakuOverlay(String reason) {
@@ -2160,6 +2987,13 @@ class LiveRoomController extends PlayerController
   // 页面刷新与重载逻辑
 
   void refreshRoom() {
+    if (kuaishouRefreshBlocked) {
+      SmartDialog.showToast(
+        '请求冷却中，请等待 ${formatKuaishouRecoveryCountdown(kuaishouRecoveryRemainingSeconds.value)}',
+      );
+      return;
+    }
+    _cancelKuaishouDeviceRecoveryTimer();
     //messages.clear();
     _clearDanmuDedupeState();
     _clearSuperChatState();
@@ -2174,14 +3008,182 @@ class LiveRoomController extends PlayerController
     loadData();
   }
 
+  Future<void> rebuildKuaishouDeviceSession() async {
+    final rateLimitError = error;
+    if (rateLimitError is! KuaishouRateLimitError ||
+        !Get.isRegistered<KuaishouAccountService>()) {
+      return;
+    }
+    final rebuilt = KuaishouAccountService.instance.rebuildDeviceSessions(
+      rateLimitError.rateLimitedSessionKeys,
+    );
+    if (rebuilt.isEmpty) {
+      kuaishouDeviceRecoveryAvailable.value = false;
+      SmartDialog.showToast('今天已重建过设备会话，请稍后再试或重新登录');
+      return;
+    }
+    kuaishouDeviceRecoveryAvailable.value = false;
+    kuaishouDeviceRecoveryArmed.value = true;
+    _kuaishouDeviceRecoveryRoomKey = '${site.id}:${rxRoomId.value}';
+    _kuaishouDeviceRecoverySlot = rebuilt.first;
+    _startKuaishouDeviceRecoveryCountdown(rateLimitError.cooldownUntil);
+  }
+
+  bool _isKuaishouChallengeError(Object error) {
+    return error is KuaishouVerificationRequiredError ||
+        (error is CoreError &&
+            error.statusCode == 403 &&
+            (error.message.contains('安全验证') ||
+                error.message.contains('滑块验证')));
+  }
+
+  Future<void> _openKuaishouChallengeFlow(int loadGeneration) async {
+    if (_kuaishouChallengeFlowOpen || _roomDisposed) return;
+    _kuaishouChallengeFlowOpen = true;
+    try {
+      final account = Get.isRegistered<KuaishouAccountService>()
+          ? KuaishouAccountService.instance
+          : null;
+      final slot = account?.activeSession?.slot ?? KuaishouAccountSlot.primary;
+      final result = await Get.toNamed(
+        RoutePath.kKuaishouWebLogin,
+        arguments: <String, dynamic>{
+          'slot': slot,
+          'url': KuaishouLiveLink.publicRoomUrl(roomId),
+          'challenge': true,
+        },
+      );
+      if (result == true && _isCurrentLoad(loadGeneration)) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        loadData();
+      }
+    } finally {
+      _kuaishouChallengeFlowOpen = false;
+    }
+  }
+
+  void _configureKuaishouDeviceRecovery(Object caughtError) {
+    _cancelKuaishouDeviceRecoveryTimer(clearState: true);
+    if (caughtError is! KuaishouRateLimitError ||
+        !Get.isRegistered<KuaishouAccountService>()) {
+      return;
+    }
+    final account = KuaishouAccountService.instance;
+    kuaishouDeviceRecoveryAvailable.value = caughtError.rateLimitedSessionKeys
+        .map(
+          (key) => KuaishouAccountSlot.values.firstWhereOrNull(
+            (slot) => slot.name == key,
+          ),
+        )
+        .whereType<KuaishouAccountSlot>()
+        .any((slot) => account.canRebuildDeviceSession(slot));
+    _startKuaishouDeviceRecoveryCountdown(caughtError.cooldownUntil);
+  }
+
+  void _startKuaishouDeviceRecoveryCountdown(DateTime? cooldownUntil) {
+    _kuaishouDeviceRecoveryTimer?.cancel();
+    _updateKuaishouRecoveryRemaining(cooldownUntil);
+    if (kuaishouRecoveryRemainingSeconds.value <= 0) {
+      _retryKuaishouAfterDeviceRecovery();
+      return;
+    }
+    _kuaishouDeviceRecoveryTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        _updateKuaishouRecoveryRemaining(cooldownUntil);
+        if (kuaishouRecoveryRemainingSeconds.value <= 0) {
+          _retryKuaishouAfterDeviceRecovery();
+        }
+      },
+    );
+  }
+
+  void _updateKuaishouRecoveryRemaining(DateTime? cooldownUntil) {
+    if (cooldownUntil == null) {
+      kuaishouRecoveryRemainingSeconds.value = 0;
+      return;
+    }
+    final remainingMilliseconds =
+        cooldownUntil.difference(DateTime.now()).inMilliseconds;
+    final remaining =
+        remainingMilliseconds <= 0 ? 0 : (remainingMilliseconds + 999) ~/ 1000;
+    kuaishouRecoveryRemainingSeconds.value = remaining > 0 ? remaining : 0;
+  }
+
+  void _retryKuaishouAfterDeviceRecovery() {
+    _kuaishouDeviceRecoveryTimer?.cancel();
+    _kuaishouDeviceRecoveryTimer = null;
+    final recoveryRoomKey = _kuaishouDeviceRecoveryRoomKey;
+    final recoverySlot = _kuaishouDeviceRecoverySlot;
+    final shouldRetry = shouldAutoRetryKuaishouDeviceRecovery(
+      roomDisposed: _roomDisposed,
+      armed: kuaishouDeviceRecoveryArmed.value,
+      recoveryRoomKey: recoveryRoomKey,
+      currentRoomKey: '${site.id}:${rxRoomId.value}',
+    );
+    kuaishouDeviceRecoveryArmed.value = false;
+    _kuaishouDeviceRecoveryRoomKey = null;
+    _kuaishouDeviceRecoverySlot = null;
+    kuaishouRecoveryRemainingSeconds.value = 0;
+    if (!shouldRetry) return;
+    if (recoverySlot != null && Get.isRegistered<KuaishouAccountService>()) {
+      final activated =
+          KuaishouAccountService.instance.activateRebuiltSession(recoverySlot);
+      if (!activated) return;
+    }
+    refreshRoom();
+  }
+
+  void _cancelKuaishouDeviceRecoveryTimer({bool clearState = false}) {
+    _kuaishouDeviceRecoveryTimer?.cancel();
+    _kuaishouDeviceRecoveryTimer = null;
+    kuaishouDeviceRecoveryArmed.value = false;
+    _kuaishouDeviceRecoveryRoomKey = null;
+    _kuaishouDeviceRecoverySlot = null;
+    if (clearState) {
+      kuaishouRecoveryRemainingSeconds.value = 0;
+      kuaishouDeviceRecoveryAvailable.value = false;
+    }
+  }
+
   @override
   void onPlayerWindowModeExited() {
     forceChatScrollToBottom(delay: const Duration(milliseconds: 120));
   }
 
   @override
+  Future<void> enterSmallWindow() async {
+    await closeFollowHoldPreview();
+    await super.enterSmallWindow();
+  }
+
+  @override
+  Future<bool> prepareAutoPipOnLeave() async {
+    await closeFollowHoldPreview();
+    return super.prepareAutoPipOnLeave();
+  }
+
+  @override
+  Future<dynamic> enablePIP() async {
+    await closeFollowHoldPreview();
+    return super.enablePIP();
+  }
+
+  @override
+  Future<void> closePlayerResources() async {
+    _cancelHoldPreviewAudioWatchdog();
+    if (!_roomDisposed) {
+      await closeFollowHoldPreview();
+    }
+    await super.closePlayerResources();
+  }
+
+  @override
   void onClose() async {
     _roomDisposed = true;
+    _cancelHoldPreviewAudioWatchdog();
+    await closeFollowHoldPreview();
+    await _holdPreviewMutations.close();
     _hasActivePlaybackSession = false;
     waitingForPlaybackUrl.value = false;
     _loadGeneration += 1;
@@ -2198,10 +3200,14 @@ class LiveRoomController extends PlayerController
     liveRoomRecommendationScrollController.dispose();
     autoExitTimer?.cancel();
     _autoQualityBufferingSubscription?.cancel();
+    _ohosReconnectConfirmationTimer?.cancel();
+    _ohosReconnectConfirmationTimer = null;
+    _ohosReconnectConfirmation.reset();
     _resetKuaishouPlaybackRecoverySession();
     _superChatRefreshTimer?.cancel();
     _liveEventFlowTimer?.cancel();
     _onlineRefreshTimer?.cancel();
+    _cancelKuaishouDeviceRecoveryTimer(clearState: true);
     _stopLiveLatencyTelemetry();
     _chatBottomRestoreTimer?.cancel();
     _cancelPendingDanmakuTimers();
@@ -2332,6 +3338,7 @@ class LiveRoomController extends PlayerController
   /// 加载直播间信息
   void loadData() async {
     final loadGeneration = ++_loadGeneration;
+    _resetOhosAutoLineSelectionSession();
     final loadStopwatch = Stopwatch()..start();
     _dismissLiveRoomLoadingOverlay();
     try {
@@ -2373,6 +3380,13 @@ class LiveRoomController extends PlayerController
         return;
       }
       detail.value = roomDetail;
+      setDouyinLayoutHint(
+        enabled: site.id == Constant.kDouyin,
+        aspectRatio: site.id == Constant.kDouyin
+            ? DouyinSite.resolveStreamAspectRatio(roomDetail.data)
+            : null,
+      );
+      updateScaleMode();
       addSysMsg("直播间信息读取完成");
       _syncBackgroundPlaybackMetadata(roomDetail);
 
@@ -2441,15 +3455,33 @@ class LiveRoomController extends PlayerController
       if (detail.value!.isRecord) {
         addSysMsg("当前主播未开播，正在转播录像");
       }
-      addSysMsg("正在连接弹幕服务器");
+      final kuaishouDanmakuReady = _kuaishouDanmakuCookieReady;
+      final douyinDanmakuReady = site.id != Constant.kDouyin ||
+          shouldStartDouyinDanmaku(null, initialLiveState);
+      for (final message in liveRoomDanmakuConnectMessages(
+        isKuaishou: site.id == Constant.kKuaishou,
+        hasKuaishouCookie: kuaishouDanmakuReady,
+        canConnect: douyinDanmakuReady,
+      )) {
+        addSysMsg(message);
+      }
       if (!_isCurrentLoad(loadGeneration)) {
         return;
       }
       initDanmau();
-      unawaited(liveDanmaku.start(detail.value?.danmakuData));
+      if (kuaishouDanmakuReady && douyinDanmakuReady) {
+        unawaited(liveDanmaku.start(detail.value?.danmakuData));
+      }
       startLiveDurationTimer();
     } catch (e, stackTrace) {
       Log.logPrint(e);
+      if (site.id == Constant.kKuaishou && _isKuaishouChallengeError(e)) {
+        if (_isCurrentLoad(loadGeneration)) {
+          addSysMsg("快手需要完成滑块验证，正在打开验证页面");
+          await _openKuaishouChallengeFlow(loadGeneration);
+        }
+        return;
+      }
       //SmartDialog.showToast(e.toString());
       if (!_isCurrentLoad(loadGeneration)) {
         return;
@@ -2480,6 +3512,7 @@ class LiveRoomController extends PlayerController
         error = e;
         errorStackTrace = stackTrace;
       }
+      _configureKuaishouDeviceRecovery(e);
     } finally {
       _dismissLiveRoomLoadingOverlay();
       loadStopwatch.stop();
@@ -2796,36 +3829,51 @@ class LiveRoomController extends PlayerController
       _autoQualityWarmupStartedForRoom = true;
       final now = DateTime.now();
       _autoQualityBufferTracker.beginWarmup(now);
+      _ohosDegradeEvidence.beginWarmup(now);
       _kuaishouPlaybackRecoveryTracker.beginWarmup(now);
     }
     // 重置播放器错误重试次数
     mediaErrorRetryCount = 0;
-    await initPlaylist(requestRevision: requestRevision);
+    await initPlaylist(
+      requestRevision: requestRevision,
+      allowOhosAutoLineSelection:
+          !userInitiatedQualityChange && automaticReconnectReason == null,
+      ohosPlaybackRecovery: automaticReconnectReason != null,
+    );
     if (_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
       if (userInitiatedQualityChange && _hasActivePlaybackSession) {
         recordLiveLinkHealthEvent(LiveLinkEventType.qualityChangedByUser);
       }
-      if (!Utils.isOhos &&
-          automaticReconnectReason != null &&
-          reconnectStartedAt != null) {
-        final completedAt = DateTime.now();
-        recordLiveLinkHealthEvent(
-          LiveLinkEventType.cdnReconnect,
-          at: completedAt,
-          reconnectReason: automaticReconnectReason,
-          reconnectHostChanged: didLivePlaybackHostChange(
-            previousSource,
-            _selectedPlaybackSource,
-          ),
-          reconnectRecoveryDuration: completedAt.difference(
-            reconnectStartedAt,
-          ),
+      if (automaticReconnectReason != null && reconnectStartedAt != null) {
+        final hostChanged = didLivePlaybackHostChange(
+          previousSource,
+          _selectedPlaybackSource,
+        );
+        if (Utils.isOhos) {
+          _armOhosReconnect(
+            reason: automaticReconnectReason,
+            hostChanged: hostChanged,
+            startedAt: reconnectStartedAt,
+          );
+        } else {
+          final completedAt = DateTime.now();
+          recordLiveLinkHealthEvent(
+            LiveLinkEventType.cdnReconnect,
+            at: completedAt,
+            reconnectReason: automaticReconnectReason,
+            reconnectHostChanged: hostChanged,
+            reconnectRecoveryDuration: completedAt.difference(
+              reconnectStartedAt,
+            ),
+          );
+        }
+      }
+      if (!Utils.isOhos) {
+        _scheduleAutoSelectFastestLine(
+          requestRevision: requestRevision,
+          loadGeneration: loadGeneration,
         );
       }
-      _scheduleAutoSelectFastestLine(
-        requestRevision: requestRevision,
-        loadGeneration: loadGeneration,
-      );
     }
   }
 
@@ -2854,6 +3902,7 @@ class LiveRoomController extends PlayerController
     final reopened = await setPlayer(
       reconnectReason: reconnectReason,
       reconnectHostChanged: reconnectHostChanged,
+      suppressOhosAutoLineSelection: persist,
     );
     if (!reopened || !_isCurrentLoad(loadGeneration)) {
       return;
@@ -2932,7 +3981,11 @@ class LiveRoomController extends PlayerController
     await changePlayLine(selectedLineIndex, persist: false);
   }
 
-  Future<void> initPlaylist({required int requestRevision}) async {
+  Future<void> initPlaylist({
+    required int requestRevision,
+    bool allowOhosAutoLineSelection = true,
+    bool ohosPlaybackRecovery = false,
+  }) async {
     final loadGeneration = _loadGeneration;
     if (_roomDisposed ||
         !_isCurrentPlaybackRequest(requestRevision, loadGeneration) ||
@@ -2959,16 +4012,21 @@ class LiveRoomController extends PlayerController
     // A previous room/line may have been a portrait stream. Reset the hint
     // for every backend until the newly opened source reports its dimensions.
     isVertical.value = false;
+    resetDecodedVideoSize();
     if (Utils.isOhos) {
       currentLineInfo.value = lineDisplayName(currentLineIndex);
       errorMsg.value = "";
       final now = DateTime.now();
       _autoQualityBufferTracker.beginWarmup(now);
+      _ohosDegradeEvidence.beginWarmup(now);
       await startLivePlaybackLightweightSampling(
         source: playUrls[currentLineIndex],
       );
       _ohosHealthyPlaybackSince = null;
       _lastOhosPlaybackPosition = Duration.zero;
+      // 新的一代播放器拥有全新的时钟：旧心跳会把“从未起播”伪装成健康。
+      _ohosLastHeartbeatAt = null;
+      resetOhosNativeHeartbeat();
       final nextPlayerGeneration = ohosPlayerRevision.value + 1;
       final assigned = _ohosPlaybackSignalAdapter.beginSource(
         roomGeneration: loadGeneration,
@@ -2982,6 +4040,10 @@ class LiveRoomController extends PlayerController
         'playerGeneration=${assigned.playerGeneration} '
         'source=${assigned.sourceFingerprint}',
       );
+      _ohosPlayerLoadGeneration = loadGeneration;
+      _ohosPlayerRequestRevision = requestRevision;
+      _ohosCurrentPlayerAllowsAutoLineSelection = allowOhosAutoLineSelection;
+      _ohosPlayerStartedDuringRecovery = ohosPlaybackRecovery;
       ohosPlayerRevision.value = nextPlayerGeneration;
       _hasActivePlaybackSession = true;
       waitingForPlaybackUrl.value = false;
@@ -3027,6 +4089,8 @@ class LiveRoomController extends PlayerController
         return;
       }
 
+      // 每次真实开流都重新判定音频输出，避免切线路/改画质后残留上一次的失败标记。
+      audioOutputFailed.value = false;
       // Warmup 必须覆盖 player.open() 期间产生的起播 buffering 事件。
       markStreamOpening();
       await player.open(
@@ -3171,7 +4235,15 @@ class LiveRoomController extends PlayerController
     bool rotateOhosLine = false,
     LiveReconnectReason? reconnectReason,
     bool? reconnectHostChanged,
+    bool suppressOhosAutoLineSelection = false,
   }) async {
+    if (!_holdPreviewPromotingMain &&
+        _holdPreviewPhase != LiveRoomHoldPreviewPhase.closed) {
+      await closeFollowHoldPreview();
+    }
+    // 任何新的开流（换房/换线/刷新/升级重开）都会使旧的声音交接看门狗
+    // 失效，避免它对着尚未起播的新流误判并触发二次重开。
+    _cancelHoldPreviewAudioWatchdog();
     final previousSource = _selectedPlaybackSource;
     final reconnectStartedAt =
         reconnectReason == null && !refreshUrls ? null : DateTime.now();
@@ -3212,7 +4284,13 @@ class LiveRoomController extends PlayerController
         return false;
       }
       _hasActivePlaybackSession = false;
-      await initPlaylist(requestRevision: requestRevision);
+      await initPlaylist(
+        requestRevision: requestRevision,
+        allowOhosAutoLineSelection: !suppressOhosAutoLineSelection &&
+            reconnectReason == null &&
+            !refreshUrls,
+        ohosPlaybackRecovery: reconnectReason != null || refreshUrls,
+      );
       if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration) ||
           !_hasActivePlaybackSession) {
         return false;
@@ -3221,21 +4299,32 @@ class LiveRoomController extends PlayerController
           (playbackUrlRefreshed
               ? LiveReconnectReason.playbackUrlRefresh
               : null);
-      if (recordedReason != null && !Utils.isOhos) {
-        final completedAt = DateTime.now();
-        recordLiveLinkHealthEvent(
-          LiveLinkEventType.cdnReconnect,
-          at: completedAt,
-          reconnectReason: recordedReason,
-          reconnectHostChanged: reconnectHostChanged ??
-              didLivePlaybackHostChange(
-                previousSource,
-                _selectedPlaybackSource,
-              ),
-          reconnectRecoveryDuration: reconnectStartedAt == null
-              ? null
-              : completedAt.difference(reconnectStartedAt),
-        );
+      if (recordedReason != null) {
+        final hostChanged = reconnectHostChanged ??
+            didLivePlaybackHostChange(
+              previousSource,
+              _selectedPlaybackSource,
+            );
+        if (Utils.isOhos) {
+          // 鸿蒙的 initPlaylist 返回时 AVPlayer 还没接受地址，
+          // 挂起等原生确认再记账，否则恢复耗时会偏短。
+          _armOhosReconnect(
+            reason: recordedReason,
+            hostChanged: hostChanged,
+            startedAt: reconnectStartedAt,
+          );
+        } else {
+          final completedAt = DateTime.now();
+          recordLiveLinkHealthEvent(
+            LiveLinkEventType.cdnReconnect,
+            at: completedAt,
+            reconnectReason: recordedReason,
+            reconnectHostChanged: hostChanged,
+            reconnectRecoveryDuration: reconnectStartedAt == null
+                ? null
+                : completedAt.difference(reconnectStartedAt),
+          );
+        }
       }
       return true;
     } catch (e, stackTrace) {
@@ -3432,30 +4521,51 @@ class LiveRoomController extends PlayerController
     }
 
     final currentId = "${site.id}_$roomId";
-    final currentIndex =
-        liveChannels.indexWhere((item) => item.id == currentId);
-    final candidates =
-        liveChannels.where((item) => item.id != currentId).toList();
-    if (candidates.isEmpty) {
+    if (liveChannels.every((item) => item.id == currentId)) {
       return;
     }
 
-    FollowUser target;
-    if (currentIndex < 0 || currentIndex >= liveChannels.length - 1) {
-      target = candidates.first;
-    } else {
-      target = liveChannels[currentIndex + 1];
-      if (target.id == currentId) {
-        target = candidates.first;
-      }
-    }
-
     _autoSwitchingRoom = true;
+    final generation = _loadGeneration;
     try {
+      final target = await findNextConfirmedLiveRoom<FollowUser>(
+        rooms: liveChannels,
+        isCurrent: (item) => item.id == currentId,
+        shouldContinue: () => !_roomDisposed &&
+            generation == _loadGeneration &&
+            "${site.id}_$roomId" == currentId,
+        checkStatus: (item) async {
+          final candidateSite = Sites.allSites[item.siteId];
+          if (candidateSite == null) {
+            return LiveStatusState.unknown;
+          }
+          final liveSite = candidateSite.liveSite;
+          final statusRequest = item.siteId == Constant.kKuaishou
+              ? KuaishouRequestTrace.run(
+                  KuaishouRequestSource.followStatus,
+                  () => (liveSite as KuaishouSite)
+                      .getFollowLiveStatusState(roomId: item.roomId),
+                  scopeId: 'kuaishou:auto-switch',
+                  forceNetwork: true,
+                )
+              : liveSite.getLiveStatusState(roomId: item.roomId);
+          return statusRequest.timeout(const Duration(seconds: 12));
+        },
+      );
+      if (target == null ||
+          _roomDisposed ||
+          generation != _loadGeneration ||
+          "${site.id}_$roomId" != currentId) {
+        return;
+      }
+      final targetSite = Sites.allSites[target.siteId];
+      if (targetSite == null) {
+        return;
+      }
+      await resetRoom(targetSite, target.roomId);
       SmartDialog.showToast(
         reason == "live_end" ? "当前直播已结束，已切换到下一个直播间" : "当前直播播放失败，已切换到下一个直播间",
       );
-      resetRoom(Sites.allSites[target.siteId]!, target.roomId);
     } finally {
       _autoSwitchingRoom = false;
     }
@@ -3605,7 +4715,10 @@ class LiveRoomController extends PlayerController
   void showDanmuSettingsSheet() {
     Utils.showBottomSheet(
       title: "弹幕设置",
+      // 内容注定超过一屏，除了按内容收敛还要留出遮罩可点区域。
+      maxHeightFactor: 0.85,
       child: ListView(
+        shrinkWrap: true,
         padding: AppStyle.edgeInsetsA12,
         children: [
           DanmuSettingsView(
@@ -3625,8 +4738,11 @@ class LiveRoomController extends PlayerController
   void showLiveSettingsSheet() {
     final settings = AppSettingsController.instance;
     Utils.showBottomSheet(
-      title: "直播设置",
+      title: "播放与网络",
+      // 开关很多，内容注定超过一屏，留出遮罩可点区域。
+      maxHeightFactor: 0.85,
       child: ListView(
+        shrinkWrap: true,
         padding: AppStyle.edgeInsetsA12,
         children: [
           SettingsCard(
@@ -3740,6 +4856,7 @@ class LiveRoomController extends PlayerController
           }
         },
         child: ListView.builder(
+          shrinkWrap: true,
           itemCount: qualites.length + 1,
           itemBuilder: (_, i) {
             if (i == 0) {
@@ -3770,6 +4887,7 @@ class LiveRoomController extends PlayerController
           changePlayLine(v ?? 0);
         },
         child: ListView.builder(
+          shrinkWrap: true,
           itemCount: playUrls.length,
           itemBuilder: (_, i) {
             return RadioListTile(
@@ -3790,8 +4908,42 @@ class LiveRoomController extends PlayerController
           groupValue: AppSettingsController.instance.scaleMode.value,
           onChanged: _onScaleModeChanged,
           child: ListView(
+            shrinkWrap: true,
             padding: AppStyle.edgeInsetsV12,
-            children: const [
+            children: [
+              if (supportsDouyinDualScreenLayout) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      "抖音双屏布局",
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                RadioGroup<LivePlayerLayoutMode>(
+                  groupValue: AppSettingsController
+                      .instance.dualScreenLayoutMode.value,
+                  onChanged: (mode) {
+                    if (mode != null) {
+                      setDualScreenLayoutMode(mode);
+                    }
+                  },
+                  child: Column(
+                    children: LivePlayerLayoutMode.values
+                        .map(
+                          (mode) => RadioListTile<LivePlayerLayoutMode>(
+                            value: mode,
+                            title: Text(mode.label),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+                const Divider(),
+              ],
               RadioListTile(
                 value: 0,
                 title: Text("适应"),
@@ -4296,42 +5448,768 @@ class LiveRoomController extends PlayerController
     );
   }
 
-  void showQuickAccessSheet() {
-    final keys = enabledQuickAccessKeys;
-    Utils.showBottomSheet(
-      title: "快捷入口",
-      child: ListView(
-        children: keys.map((key) {
-          final item = Constant.allLiveRoomQuickAccess[key]!;
-          final enabled = key != "recommendation" || hasCategoryRecommendation;
-          return ListTile(
-            leading: Icon(item.iconData),
-            title: Text(quickAccessTitle(key)),
-            subtitle: Text(quickAccessSubtitle(key)),
-            enabled: enabled,
-            onTap: !enabled
-                ? null
-                : () {
-                    Get.back();
-                    switch (key) {
-                      case "follow":
-                        showFollowUserSheet();
-                        break;
-                      case "history":
-                        openHistoryPage();
-                        break;
-                      case "recommendation":
-                        openCategoryRecommendation();
-                        break;
-                      case "contribution_rank":
-                        showContributionRankSheet();
-                        break;
-                    }
-                  },
-          );
-        }).toList(),
-      ),
+  void startFollowHoldPreview(FollowUser follow) {
+    if (Utils.isOhos) {
+      SmartDialog.showToast("鸿蒙版暂不支持长按预览");
+      return;
+    }
+    if (Platform.isIOS && !_holdPreviewEnabledOnIos) {
+      SmartDialog.showToast("当前 iOS 版本暂未开放长按预览");
+      return;
+    }
+    if (follow.liveStatus.value != 2) {
+      SmartDialog.showToast("主播未开播，无法预览");
+      return;
+    }
+    final targetSite = Sites.allSites[follow.siteId];
+    if (targetSite == null) {
+      SmartDialog.showToast("当前平台暂不支持预览");
+      return;
+    }
+    final target = MultiRoomItem.fromFollow(follow);
+    if (target.key == "${site.id}_$roomId" || _roomDisposed) {
+      return;
+    }
+    final mainShouldPlay = player.state.playing || player.state.buffering;
+    _holdPreviewMainWasPlaying = mainShouldPlay;
+    _cancelHoldPreviewAudioWatchdog();
+
+    final revision = ++_holdPreviewRevision;
+    _holdPreviewLingerTimer?.cancel();
+    _holdPreviewLingerTimer = null;
+    _holdPreviewLingerDeadline = null;
+    _holdPreviewPhase = LiveRoomHoldPreviewPhase.holding;
+    _holdPreviewItem = target;
+    _removeHoldPreviewOverlay();
+    _insertHoldPreviewOverlay();
+    _markHoldPreviewOverlayNeedsBuild();
+
+    unawaited(
+      _holdPreviewMutations.run(() async {
+        await _restoreHoldPreviewMainAudioLocked();
+        await _disposeHoldPreviewPlayerLocked();
+        if (!_isCurrentHoldPreview(revision, target.key)) return;
+        await _createHoldPreviewPlayerLocked(
+          item: target,
+          revision: revision,
+          allowAudio: true,
+          mainShouldPlay: mainShouldPlay,
+        );
+      }).catchError((Object error, StackTrace stackTrace) {
+        Log.e("创建长按预览失败: $error", stackTrace);
+        if (_isCurrentHoldPreview(revision, target.key)) {
+          unawaited(closeFollowHoldPreview());
+        }
+      }),
     );
+  }
+
+  void endFollowHoldPreview() {
+    if (_holdPreviewPhase != LiveRoomHoldPreviewPhase.holding) return;
+    _holdPreviewPhase = LiveRoomHoldPreviewPhase.lingering;
+    _startHoldPreviewLingerTimer(_holdPreviewRevision);
+    _markHoldPreviewOverlayNeedsBuild();
+  }
+
+  void cancelFollowHoldPreview() {
+    if (_holdPreviewPhase == LiveRoomHoldPreviewPhase.closed) return;
+    unawaited(closeFollowHoldPreview());
+  }
+
+  Future<void> closeFollowHoldPreview() async {
+    if (_holdPreviewClosing &&
+        _holdPreviewPhase == LiveRoomHoldPreviewPhase.closed) {
+      await _holdPreviewMutations.idle;
+      return;
+    }
+    _holdPreviewClosing = true;
+    _holdPreviewRevision += 1;
+    _holdPreviewLingerTimer?.cancel();
+    _holdPreviewLingerTimer = null;
+    _holdPreviewLingerDeadline = null;
+    _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+    _holdPreviewItem = null;
+    _removeHoldPreviewOverlay();
+    try {
+      await _holdPreviewMutations.run(() async {
+        await _restoreHoldPreviewMainAudioLocked();
+        await _disposeHoldPreviewPlayerLocked();
+      });
+    } catch (error, stackTrace) {
+      Log.e("关闭长按预览失败: $error", stackTrace);
+    } finally {
+      _holdPreviewClosing = false;
+    }
+  }
+
+  bool _isCurrentHoldPreview(int revision, String roomKey) {
+    return !_roomDisposed &&
+        revision == _holdPreviewRevision &&
+        _holdPreviewPhase != LiveRoomHoldPreviewPhase.closed &&
+        _holdPreviewItem?.key == roomKey;
+  }
+
+  void _insertHoldPreviewOverlay() {
+    final item = _holdPreviewItem;
+    if (item == null || _holdPreviewOverlay != null) return;
+    final context = Get.context;
+    if (context == null) return;
+    final overlay = Overlay.of(context, rootOverlay: true);
+    _holdPreviewOverlay = OverlayEntry(
+      builder: (overlayContext) {
+        final activeItem = _holdPreviewItem;
+        if (activeItem == null ||
+            _holdPreviewPhase == LiveRoomHoldPreviewPhase.closed) {
+          return const SizedBox.shrink();
+        }
+        final mediaQuery = MediaQuery.of(overlayContext);
+        final renderObject = globalPlayerKey.currentContext?.findRenderObject();
+        Rect playerRect;
+        if (renderObject is RenderBox && renderObject.hasSize) {
+          playerRect =
+              renderObject.localToGlobal(Offset.zero) & renderObject.size;
+        } else {
+          playerRect = Offset.zero & mediaQuery.size;
+        }
+        final portrait = mediaQuery.orientation == Orientation.portrait &&
+            !fullScreenState.value;
+        final obscuredRight = !useBottomSheetPlayerMenus
+            ? Utils.activeRightDialogPanelWidth(mediaQuery.size)
+            : 0.0;
+        final rect = resolveLiveRoomHoldPreviewRect(
+          screenSize: mediaQuery.size,
+          safePadding: mediaQuery.viewPadding,
+          playerRect: playerRect,
+          portrait: portrait,
+          obscuredRight: obscuredRight,
+        );
+        return LiveRoomHoldPreviewOverlay(
+          rect: rect,
+          item: activeItem,
+          phase: _holdPreviewPhase,
+          playerController: _holdPreviewPlayer?.item.key == activeItem.key
+              ? _holdPreviewPlayer
+              : null,
+          lingerDeadline: _holdPreviewLingerDeadline,
+          onTap: _promoteHoldPreview,
+          onPhysicalSizeChanged: (width, height) {
+            if (_holdPreviewPhase == LiveRoomHoldPreviewPhase.switching ||
+                _holdPreviewPhase == LiveRoomHoldPreviewPhase.closed) {
+              return;
+            }
+            final preview = _holdPreviewPlayer;
+            if (preview == null || preview.item.key != activeItem.key) return;
+            // The preview controller applies this only on iOS. Keeping the
+            // call here lets rotation and split-view resize the texture to the
+            // actual overlay instead of allocating an original-quality frame.
+            preview.updatePreviewOutputSize(width, height);
+          },
+        );
+      },
+    );
+    overlay.insert(_holdPreviewOverlay!);
+  }
+
+  void _removeHoldPreviewOverlay() {
+    final overlay = _holdPreviewOverlay;
+    _holdPreviewOverlay = null;
+    overlay?.remove();
+    overlay?.dispose();
+  }
+
+  void _markHoldPreviewOverlayNeedsBuild() {
+    _holdPreviewOverlay?.markNeedsBuild();
+  }
+
+  void _startHoldPreviewLingerTimer(int revision) {
+    _holdPreviewLingerTimer?.cancel();
+    final deadline = DateTime.now().add(_holdPreviewLingerDuration);
+    _holdPreviewLingerDeadline = deadline;
+    _holdPreviewLingerTimer = Timer(_holdPreviewLingerDuration, () {
+      if (revision != _holdPreviewRevision ||
+          _holdPreviewPhase != LiveRoomHoldPreviewPhase.lingering) {
+        return;
+      }
+      unawaited(closeFollowHoldPreview());
+    });
+  }
+
+  Future<void> _createHoldPreviewPlayerLocked({
+    required MultiRoomItem item,
+    required int revision,
+    required bool allowAudio,
+    required bool mainShouldPlay,
+  }) async {
+    if (!_isCurrentHoldPreview(revision, item.key)) return;
+    final expectedMainMuted = mutedState.value;
+    final expectedMainVolume = player.state.volume.clamp(0, 100).toDouble();
+    final tag = "live-room-hold-preview-${identityHashCode(this)}-$revision";
+    var loadCancelled = false;
+    final preview = Get.put(
+      MultiRoomPlayerController(
+        item,
+        initialShowDanmaku: false,
+        lightweightPreview: true,
+        externalCancellation: () =>
+            loadCancelled || !_isCurrentHoldPreview(revision, item.key),
+      ),
+      tag: tag,
+    );
+    _holdPreviewPlayer = preview;
+    _holdPreviewPlayerTag = tag;
+    _markHoldPreviewOverlayNeedsBuild();
+
+    final loadTimeoutTimer = Timer(_holdPreviewLoadTimeout, () {
+      loadCancelled = true;
+      if (!_isCurrentHoldPreview(revision, item.key)) return;
+      preview.errorText.value = "预览加载超时";
+      _markHoldPreviewOverlayNeedsBuild();
+      if (_holdPreviewPhase == LiveRoomHoldPreviewPhase.loadingPrevious) {
+        _holdPreviewRevision += 1;
+        _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+        _holdPreviewItem = null;
+        _removeHoldPreviewOverlay();
+      }
+    });
+    try {
+      await preview.load();
+    } finally {
+      loadTimeoutTimer.cancel();
+    }
+    if (loadCancelled) return;
+    if (!_isCurrentHoldPreview(revision, item.key) ||
+        preview.errorText.value.isNotEmpty ||
+        !preview.liveStatus.value) {
+      if (_isCurrentHoldPreview(revision, item.key)) {
+        await _stabilizeMainAfterMutedPreviewOpenLocked(
+          preview: preview,
+          revision: revision,
+          mainShouldPlay: mainShouldPlay,
+          expectedMainMuted: expectedMainMuted,
+          expectedMainVolume: expectedMainVolume,
+        );
+      }
+      return;
+    }
+    final advancing = await preview.waitUntilActuallyPlaying(
+      const Duration(seconds: 3),
+    );
+    if (!advancing || !_isCurrentHoldPreview(revision, item.key)) {
+      if (_isCurrentHoldPreview(revision, item.key)) {
+        preview.errorText.value = "预览起播超时";
+        _markHoldPreviewOverlayNeedsBuild();
+        await _stabilizeMainAfterMutedPreviewOpenLocked(
+          preview: preview,
+          revision: revision,
+          mainShouldPlay: mainShouldPlay,
+          expectedMainMuted: expectedMainMuted,
+          expectedMainVolume: expectedMainVolume,
+        );
+      }
+      return;
+    }
+
+    if (Platform.isIOS) {
+      await _recoverHoldPreviewPlayers(
+        preview: preview,
+        revision: revision,
+        mainShouldPlay: mainShouldPlay,
+      );
+    }
+    if (allowAudio &&
+        AppSettingsController.instance.liveRoomHoldPreviewAudio.value &&
+        _isCurrentHoldPreview(revision, item.key)) {
+      await _giveAudioToHoldPreviewLocked(
+        preview,
+        revision: revision,
+        roomKey: item.key,
+      );
+    } else if (_isCurrentHoldPreview(revision, item.key)) {
+      await _stabilizeMainAfterMutedPreviewOpenLocked(
+        preview: preview,
+        revision: revision,
+        mainShouldPlay: mainShouldPlay,
+        expectedMainMuted: expectedMainMuted,
+        expectedMainVolume: expectedMainVolume,
+      );
+    }
+  }
+
+  Future<void> _stabilizeMainAfterMutedPreviewOpenLocked({
+    required MultiRoomPlayerController preview,
+    required int revision,
+    required bool mainShouldPlay,
+    required bool expectedMainMuted,
+    required double expectedMainVolume,
+  }) async {
+    // A muted Player.open may still take iOS' shared audio session. Reapply
+    // the main room's exact session state, then verify both timelines once
+    // more because that audio-session activation can interrupt the preview.
+    await setSessionPlayerVolume(
+      expectedMainMuted ? 0 : expectedMainVolume,
+    );
+    if (Platform.isIOS) {
+      await _recoverHoldPreviewPlayers(
+        preview: preview,
+        revision: revision,
+        mainShouldPlay: mainShouldPlay,
+      );
+    }
+  }
+
+  Future<bool> _recoverHoldPreviewPlayers({
+    required MultiRoomPlayerController preview,
+    required int revision,
+    required bool mainShouldPlay,
+  }) async {
+    await preview.playerMutationsIdle;
+    final targetKey = _holdPreviewItem?.key;
+    return _holdPreviewRecovery.recover(
+      targets: [
+        MultiRoomPlaybackRecoveryTarget(
+          roomKey: "main:${site.id}/$roomId",
+          shouldPlay: () =>
+              mainShouldPlay &&
+              !_roomDisposed &&
+              !isBackground &&
+              revision == _holdPreviewRevision,
+          requestPlay: (forceRestart) async {
+            if (forceRestart) {
+              await player.pause();
+            }
+            await player.play();
+          },
+          waitUntilPlaying: _waitUntilMainPlayerAdvances,
+        ),
+        MultiRoomPlaybackRecoveryTarget(
+          roomKey: "preview:${preview.item.key}",
+          shouldPlay: () =>
+              revision == _holdPreviewRevision &&
+              targetKey == _holdPreviewItem?.key &&
+              preview.shouldRecoverPlayback,
+          requestPlay: preview.ensurePlaying,
+          waitUntilPlaying: preview.waitUntilActuallyPlaying,
+        ),
+      ],
+      isCancelled: () =>
+          _roomDisposed ||
+          isBackground ||
+          revision != _holdPreviewRevision ||
+          targetKey != _holdPreviewItem?.key,
+    );
+  }
+
+  Future<bool> _waitUntilMainPlayerAdvances(Duration timeout) async {
+    if (_roomDisposed || isBackground) return false;
+    final initial = player.state.position;
+    StreamSubscription<Duration>? subscription;
+    final completer = Completer<bool>();
+    try {
+      subscription = player.stream.position.listen(
+        (position) {
+          if (_roomDisposed || isBackground) {
+            if (!completer.isCompleted) completer.complete(false);
+            return;
+          }
+          if ((position - initial).inMilliseconds.abs() >= 20 &&
+              !completer.isCompleted) {
+            completer.complete(true);
+          }
+        },
+        onError: (Object _, StackTrace __) {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+      );
+      return await completer.future.timeout(
+        timeout,
+        onTimeout: () => false,
+      );
+    } finally {
+      await subscription?.cancel();
+    }
+  }
+
+  Future<void> _giveAudioToHoldPreviewLocked(
+    MultiRoomPlayerController preview, {
+    required int revision,
+    required String roomKey,
+  }) async {
+    if (_holdPreviewOwnsAudio || !_isCurrentHoldPreview(revision, roomKey)) {
+      return;
+    }
+    _holdPreviewAudioSnapshot = _HoldPreviewAudioSnapshot(
+      volume: player.state.volume.clamp(0, 100).toDouble(),
+      muted: mutedState.value,
+    );
+    _holdPreviewOwnsAudio = true;
+    await setSessionPlayerVolume(0);
+    if (!_isCurrentHoldPreview(revision, roomKey)) {
+      await _restoreHoldPreviewMainAudioLocked();
+      return;
+    }
+    final snapshot = _holdPreviewAudioSnapshot!;
+    final desired = snapshot.muted
+        ? AppSettingsController.instance.playerVolume.value
+        : snapshot.volume;
+    await preview.setVolume(desired);
+    if (!_isCurrentHoldPreview(revision, roomKey)) {
+      await _restoreHoldPreviewMainAudioLocked();
+      return;
+    }
+    await preview.setMuted(false);
+    if (!_isCurrentHoldPreview(revision, roomKey)) {
+      await _restoreHoldPreviewMainAudioLocked();
+      return;
+    }
+    if (Platform.isIOS &&
+        !await preview.waitUntilActuallyPlaying(
+          const Duration(milliseconds: 700),
+        )) {
+      await _restoreHoldPreviewMainAudioLocked();
+      throw StateError("预览播放器接管声音后停止推进");
+    }
+  }
+
+  Future<void> _restoreHoldPreviewMainAudioLocked() async {
+    if (!_holdPreviewOwnsAudio) {
+      _holdPreviewAudioSnapshot = null;
+      return;
+    }
+    final preview = _holdPreviewPlayer;
+    if (preview != null) {
+      await preview.setMuted(true);
+    }
+    final snapshot = _holdPreviewAudioSnapshot;
+    _holdPreviewOwnsAudio = false;
+    _holdPreviewAudioSnapshot = null;
+    if (snapshot != null && !_roomDisposed && !isPlayerClosing) {
+      await setSessionPlayerVolume(snapshot.muted ? 0 : snapshot.volume);
+    }
+  }
+
+  Future<void> _disposeHoldPreviewPlayerLocked() async {
+    final preview = _holdPreviewPlayer;
+    final tag = _holdPreviewPlayerTag;
+    _holdPreviewPlayer = null;
+    _holdPreviewPlayerTag = null;
+    if (preview == null) return;
+    final expectedMainMuted = mutedState.value;
+    final expectedMainVolume = player.state.volume.clamp(0, 100).toDouble();
+    await WidgetsBinding.instance.endOfFrame;
+    try {
+      await preview.disposePreviewPlayer();
+    } finally {
+      if (tag != null &&
+          Get.isRegistered<MultiRoomPlayerController>(tag: tag)) {
+        await Get.delete<MultiRoomPlayerController>(tag: tag, force: true);
+      }
+    }
+    if (!_roomDisposed && !isPlayerClosing) {
+      await setSessionPlayerVolume(
+        expectedMainMuted ? 0 : expectedMainVolume,
+      );
+    }
+    await _recoverMainAfterHoldPreviewMutationLocked();
+  }
+
+  Future<void> _recoverMainAfterHoldPreviewMutationLocked() async {
+    if (!Platform.isIOS ||
+        !_holdPreviewMainWasPlaying ||
+        _roomDisposed ||
+        isBackground ||
+        isPlayerClosing) {
+      return;
+    }
+    final recoveryStartedAt = DateTime.now();
+    // 预览播放器销毁会释放共享 AVAudioSession，主播放器的 audiounit AO
+    // 必然被中断。mpv 复用 pause/play 之间的 AO 实例，必须先通过
+    // audio-device 弹跳重建音频输出，否则位置推进而声音永久丢失。
+    await rebuildAudioOutput();
+    final recovered = await _recoverMainPlaybackAfterHoldPreview();
+    Log.i(
+      "长按预览关闭恢复完成：playback=$recovered "
+      "耗时${DateTime.now().difference(recoveryStartedAt).inMilliseconds}ms",
+    );
+    await _verifyHoldPreviewAudioHandback();
+  }
+
+  Future<bool> _recoverMainPlaybackAfterHoldPreview() {
+    return _holdPreviewCloseRecovery.recover(
+      targets: [
+        MultiRoomPlaybackRecoveryTarget(
+          roomKey: "main:${site.id}/$roomId",
+          shouldPlay: () =>
+              !_roomDisposed &&
+              !isBackground &&
+              !isPlayerClosing &&
+              _holdPreviewMainWasPlaying,
+          requestPlay: (forceRestart) async {
+            if (forceRestart) {
+              await player.pause();
+            }
+            await player.play();
+          },
+          waitUntilPlaying: _waitUntilMainPlayerAdvances,
+        ),
+      ],
+      isCancelled: () => _roomDisposed || isBackground || isPlayerClosing,
+    );
+  }
+
+  /// 恢复后确认音频输出真的在产数据：不活就再弹跳一次，仍不行则升级为
+  /// 重开当前流（等价于用户手动刷新），避免预览结束后永久无声。
+  Future<void> _verifyHoldPreviewAudioHandback() async {
+    if (!Platform.isIOS ||
+        _roomDisposed ||
+        isBackground ||
+        isPlayerClosing) {
+      return;
+    }
+    var audioAlive = await waitUntilAudioOutputAlive();
+    if (!audioAlive && !_roomDisposed && !isPlayerClosing) {
+      Log.w("长按预览关闭后音频输出未恢复，再次执行 audio-device 弹跳");
+      await rebuildAudioOutput();
+      audioAlive = await waitUntilAudioOutputAlive();
+    }
+    if (!audioAlive && !_roomDisposed && !isPlayerClosing) {
+      Log.w("音频输出重建仍未恢复，升级为重开当前流");
+      _cancelHoldPreviewAudioWatchdog();
+      refreshRoom();
+      return;
+    }
+    // 幂等 play() 不会触发 playing 事件，显式刷新一次 iOS 纹理限幅，
+    // 避免纹理停在预览销毁前的状态。
+    refreshIosVideoOutputLimit(force: true);
+    _startHoldPreviewAudioWatchdog();
+  }
+
+  /// 预览关闭后的声音交接看门狗。iOS 音频会话释放/重建是异步的，中断
+  /// 可能晚于恢复窗口落地：+1s / +3s 两次采样，位置停滞走播放恢复，
+  /// 音频缺失走 audio-device 弹跳，仍不恢复则升级重开当前流。
+  void _startHoldPreviewAudioWatchdog() {
+    _cancelHoldPreviewAudioWatchdog();
+    if (!Platform.isIOS || _roomDisposed || isPlayerClosing) {
+      return;
+    }
+    final generation = _holdPreviewAudioWatchdogGeneration;
+    for (final delay in const [Duration(seconds: 1), Duration(seconds: 3)]) {
+      _holdPreviewAudioWatchdogTimers.add(
+        Timer(delay, () {
+          if (generation != _holdPreviewAudioWatchdogGeneration) {
+            return;
+          }
+          unawaited(_runHoldPreviewAudioWatchdogCheck());
+        }),
+      );
+    }
+  }
+
+  void _cancelHoldPreviewAudioWatchdog() {
+    _holdPreviewAudioWatchdogGeneration += 1;
+    for (final timer in _holdPreviewAudioWatchdogTimers) {
+      timer.cancel();
+    }
+    _holdPreviewAudioWatchdogTimers.clear();
+  }
+
+  Future<void> _runHoldPreviewAudioWatchdogCheck() async {
+    if (_roomDisposed || isBackground || isPlayerClosing) {
+      return;
+    }
+    final checkStartedAt = DateTime.now();
+    final advancing = await _waitUntilMainPlayerAdvances(
+      const Duration(milliseconds: 700),
+    );
+    if (_roomDisposed || isBackground || isPlayerClosing) {
+      return;
+    }
+    if (!advancing && _holdPreviewMainWasPlaying) {
+      Log.w("预览关闭看门狗：主播放器位置停滞，重新执行恢复");
+      await _recoverMainPlaybackAfterHoldPreview();
+      if (_roomDisposed || isBackground || isPlayerClosing) {
+        return;
+      }
+    }
+    final audioAlive = await waitUntilAudioOutputAlive(
+      timeout: const Duration(milliseconds: 800),
+      interval: const Duration(milliseconds: 200),
+    );
+    if (_roomDisposed || isBackground || isPlayerClosing) {
+      return;
+    }
+    if (!audioAlive) {
+      Log.w("预览关闭看门狗：音频输出未产数据，执行 audio-device 弹跳");
+      await rebuildAudioOutput();
+      final retried = await waitUntilAudioOutputAlive(
+        timeout: const Duration(milliseconds: 1200),
+      );
+      if (!retried && !_roomDisposed && !isPlayerClosing) {
+        Log.w("预览关闭看门狗：音频输出重建失败，升级为重开当前流");
+        _cancelHoldPreviewAudioWatchdog();
+        refreshRoom();
+        return;
+      }
+    }
+    Log.d(
+      "预览关闭看门狗采样完成：advancing=$advancing audio=$audioAlive "
+      "耗时${DateTime.now().difference(checkStartedAt).inMilliseconds}ms",
+    );
+  }
+
+  void _promoteHoldPreview() {
+    if (_holdPreviewPhase != LiveRoomHoldPreviewPhase.lingering ||
+        _holdPreviewPlayer == null ||
+        _holdPreviewItem == null) {
+      return;
+    }
+    final revision = ++_holdPreviewRevision;
+    final target = _holdPreviewItem!;
+    final previous = MultiRoomItem(
+      site: site,
+      roomId: roomId,
+      userName: detail.value?.userName ?? "",
+      face: detail.value?.userAvatar ?? "",
+    );
+    _holdPreviewLingerTimer?.cancel();
+    _holdPreviewLingerTimer = null;
+    _holdPreviewLingerDeadline = null;
+    _holdPreviewPhase = LiveRoomHoldPreviewPhase.switching;
+    _markHoldPreviewOverlayNeedsBuild();
+
+    unawaited(
+      _holdPreviewMutations.run(() async {
+        final targetPreview = _holdPreviewPlayer;
+        if (targetPreview == null ||
+            !_isCurrentHoldPreview(revision, target.key)) {
+          return;
+        }
+        await targetPreview.playerMutationsIdle;
+        if (!_isCurrentHoldPreview(revision, target.key)) return;
+        bool switched;
+        _holdPreviewPromotingMain = true;
+        try {
+          await resetRoom(
+            target.site,
+            target.roomId,
+            fromHoldPreview: true,
+          );
+          if (_holdPreviewOwnsAudio) {
+            // resetRoom restores persisted intent before the target stream opens.
+            // Keep the main player silent until the preview-to-main handoff is
+            // verified, preventing a short double-audio window.
+            await setSessionPlayerVolume(0);
+          }
+          switched = await _waitForTargetRoomPlayback(
+            target,
+            revision: revision,
+          );
+        } finally {
+          _holdPreviewPromotingMain = false;
+        }
+        if (!switched || !_isCurrentHoldPreview(revision, target.key)) {
+          await _restoreHoldPreviewMainAudioLocked();
+          await _disposeHoldPreviewPlayerLocked();
+          _removeHoldPreviewOverlay();
+          _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+          _holdPreviewItem = null;
+          if (!_roomDisposed && "${site.id}_$roomId" != previous.key) {
+            await resetRoom(
+              previous.site,
+              previous.roomId,
+              fromHoldPreview: true,
+            );
+          }
+          SmartDialog.showToast("切换直播间失败，已返回原直播间");
+          return;
+        }
+
+        _holdPreviewMainWasPlaying = true;
+        await _restoreHoldPreviewMainAudioLocked();
+        _holdPreviewPhase = LiveRoomHoldPreviewPhase.loadingPrevious;
+        _holdPreviewItem = previous;
+        _removeHoldPreviewOverlay();
+        _insertHoldPreviewOverlay();
+        _markHoldPreviewOverlayNeedsBuild();
+        await _disposeHoldPreviewPlayerLocked();
+        if (!_isCurrentHoldPreview(revision, previous.key)) return;
+
+        await _createHoldPreviewPlayerLocked(
+          item: previous,
+          revision: revision,
+          allowAudio: false,
+          mainShouldPlay: true,
+        );
+        final previousPreview = _holdPreviewPlayer;
+        if (!_isCurrentHoldPreview(revision, previous.key) ||
+            previousPreview == null ||
+            previousPreview.errorText.value.isNotEmpty ||
+            !previousPreview.liveStatus.value) {
+          _removeHoldPreviewOverlay();
+          _holdPreviewPhase = LiveRoomHoldPreviewPhase.closed;
+          _holdPreviewItem = null;
+          await _disposeHoldPreviewPlayerLocked();
+          return;
+        }
+        _holdPreviewPhase = LiveRoomHoldPreviewPhase.lingering;
+        _startHoldPreviewLingerTimer(revision);
+        _markHoldPreviewOverlayNeedsBuild();
+      }).catchError((Object error, StackTrace stackTrace) {
+        Log.e("预览切台失败: $error", stackTrace);
+        unawaited(closeFollowHoldPreview());
+      }),
+    );
+  }
+
+  Future<bool> _waitForTargetRoomPlayback(
+    MultiRoomItem target, {
+    required int revision,
+  }) async {
+    Duration? baseline;
+    StreamSubscription<Duration>? subscription;
+    Timer? stateTimer;
+    final completer = Completer<bool>();
+    bool stillCurrent() =>
+        !_roomDisposed &&
+        revision == _holdPreviewRevision &&
+        "${site.id}_$roomId" == target.key;
+    try {
+      subscription = player.stream.position.listen(
+        (position) {
+          if (!stillCurrent()) {
+            if (!completer.isCompleted) completer.complete(false);
+            return;
+          }
+          if (!player.state.playing || !liveStatus.value) return;
+          final first = baseline;
+          if (first == null) {
+            baseline = position;
+            return;
+          }
+          if ((position - first).inMilliseconds.abs() >= 20 &&
+              !completer.isCompleted) {
+            completer.complete(true);
+          }
+        },
+        onError: (Object _, StackTrace __) {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+      );
+      stateTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+        if (!stillCurrent() || loadError.value) {
+          if (!completer.isCompleted) completer.complete(false);
+        } else if (detail.value != null &&
+            roomLiveState.value == LiveStatusState.offline) {
+          if (!completer.isCompleted) completer.complete(false);
+        }
+      });
+      return await completer.future.timeout(
+        const Duration(seconds: 12),
+        onTimeout: () => false,
+      );
+    } finally {
+      stateTimer?.cancel();
+      await subscription?.cancel();
+    }
   }
 
   List<FollowUser> _followUsersByFilterMode(int filterMode) {
@@ -4356,6 +6234,7 @@ class LiveRoomController extends PlayerController
     ScrollController? scrollController,
     ValueChanged<FollowUser>? onSelected,
     bool liveOnly = false,
+    bool enableHoldPreview = false,
   }) {
     const options = ["全部", "直播中", "未开播"];
     return Obx(() {
@@ -4410,6 +6289,7 @@ class LiveRoomController extends PlayerController
                         item: item,
                         onClose: onClose,
                         onSelected: onSelected,
+                        enableHoldPreview: enableHoldPreview,
                       );
                     },
                   ),
@@ -4437,6 +6317,7 @@ class LiveRoomController extends PlayerController
     required FollowUser item,
     required VoidCallback onClose,
     ValueChanged<FollowUser>? onSelected,
+    required bool enableHoldPreview,
   }) {
     return Obx(
       () => FollowUserItem(
@@ -4459,6 +6340,17 @@ class LiveRoomController extends PlayerController
                   );
                 }
               },
+        onLongPress: !enableHoldPreview
+            ? null
+            : () {
+                startFollowHoldPreview(item);
+              },
+        onLongPressEnd: !enableHoldPreview
+            ? null
+            : (_) {
+                endFollowHoldPreview();
+              },
+        onLongPressCancel: !enableHoldPreview ? null : cancelFollowHoldPreview,
       ),
     );
   }
@@ -4633,6 +6525,7 @@ class LiveRoomController extends PlayerController
       title: "关注列表",
       child: buildFollowUserSelection(
         onClose: Get.back,
+        enableHoldPreview: true,
       ),
     );
   }
@@ -4641,6 +6534,7 @@ class LiveRoomController extends PlayerController
     Utils.showBottomSheet(
       title: "定时关闭",
       child: ListView(
+        shrinkWrap: true,
         children: [
           Obx(
             () => SwitchListTile(
@@ -4714,9 +6608,11 @@ class LiveRoomController extends PlayerController
       naviteUrl = "bilibili://live/${detail.value?.roomId}";
       webUrl = "https://live.bilibili.com/${detail.value?.roomId}";
     } else if (site.id == Constant.kDouyin) {
-      var args = detail.value?.danmakuData as DouyinDanmakuArgs;
-      naviteUrl = "snssdk1128://webcast_room?room_id=${args.roomId}";
-      webUrl = "https://live.douyin.com/${args.webRid}";
+      final args = detail.value?.danmakuData;
+      webUrl = "https://live.douyin.com/${detail.value?.roomId ?? roomId}";
+      naviteUrl = args is DouyinDanmakuArgs && args.roomId.isNotEmpty
+          ? "snssdk1128://webcast_room?room_id=${args.roomId}"
+          : webUrl;
     } else if (site.id == Constant.kHuya) {
       var args = detail.value?.danmakuData as HuyaDanmakuArgs;
       naviteUrl =
@@ -4736,7 +6632,14 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  Future<void> resetRoom(Site site, String roomId) async {
+  Future<void> resetRoom(
+    Site site,
+    String roomId, {
+    bool fromHoldPreview = false,
+  }) async {
+    if (!fromHoldPreview) {
+      await closeFollowHoldPreview();
+    }
     if (this.site == site && this.roomId == roomId) {
       return;
     }
@@ -4823,6 +6726,7 @@ ${errorStackTrace ?? ""}''');
   void didChangeMetrics() {
     super.didChangeMetrics();
     refreshIosVideoOutputLimit(force: true);
+    _markHoldPreviewOverlayNeedsBuild();
   }
 
   @override
@@ -4831,6 +6735,7 @@ ${errorStackTrace ?? ""}''');
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
+      unawaited(closeFollowHoldPreview());
       Log.d("进入后台:$state");
       unawaited(
         suspendLiveLatencyChase(
@@ -4891,7 +6796,10 @@ ${errorStackTrace ?? ""}''');
       );
     } else if (state == AppLifecycleState.inactive) {
       Log.d("应用短暂失焦:$state");
-      unawaited(syncAutoPipOnLeave());
+      unawaited(() async {
+        await closeFollowHoldPreview();
+        await syncAutoPipOnLeave();
+      }());
     }
   }
 
@@ -4982,19 +6890,28 @@ ${errorStackTrace ?? ""}''');
   ///
   /// 允许后台继续播放时，断流后 HLS 直播窗口会停滞，position 不再推进；
   /// 与 [updateOhosVideoState] 维护的最后健康进度对比即可发现假播放。
-  /// 从未有过进度时保守视为健康（交给正常 play() 路径）。
+  ///
+  /// 分层兜底：position 不可用（部分直播源 currentTime 恒为 -1）时退到原生心跳；
+  /// 两者都没有过任何证据时保守视为健康，交给正常 play() 路径，宁可漏判也不要
+  /// 把一路正常播放的画面重连掉。
   bool _ohosPlaybackLooksStalled(VideoPlayerController controller) {
     final value = controller.value;
     if (value.hasError) {
       return true;
     }
-    if (!value.isPlaying || _lastOhosPlaybackPosition <= Duration.zero) {
+    if (!value.isPlaying) {
       return false;
     }
-    return !didOhosPlaybackTimelineProgress(
-      current: value.position,
-      previous: _lastOhosPlaybackPosition,
-    );
+    if (_lastOhosPlaybackPosition > Duration.zero) {
+      return !didOhosPlaybackTimelineProgress(
+        current: value.position,
+        previous: _lastOhosPlaybackPosition,
+      );
+    }
+    if (_ohosLastHeartbeatAt != null) {
+      return !_ohosHeartbeatLooksAlive(DateTime.now());
+    }
+    return false;
   }
 
   @override

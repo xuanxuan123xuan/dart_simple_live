@@ -39,8 +39,8 @@ void main() {
     test('extracts version and build number from release tags', () {
       expect(AppUpdateService.versionFromTag('v26.3.20-dev'), '26.3.20');
       expect(AppUpdateService.versionFromTag('v26.3.20'), '26.3.20');
-      expect(AppUpdateService.buildNumberFromVersion('26.3.20'), 260320);
-      expect(AppUpdateService.buildNumberFromVersion('26.3.1'), 260301);
+      expect(AppUpdateService.buildNumberFromVersion('26.3.20'), 26320);
+      expect(AppUpdateService.buildNumberFromVersion('26.3.1'), 26301);
       expect(AppUpdateService.buildNumberFromVersion('bad.version'), 0);
     });
 

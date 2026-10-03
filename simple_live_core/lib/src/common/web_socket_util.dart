@@ -65,6 +65,10 @@ class WebScoketUtils {
   /// 尝试重连
   final Function()? onReconnect;
 
+  /// 重连次数耗尽、彻底放弃连接时回调（与 [onClose] 的"重连超过最大次数"
+  /// 消息同时触发）。调用方可在此时刷新凭证后重建连接。
+  final Function()? onGiveUp;
+
   /// 准备就绪
   final Function()? onReady;
 
@@ -95,6 +99,7 @@ class WebScoketUtils {
     this.onMessage,
     this.onClose,
     this.onReconnect,
+    this.onGiveUp,
     this.onReady,
     this.onHeartBeat,
     this.headers,
@@ -287,6 +292,7 @@ class WebScoketUtils {
     if (reconnectTime >= maxReconnectTime) {
       status = SocketStatus.closed;
       onClose?.call("重连超过最大次数，与服务器断开连接");
+      onGiveUp?.call();
       return;
     }
     reconnectTime += 1;
@@ -357,6 +363,18 @@ class WebScoketUtils {
     if (_manuallyClosed) {
       return;
     }
-    _scheduleReconnect();
+    // A caller may request a retry while the stream is still open (for
+    // example, after a server-level error frame). Tear down the old stream
+    // first so the retry cannot leave a half-open connection behind.
+    if (_disconnectHandled) {
+      return;
+    }
+    _disconnectHandled = true;
+    status = SocketStatus.failed;
+    unawaited(
+      _teardownConnection(invalidateGeneration: false).then((_) {
+        _scheduleReconnect();
+      }),
+    );
   }
 }

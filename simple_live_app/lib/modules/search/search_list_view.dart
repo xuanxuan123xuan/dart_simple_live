@@ -13,9 +13,14 @@ import 'package:simple_live_app/widgets/page_grid_view.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class SearchListView extends StatelessWidget {
-  const SearchListView({required this.controller, Key? key}) : super(key: key);
+  const SearchListView({
+    required this.controller,
+    required this.topClearance,
+    Key? key,
+  }) : super(key: key);
 
   final SearchListController controller;
+  final double topClearance;
 
   @override
   Widget build(BuildContext context) {
@@ -29,55 +34,62 @@ class SearchListView extends StatelessWidget {
     if (userRowCount < 1) userRowCount = 1;
     return KeepAliveWrapper(
       child: Obx(
-        () => Column(
-          children: [
+        () {
+          final headerSlivers = <Widget>[
+            SliverToBoxAdapter(child: SizedBox(height: topClearance)),
             if (controller.site.id == "douyin" &&
                 controller.searchMode.value == 1 &&
                 !controller.pageEmpty.value)
-              const DouyinAnchorSearchNotice(),
-            Expanded(
-              child: controller.searchMode.value == 0
-                  ? PageGridView(
-                      pageController: controller,
-                      padding: AppStyle.edgeInsetsA12,
-                      firstRefresh: false,
-                      mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
-                      crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
-                      crossAxisCount: roomLayout.crossAxisCount,
-                      showPageLoadding: true,
-                      itemBuilder: (_, i) {
-                        var item = controller.list[i] as LiveRoomItem;
-                        return LiveRoomCard(controller.site, item);
-                      },
-                    )
-                  : PageGridView(
-                      crossAxisSpacing: 12,
-                      crossAxisCount: userRowCount,
-                      pageController: controller,
-                      firstRefresh: false,
-                      emptyWidget: controller.site.id == "douyin"
-                          ? const DouyinAnchorSearchEmpty()
-                          : null,
-                      itemBuilder: (_, i) {
-                        var item = controller.list[i] as LiveAnchorItem;
-                        return SearchAnchorTile(
-                          site: controller.site,
-                          item: item,
-                          metadata: controller.searchMetadata,
-                        );
-                      },
-                    ),
-            ),
-            if (controller.paginationUnavailable.value)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 8),
-                child: Text(
-                  "分页信息不可用，已停止自动加载",
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
+              const SliverToBoxAdapter(child: DouyinAnchorSearchNotice()),
+          ];
+          return Column(
+            children: [
+              Expanded(
+                child: controller.searchMode.value == 0
+                    ? PageGridView(
+                        pageController: controller,
+                        padding: AppStyle.edgeInsetsA12,
+                        headerSlivers: headerSlivers,
+                        firstRefresh: false,
+                        mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
+                        crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
+                        crossAxisCount: roomLayout.crossAxisCount,
+                        showPageLoadding: true,
+                        itemBuilder: (_, i) {
+                          var item = controller.list[i] as LiveRoomItem;
+                          return LiveRoomCard(controller.site, item);
+                        },
+                      )
+                    : PageGridView(
+                        crossAxisSpacing: 12,
+                        crossAxisCount: userRowCount,
+                        pageController: controller,
+                        headerSlivers: headerSlivers,
+                        firstRefresh: false,
+                        emptyWidget: controller.site.id == "douyin"
+                            ? const DouyinAnchorSearchEmpty()
+                            : null,
+                        itemBuilder: (_, i) {
+                          var item = controller.list[i] as LiveAnchorItem;
+                          return SearchAnchorTile(
+                            site: controller.site,
+                            item: item,
+                            metadata: controller.searchMetadata,
+                          );
+                        },
+                      ),
               ),
-          ],
-        ),
+              if (controller.paginationUnavailable.value)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    "分页信息不可用，已停止自动加载",
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }

@@ -19,7 +19,7 @@ class AdvancedConnectionPage extends GetView<AdvancedConnectionController> {
           Padding(
             padding: AppStyle.edgeInsetsA12.copyWith(top: 0),
             child: Text(
-              "仅在使用自建同步服务或需要手动指定代理时修改。错误设置可能导致远程同步无法连接。",
+              "可选择同步站点或使用自建同步服务；workers.dev 站点必须走代理，国内站点可直连。错误设置可能导致远程同步无法连接。",
               style: Get.textTheme.bodySmall?.copyWith(color: Colors.grey),
             ),
           ),
@@ -28,10 +28,10 @@ class AdvancedConnectionPage extends GetView<AdvancedConnectionController> {
               children: [
                 GetBuilder<AdvancedConnectionController>(
                   builder: (controller) => SettingsAction(
-                    title: "同步服务地址",
+                    title: "同步站点",
                     subtitle: controller.syncServerUrlSubtitle,
                     value: controller.syncServerUrlLabel,
-                    onTap: controller.editSyncServerUrl,
+                    onTap: controller.chooseSyncServerUrl,
                   ),
                 ),
                 AppStyle.divider,

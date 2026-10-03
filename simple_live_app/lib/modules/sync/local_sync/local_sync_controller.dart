@@ -109,6 +109,7 @@ class LocalSyncController extends BaseController {
     Utils.showBottomSheet(
       title: '请选择地址',
       child: ListView.builder(
+        shrinkWrap: true,
         itemBuilder: (_, i) {
           return ListTile(
             title: Text(addressList[i]),
@@ -134,6 +135,7 @@ class LocalSyncController extends BaseController {
     Utils.showBottomSheet(
       title: "本机信息",
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Visibility(
             visible:

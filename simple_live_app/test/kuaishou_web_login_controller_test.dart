@@ -19,6 +19,106 @@ void main() {
     );
   });
 
+  group('KuaishouFreshLoginSessionCoordinator', () {
+    test('clears cookies before enabling the first page bootstrap', () async {
+      final coordinator = KuaishouFreshLoginSessionCoordinator();
+      final events = <String>[];
+
+      expect(coordinator.blocksAutoCheck, isTrue);
+      await coordinator.prepare(clearCookies: () async {
+        events.add('clear-cookies');
+      });
+      await coordinator.prepare(clearCookies: () async {
+        events.add('unexpected-second-clear');
+      });
+
+      expect(events, ['clear-cookies']);
+      expect(coordinator.prepared, isTrue);
+      expect(coordinator.storageResetPending, isTrue);
+      expect(coordinator.blocksAutoCheck, isTrue);
+    });
+
+    test('clears page state and cookies once before reloading', () async {
+      final coordinator = KuaishouFreshLoginSessionCoordinator();
+      final events = <String>[];
+      await coordinator.prepare(clearCookies: () async {});
+
+      Future<void> finish() => coordinator.finishBootstrap(
+            clearPageStorage: () async {
+              events.add('clear-storage');
+            },
+            clearCookies: () async {
+              events.add('clear-cookies');
+            },
+            reload: () async {
+              events.add('reload');
+            },
+          );
+
+      await finish();
+      await finish();
+
+      expect(events, ['clear-storage', 'clear-cookies', 'reload']);
+      expect(coordinator.storageResetPending, isFalse);
+      expect(coordinator.blocksAutoCheck, isFalse);
+    });
+
+    test('failed preparation keeps automatic detection blocked', () async {
+      final coordinator = KuaishouFreshLoginSessionCoordinator();
+
+      await expectLater(
+        coordinator.prepare(
+          clearCookies: () async => throw StateError('clear failed'),
+        ),
+        throwsStateError,
+      );
+
+      expect(coordinator.prepared, isFalse);
+      expect(coordinator.blocksAutoCheck, isTrue);
+    });
+
+    test('cleanup is idempotent and still attempts cookie removal', () async {
+      final coordinator = KuaishouFreshLoginSessionCoordinator();
+      var storageClearCount = 0;
+      var cookieClearCount = 0;
+
+      Future<void> cleanup() => coordinator.cleanup(
+            clearPageStorage: () async {
+              storageClearCount++;
+            },
+            clearCookies: () async {
+              cookieClearCount++;
+            },
+          );
+
+      await cleanup();
+      await cleanup();
+
+      expect(storageClearCount, 1);
+      expect(cookieClearCount, 1);
+      expect(coordinator.cleaned, isTrue);
+      expect(coordinator.blocksAutoCheck, isTrue);
+    });
+
+    test('cleanup reports storage errors after clearing cookies', () async {
+      final coordinator = KuaishouFreshLoginSessionCoordinator();
+      var cookieClearCount = 0;
+
+      await expectLater(
+        coordinator.cleanup(
+          clearPageStorage: () async => throw StateError('storage failed'),
+          clearCookies: () async {
+            cookieClearCount++;
+          },
+        ),
+        throwsStateError,
+      );
+
+      expect(cookieClearCount, 1);
+      expect(coordinator.cleaned, isFalse);
+    });
+  });
+
   group('hasKuaishouAuthenticatedSession', () {
     test('does not treat the anonymous kwfv1 cookie as a login', () {
       expect(

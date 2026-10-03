@@ -12,7 +12,8 @@ permissions:
   contents: read
 
 env:
-  FLUTTER_VERSION: "3.41.x"
+  # Flutter 3.44.7 includes the Android external-texture fence leak fix.
+  FLUTTER_VERSION: "3.44.7"
 
 jobs:
   build:

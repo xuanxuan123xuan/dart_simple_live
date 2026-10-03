@@ -2,7 +2,7 @@
 
 Simple Live 的 Flutter 客户端，支持 Android、iOS、Windows、macOS、Linux，以及本分支维护的 HarmonyOS NEXT 端口。
 
-当前应用版本：`1.13.0+11300`。本分支使用 Flutter 3.22.x，依赖版本已经按该工具链固定。
+当前应用版本：`26.4.1+26401`。本分支使用 Flutter 3.44.7，依赖版本已经按该工具链固定。
 
 ## 目录
 
@@ -28,6 +28,6 @@ dart run tool/app_version.dart check
 dart run tool/app_version.dart sync
 ```
 
-该命令会同步 Flutter 生成常量与鸿蒙版本配置。构建号必须满足 `major × 10000 + minor × 100 + patch`。
+该命令会同步 Flutter 生成常量与鸿蒙版本配置。构建号必须满足 `major × 1000 + minor × 100 + patch`（major 为两位年份，minor 为季度取值 1～4，patch 取值 0～99）。
 
 更多平台功能、构建方式和使用说明见仓库根目录 [README](../README.md)。

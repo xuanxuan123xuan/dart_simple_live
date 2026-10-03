@@ -18,6 +18,7 @@ import 'package:screen_retriever/screen_retriever.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/desktop_startup_args.dart';
+import 'package:simple_live_app/app/glass_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
@@ -35,6 +36,7 @@ import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/app_update_service.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/guide_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
@@ -45,7 +47,9 @@ import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
+import 'package:simple_live_app/services/windows_fullscreen_service.dart';
 import 'package:simple_live_app/widgets/guide_overlay.dart';
+import 'package:simple_live_app/widgets/glass/glass_route_background.dart';
 import 'package:simple_live_app/widgets/status/app_loadding_widget.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
@@ -76,7 +80,7 @@ void main(List<String> args) async {
   }
 
   await initializeApplication(args);
-  runApp(const MyApp());
+  runApp(AppGlassController.wrap(const MyApp()));
   unawaited(setupDesktopWindowLifecycle());
 }
 
@@ -135,6 +139,9 @@ Future<void> initializeApplication(List<String> args) async {
   await Hive.initFlutter(await resolveHivePath(args));
   //初始化服务
   await initServices();
+  if (!Utils.isOhos) {
+    await AppGlassController.initialize();
+  }
   if (Utils.isOhos) {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
@@ -328,6 +335,31 @@ Future initWindow() async {
 
 final _desktopWindowLifecycle = _DesktopWindowLifecycle();
 
+Future<bool> _isDesktopFullScreen() async {
+  try {
+    final isWindows = Platform.isWindows;
+    return await (isWindows
+            ? WindowsFullscreenService.isFullScreen()
+            : windowManager.isFullScreen())
+        .timeout(const Duration(milliseconds: 500));
+  } catch (e) {
+    Log.d('桌面窗口读取全屏状态失败：$e');
+    return false;
+  }
+}
+
+Future<void> _exitDesktopFullScreen() async {
+  try {
+    final operation = Platform.isWindows
+        ? WindowsFullscreenService.setFullScreen(false)
+        : windowManager.setFullScreen(false);
+    await operation.timeout(const Duration(seconds: 2));
+  } catch (e, stackTrace) {
+    Log.e('桌面窗口退出全屏失败：$e', stackTrace);
+  }
+}
+
+
 Future<void> setupDesktopWindowLifecycle() async {
   if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
     return;
@@ -459,7 +491,7 @@ class _DesktopWindowLifecycle with WindowListener {
           ? Get.find<LiveRoomController>()
           : null;
       if (liveRoom?.smallWindowState.value == true ||
-          await windowManager.isFullScreen()) {
+          await _isDesktopFullScreen()) {
         return;
       }
       final maximized = await windowManager.isMaximized();
@@ -598,6 +630,7 @@ Future initServices() async {
   Get.put(BiliBiliAccountService());
 
   Get.put(DouyinAccountService());
+  Get.put(DouyuAccountService());
 
   Get.put(KuaishouAccountService());
 
@@ -654,7 +687,10 @@ void initCoreLog() {
 class MyApp extends StatelessWidget {
   static const MethodChannel _desktopShortcutChannel =
       MethodChannel("simple_live/desktop_shortcuts");
+  static const MethodChannel _iosMenuChannel =
+      MethodChannel("simple_live/ios_menu");
   static bool _desktopShortcutHandlerBound = false;
+  static bool _iosMenuHandlerBound = false;
   static bool? _desktopShortcutCaptureEnabled;
   static bool _ohosNotificationNavigationBound = false;
   static bool _appUpdateAutoCheckStarted = false;
@@ -678,6 +714,10 @@ class MyApp extends StatelessWidget {
       );
       FocusManager.instance.addListener(_syncDesktopShortcutCaptureState);
       _desktopShortcutHandlerBound = true;
+    }
+    if (Platform.isIOS && !_iosMenuHandlerBound) {
+      _iosMenuChannel.setMethodCallHandler(_handleIosMenuMethod);
+      _iosMenuHandlerBound = true;
     }
     if (!_appUpdateAutoCheckStarted) {
       _appUpdateAutoCheckStarted = true;
@@ -764,73 +804,108 @@ class MyApp extends StatelessWidget {
                 : mediaQueryData.copyWith(
                     textScaler: const TextScaler.linear(1.0));
 
-            return MediaQuery(
-              data: fixedMediaQueryData,
-              child: Stack(
-                children: [
-                  //侧键返回
-                  RawGestureDetector(
-                    excludeFromSemantics: true,
-                    gestures: <Type, GestureRecognizerFactory>{
-                      FourthButtonTapGestureRecognizer:
-                          GestureRecognizerFactoryWithHandlers<
-                              FourthButtonTapGestureRecognizer>(
-                        () => FourthButtonTapGestureRecognizer(),
-                        (FourthButtonTapGestureRecognizer instance) {
-                          instance.onTapDown = (TapDownDetails details) async {
-                            //如果处于全屏状态，退出全屏
-                            if (_isDesktopPlatform) {
-                              if (await windowManager.isFullScreen()) {
-                                await windowManager.setFullScreen(false);
-                                return;
-                              }
+            final appContent = Stack(
+              children: [
+                //侧键返回
+                RawGestureDetector(
+                  excludeFromSemantics: true,
+                  gestures: <Type, GestureRecognizerFactory>{
+                    FourthButtonTapGestureRecognizer:
+                        GestureRecognizerFactoryWithHandlers<
+                            FourthButtonTapGestureRecognizer>(
+                      () => FourthButtonTapGestureRecognizer(),
+                      (FourthButtonTapGestureRecognizer instance) {
+                        instance.onTapDown = (TapDownDetails details) async {
+                          //如果处于全屏状态，退出全屏
+                          if (_isDesktopPlatform) {
+                            if (await _isDesktopFullScreen()) {
+                              await _exitDesktopFullScreen();
+                              return;
                             }
-                            Get.back();
-                          };
+                          }
+                          Get.back();
+                        };
+                      },
+                    ),
+                  },
+                  child: KeyboardListener(
+                    focusNode: FocusNode(),
+                    autofocus: true,
+                    onKeyEvent: (KeyEvent event) async {
+                      if (event is KeyDownEvent) {
+                        await _handleGlobalShortcut(event);
+                      }
+                    },
+                    child: child!,
+                  ),
+                ),
+
+                //查看DEBUG日志按钮
+                //只在Debug、Profile模式显示
+                Visibility(
+                  visible: !kReleaseMode,
+                  child: Positioned(
+                    right: 12,
+                    bottom: 100 + context.mediaQueryViewPadding.bottom,
+                    child: Opacity(
+                      opacity: 0.4,
+                      child: ElevatedButton(
+                        child: const Text("DEBUG LOG"),
+                        onPressed: () {
+                          Get.bottomSheet(
+                            const DebugLogPage(),
+                          );
                         },
                       ),
-                    },
-                    child: KeyboardListener(
-                      focusNode: FocusNode(),
-                      autofocus: true,
-                      onKeyEvent: (KeyEvent event) async {
-                        if (event is KeyDownEvent) {
-                          await _handleGlobalShortcut(event);
-                        }
-                      },
-                      child: child!,
                     ),
                   ),
+                ),
 
-                  //查看DEBUG日志按钮
-                  //只在Debug、Profile模式显示
-                  Visibility(
-                    visible: !kReleaseMode,
-                    child: Positioned(
-                      right: 12,
-                      bottom: 100 + context.mediaQueryViewPadding.bottom,
-                      child: Opacity(
-                        opacity: 0.4,
-                        child: ElevatedButton(
-                          child: const Text("DEBUG LOG"),
-                          onPressed: () {
-                            Get.bottomSheet(
-                              const DebugLogPage(),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  const GuideOverlay(),
-                ],
-              ),
+                const GuideOverlay(),
+              ],
+            );
+            return MediaQuery(
+              data: fixedMediaQueryData,
+              child: Utils.isOhos
+                  ? appContent
+                  : GlassRouteBackground(child: appContent),
             );
           },
         ),
       );
     }));
+  }
+
+  static Future<void> _handleIosMenuMethod(MethodCall call) async {
+    switch (call.method) {
+      case "openHome":
+        Get.offAllNamed(RoutePath.kIndex);
+        break;
+      case "openFollow":
+        Get.toNamed(RoutePath.kFollowUser);
+        break;
+      case "openSearch":
+        Get.toNamed(RoutePath.kSearch);
+        break;
+      case "openHistory":
+        Get.toNamed(RoutePath.kHistory);
+        break;
+      case "openSettings":
+        Get.toNamed(RoutePath.kSettings);
+        break;
+      case "openHelp":
+        Get.toNamed(RoutePath.kHelp);
+        break;
+      case "openAbout":
+        Get.toNamed(RoutePath.kAbout);
+        break;
+      case "openUpdate":
+        Get.toNamed(RoutePath.kAppUpdate);
+        break;
+      case "openProfileBackup":
+        Get.toNamed(RoutePath.kProfileBackup);
+        break;
+    }
   }
 
   static Future<void> _openOhosNotificationTarget(
@@ -896,8 +971,8 @@ class MyApp extends StatelessWidget {
         await liveRoomController.exitPlayerWindowMode();
         return;
       }
-      if (_isDesktopPlatform && await windowManager.isFullScreen()) {
-        await windowManager.setFullScreen(false);
+      if (_isDesktopPlatform && await _isDesktopFullScreen()) {
+        await _exitDesktopFullScreen();
       }
       return;
     }

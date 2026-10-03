@@ -22,7 +22,9 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_tracker.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/player/player_volume_session_policy.dart';
+import 'package:simple_live_app/services/android_resource_diagnostics.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart';
@@ -37,6 +39,7 @@ import 'package:simple_live_app/services/ios_video_output_size.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:simple_live_app/services/windows_fullscreen_service.dart';
 import 'package:video_player/video_player.dart';
 
 const _ohosMediaChannel = MethodChannel('simple_live/ohos_media');
@@ -205,11 +208,12 @@ mixin PlayerMixin {
       LiveLinkHealthShadowCollector(
     tracker: LiveLinkHealthTracker(
       capabilities: LiveLinkHealthCapabilities(
+        // AVPlayer 没有等价的音频欠载回调，保持 unsupported。
         audioUnderrunEvents: !Utils.isOhos,
-        // OHOS currently exposes only a widget rebuild request here, not a
-        // reliable async playback-success callback. Report the metric as
-        // unsupported instead of presenting a misleading zero reconnects.
-        automaticReconnectEvents: !Utils.isOhos,
+        // 鸿蒙侧的重开由 OhosReconnectConfirmation 与原生播放确认
+        // （initialized / 首帧 / 心跳）配对后才记账，语义与 mpv 侧的
+        // "重开完成即计次"一致，因此两端都按支持上报。
+        automaticReconnectEvents: true,
       ),
     ),
   );
@@ -217,6 +221,7 @@ mixin PlayerMixin {
   int? _livePlaybackSamplingGeneration;
   int? _liveLatencyChaseServiceGeneration;
   DateTime? _nextLivePlaybackHealthSampleAt;
+  DateTime? _nextAndroidResourceDiagnosticAt;
   DateTime? _lastLiveLatencyChaseAudioUnderrunAt;
   DateTime? _latestLivePlaybackCacheSampledAt;
   double? _latestLivePlaybackCacheDurationSeconds;
@@ -282,18 +287,58 @@ mixin PlayerMixin {
     _playerInitialized = true;
     await MpvOptionsService.applyToPlayer(player);
     final nativePlayer = player.platform as NativePlayer;
-    // 设置音频输出驱动
-    if (AppSettingsController.instance.customPlayerOutput.value) {
-      if (player.platform is NativePlayer) {
-        await (player.platform as dynamic).setProperty(
-          'ao',
-          AppSettingsController.instance.audioOutputDriver.value,
-        );
-      }
+    // 设置音频输出驱动。
+    //
+    // 取 effectiveOptions 而不是直接读设置项：前者已按平台过滤掉本平台
+    // libmpv 不存在的 ao（否则音频初始化直接失败、全程无声），并且遵循
+    // custom < advanced < conf 的覆盖顺序。
+    final effectiveAo = MpvOptionsService.effectiveOptions()["ao"];
+    if (effectiveAo != null && effectiveAo.isNotEmpty) {
+      await (player.platform as dynamic).setProperty('ao', effectiveAo);
     }
     // media_kit 仓库更新导致的问题，临时解决办法
     if (Platform.isAndroid) {
       await nativePlayer.setProperty('force-seekable', 'yes');
+    }
+    if (Platform.isAndroid || Platform.isIOS) {
+      BackgroundPlaybackService.instance.setAndroidControlHandler(
+        _handleAndroidBackgroundControl,
+      );
+    }
+  }
+
+  bool _androidAudioDucked = false;
+
+  Future<void> _handleAndroidBackgroundControl(String control) async {
+    if ((!Platform.isAndroid && !Platform.isIOS) || Utils.isOhos) return;
+    switch (control) {
+      case 'play':
+      case 'resume':
+        await player.play();
+        break;
+      case 'pause':
+        await player.pause();
+        break;
+      case 'stop':
+        await player.stop();
+        await BackgroundPlaybackService.instance.stop();
+        break;
+      case 'duck':
+        if (!_androidAudioDucked) {
+          final current = player.state.volume.clamp(0.0, 100.0).toDouble();
+          await player.setVolume(current * 0.2);
+          _androidAudioDucked = true;
+        }
+        break;
+      case 'unduck':
+        if (_androidAudioDucked) {
+          final restore = AppSettingsController.instance.playerVolume.value
+              .clamp(0.0, 100.0)
+              .toDouble();
+          await player.setVolume(restore);
+          _androidAudioDucked = false;
+        }
+        break;
     }
   }
 
@@ -402,6 +447,11 @@ mixin PlayerMixin {
           value.isBuffering || !value.isInitialized,
           at: sampledAt,
         );
+        final ohosCacheSeconds = _ohosDemuxerCacheSeconds;
+        if (ohosCacheSeconds != null) {
+          _latestLivePlaybackCacheSampledAt = sampledAt;
+          _latestLivePlaybackCacheDurationSeconds = ohosCacheSeconds;
+        }
         _recordLiveLinkHealthSample(
           LiveLinkHealthSample(
             generation: generation,
@@ -412,6 +462,10 @@ mixin PlayerMixin {
             playbackSpeed: value.playbackSpeed,
             streamActive:
                 value.isInitialized && (value.isPlaying || value.isBuffering),
+            demuxerCacheSeconds: ohosCacheSeconds,
+            playbackEndpointReachable: currentPlaybackEndpointReachable(
+              sampledAt,
+            ),
           ),
         );
         return;
@@ -455,6 +509,9 @@ mixin PlayerMixin {
             demuxerCacheSeconds: cacheDurationSeconds,
             receiveBytesPerSecond: throughput.receiveBytesPerSecond,
             estimatedMediaBitsPerSecond: throughput.estimatedMediaBitsPerSecond,
+            playbackEndpointReachable: currentPlaybackEndpointReachable(
+              sampledAt,
+            ),
           ),
         );
       }
@@ -584,9 +641,26 @@ mixin PlayerMixin {
   }
 
   void _recordLiveLinkHealthSample(LiveLinkHealthSample sample) {
+    _recordAndroidResourceDiagnostics(sample.sampledAt);
     final summary = _liveLinkHealthCollector.addSample(sample);
     if (summary != null) {
       Log.writeLog(summary);
+    }
+  }
+
+  void _recordAndroidResourceDiagnostics(DateTime sampledAt) {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    final nextAt = _nextAndroidResourceDiagnosticAt;
+    if (nextAt != null && sampledAt.isBefore(nextAt)) {
+      return;
+    }
+    _nextAndroidResourceDiagnosticAt =
+        sampledAt.add(const Duration(seconds: 60));
+    final snapshot = AndroidResourceDiagnostics.read();
+    if (snapshot != null) {
+      Log.writeLog(AndroidResourceDiagnostics.format(snapshot));
     }
   }
 
@@ -625,6 +699,7 @@ mixin PlayerMixin {
   Future<void> _cancelLivePlaybackSamplingInfrastructure() async {
     _liveLatencyChaseSamplingLoop.stop();
     _nextLivePlaybackHealthSampleAt = null;
+    _nextAndroidResourceDiagnosticAt = null;
     await _livePlaybackBufferingSubscription?.cancel();
     _livePlaybackBufferingSubscription = null;
     _livePlaybackBuffering = null;
@@ -639,6 +714,7 @@ mixin PlayerMixin {
     _lastLiveLatencyChaseAudioUnderrunAt = null;
     _latestLivePlaybackCacheSampledAt = null;
     _latestLivePlaybackCacheDurationSeconds = null;
+    _ohosDemuxerCacheSeconds = null;
     await _cancelLivePlaybackSamplingInfrastructure();
     _livePlaybackSource = null;
     _livePlaybackProtocol = null;
@@ -665,6 +741,7 @@ mixin PlayerMixin {
     _lastLiveLatencyChaseAudioUnderrunAt = null;
     _latestLivePlaybackCacheSampledAt = null;
     _latestLivePlaybackCacheDurationSeconds = null;
+    _ohosDemuxerCacheSeconds = null;
     await _cancelLivePlaybackSamplingInfrastructure();
     _livePlaybackSource = null;
     _livePlaybackProtocol = null;
@@ -693,6 +770,77 @@ mixin PlayerMixin {
   }
 
   VideoPlayerController? _ohosVideoController;
+
+  /// 鸿蒙原生上报的读取缓存深度（秒）。
+  ///
+  /// 没有它时，鸿蒙的健康采样只有 intake 一个可用维度，
+  /// [LiveLinkHealthEvaluator] 永远停在 insufficientData，评分无从计算。
+  double? _ohosDemuxerCacheSeconds;
+
+  /// 记录一次鸿蒙原生缓存深度上报。
+  void recordOhosDemuxerCacheDuration(Duration? cacheDuration) {
+    _ohosDemuxerCacheSeconds =
+        cacheDuration == null ? null : cacheDuration.inMilliseconds / 1000.0;
+  }
+
+  /// 最近一次原生时钟跳动的时刻，仅供播放信息面板展示。
+  DateTime? _ohosLastNativeHeartbeatAt;
+
+  /// 最近一次播放端点 TCP 建连探测的结论及其时刻。
+  ///
+  /// 复用自动网络诊断已经付出的探测开销，不额外开探测循环：健康采样是每秒一次，
+  /// 而一次探测最坏要几秒，按采样节奏探测会在网络已经变差时继续加重负担。
+  bool? _lastEndpointReachable;
+  DateTime? _lastEndpointReachableAt;
+
+  /// 端点结论的有效期，与探测冷却（30s）对齐。
+  ///
+  /// 不取评估器长窗口的 60s：一个"不可达"结论会压制评估器的 catchupCacheDrain
+  /// 归因（见 live_link_health_evaluator.dart 的 `endpointReachable != false`），
+  /// 窗口越长，网络已恢复、mpv 正在追帧时把追帧耗缓存误判成进流不足的机会越大。
+  /// 与冷却对齐后，同一时刻最多只有一个结论存活，过期即可被下一次探测刷新。
+  static const endpointReachabilityTtl = Duration(seconds: 30);
+
+  /// 仍在有效期内的端点可达性结论，过期或从未探测则为 null。
+  ///
+  /// 注意语义边界：这是"TCP 能否建连"，不是"码流是否在流动"。
+  bool? currentPlaybackEndpointReachable(DateTime at) {
+    final reachable = _lastEndpointReachable;
+    final observedAt = _lastEndpointReachableAt;
+    if (reachable == null || observedAt == null) {
+      return null;
+    }
+    if (at.difference(observedAt) >= endpointReachabilityTtl) {
+      return null;
+    }
+    return reachable;
+  }
+
+  /// 记录一次端点探测结论（由自动网络诊断复用调用）。
+  void recordPlaybackEndpointReachable(bool reachable, {DateTime? at}) {
+    _lastEndpointReachable = reachable;
+    _lastEndpointReachableAt = at ?? DateTime.now();
+  }
+
+  /// 清空端点探测结论（换房重置诊断会话时调用）。
+  void resetPlaybackEndpointReachable() {
+    _lastEndpointReachable = null;
+    _lastEndpointReachableAt = null;
+  }
+
+  /// 记录原生心跳时刻（只有 TIME_UPDATE 触发，缓存事件不算）。
+  void recordOhosNativeHeartbeat(DateTime? heartbeatAt) {
+    if (heartbeatAt == null) {
+      return;
+    }
+    _ohosLastNativeHeartbeatAt = heartbeatAt;
+  }
+
+  /// 换播放器代次时清空面板用的心跳时刻，避免旧代次心跳看起来仍然新鲜。
+  void resetOhosNativeHeartbeat() {
+    _ohosLastNativeHeartbeatAt = null;
+  }
+
   final GlobalKey ohosPlayerWidgetKey =
       GlobalKey(debugLabel: 'ohos-native-player');
   final RxBool ohosPlaying = false.obs;
@@ -707,6 +855,39 @@ mixin PlayerMixin {
 
   /// Whether the current source is actually taller than it is wide.
   final RxBool isVertical = false.obs;
+
+  bool _douyinLayoutEnabled = false;
+  double? _douyinStreamAspectRatioHint;
+
+  bool get douyinLayoutEnabled => _douyinLayoutEnabled;
+
+  double? get douyinVideoAspectRatio {
+    if (!_douyinLayoutEnabled) {
+      return null;
+    }
+    return AppSettingsController
+            .instance.dualScreenLayoutMode.value.forcedAspectRatio ??
+        parseLivePlayerAspectRatio(
+          decodedVideoWidth.value,
+          decodedVideoHeight.value,
+        ) ??
+        _douyinStreamAspectRatioHint;
+  }
+
+  void setDouyinLayoutHint({required bool enabled, double? aspectRatio}) {
+    _douyinLayoutEnabled = enabled;
+    _douyinStreamAspectRatioHint = aspectRatio;
+    resetDecodedVideoSize();
+  }
+
+  /// Dimensions reported for the currently opened media source.
+  final RxInt decodedVideoWidth = 0.obs;
+  final RxInt decodedVideoHeight = 0.obs;
+
+  void resetDecodedVideoSize() {
+    decodedVideoWidth.value = 0;
+    decodedVideoHeight.value = 0;
+  }
 
   VideoPlayerController? get ohosVideoController => _ohosVideoController;
 
@@ -790,6 +971,12 @@ mixin PlayerStateMixin on PlayerMixin {
   RxBool showDanmakuState = false.obs;
 
   RxBool mutedState = false.obs;
+
+  /// libmpv 是否报过"打不开音频设备"。
+  ///
+  /// 这类错误不触发换线重试（画面是好的），但会导致全程无声，所以要留痕
+  /// 并在播放信息里显示，否则用户只能看到"没声音"而无从判断原因。
+  RxBool audioOutputFailed = false.obs;
   double _volumeBeforeMute = 0.0;
 
   void onPlayerWindowModeExited() {}
@@ -971,8 +1158,31 @@ mixin PlayerStateMixin on PlayerMixin {
     }
     var boxFit = BoxFit.contain;
     double? aspectRatio;
-    if (player.state.width != null && player.state.height != null) {
-      aspectRatio = player.state.width! / player.state.height!;
+    aspectRatio = parseLivePlayerAspectRatio(
+      decodedVideoWidth.value,
+      decodedVideoHeight.value,
+    );
+
+    if (douyinLayoutEnabled) {
+      // The selected dual-screen ratio sizes the surrounding viewport. Keep
+      // the decoded video at its native ratio so a manual 9:16/16:9 choice
+      // cannot stretch the composited source.
+      final scaleMode = AppSettingsController.instance.scaleMode.value;
+      aspectRatio = scaleMode == 3
+          ? 16 / 9
+          : scaleMode == 4
+              ? 4 / 3
+              : null;
+      boxFit = scaleMode == 1
+          ? BoxFit.fill
+          : scaleMode == 2
+              ? BoxFit.cover
+              : BoxFit.contain;
+      globalPlayerKey.currentState?.update(
+        aspectRatio: aspectRatio,
+        fit: boxFit,
+      );
+      return;
     }
 
     if (AppSettingsController.instance.scaleMode.value == 0) {
@@ -1301,27 +1511,18 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         }
         Log.d('Desktop fullscreen: enter start');
         try {
-          _windowMaximizedBeforeFullScreen = await windowManager.isMaximized();
-          await windowManager
-              .setFullScreen(true)
-              .timeout(const Duration(seconds: 2));
-          await _waitForWindowsFullScreenState(true);
-          // Let window_manager finish the native Win32 resize before moving
-          // the Video widget into the fullscreen layout. Changing both at the
-          // same time can stall the Windows texture/surface during a double
-          // click transition.
+          final entered = await _setWindowsFullScreenState(true);
+          if (!entered) {
+            fullScreenState.value = false;
+            return;
+          }
+          // Let the native Win32 resize reach Flutter before moving the Video
+          // widget into the fullscreen layout.
+          await WidgetsBinding.instance.endOfFrame;
           fullScreenState.value = true;
-          await Future.delayed(const Duration(milliseconds: 32));
           Log.d('Desktop fullscreen: enter complete');
         } catch (e, stackTrace) {
           fullScreenState.value = false;
-          try {
-            await windowManager
-                .setFullScreen(false)
-                .timeout(const Duration(seconds: 2));
-          } catch (rollbackError) {
-            Log.d('Desktop fullscreen: enter rollback failed: $rollbackError');
-          }
           Log.e('Desktop fullscreen: enter failed: $e', stackTrace);
         }
       });
@@ -1444,20 +1645,16 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         }
         Log.d('Desktop fullscreen: exit start');
         try {
-          await windowManager
-              .setFullScreen(false)
-              .timeout(const Duration(seconds: 2));
-          await _waitForWindowsFullScreenState(false);
-          await _refreshWindowsWindowBounds();
-          if (_windowMaximizedBeforeFullScreen) {
-            await windowManager.maximize();
-            await _waitForWindowMaximizedState(true);
+          final exited = await _setWindowsFullScreenState(false);
+          if (exited) {
+            await WidgetsBinding.instance.endOfFrame;
+          } else {
+            Log.d('Desktop fullscreen: exit settled without native confirmation');
           }
           Log.d('Desktop fullscreen: exit complete');
         } catch (e, stackTrace) {
           Log.e('Desktop fullscreen: exit failed: $e', stackTrace);
         } finally {
-          _windowMaximizedBeforeFullScreen = false;
           fullScreenState.value = false;
         }
       });
@@ -1504,7 +1701,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   Size? _lastWindowSize;
   Offset? _lastWindowPosition;
   Future<void>? _desktopWindowModeTransition;
-  bool _windowMaximizedBeforeFullScreen = false;
   bool _windowMaximizedBeforeSmallWindow = false;
 
   Future<void> _serializeDesktopWindowModeTransition(
@@ -1523,6 +1719,22 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
   }
 
+  Future<bool> _setWindowsFullScreenState(bool value) async {
+    if (!Platform.isWindows) {
+      await windowManager.setFullScreen(value);
+      return value;
+    }
+
+    try {
+      return await WindowsFullscreenService.setFullScreen(value)
+          .timeout(const Duration(seconds: 2));
+    } catch (e, stackTrace) {
+      Log.d('Desktop fullscreen: native transition($value) timed out or failed: $e');
+      Log.e('Desktop fullscreen: native transition($value) failed', stackTrace);
+    }
+    return false;
+  }
+
   Future<void> _waitForWindowMaximizedState(bool value) async {
     if (!Platform.isWindows) {
       return;
@@ -1531,21 +1743,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     final deadline = DateTime.now().add(const Duration(milliseconds: 600));
     while (DateTime.now().isBefore(deadline)) {
       if (await windowManager.isMaximized() == value) {
-        return;
-      }
-      await Future.delayed(const Duration(milliseconds: 16));
-    }
-  }
-
-  Future<void> _waitForWindowsFullScreenState(bool value) async {
-    if (!Platform.isWindows) {
-      await Future.delayed(const Duration(milliseconds: 16));
-      return;
-    }
-
-    final deadline = DateTime.now().add(const Duration(milliseconds: 800));
-    while (DateTime.now().isBefore(deadline)) {
-      if (await windowManager.isFullScreen() == value) {
         return;
       }
       await Future.delayed(const Duration(milliseconds: 16));
@@ -1684,7 +1881,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           lastAudibleVolume: _volumeBeforeMute,
           userIntentVolume: AppSettingsController.instance.playerVolume.value,
         );
-        await setSessionPlayerVolume(restoreVolume);
+        await setSessionPlayerVolume(restoreVolume, persist: true);
       } else {
         _volumeBeforeMute = ohosVolume.value * 100;
         await setSessionPlayerVolume(0);
@@ -1696,7 +1893,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         lastAudibleVolume: _volumeBeforeMute,
         userIntentVolume: AppSettingsController.instance.playerVolume.value,
       );
-      await setSessionPlayerVolume(restoreVolume);
+      await setSessionPlayerVolume(restoreVolume, persist: true);
       return;
     }
     _volumeBeforeMute = player.state.volume <= 0
@@ -1744,6 +1941,75 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     if (persist) {
       AppSettingsController.instance.setPlayerVolume(value);
     }
+  }
+
+  /// 强制重建音频输出（audio-device 弹跳）。
+  ///
+  /// iOS 上销毁第二个 libmpv Player（如长按预览小窗）会释放共享
+  /// AVAudioSession，主播放器的 audiounit AO 随之中断。mpv 在 pause/play
+  /// 之间复用同一 AO 实例，因此位置能继续推进，但声音送往已死掉的音频
+  /// 单元。把 `audio-device` 切到 `no` 再切回 `auto` 可强制 mpv 重建 AO
+  /// 并重新激活音频会话，是 pause/play 无法替代的恢复手段。
+  Future<void> rebuildAudioOutput() async {
+    if (!Platform.isIOS || _playerClosing) {
+      return;
+    }
+    final startedAt = DateTime.now();
+    try {
+      AudioDevice? disabledDevice;
+      for (final device in player.state.audioDevices) {
+        if (device.name == 'no') {
+          disabledDevice = device;
+          break;
+        }
+      }
+      await player.setAudioDevice(
+        disabledDevice ?? const AudioDevice('no', ''),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await player.setAudioDevice(AudioDevice.auto());
+      Log.d(
+        "已重建音频输出（audio-device 弹跳，"
+        "耗时 ${DateTime.now().difference(startedAt).inMilliseconds}ms）",
+      );
+    } catch (e, stackTrace) {
+      Log.e("重建音频输出失败: $e", stackTrace);
+    }
+  }
+
+  /// 轮询 mpv `audio-bitrate`，确认音频输出确实在产数据。
+  ///
+  /// `state.playing` 与位置推进都证明不了音频单元存活——只有 AO 真正
+  /// 输出数据时 `audio-bitrate` 才会大于 0。
+  Future<bool> waitUntilAudioOutputAlive({
+    Duration timeout = const Duration(milliseconds: 1500),
+    Duration interval = const Duration(milliseconds: 250),
+  }) async {
+    if (!Platform.isIOS) {
+      return true;
+    }
+    final platform = player.platform;
+    if (platform is! NativePlayer) {
+      return true;
+    }
+    // NativePlayer 的 web stub 缺少 getProperty，保持动态调用。
+    final dynamic native = platform;
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      try {
+        final value = await native.getProperty(mpvAudioBitrateProperty);
+        final bitrate = value is num
+            ? value.toDouble()
+            : double.tryParse(value?.toString() ?? '');
+        if (bitrate != null && bitrate > 0) {
+          return true;
+        }
+      } catch (_) {
+        // 属性读取失败按未就绪处理，重试直到超时。
+      }
+      await Future<void>.delayed(interval);
+    }
+    return false;
   }
 
   Future<void> adjustDesktopPlayerVolumeByShortcut(int delta) async {
@@ -2559,6 +2825,12 @@ class PlayerController extends BaseController
         PlayerDanmakuMixin,
         PlayerSystemMixin,
         PlayerGestureControlMixin {
+  void setDualScreenLayoutMode(LivePlayerLayoutMode mode) {
+    AppSettingsController.instance.setDualScreenLayoutMode(mode);
+    updateScaleMode();
+    update();
+  }
+
   @override
   void onInit() {
     if (Utils.isOhos) {
@@ -2606,6 +2878,9 @@ class PlayerController extends BaseController
 
   // Fix Issue #57: 流错误重试计数器
   int _streamErrorRetryCount = 0;
+  int _decodeFailureCount = 0;
+  bool _softwareDecodeFallback = false;
+  DateTime? _lastPlayerOpenAt;
   DateTime? _lastStreamErrorTime;
   bool _streamErrorRecoveryInFlight = false;
   Timer? _surfaceHealthCheckTimer;
@@ -2631,6 +2906,8 @@ class PlayerController extends BaseController
   static const _surfaceRecoveryGraceDuration = Duration(seconds: 8);
   static const _surfaceRecoveryValidationDelay = Duration(milliseconds: 600);
   static const _maxSurfaceRecoveryAttempts = 3;
+  static const _maxDecodeFailuresBeforeFallback = 2;
+  static const _playerOpenCooldown = Duration(seconds: 2);
   static const _playbackStallSampleInterval = Duration(seconds: 3);
   static const _playbackStallTimeout = Duration(seconds: 15);
   static const _playbackBufferingStallTimeout = Duration(seconds: 30);
@@ -2675,6 +2952,7 @@ class PlayerController extends BaseController
     _autoDiagnosisTracker.reset();
     _hasMarkedInitialStreamOpening = false;
     _lastAutoDiagnoseAt = null;
+    resetPlaybackEndpointReachable();
     _networkHintTimer?.cancel();
     _networkHintTimer = null;
     networkHint.value = "";
@@ -2822,9 +3100,11 @@ class PlayerController extends BaseController
     }
     _errorSubscription = player.stream.error.listen((event) {
       Log.d("播放器错误：$event");
-      // 跳过无音频输出的错误
+      // 无音频输出不走换线重试（画面是好的），但要留痕给播放信息，
+      // 否则这类永久性故障对用户完全不可见。
       // Could not open/initialize audio device -> no sound.
       if (event.contains('no sound.')) {
+        audioOutputFailed.value = true;
         return;
       }
 
@@ -2921,6 +3201,9 @@ class PlayerController extends BaseController
         return;
       }
 
+      decodedVideoWidth.value = event;
+      updateScaleMode();
+
       isVertical.value =
           (player.state.height ?? 9) > (player.state.width ?? 16);
       unawaited(_syncAndroidExternalWindowLandscapeOrientation());
@@ -2937,6 +3220,9 @@ class PlayerController extends BaseController
         }
         return;
       }
+
+      decodedVideoHeight.value = event;
+      updateScaleMode();
 
       isVertical.value =
           (player.state.height ?? 9) > (player.state.width ?? 16);
@@ -3011,6 +3297,13 @@ class PlayerController extends BaseController
         Log.d("[player-diag] diagnose result dropped (stale generation)");
         return;
       }
+      // 复用这次已经付出的探测结果喂健康采样。lost == samples 才算不可达：
+      // 只要有一次建连成功，端点就是通的。
+      if (playbackResult != null) {
+        recordPlaybackEndpointReachable(
+          playbackResult.lost < playbackResult.samples,
+        );
+      }
       networkHint.value =
           NetworkDiagnoseService.summarizePlaybackEndpoint(playbackResult);
       _networkHintTimer?.cancel();
@@ -3069,6 +3362,9 @@ class PlayerController extends BaseController
     _stallMediaUri = null;
     _playbackStallRecoveryAttempts = 0;
     _playbackStallRecoveryInFlight = false;
+    _decodeFailureCount = 0;
+    _softwareDecodeFallback = false;
+    _lastPlayerOpenAt = null;
   }
 
   // Fix Issue #57: 判断是否为流错误（网络/解码错误）
@@ -3079,6 +3375,30 @@ class PlayerController extends BaseController
         error.contains('tls:') ||
         error.contains('Invalid NAL unit') ||
         error.contains('missing picture');
+  }
+
+  bool _isDecodeSurfaceError(String error) {
+    final value = error.toLowerCase();
+    return value.contains('both surface and native_window are null') ||
+        value.contains('invalid nal unit') ||
+        value.contains('missing picture');
+  }
+
+  Future<void> _applySoftwareDecodeFallback() async {
+    if (_softwareDecodeFallback || _playerClosing || !Platform.isAndroid) {
+      return;
+    }
+    _softwareDecodeFallback = true;
+    try {
+      final native = player.platform;
+      if (native is NativePlayer) {
+        await (native as dynamic).setProperty('hwdec', 'no');
+        await (native as dynamic).setProperty('vo', 'gpu');
+        Log.w('检测到连续硬件解码故障，当前直播会话降级为软件解码');
+      }
+    } catch (e, stackTrace) {
+      Log.e('切换软件解码失败: $e', stackTrace);
+    }
   }
 
   // Fix Issue #57: 处理流错误，自动重试
@@ -3104,6 +3424,13 @@ class PlayerController extends BaseController
     }
 
     _streamErrorRetryCount++;
+    if (_isDecodeSurfaceError(error)) {
+      _decodeFailureCount++;
+      Log.w('解码/Surface故障计数=$_decodeFailureCount');
+      if (_decodeFailureCount >= _maxDecodeFailuresBeforeFallback) {
+        await _applySoftwareDecodeFallback();
+      }
+    }
     Log.w(
       "检测到流错误，自动重试解码器 ($_streamErrorRetryCount/3): $error",
       false,
@@ -3143,6 +3470,12 @@ class PlayerController extends BaseController
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
         }
+        final now = DateTime.now();
+        if (_lastPlayerOpenAt != null &&
+            now.difference(_lastPlayerOpenAt!) < _playerOpenCooldown) {
+          return;
+        }
+        _lastPlayerOpenAt = now;
         await player.open(currentMedia);
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
@@ -3367,6 +3700,16 @@ class PlayerController extends BaseController
         return;
       }
       Log.w("Surface恢复失败，重开当前媒体");
+      final now = DateTime.now();
+      if (_lastPlayerOpenAt != null &&
+          now.difference(_lastPlayerOpenAt!) < _playerOpenCooldown) {
+        return;
+      }
+      _lastPlayerOpenAt = now;
+      _decodeFailureCount++;
+      if (_decodeFailureCount >= _maxDecodeFailuresBeforeFallback) {
+        await _applySoftwareDecodeFallback();
+      }
       await player.open(activeMedia);
       if (!_isCurrentSurfaceRecovery(
         token: recoveryToken,
@@ -3464,12 +3807,13 @@ class PlayerController extends BaseController
   }
 
   Future<void> _syncBackgroundPlaybackService(bool playing) async {
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isIOS) {
       return;
     }
     if (playing &&
         AppSettingsController.instance.allowBackgroundPlayback.value) {
       await BackgroundPlaybackService.instance.start();
+      await BackgroundPlaybackService.instance.updatePlaybackState(playing: true);
     } else if (!playing ||
         !AppSettingsController.instance.allowBackgroundPlayback.value) {
       await BackgroundPlaybackService.instance.stop();
@@ -3506,10 +3850,9 @@ class PlayerController extends BaseController
     return result;
   }
 
-  Future<void> showDebugInfo() async {
+  Future<List<MapEntry<String, String>>> readPlaybackDiagnosticRows() async {
     if (Utils.isOhos) {
-      _showOhosDebugInfo();
-      return;
+      return _buildOhosDiagnosticRows();
     }
     final mpvProperties = await _readMpvDiagnosticProperties();
     final videoTrack = player.state.track.video;
@@ -3526,6 +3869,62 @@ class PlayerController extends BaseController
         videoTrack.bitrate?.toString() ??
         '未知';
 
+    Log.i(
+      '播放诊断：hwdec=$hwdec codec=$codec fps=$fps bitrate=$videoBitrate '
+      'source=$sourceResolution output=$outputResolution',
+    );
+    String textOf(Object? value) => value?.toString() ?? '未知';
+    return [
+      MapEntry('实际硬件解码', hwdec),
+      MapEntry('视频编码', codec),
+      MapEntry('视频 FPS', fps),
+      MapEntry('视频码率（bit/s）', videoBitrate),
+      MapEntry('源分辨率', sourceResolution),
+      MapEntry('输出纹理分辨率', outputResolution),
+      MapEntry('VideoParams', textOf(player.state.videoParams)),
+      MapEntry('AudioParams', textOf(player.state.audioParams)),
+      MapEntry('Media', textOf(player.state.playlist)),
+      MapEntry('AudioTrack', textOf(player.state.track.audio)),
+      MapEntry('VideoTrack', textOf(videoTrack)),
+      MapEntry('AudioBitrate', textOf(player.state.audioBitrate)),
+      MapEntry('Volume', textOf(player.state.volume)),
+      MapEntry('音频输出', _audioOutputDiagnostic()),
+    ];
+  }
+
+  /// 音频输出状态。区分"设备打不开"和"选项被平台过滤"两种无声原因。
+  String _audioOutputDiagnostic() {
+    final effective = MpvOptionsService.effectiveOptionsWithSource();
+    final ignoredAo = effective.ignored['ao'];
+    final ao = effective.options['ao'];
+    final platform = MpvOptionsService.currentPlatform();
+
+    final parts = <String>[];
+    if (audioOutputFailed.value) {
+      parts.add('初始化失败，当前无声');
+    } else {
+      parts.add('正常');
+    }
+    parts.add('ao=${ao == null || ao.isEmpty ? "默认" : ao}');
+    if (ignoredAo != null) {
+      parts.add(
+        '已忽略 ao=$ignoredAo（$platform 不支持，'
+        '来源：${effective.source['ao'] ?? '未知'}）',
+      );
+    }
+    final otherIgnored = effective.ignored.entries
+        .where((e) => e.key != 'ao')
+        .map((e) => '${e.key}=${e.value}')
+        .join(', ');
+    if (otherIgnored.isNotEmpty) {
+      parts.add('其他已忽略：$otherIgnored');
+    }
+    return parts.join(' · ');
+  }
+
+  Future<void> showDebugInfo() async {
+    final rows = await readPlaybackDiagnosticRows();
+
     Widget diagnosticTile(String title, Object? value) {
       final text = value?.toString() ?? '未知';
       return ListTile(
@@ -3537,34 +3936,41 @@ class PlayerController extends BaseController
       );
     }
 
-    Log.i(
-      '播放诊断：hwdec=$hwdec codec=$codec fps=$fps bitrate=$videoBitrate '
-      'source=$sourceResolution output=$outputResolution',
-    );
     Utils.showBottomSheet(
       title: "播放信息",
       maxHeightFactor: 0.5,
       child: ListView(
-        children: [
-          diagnosticTile('实际硬件解码', hwdec),
-          diagnosticTile('视频编码', codec),
-          diagnosticTile('视频 FPS', fps),
-          diagnosticTile('视频码率（bit/s）', videoBitrate),
-          diagnosticTile('源分辨率', sourceResolution),
-          diagnosticTile('输出纹理分辨率', outputResolution),
-          diagnosticTile('VideoParams', player.state.videoParams),
-          diagnosticTile('AudioParams', player.state.audioParams),
-          diagnosticTile('Media', player.state.playlist),
-          diagnosticTile('AudioTrack', player.state.track.audio),
-          diagnosticTile('VideoTrack', videoTrack),
-          diagnosticTile('AudioBitrate', player.state.audioBitrate),
-          diagnosticTile('Volume', player.state.volume),
-        ],
+        shrinkWrap: true,
+        children:
+            rows.map((row) => diagnosticTile(row.key, row.value)).toList(),
       ),
     );
   }
 
-  void _showOhosDebugInfo() {
+  String _ohosLastHeartbeatAgeLabel() {
+    final heartbeatAt = _ohosLastNativeHeartbeatAt;
+    if (heartbeatAt == null) {
+      return "未上报";
+    }
+    final age = DateTime.now().difference(heartbeatAt);
+    return "${age.inMilliseconds}ms 前";
+  }
+
+  String _endpointReachableLabel() {
+    final observedAt = _lastEndpointReachableAt;
+    final reachable = _lastEndpointReachable;
+    if (reachable == null || observedAt == null) {
+      return "未探测";
+    }
+    final age = DateTime.now().difference(observedAt);
+    final freshness = age >= PlayerMixin.endpointReachabilityTtl
+        ? "已过期"
+        : "${age.inSeconds}s 前";
+    // 这里是 TCP 建连结论，不是码流是否在流动。
+    return "${reachable ? "可建连" : "不可建连"}（$freshness）";
+  }
+
+  List<MapEntry<String, String>> _buildOhosDiagnosticRows() {
     final controller = _ohosVideoController;
     final value = controller?.value;
     final size = value?.size ?? Size.zero;
@@ -3579,7 +3985,7 @@ class PlayerController extends BaseController
                     : value.isPlaying
                         ? "播放中"
                         : "已暂停";
-    final rows = <MapEntry<String, String>>[
+    return <MapEntry<String, String>>[
       const MapEntry("Backend", "HarmonyOS AVPlayer"),
       MapEntry("State", state),
       MapEntry(
@@ -3599,31 +4005,31 @@ class PlayerController extends BaseController
         "${(ohosVolume.value * 100).round()}%",
       ),
       MapEntry("PlaybackSpeed", value?.playbackSpeed.toString() ?? "未知"),
+      MapEntry(
+        "CacheDepth",
+        _ohosDemuxerCacheSeconds == null
+            ? "未上报"
+            : "${_ohosDemuxerCacheSeconds!.toStringAsFixed(2)}s",
+      ),
+      MapEntry(
+        "Heartbeat",
+        _ohosLastHeartbeatAgeLabel(),
+      ),
+      MapEntry(
+        "EndpointReachable",
+        _endpointReachableLabel(),
+      ),
+      if (Utils.isOhos)
+        MapEntry("PlaybackProfile", ohosPlaybackProfileDiagnostic),
       MapEntry("Media", controller?.dataSource ?? "未创建"),
       if (value?.errorDescription != null)
         MapEntry("Error", value!.errorDescription!),
     ];
-
-    Utils.showBottomSheet(
-      title: "播放信息",
-      maxHeightFactor: 0.5,
-      child: ListView(
-        children: rows
-            .map(
-              (row) => ListTile(
-                title: Text(row.key),
-                subtitle: Text(row.value),
-                onTap: () {
-                  Clipboard.setData(
-                    ClipboardData(text: "${row.key}\n${row.value}"),
-                  );
-                },
-              ),
-            )
-            .toList(),
-      ),
-    );
   }
+
+  /// Current OHOS playback profile for diagnostics. Room controllers override
+  /// this with the profile actually selected for the active generation.
+  String get ohosPlaybackProfileDiagnostic => 'stable';
 
   Future<void> closePlayerResources() async {
     if (_playerClosing) {
@@ -3681,6 +4087,7 @@ class PlayerController extends BaseController
       return;
     }
     await stopBackgroundPlaybackService();
+    BackgroundPlaybackService.instance.setAndroidControlHandler(null);
     await stopLiveLatencyChase();
     await player.stop();
     if (smallWindowState.value) {

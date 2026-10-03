@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
@@ -17,6 +18,7 @@ import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/immersive_volume_slider.dart';
 
 final Expando<Map<String, GlobalKey<_MultiRoomTileState>>>
@@ -56,75 +58,79 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                 top: MediaQuery.viewPaddingOf(context).top,
               ),
               child: LayoutBuilder(
-              builder: (context, constraints) => Obx(
-                () {
-                  final rooms = controller.rooms.toList();
-                  if (rooms.isEmpty) {
-                    return const _CenterText("没有可播放的直播间");
-                  }
-                  final gap = AppSettingsController
-                      .instance.effectiveMultiRoomGap
-                      .toDouble();
-                  final mainSubLayoutActive = controller.isMainSubLayoutActive;
-                  final chatPanelRatio = controller.chatPanelRatio.value;
-                  // 双击聚焦模式：只显示单个直播间全屏。
-                  final focusKey = controller.focusedRoomKey.value;
-                  if (focusKey != null) {
-                    final idx = rooms.indexWhere((r) => r.key == focusKey);
-                    if (idx >= 0) {
-                      return Padding(
-                        padding: EdgeInsets.all(gap),
-                        child: _tileAt(idx, rooms),
+                builder: (context, constraints) => Obx(
+                  () {
+                    final rooms = controller.rooms.toList();
+                    if (rooms.isEmpty) {
+                      return const _CenterText("没有可播放的直播间");
+                    }
+                    final gap = AppSettingsController
+                        .instance.effectiveMultiRoomGap
+                        .toDouble();
+                    final mainSubLayoutActive =
+                        controller.isMainSubLayoutActive;
+                    final chatPanelRatio = controller.chatPanelRatio.value;
+                    // 双击聚焦模式：只显示单个直播间全屏。
+                    final focusKey = controller.focusedRoomKey.value;
+                    if (focusKey != null) {
+                      final idx = rooms.indexWhere((r) => r.key == focusKey);
+                      if (idx >= 0) {
+                        return Padding(
+                          padding: EdgeInsets.all(gap),
+                          child: _tileAt(idx, rooms),
+                        );
+                      }
+                    }
+                    final showChat = AppSettingsController
+                            .instance.multiRoomShowChatPanel.value &&
+                        (rooms.length == 2 || rooms.length == 3);
+                    if (showChat) {
+                      return _buildChatPanelLayout(
+                        rooms,
+                        constraints,
+                        gap,
+                        mainSubLayoutActive: mainSubLayoutActive,
+                        chatPanelRatio: chatPanelRatio,
                       );
                     }
-                  }
-                  final showChat = AppSettingsController
-                          .instance.multiRoomShowChatPanel.value &&
-                      (rooms.length == 2 || rooms.length == 3);
-                  if (showChat) {
-                    return _buildChatPanelLayout(
-                      rooms,
-                      constraints,
+                    if (mainSubLayoutActive) {
+                      return _buildMainSubRoomLayout(rooms, gap);
+                    }
+                    final columns = _bestColumnCount(
+                      rooms.length,
+                      constraints.maxWidth,
+                      constraints.maxHeight,
                       gap,
-                      mainSubLayoutActive: mainSubLayoutActive,
-                      chatPanelRatio: chatPanelRatio,
                     );
-                  }
-                  if (mainSubLayoutActive) {
-                    return _buildMainSubRoomLayout(rooms, gap);
-                  }
-                  final columns = _bestColumnCount(
-                    rooms.length,
-                    constraints.maxWidth,
-                    constraints.maxHeight,
-                    gap,
-                  );
-                  final rows = (rooms.length / columns).ceil();
-                  return Padding(
-                    padding: EdgeInsets.all(gap),
-                    child: Column(
-                      children: [
-                        for (var row = 0; row < rows; row += 1) ...[
-                          if (row > 0) SizedBox(height: gap),
-                          Expanded(
-                            child: Row(
-                              children: [
-                                for (var col = 0; col < columns; col += 1) ...[
-                                  if (col > 0) SizedBox(width: gap),
-                                  Expanded(
-                                    child: _tileAt(row * columns + col, rooms),
-                                  ),
+                    final rows = (rooms.length / columns).ceil();
+                    return Padding(
+                      padding: EdgeInsets.all(gap),
+                      child: Column(
+                        children: [
+                          for (var row = 0; row < rows; row += 1) ...[
+                            if (row > 0) SizedBox(height: gap),
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  for (var col = 0;
+                                      col < columns;
+                                      col += 1) ...[
+                                    if (col > 0) SizedBox(width: gap),
+                                    Expanded(
+                                      child:
+                                          _tileAt(row * columns + col, rooms),
+                                    ),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
-                          ),
+                          ],
                         ],
-                      ],
-                    ),
-                  );
-                },
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
             ),
             // 顶部覆盖层：点击画面切换显隐，8 秒自动隐藏，尺寸与播放器全屏控件一致
             Obx(
@@ -762,6 +768,7 @@ class _ChatPanel extends StatefulWidget {
 
 class _ChatPanelState extends State<_ChatPanel> {
   final ScrollController _scrollController = ScrollController();
+
   /// 用户是否停留在列表底部附近；为 false 时新弹幕到达不再强制拉回底部。
   bool _followBottom = true;
 
@@ -1120,60 +1127,66 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                       behavior: HitTestBehavior.opaque,
                       onTap: () {},
                       onDoubleTap: () {},
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Obx(
-                            () => _OverlayButton(
-                              tooltip: controller.showDanmaku.value
-                                  ? "关闭弹幕"
-                                  : "开启弹幕",
-                              icon: controller.showDanmaku.value
-                                  ? Remix.message_3_line
-                                  : Remix.message_3_fill,
-                              onPressed: controller.toggleDanmaku,
+                      child: GlassSurface(
+                        role: GlassSurfaceRole.platformViewControl,
+                        radius: 18,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Obx(
+                              () => _OverlayButton(
+                                tooltip: controller.showDanmaku.value
+                                    ? "关闭弹幕"
+                                    : "开启弹幕",
+                                icon: controller.showDanmaku.value
+                                    ? Remix.message_3_line
+                                    : Remix.message_3_fill,
+                                onPressed: controller.toggleDanmaku,
+                              ),
                             ),
-                          ),
-                          _OverlayButton(
-                            tooltip: controller.paused.value ? "继续播放" : "暂停播放",
-                            icon: controller.paused.value
-                                ? Icons.play_arrow
-                                : Icons.pause,
-                            onPressed: widget.onTogglePaused ??
-                                controller.togglePaused,
-                          ),
-                          _OverlayButton(
-                            tooltip: "刷新",
-                            icon: Remix.refresh_line,
-                            onPressed: widget.refreshDisabled
-                                ? null
-                                : controller.refreshRoom,
-                          ),
-                          Obx(
-                            () => _OverlayButton(
-                              tooltip: controller.muted.value ? "取消静音" : "调节音量",
-                              icon: controller.muted.value
-                                  ? Remix.volume_mute_line
-                                  : Remix.volume_up_line,
-                              onPressed: () {
-                                if (controller.muted.value) {
-                                  (widget.onToggleAudio ??
-                                          controller.toggleMute)
-                                      .call();
-                                } else {
-                                  _setVolumeSliderVisible(
-                                    !_showVolumeSlider,
-                                  );
-                                }
-                              },
+                            _OverlayButton(
+                              tooltip:
+                                  controller.paused.value ? "继续播放" : "暂停播放",
+                              icon: controller.paused.value
+                                  ? Icons.play_arrow
+                                  : Icons.pause,
+                              onPressed: widget.onTogglePaused ??
+                                  controller.togglePaused,
                             ),
-                          ),
-                          _OverlayButton(
-                            tooltip: "移除",
-                            icon: Remix.close_line,
-                            onPressed: onRemove,
-                          ),
-                        ],
+                            _OverlayButton(
+                              tooltip: "刷新",
+                              icon: Remix.refresh_line,
+                              onPressed: widget.refreshDisabled
+                                  ? null
+                                  : controller.refreshRoom,
+                            ),
+                            Obx(
+                              () => _OverlayButton(
+                                tooltip:
+                                    controller.muted.value ? "取消静音" : "调节音量",
+                                icon: controller.muted.value
+                                    ? Remix.volume_mute_line
+                                    : Remix.volume_up_line,
+                                onPressed: () {
+                                  if (controller.muted.value) {
+                                    (widget.onToggleAudio ??
+                                            controller.toggleMute)
+                                        .call();
+                                  } else {
+                                    _setVolumeSliderVisible(
+                                      !_showVolumeSlider,
+                                    );
+                                  }
+                                },
+                              ),
+                            ),
+                            _OverlayButton(
+                              tooltip: "移除",
+                              icon: Remix.close_line,
+                              onPressed: onRemove,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),

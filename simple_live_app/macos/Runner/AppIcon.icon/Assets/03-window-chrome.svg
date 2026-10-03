@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>SimpleLive window title bar and traffic lights</title>
+  <g transform="rotate(6 512 512)">
+    <path d="M243 278H781A86 86 0 0 1 867 364V378H157V364A86 86 0 0 1 243 278Z" fill="#E5E1FA"/>
+    <circle cx="222" cy="328" r="17" fill="#FF6B60"/>
+    <circle cx="269" cy="328" r="17" fill="#FFC536"/>
+    <circle cx="316" cy="328" r="17" fill="#56D7A8"/>
+  </g>
+</svg>
+

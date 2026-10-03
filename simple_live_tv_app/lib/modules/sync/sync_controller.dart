@@ -10,6 +10,8 @@ import 'package:simple_live_tv_app/app/event_bus.dart';
 import 'package:simple_live_tv_app/app/log.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/bulk_data_import_service.dart';
+import 'package:simple_live_tv_app/services/douyin_account_service.dart';
+import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/signalr_service.dart';
 import 'package:simple_live_tv_app/widgets/sync_progress_dialog.dart';
 
@@ -22,6 +24,8 @@ class SyncController extends BaseController {
   StreamSubscription? _onHistorySubscription;
   StreamSubscription? _onShieldWordSubscription;
   StreamSubscription? _onBiliAccountSubscription;
+  StreamSubscription? _onDouyinAccountSubscription;
+  StreamSubscription? _onKuaishouAccountSubscription;
   final currentRoomId = "--".obs;
   final RxList<RoomUser> roomUsers = <RoomUser>[].obs;
   Timer? _timer;
@@ -121,6 +125,10 @@ class SyncController extends BaseController {
         signalR.onShieldWordStream.listen(onReceiveShieldWord);
     _onBiliAccountSubscription =
         signalR.onBiliAccountStream.listen(onReceiveBiliAccount);
+    _onDouyinAccountSubscription =
+        signalR.onDouyinAccountStream.listen(onReceiveDouyinAccount);
+    _onKuaishouAccountSubscription =
+        signalR.onKuaishouAccountStream.listen(onReceiveKuaishouAccount);
   }
 
   SyncProgress _stageProgress(String stage, RoomSyncPayload payload) {
@@ -278,6 +286,38 @@ class SyncController extends BaseController {
     }
   }
 
+  void onReceiveDouyinAccount(RoomSyncPayload payload) async {
+    try {
+      final jsonBody = json.decode(payload.content);
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      final cookie = jsonBody['cookie']?.toString() ?? "";
+      if (cookie.isEmpty) {
+        throw const FormatException("账号 Cookie 为空");
+      }
+      DouyinAccountService.instance.setCookie(cookie);
+      SmartDialog.showToast('已同步抖音账号');
+    } catch (e) {
+      SmartDialog.showToast("同步失败:$e");
+      Log.logPrint(e);
+    }
+  }
+
+  void onReceiveKuaishouAccount(RoomSyncPayload payload) async {
+    try {
+      final jsonBody = json.decode(payload.content);
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      KuaishouAccountService.instance.importBackupMap(jsonBody);
+      SmartDialog.showToast('已同步快手账号');
+    } catch (e) {
+      SmartDialog.showToast("同步失败:$e");
+      Log.logPrint(e);
+    }
+  }
+
   @override
   void onClose() {
     _timer?.cancel();
@@ -288,6 +328,8 @@ class SyncController extends BaseController {
     _onHistorySubscription?.cancel();
     _onShieldWordSubscription?.cancel();
     _onBiliAccountSubscription?.cancel();
+    _onDouyinAccountSubscription?.cancel();
+    _onKuaishouAccountSubscription?.cancel();
     signalR.dispose();
     super.onClose();
   }

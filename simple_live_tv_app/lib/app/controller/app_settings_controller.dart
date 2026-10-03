@@ -1,6 +1,6 @@
-import 'package:simple_live_tv_app/services/local_storage_service.dart';
-
 import 'package:get/get.dart';
+import 'package:simple_live_tv_app/modules/follow_user/tv_follow_grid_layout.dart';
+import 'package:simple_live_tv_app/services/local_storage_service.dart';
 
 class AppSettingsController extends GetxController {
   static AppSettingsController get instance =>
@@ -159,6 +159,18 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kPlayerCompatMode, false);
     mpvProfile.value = LocalStorageService.instance
         .getValue(LocalStorageService.kMpvProfile, "balanced");
+    customPlayerOutput.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kCustomPlayerOutput, false);
+    videoOutputDriver.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kVideoOutputDriver, "gpu");
+    videoHardwareDecoder.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kVideoHardwareDecoder, "auto-safe");
+    audioOutputDriver.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kAudioOutputDriver, "audiotrack");
+    mpvAdvancedOptions.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kMpvAdvancedOptions, "");
+    renderFallbackStage.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kRenderFallbackStage, 0);
 
     playerAutoPause.value = LocalStorageService.instance
         .getValue(LocalStorageService.kPlayerAutoPause, false);
@@ -245,6 +257,12 @@ class AppSettingsController extends GetxController {
       LocalStorageService.kFollowShowLiveCover,
       false,
     );
+    followCardDensity.value = TvFollowCardDensity.fromStorage(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kFollowCardDensity,
+        TvFollowCardDensity.auto.storageValue,
+      ),
+    );
     multiRoomGap.value = _normalizeMultiRoomGap(
       LocalStorageService.instance.getValue(
         LocalStorageService.kMultiRoomGap,
@@ -262,6 +280,7 @@ class AppSettingsController extends GetxController {
   var hardwareDecode = true.obs;
   void setHardwareDecode(bool e) {
     hardwareDecode.value = e;
+    resetRenderFallbackStage();
     LocalStorageService.instance
         .setValue(LocalStorageService.kHardwareDecode, e);
   }
@@ -491,6 +510,7 @@ class AppSettingsController extends GetxController {
   var playerCompatMode = false.obs;
   void setPlayerCompatMode(bool e) {
     playerCompatMode.value = e;
+    resetRenderFallbackStage();
     LocalStorageService.instance
         .setValue(LocalStorageService.kPlayerCompatMode, e);
   }
@@ -498,7 +518,84 @@ class AppSettingsController extends GetxController {
   var mpvProfile = "balanced".obs;
   void setMpvProfile(String e) {
     mpvProfile.value = e;
+    resetRenderFallbackStage();
     LocalStorageService.instance.setValue(LocalStorageService.kMpvProfile, e);
+  }
+
+  var customPlayerOutput = false.obs;
+  var videoOutputDriver = "gpu".obs;
+  var videoHardwareDecoder = "auto-safe".obs;
+  var audioOutputDriver = "audiotrack".obs;
+  var mpvAdvancedOptions = "".obs;
+
+  /// Android 起播渲染降级档位（自动探测结果，见 MpvOptionsService）
+  var renderFallbackStage = 0.obs;
+
+  void setRenderFallbackStage(int value) {
+    renderFallbackStage.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kRenderFallbackStage,
+      value,
+    );
+  }
+
+  void resetRenderFallbackStage() {
+    if (renderFallbackStage.value == 0) {
+      return;
+    }
+    setRenderFallbackStage(0);
+  }
+
+  void setCustomPlayerOutput(bool value) {
+    customPlayerOutput.value = value;
+    resetRenderFallbackStage();
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kCustomPlayerOutput,
+      value,
+    );
+  }
+
+  void setVideoOutputDriver(String value) {
+    videoOutputDriver.value = value;
+    resetRenderFallbackStage();
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kVideoOutputDriver,
+      value,
+    );
+  }
+
+  void setVideoHardwareDecoder(String value) {
+    videoHardwareDecoder.value = value;
+    resetRenderFallbackStage();
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kVideoHardwareDecoder,
+      value,
+    );
+  }
+
+  void setAudioOutputDriver(String value) {
+    audioOutputDriver.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kAudioOutputDriver,
+      value,
+    );
+  }
+
+  void setMpvAdvancedOptions(String value) {
+    mpvAdvancedOptions.value = value;
+    resetRenderFallbackStage();
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kMpvAdvancedOptions,
+      value,
+    );
+  }
+
+  void resetCustomPlayerOutput() {
+    setCustomPlayerOutput(false);
+    setVideoOutputDriver("gpu");
+    setVideoHardwareDecoder("auto-safe");
+    setAudioOutputDriver("audiotrack");
+    setMpvAdvancedOptions("");
   }
 
   var playerBufferSize = 32.obs;
@@ -688,6 +785,7 @@ class AppSettingsController extends GetxController {
   var followOnlyLive = false.obs;
   var followRefreshOnEnter = false.obs;
   var followShowLiveCover = false.obs;
+  var followCardDensity = TvFollowCardDensity.auto.obs;
 
   String _normalizeFollowDisplayStyle(String value) {
     if (followDisplayStyleOptions.contains(value)) {
@@ -726,6 +824,14 @@ class AppSettingsController extends GetxController {
     LocalStorageService.instance.setValue(
       LocalStorageService.kFollowShowLiveCover,
       value,
+    );
+  }
+
+  void setFollowCardDensity(TvFollowCardDensity value) {
+    followCardDensity.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kFollowCardDensity,
+      value.storageValue,
     );
   }
 

@@ -24,6 +24,7 @@ class SearchListController extends BasePageController<Object> {
   int _queryVersion = 0;
   int? _loadingVersion;
   CoreCancellationToken? _activeCancellation;
+  final Set<String> _seenSearchKeys = <String>{};
   LiveSearchMetadata? searchMetadata;
   final RxBool paginationUnavailable = false.obs;
 
@@ -136,21 +137,21 @@ class SearchListController extends BasePageController<Object> {
       if (!_isCurrent(version)) {
         return;
       }
+      final uniqueItems = _filterDuplicateItems(items, mode);
       if (page == 1) {
-        list.assignAll(items);
+        list.assignAll(uniqueItems);
         searchMetadata = metadata;
       } else {
-        list.addAll(items);
+        list.addAll(uniqueItems);
       }
       paginationUnavailable.value =
           metadata.continuation == SearchContinuation.unknown;
-      if (items.isNotEmpty &&
-          metadata.continuation == SearchContinuation.more) {
+      if (metadata.continuation == SearchContinuation.more) {
         currentPage = page + 1;
         canLoadMore.value = true;
       } else {
         canLoadMore.value = false;
-        if (items.isEmpty && page == 1) {
+        if (uniqueItems.isEmpty && page == 1) {
           pageEmpty.value = true;
         }
       }
@@ -178,7 +179,29 @@ class SearchListController extends BasePageController<Object> {
     pageEmpty.value = false;
     searchMetadata = null;
     paginationUnavailable.value = false;
+    _seenSearchKeys.clear();
     list.clear();
+  }
+
+  List<Object> _filterDuplicateItems(List<Object> items, int mode) {
+    final uniqueItems = <Object>[];
+    for (final item in items) {
+      final roomId = switch (item) {
+        LiveRoomItem value => value.roomId.trim(),
+        LiveAnchorItem value => value.roomId.trim(),
+        _ => "",
+      };
+      if (roomId.isEmpty) {
+        uniqueItems.add(item);
+        continue;
+      }
+      final type = mode == 1 ? "anchor" : "room";
+      final key = "${site.id}:$type:$roomId";
+      if (_seenSearchKeys.add(key)) {
+        uniqueItems.add(item);
+      }
+    }
+    return uniqueItems;
   }
 
   bool _isCurrent(int version) => !isClosed && version == _queryVersion;

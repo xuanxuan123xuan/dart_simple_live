@@ -18,8 +18,8 @@ class AppColors {
   /// 按 seed 缓存 light/dark ColorScheme：主题切换（深色/浅色/跟随系统）
   /// 与动态取色开关变化时 seed 未变，直接复用缓存，不再每次 rebuild 重算
   /// ColorScheme.fromSeed（鸿蒙上该计算 + 全局重建叠加会明显卡顿）。
-  static final Map<int, ({ColorScheme light, ColorScheme dark})>
-      _schemeCache = {};
+  static final Map<int, ({ColorScheme light, ColorScheme dark})> _schemeCache =
+      {};
   static ({ColorScheme light, ColorScheme dark}) cachedSchemes(Color seed) {
     return _schemeCache.putIfAbsent(
       seed.toARGB32(),
@@ -46,8 +46,14 @@ class AppStyle {
     fontFamily: Platform.isWindows ? "Microsoft YaHei" : null,
     visualDensity: VisualDensity.standard,
     appBarTheme: AppBarTheme(
-      //elevation: 0,
       centerTitle: true,
+      // Let secondary-page app bars reveal the Scaffold's own background so
+      // dynamic colours cannot create a different band behind the title.
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      shadowColor: Colors.transparent,
       titleTextStyle: const TextStyle(
         fontSize: 16,
         color: AppColors.black333,
@@ -55,6 +61,33 @@ class AppStyle {
       foregroundColor: AppColors.black333,
       systemOverlayStyle: SystemUiOverlayStyle.dark.copyWith(
         systemNavigationBarColor: Colors.transparent,
+      ),
+    ),
+    dialogTheme: const DialogThemeData(
+      surfaceTintColor: Colors.transparent,
+      elevation: 12,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(20)),
+      ),
+    ),
+    bottomSheetTheme: const BottomSheetThemeData(
+      surfaceTintColor: Colors.transparent,
+      elevation: 12,
+      modalElevation: 12,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    ),
+    drawerTheme: const DrawerThemeData(
+      surfaceTintColor: Colors.transparent,
+      elevation: 12,
+    ),
+    popupMenuTheme: const PopupMenuThemeData(
+      color: Color(0xB8F8FAFF),
+      surfaceTintColor: Colors.transparent,
+      elevation: 10,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(14)),
       ),
     ),
 
@@ -90,9 +123,12 @@ class AppStyle {
           fontFamily: Platform.isWindows ? "Microsoft YaHei" : null,
         ),
     appBarTheme: AppBarTheme(
-      //elevation: 0,
-
       centerTitle: true,
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      shadowColor: Colors.transparent,
       titleTextStyle: const TextStyle(
         fontSize: 16,
         color: Colors.white,
@@ -100,6 +136,33 @@ class AppStyle {
       foregroundColor: Colors.white,
       systemOverlayStyle: SystemUiOverlayStyle.light.copyWith(
         systemNavigationBarColor: Colors.transparent,
+      ),
+    ),
+    dialogTheme: const DialogThemeData(
+      surfaceTintColor: Colors.transparent,
+      elevation: 12,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(20)),
+      ),
+    ),
+    bottomSheetTheme: const BottomSheetThemeData(
+      surfaceTintColor: Colors.transparent,
+      elevation: 12,
+      modalElevation: 12,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    ),
+    drawerTheme: const DrawerThemeData(
+      surfaceTintColor: Colors.transparent,
+      elevation: 12,
+    ),
+    popupMenuTheme: const PopupMenuThemeData(
+      color: Color(0xC414171B),
+      surfaceTintColor: Colors.transparent,
+      elevation: 10,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(14)),
       ),
     ),
     // radioTheme: RadioThemeData(

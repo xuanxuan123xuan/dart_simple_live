@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>SimpleLive floating danmaku comments</title>
+  <g transform="rotate(6 512 512)">
+    <g>
+      <rect x="99" y="432" width="302" height="108" rx="54" fill="#E8E5FB" fill-opacity="0.9"/>
+      <circle cx="150" cy="486" r="21" fill="#55D7AA"/>
+      <rect x="188" y="474" width="126" height="24" rx="12" fill="#FFFDF8"/>
+    </g>
+    <g>
+      <rect x="615" y="582" width="320" height="108" rx="54" fill="#E8E5FB" fill-opacity="0.9"/>
+      <circle cx="670" cy="636" r="21" fill="#7152E8"/>
+      <rect x="710" y="624" width="137" height="24" rx="12" fill="#FFFDF8"/>
+    </g>
+  </g>
+</svg>
+

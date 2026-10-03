@@ -38,16 +38,18 @@ class AccountPage extends GetView<AccountController> {
               onTap: controller.bilibiliTap,
             ),
           ),
-          ListTile(
-            leading: Image.asset(
-              'assets/images/douyu.png',
-              width: 36,
-              height: 36,
+          Obx(
+            () => ListTile(
+              leading: Image.asset(
+                'assets/images/douyu.png',
+                width: 36,
+                height: 36,
+              ),
+              title: const Text("斗鱼直播"),
+              subtitle: Text(controller.getDouyuCookieSummaryText()),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: controller.douyuTap,
             ),
-            title: const Text("斗鱼直播"),
-            subtitle: const Text("无需登录"),
-            enabled: false,
-            trailing: const Icon(Icons.chevron_right),
           ),
           ListTile(
             leading: Image.asset(

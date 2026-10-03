@@ -5,6 +5,7 @@
 // Copyright 2013 The Flutter Authors.
 
 import media from '@ohos.multimedia.media';
+import deviceInfo from '@ohos.deviceInfo';
 import prompt from '@ohos.promptAction';
 import resourceManager from '@ohos.resourceManager';
 import window from '@ohos.window';
@@ -41,6 +42,18 @@ const SOURCE_KIND_RAW_FILE: string = 'rawFile';
 const OPERATE_ERROR: number = 801;
 const AVPLAYER_STATE_ERROR: number = 5400102;
 
+const PLAYBACK_STRATEGY_IDLE: string = 'idle';
+const PLAYBACK_STRATEGY_APPLYING: string = 'applying';
+const PLAYBACK_STRATEGY_APPLIED: string = 'applied';
+const PLAYBACK_STRATEGY_FALLBACK: string = 'fallback';
+const PLAYBACK_PROFILE_STABLE: string = 'stable';
+const PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL: string =
+  'lowLatencyExperimental';
+// `preferredBufferDuration` and the media-source strategy overload are
+// available from the API 12 baseline. API 18-only catch-up fields remain
+// restricted to the stable profile below.
+const LOW_LATENCY_EXPERIMENTAL_MIN_API_VERSION: number = 12;
+
 const TAG = 'VideoPlayer'
 export class VideoPlayer {
   private avPlayer: media.AVPlayer | null = null;
@@ -64,11 +77,23 @@ export class VideoPlayer {
   private playerGeneration: number = 0;
   private sourceAssignmentState: string = SOURCE_ASSIGNMENT_IDLE;
   private sourceKind: string = SOURCE_KIND_RAW_FILE;
+  // The profile is normalized at construction time. Unknown values and
+  // runtimes without the required native API fail closed to stable.
+  private playbackProfile: string = PLAYBACK_PROFILE_STABLE;
+  private appPlayerGeneration: number | null = null;
+  private playbackStrategyGeneration: number = -1;
+  private playbackStrategyState: string = PLAYBACK_STRATEGY_IDLE;
+  private playbackStrategyTask: Promise<void> | null = null;
+  private prepareGeneration: number = -1;
   private prepared: boolean = false;
   private firstFrameRendered: boolean = false;
   private disposed: boolean = false;
+  // HarmonyOS AVPlayer reports currentTime === -1 for sources whose timeline it
+  // cannot expose (observed on HTTP-FLV live). TIME_UPDATE still fires with a
+  // usable clock there, so keep its last value as the position fallback.
+  private lastKnownTimeMs: number = -1;
 
-  constructor(playerModel: PlayerModel, textureEntry: SurfaceTextureEntry, rawFile: resourceManager.RawFileDescriptor | null, url: string | null, eventChannel: EventChannel, AudioFocus: Boolean, headers: Record<string, string> | null) {
+  constructor(playerModel: PlayerModel, textureEntry: SurfaceTextureEntry, rawFile: resourceManager.RawFileDescriptor | null, url: string | null, eventChannel: EventChannel, AudioFocus: Boolean, headers: Record<string, string> | null, playbackProfile: string = PLAYBACK_PROFILE_STABLE, appPlayerGeneration: number | null = null) {
     this.playerModel = playerModel;
     this.textureEntry = textureEntry;
     this.playerGeneration = textureEntry.getTextureId();
@@ -77,6 +102,8 @@ export class VideoPlayer {
     this.url = url;
     this.eventChannel = eventChannel;
     this.headers = headers;
+    this.playbackProfile = this.normalizePlaybackProfile(playbackProfile);
+    this.appPlayerGeneration = appPlayerGeneration;
     this.sourceKind = this.resolveSourceKind();
     if (AudioFocus == true) {
       this.interruptMode = audio.InterruptMode.SHARE_MODE;
@@ -128,12 +155,152 @@ export class VideoPlayer {
     return !this.disposed && generation === this.playerGeneration && this.avPlayer === player;
   }
 
+  private supportsLowLatencyExperimental(): boolean {
+    return deviceInfo.sdkApiVersion >= LOW_LATENCY_EXPERIMENTAL_MIN_API_VERSION;
+  }
+
+  private normalizePlaybackProfile(profile: string): string {
+    if (profile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL &&
+      this.supportsLowLatencyExperimental()) {
+      return PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL;
+    }
+    return PLAYBACK_PROFILE_STABLE;
+  }
+
   private beginNewSourceGeneration(): void {
     this.playerGeneration += 1;
     this.sourceAssignmentState = SOURCE_ASSIGNMENT_IDLE;
     this.sourceKind = this.resolveSourceKind();
+    this.playbackStrategyGeneration = -1;
+    this.playbackStrategyState = PLAYBACK_STRATEGY_IDLE;
+    this.playbackStrategyTask = null;
+    this.prepareGeneration = -1;
     this.prepared = false;
     this.firstFrameRendered = false;
+    // The next source owns a fresh timeline; a stale fallback would otherwise
+    // read as progress and mask a source that never starts.
+    this.lastKnownTimeMs = -1;
+  }
+
+  private buildLivePlaybackStrategy(): media.PlaybackStrategy {
+    if (this.playbackProfile !== PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL) {
+      // Stable follows AVPlayer's system buffering policy. A fixed 20-second
+      // startup buffer can prevent HTTP-FLV from reaching prepared/playing
+      // before the app's initialization timeout on slower live endpoints.
+      return {};
+    }
+    // Experimental low latency changes only the preferred buffer duration.
+    return {
+      preferredBufferDuration: 1,
+    };
+  }
+
+  private logPlaybackStrategy(
+    result: string,
+    generation: number,
+    usesConfiguredStrategy: boolean = true,
+  ): void {
+    const preferredBuffer =
+      usesConfiguredStrategy &&
+        this.playbackProfile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL ?
+      '1s' : 'system-default';
+    Log.i(TAG,
+      `playback strategy ${result} generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
+      `profile=${this.playbackProfile} appGeneration=${this.appPlayerGeneration ?? 'none'} ` +
+      `sourceKind=${this.sourceKind} ` +
+      `preferredBuffer=${preferredBuffer} ` +
+      `playingWaterline=system-default smartCatchup=system-default`);
+  }
+
+  private sendPlaybackProfile(status: string): void {
+    if (this.eventSink?.hasDelegate() !== true) {
+      return;
+    }
+    let event: HashMap<string, Object> = new HashMap<string, Object>();
+    event.set("event", "playbackProfile");
+    event.set("textureId", this.textureEntry.getTextureId());
+    event.set("profile", this.playbackProfile);
+    event.set("status", status);
+    event.set("lowLatencyExperimentalSupported",
+      this.supportsLowLatencyExperimental());
+    this.eventSink?.success(event);
+  }
+
+  private async applyPlaybackStrategyIfNeeded(
+    generation: number,
+    player: media.AVPlayer,
+  ): Promise<void> {
+    if (!this.isCurrentGeneration(generation, player)) {
+      return;
+    }
+    if (this.playbackStrategyGeneration === generation &&
+      this.playbackStrategyTask != null) {
+      await this.playbackStrategyTask;
+      return;
+    }
+
+    this.playbackStrategyGeneration = generation;
+    if (this.playbackProfile === PLAYBACK_PROFILE_STABLE) {
+      this.playbackStrategyState = PLAYBACK_STRATEGY_APPLIED;
+      this.playbackStrategyTask = Promise.resolve();
+      this.logPlaybackStrategy('system-default', generation, false);
+      this.sendPlaybackProfile('applied');
+      return;
+    }
+
+    this.playbackStrategyState = PLAYBACK_STRATEGY_APPLYING;
+    const task = (async () => {
+      try {
+        await player.setPlaybackStrategy(this.buildLivePlaybackStrategy());
+        if (!this.isCurrentGeneration(generation, player)) {
+          return;
+        }
+        this.playbackStrategyState = PLAYBACK_STRATEGY_APPLIED;
+        this.logPlaybackStrategy('applied', generation);
+        this.sendPlaybackProfile('applied');
+      } catch (error) {
+        if (!this.isCurrentGeneration(generation, player)) {
+          return;
+        }
+        this.playbackStrategyState = PLAYBACK_STRATEGY_FALLBACK;
+        const nativeError = error as BusinessError;
+        Log.w(TAG,
+          `playback strategy fallback generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
+          `profile=${this.playbackProfile} appGeneration=${this.appPlayerGeneration ?? 'none'} ` +
+          `sourceKind=${this.sourceKind} code=${nativeError.code} state=${player.state}`);
+        this.logPlaybackStrategy('fallback-system-default', generation, false);
+        this.sendPlaybackProfile('fallbackSystemDefault');
+      }
+    })();
+    this.playbackStrategyTask = task;
+    await task;
+  }
+
+  private async prepareCurrentGeneration(
+    generation: number,
+    player: media.AVPlayer,
+  ): Promise<void> {
+    if (!this.isCurrentGeneration(generation, player) ||
+      this.prepareGeneration === generation) {
+      return;
+    }
+    this.prepareGeneration = generation;
+    await this.applyPlaybackStrategyIfNeeded(generation, player);
+    if (!this.isCurrentGeneration(generation, player)) {
+      return;
+    }
+    try {
+      await player.prepare();
+    } catch (error) {
+      if (!this.isCurrentGeneration(generation, player)) {
+        return;
+      }
+      const nativeError = error as BusinessError;
+      Log.e(TAG,
+        `prepare failed generation=${generation} sourceKind=${this.sourceKind} ` +
+        `strategyState=${this.playbackStrategyState} code=${nativeError.code} state=${player.state}`);
+      this.sendError(nativeError);
+    }
   }
 
   private async assignMediaSourceIfNeeded(generation: number): Promise<void> {
@@ -156,8 +323,38 @@ export class VideoPlayer {
       } else {
         let mediaSource: media.MediaSource = media.createMediaSourceWithUrl(
           this.getIUri(), this.headers ?? {});
-        let playbackStrategy: media.PlaybackStrategy = {};
-        await player.setMediaSource(mediaSource, playbackStrategy);
+        let playbackStrategy: media.PlaybackStrategy =
+          this.buildLivePlaybackStrategy();
+        this.playbackStrategyGeneration = generation;
+        this.playbackStrategyState = PLAYBACK_STRATEGY_APPLYING;
+        this.playbackStrategyTask = Promise.resolve();
+        try {
+          await player.setMediaSource(mediaSource, playbackStrategy);
+          if (this.isCurrentGeneration(generation, player)) {
+            this.playbackStrategyState = PLAYBACK_STRATEGY_APPLIED;
+            this.logPlaybackStrategy(
+              'applied-with-media-source', generation,
+              this.playbackProfile === PLAYBACK_PROFILE_LOW_LATENCY_EXPERIMENTAL);
+            this.sendPlaybackProfile('applied');
+          }
+        } catch (strategyError) {
+          if (!this.isCurrentGeneration(generation, player)) {
+            return;
+          }
+          const nativeError = strategyError as BusinessError;
+          this.playbackStrategyState = PLAYBACK_STRATEGY_FALLBACK;
+          Log.w(TAG,
+            `media source strategy fallback generation=${generation} sdkApi=${deviceInfo.sdkApiVersion} ` +
+            `profile=${this.playbackProfile} appGeneration=${this.appPlayerGeneration ?? 'none'} ` +
+            `sourceKind=${this.sourceKind} code=${nativeError.code} state=${player.state}`);
+          mediaSource = media.createMediaSourceWithUrl(
+            this.getIUri(), this.headers ?? {});
+          await player.setMediaSource(mediaSource, {});
+          if (this.isCurrentGeneration(generation, player)) {
+            this.logPlaybackStrategy('fallback-system-default', generation, false);
+            this.sendPlaybackProfile('fallbackSystemDefault');
+          }
+        }
       }
       if (!this.isCurrentGeneration(generation, player)) {
         return;
@@ -200,7 +397,7 @@ export class VideoPlayer {
           break;
         case AvplayerStatus.INITIALIZED:
           this.avPlayer.surfaceId = this.surfaceId;
-          this.avPlayer.prepare();
+          await this.prepareCurrentGeneration(this.playerGeneration, boundPlayer);
           break;
         case AvplayerStatus.PREPARED:
           this.prepared = true;
@@ -252,10 +449,20 @@ export class VideoPlayer {
     });
 
     this.avPlayer.on(Events.TIME_UPDATE, (time: number) => {
+      if (this.disposed || this.avPlayer !== boundPlayer) {
+        return;
+      }
+      if (time >= 0) {
+        this.lastKnownTimeMs = time;
+      }
       this.initProgress(time);
+      this.sendPlaybackTime(time);
     });
 
     this.avPlayer.on(Events.BUFFER_UPDATE, (infoType: media.BufferingInfoType, value: number) => {
+      if (this.disposed || this.avPlayer !== boundPlayer) {
+        return;
+      }
       this.sendBufferingUpdate(infoType, value);
     });
 
@@ -349,11 +556,17 @@ export class VideoPlayer {
   }
 
   getPosition(): number {
-    if (this.avPlayer !== null) {
-      return this.avPlayer.currentTime;
-    } else {
+    if (this.avPlayer === null) {
       return 0;
     }
+    const currentTime = this.avPlayer.currentTime;
+    // Prefer the live value. Only fall back when AVPlayer declines to report a
+    // timeline (-1), so a genuine live-window rewind still reaches Flutter and
+    // its discontinuity handling stays intact.
+    if (currentTime >= 0) {
+      return currentTime;
+    }
+    return this.lastKnownTimeMs >= 0 ? this.lastKnownTimeMs : 0;
   }
 
   /**
@@ -694,6 +907,24 @@ export class VideoPlayer {
     this.eventSink?.success(event);
   }
 
+  /// Liveness heartbeat carrying the AVPlayer clock.
+  ///
+  /// A live source may expose no usable position, which leaves the Flutter
+  /// progress watchdog blind. The arrival of this event is itself the evidence
+  /// that the native clock still advances, independent of the value.
+  sendPlaybackTime(timeMs: number): void {
+    // Emitted roughly once per second per player. Dropping it while detached
+    // keeps QueuingEventSink bounded; liveness resumes once Flutter listens.
+    if (this.eventSink?.hasDelegate() !== true) {
+      return;
+    }
+    let event: HashMap<string, Object> = new HashMap<string, Object>();
+    event.set("event", "playbackTime");
+    event.set("textureId", this.textureEntry.getTextureId());
+    event.set("timeMs", timeMs);
+    this.eventSink?.success(event);
+  }
+
   sendBufferingUpdate(infoType: media.BufferingInfoType, bufferingPosition: number): void {
     let event: HashMap<string, Object> = new HashMap<string, Object>();
     if (infoType == media.BufferingInfoType.BUFFERING_START) {
@@ -701,22 +932,38 @@ export class VideoPlayer {
     } else if (infoType == media.BufferingInfoType.BUFFERING_END) {
       event.set("event", "bufferingEnd");
     } else if (infoType == media.BufferingInfoType.CACHED_DURATION) {
+      // Periodic telemetry, unlike the start/end edges below: drop it while no
+      // listener is attached rather than growing the queue for that window.
+      if (this.eventSink?.hasDelegate() !== true) {
+        return;
+      }
+      // Cache depth in milliseconds. Reported twice on purpose: as telemetry
+      // for the health layer, and as video_player's buffered range.
       event.set("event", "cachedDuration");
-      // 与 bufferingUpdate 保持一致，带上实际缓存时长（毫秒）。
+      event.set("textureId", this.textureEntry.getTextureId());
+      event.set("durationMs", bufferingPosition);
+      this.eventSink?.success(event);
+
+      let bufferedEvent: HashMap<string, Object> = new HashMap<string, Object>();
+      bufferedEvent.set("event", "bufferingUpdate");
       let range: ArrayList<number> = new ArrayList<number>();
       range.add(0);
       range.add(bufferingPosition);
       let valuesList: ArrayList<ArrayList<number>> = new ArrayList<ArrayList<number>>();
       valuesList.add(range);
-      event.set("values", valuesList);
+      bufferedEvent.set("values", valuesList);
+      this.eventSink?.success(bufferedEvent);
+      return;
     } else {
-      event.set("event", "bufferingUpdate");
-      let range: ArrayList<number> = new ArrayList<number>();
-      range.add(0);
-      range.add(bufferingPosition);
-      let valuesList: ArrayList<ArrayList<number>> = new ArrayList<ArrayList<number>>();
-      valuesList.add(range);
-      event.set("values", valuesList);
+      if (this.eventSink?.hasDelegate() !== true) {
+        return;
+      }
+      // BUFFERING_PERCENT carries 0..100, not milliseconds. Reporting it as a
+      // buffered range used to hand video_player a 0..100 ms window, which
+      // understates the cache by three orders of magnitude.
+      event.set("event", "bufferingPercent");
+      event.set("textureId", this.textureEntry.getTextureId());
+      event.set("percent", bufferingPosition);
     }
     this.eventSink?.success(event);
   }

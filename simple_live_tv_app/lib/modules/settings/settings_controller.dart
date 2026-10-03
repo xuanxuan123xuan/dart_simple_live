@@ -5,12 +5,16 @@ import 'package:get/get.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
 import 'package:simple_live_tv_app/app/controller/base_controller.dart';
+import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
 import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/signalr_service.dart';
+import 'package:simple_live_tv_app/services/tv_app_update_service.dart';
+import 'package:simple_live_tv_app/modules/settings/tv_update_dialog.dart';
+import 'package:simple_live_tv_app/widgets/sync_server_picker_dialog.dart';
 
 class SettingsController extends BaseController
     with GetTickerProviderStateMixin {
@@ -48,6 +52,12 @@ class SettingsController extends BaseController
   var hardwareDecodeFocusNode = AppFocusNode()..isFoucsed.value = true;
   var compatibleModeFocusNode = AppFocusNode();
   var mpvProfileFocusNode = AppFocusNode();
+  var customPlayerOutputFocusNode = AppFocusNode();
+  var videoOutputFocusNode = AppFocusNode();
+  var hardwareDecoderFocusNode = AppFocusNode();
+  var audioOutputFocusNode = AppFocusNode();
+  var advancedMpvFocusNode = AppFocusNode();
+  var resetMpvFocusNode = AppFocusNode();
   var scaleFoucsNode = AppFocusNode();
   var defaultQualityFocusNode = AppFocusNode();
   var danmakuFoucsNode = AppFocusNode();
@@ -77,25 +87,35 @@ class SettingsController extends BaseController
   var kuaishouFocusNode = AppFocusNode();
   var versionFocusNode = AppFocusNode();
 
-  void editSyncServerUrl() async {
-    var value = await Utils.showEditTextDialog(
-      SignalRService.configuredUrl,
-      title: "同步服务地址",
-      hintText: SignalRService.kDefaultUrl,
-      validate: (text) {
-        final url = text.trim();
-        if (url.isEmpty) {
-          return true;
-        }
-        final uri = Uri.tryParse(url);
-        if (uri == null ||
-            !(uri.scheme == "wss" || uri.scheme == "ws") ||
-            uri.host.isEmpty) {
-          SmartDialog.showToast("请输入 ws:// 或 wss:// 开头的同步服务地址");
-          return false;
-        }
-        return true;
-      },
+  Future<void> editMpvAdvancedOptions() async {
+    final settings = AppSettingsController.instance;
+    final value = await Utils.showEditTextDialog(
+      settings.mpvAdvancedOptions.value,
+      title: "高级 mpv options",
+      hintText: "每行一个 key=value，例如 cache=yes",
+      maxLines: 10,
+      confirm: "保存",
+      validate: (_) => true,
+    );
+    if (value == null) return;
+    settings.setMpvAdvancedOptions(value);
+    SmartDialog.showToast("已保存，重开直播间后生效");
+  }
+
+  Future<void> resetMpvOptions() async {
+    final confirmed = await Utils.showAlertDialog(
+      "将关闭自定义输出并清空高级 mpv 参数。",
+      title: "恢复播放器默认配置",
+      confirm: "恢复默认",
+    );
+    if (!confirmed) return;
+    AppSettingsController.instance.resetCustomPlayerOutput();
+    SmartDialog.showToast("已恢复默认，重开直播间后生效");
+  }
+
+  Future<void> chooseSyncServerUrl() async {
+    final value = await Get.dialog<String>(
+      const SyncServerPickerDialog(),
     );
     if (value == null) {
       return;
@@ -376,6 +396,20 @@ class SettingsController extends BaseController
     return session.credentialState == KuaishouCredentialState.valid
         ? "有效"
         : "已配置，待验证";
+  }
+
+  Future<void> checkTvUpdate() async {
+    final service = TvAppUpdateService.instance;
+    try {
+      final version = await service.checkForUpdates();
+      if (service.isNewer(version)) {
+        await Get.dialog(const TvUpdateDialog());
+      } else {
+        SmartDialog.showToast('已是最新版本');
+      }
+    } catch (_) {
+      SmartDialog.showToast('检查更新失败');
+    }
   }
 
   String _kuaishouSlotName(KuaishouAccountSlot slot) =>

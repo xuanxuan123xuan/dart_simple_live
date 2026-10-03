@@ -68,8 +68,8 @@ AppVersion _parseVersionName(String value) {
   ).firstMatch(value.trim());
   if (match == null) {
     throw const FormatException(
-      'Version must use major.minor or major.minor.patch, '
-      'for example 1.13 or 1.13.1.',
+      'Version must use major.minor or major.minor.patch '
+      '(year.quarter[.patch]), for example 26.3 or 26.3.1.',
     );
   }
   return _versionFromComponents(
@@ -106,13 +106,27 @@ AppVersion _readVersion(File pubspec) {
 }
 
 AppVersion _versionFromComponents(int major, int minor, int patch) {
-  if (minor > 99 || patch > 99) {
+  // major is the two-digit year (2026 -> 26), minor is the quarter and patch is
+  // the release within that quarter. The build number packs minor into the
+  // hundreds digit and patch into the last two digits.
+  if (major > 99) {
     throw const FormatException(
-      'Version minor and patch components must each be between 0 and 99.',
+      'Version major component must be a two-digit year, '
+      'for example 26 for 2026.',
+    );
+  }
+  if (minor < 1 || minor > 4) {
+    throw const FormatException(
+      'Version minor component (quarter) must be between 1 and 4.',
+    );
+  }
+  if (patch > 99) {
+    throw const FormatException(
+      'Version patch component must be between 0 and 99.',
     );
   }
 
-  final expectedBuildNumber = major * 10000 + minor * 100 + patch;
+  final expectedBuildNumber = major * 1000 + minor * 100 + patch;
   return AppVersion(
     name: '$major.$minor.$patch',
     buildNumber: expectedBuildNumber,

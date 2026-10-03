@@ -56,6 +56,25 @@ bool FlutterWindow::OnCreate() {
         }
         result->NotImplemented();
       });
+  windows_fullscreen_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "simple_live/windows_fullscreen",
+          &flutter::StandardMethodCodec::GetInstance());
+  windows_fullscreen_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() == "enter") {
+          result->Success(windows_fullscreen_.Enter(GetHandle()));
+        } else if (call.method_name() == "exit") {
+          result->Success(windows_fullscreen_.Exit(GetHandle()));
+        } else if (call.method_name() == "isActive") {
+          result->Success(windows_fullscreen_.IsActive());
+        } else {
+          result->NotImplemented();
+        }
+      });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -71,6 +90,10 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (windows_fullscreen_.IsActive()) {
+    windows_fullscreen_.Exit(GetHandle());
+  }
+  windows_fullscreen_channel_.reset();
   shortcut_channel_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
@@ -83,6 +106,15 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // Returning zero for a proposed non-client recalculation keeps the client
+  // area equal to the full window while the native fullscreen transition is
+  // in progress. This prevents one frame of the old title-bar border from
+  // reaching the Flutter child window.
+  if (message == WM_NCCALCSIZE && wparam != FALSE &&
+      windows_fullscreen_.IsActive()) {
+    return 0;
+  }
+
   switch (message) {
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:

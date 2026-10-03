@@ -17,7 +17,7 @@ enum AppIconVariant {
     }
     return AppIconVariant.values.firstWhere(
       (variant) => variant.storageValue == value,
-      orElse: () => AppIconVariant.classic,
+      orElse: () => AppIconVariant.modern,
     );
   }
 }

@@ -17,12 +17,27 @@ class HomeListView extends StatelessWidget {
     // Masonry 自适应高度，mainAxisExtent 仅 useFixedGrid 预留。
     final layout = LiveRoomGridLayout.resolve(
       MediaQuery.sizeOf(context).width,
+      // Keep the home cards aligned with the card layout on the follow page.
+      // The bottom navigation has a 12 px outer inset, so an 8 px grid inset
+      // leaves the same small overlap-free gap on both pages.
+      horizontalPadding: 8,
       detailsExtent: 0,
     );
+    // The body already extends behind the transparent app bar. Reserve only
+    // the status-bar inset and a small breathing space; adding kToolbarHeight
+    // here double-counts the floating selector and leaves a large blank band.
+    final topClearance = MediaQuery.paddingOf(context).top + 8;
     return KeepAliveWrapper(
       child: PageGridView(
         pageController: controller,
-        padding: AppStyle.edgeInsetsA12,
+        padding: AppStyle.edgeInsetsH8.copyWith(
+          top: 0,
+          bottom: 96,
+        ),
+        headerSlivers: [
+          SliverToBoxAdapter(child: SizedBox(height: topClearance)),
+        ],
+        refreshHeaderIndex: 1,
         firstRefresh: true,
         mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
         crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,

@@ -16,7 +16,7 @@ class PlaybackPageSettingsPage extends GetView<IndexedSettingsController> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("播放页设置"),
+        title: const Text("直播间界面与快捷键"),
       ),
       body: ListView(
         padding: AppStyle.pagePadding(),
@@ -24,7 +24,7 @@ class PlaybackPageSettingsPage extends GetView<IndexedSettingsController> {
           Padding(
             padding: AppStyle.edgeInsetsA12.copyWith(top: 0),
             child: Text(
-              "播放页标签顺序",
+              "直播间标签顺序",
               style: Get.textTheme.titleSmall,
             ),
           ),

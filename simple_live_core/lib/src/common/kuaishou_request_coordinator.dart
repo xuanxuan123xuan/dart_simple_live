@@ -118,6 +118,12 @@ class KuaishouRequestCoordinator {
     return _cooldownActive;
   }
 
+  /// 当前冷却截止时间。冷却已结束或未启用时返回 null。
+  DateTime? get cooldownUntil {
+    _refreshCooldownState();
+    return _cooldownActive ? _cooldownUntil : null;
+  }
+
   void _refreshCooldownState() {
     final until = _cooldownUntil;
     if (_cooldownActive && until != null && !until.isAfter(_now())) {
@@ -176,6 +182,19 @@ class KuaishouRequestCoordinator {
       (request) => request.priority != KuaishouRequestPriority.userEnter,
     );
   }
+
+  /// 冷却到期后，哪些优先级可以领取那唯一一个恢复探针。
+  ///
+  /// 用户主动进房仍然优先，但后台关注刷新也允许当探针：否则用户只看关注页、
+  /// 不点进任何直播间时，冷却到期后关注列表会一直停在「限流」不再恢复。
+  /// 弹幕凭证请求同样允许当探针：冷却结束时用户往往停留在原房间观看，
+  /// 不会再触发进房请求，若弹幕凭证永远领不到探针，它只会在重试预算内
+  /// 反复被「等待恢复探针」拒绝后永久停止（有 Cookie 却连不上弹幕服务器的
+  /// 根因之一）。探针始终只有一个名额，不会让恢复阶段产生并发突发。
+  static bool _canClaimProbe(KuaishouRequestPriority priority) =>
+      priority == KuaishouRequestPriority.userEnter ||
+      priority == KuaishouRequestPriority.followRefresh ||
+      priority == KuaishouRequestPriority.danmakuCredential;
 
   /// 立即结束冷却。
   void endCooldown() {
@@ -266,13 +285,12 @@ class KuaishouRequestCoordinator {
       return Future.error(KuaishouCooldownError('快手请求处于冷却期'));
     }
     if (_awaitingCooldownProbe && !allowDuringCooldown) {
-      if (priority != KuaishouRequestPriority.userEnter ||
-          _cooldownProbeClaimed) {
+      if (!_canClaimProbe(priority) || _cooldownProbeClaimed) {
         CoreLog.i(
-          '[ks-coordinator] rejected awaiting user probe '
+          '[ks-coordinator] rejected awaiting probe '
           'key=${logLabel ?? '<key>'}',
         );
-        return Future.error(KuaishouCooldownError('快手请求等待用户探针'));
+        return Future.error(KuaishouCooldownError('快手请求等待恢复探针'));
       }
       _cooldownProbeClaimed = true;
       cooldownProbe = true;
@@ -386,7 +404,7 @@ class KuaishouRequestCoordinator {
       if (!_awaitingCooldownProbe) {
         return false;
       }
-      if (request.priority == KuaishouRequestPriority.userEnter &&
+      if (_canClaimProbe(request.priority) &&
           (request.cooldownProbe || !_cooldownProbeClaimed)) {
         _cooldownProbeClaimed = true;
         request.cooldownProbe = true;
@@ -447,6 +465,13 @@ class KuaishouRequestCoordinator {
         }
       } else if (!next.completer.isCompleted) {
         next.completer.completeError(e, stackTrace);
+      }
+      // 探针失败必须归还名额，否则 _cooldownProbeClaimed 永远为 true，
+      // 后续任何请求都会以「等待用户探针」被拒，冷却再也无法退出。
+      if (next.cooldownProbe && _awaitingCooldownProbe && epoch == _epoch) {
+        _cooldownProbeClaimed = false;
+        next.cooldownProbe = false;
+        CoreLog.i('[ks-coordinator] probe failed; probe slot released');
       }
     } finally {
       // 仅当在途项仍属于本次执行时移除，避免旧代次请求误删新请求的合并项。

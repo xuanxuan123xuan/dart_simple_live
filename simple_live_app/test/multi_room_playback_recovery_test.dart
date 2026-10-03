@@ -227,6 +227,99 @@ void main() {
       expect(requests, 0);
     });
 
+    test('default coordinator keeps the first attempt non-disruptive',
+        () async {
+      const coordinator = MultiRoomPlaybackRecoveryCoordinator(
+        confirmTimeout: Duration(milliseconds: 50),
+        retryDelay: Duration(milliseconds: 10),
+      );
+      final restartFlags = <bool>[];
+      var checks = 0;
+
+      final recovered = await coordinator.recover(
+        targets: [
+          MultiRoomPlaybackRecoveryTarget(
+            roomKey: 'preview',
+            shouldPlay: () => true,
+            requestPlay: (forceRestart) async {
+              restartFlags.add(forceRestart);
+            },
+            waitUntilPlaying: (_) async {
+              // 模拟首轮输出仍处于中断状态，强制重建后恢复推进。
+              checks += 1;
+              return checks > 1;
+            },
+          ),
+        ],
+        isCancelled: () => false,
+      );
+
+      expect(recovered, isTrue);
+      expect(restartFlags, [false, true]);
+    });
+
+    test('forceRestartOnFirstAttempt rebuilds the player on the first pass',
+        () async {
+      const coordinator = MultiRoomPlaybackRecoveryCoordinator(
+        forceRestartOnFirstAttempt: true,
+        confirmTimeout: Duration(milliseconds: 50),
+        retryDelay: Duration(milliseconds: 10),
+      );
+      final restartFlags = <bool>[];
+
+      final recovered = await coordinator.recover(
+        targets: [
+          MultiRoomPlaybackRecoveryTarget(
+            roomKey: 'preview',
+            shouldPlay: () => true,
+            requestPlay: (forceRestart) async {
+              restartFlags.add(forceRestart);
+            },
+            waitUntilPlaying: (_) async => true,
+          ),
+        ],
+        isCancelled: () => false,
+      );
+
+      expect(recovered, isTrue);
+      expect(restartFlags, [true]);
+    });
+
+    test('returns true in one pass and skips undesired targets', () async {
+      const coordinator = MultiRoomPlaybackRecoveryCoordinator(
+        confirmTimeout: Duration(milliseconds: 50),
+        retryDelay: Duration(milliseconds: 10),
+      );
+      final restartFlags = <bool>[];
+      var pausedRequests = 0;
+
+      final recovered = await coordinator.recover(
+        targets: [
+          MultiRoomPlaybackRecoveryTarget(
+            roomKey: 'healthy',
+            shouldPlay: () => true,
+            requestPlay: (forceRestart) async {
+              restartFlags.add(forceRestart);
+            },
+            waitUntilPlaying: (_) async => true,
+          ),
+          MultiRoomPlaybackRecoveryTarget(
+            roomKey: 'paused-by-user',
+            shouldPlay: () => false,
+            requestPlay: (_) async {
+              pausedRequests += 1;
+            },
+            waitUntilPlaying: (_) async => false,
+          ),
+        ],
+        isCancelled: () => false,
+      );
+
+      expect(recovered, isTrue);
+      expect(restartFlags, [false]);
+      expect(pausedRequests, 0);
+    });
+
     test('cancellation prevents later targets and retries', () async {
       const coordinator = MultiRoomPlaybackRecoveryCoordinator(
         maxAttempts: 3,

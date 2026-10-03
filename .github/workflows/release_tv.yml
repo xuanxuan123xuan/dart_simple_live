@@ -262,6 +262,7 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --yes --no-progress
+          pwsh -NoProfile -File .github/scripts/install_inno_setup_chinese.ps1
           dart pub global activate fastforge $env:FASTFORGE_VERSION
           $pubBin = Join-Path $env:LOCALAPPDATA "Pub\Cache\bin"
           $pubBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
@@ -277,8 +278,12 @@ jobs:
           TV_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           $out = Join-Path $env:RUNNER_TEMP "release-tv-windows"
+          $dist = Join-Path $env:GITHUB_WORKSPACE "simple_live_tv_app\dist"
           New-Item -ItemType Directory -Force $out | Out-Null
-          $files = @(Get-ChildItem -LiteralPath "simple_live_tv_app\build\dist" -Recurse -File |
+          if (-not (Test-Path -LiteralPath $dist -PathType Container)) {
+            throw "Fastforge output directory was not created: $dist"
+          }
+          $files = @(Get-ChildItem -LiteralPath $dist -Recurse -File |
             Where-Object { $_.Extension -ieq ".exe" } |
             Sort-Object Length -Descending)
           if ($files.Count -lt 1) { throw "Expected a Windows TV EXE output." }

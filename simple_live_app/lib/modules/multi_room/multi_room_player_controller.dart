@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
@@ -21,10 +22,14 @@ import 'package:simple_live_app/services/live_link_health_collector.dart'
     show canonicalizeLivePlaybackSource, didLivePlaybackHostChange;
 import 'package:simple_live_app/services/live_link_health_media_kit_adapter.dart';
 import 'package:simple_live_app/services/live_link_health_models.dart';
+import 'package:simple_live_app/services/ios_video_output_size.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_sampling_loop.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+
+export 'multi_room_player_configuration.dart';
+import 'multi_room_player_configuration.dart';
 
 bool shouldSampleMultiRoomLiveHealth({
   required bool appActive,
@@ -167,6 +172,8 @@ class MultiRoomTileControlsVisibility {
 class MultiRoomPlayerController extends GetxController {
   final MultiRoomItem item;
   final void Function()? onPlayerOpened;
+  final MultiRoomPlayerConfiguration configuration;
+  final bool Function()? externalCancellation;
 
   MultiRoomPlayerController(
     this.item, {
@@ -181,7 +188,14 @@ class MultiRoomPlayerController extends GetxController {
     MpvLiveLatencyPlaybackRole initialLiveLatencyRole =
         MpvLiveLatencyPlaybackRole.multiRoomSecondaryOrInactive,
     PlayerMutationQueue? mutationQueue,
-  })  : _mutationQueue = mutationQueue ?? PlayerMutationQueue(),
+    MultiRoomPlayerConfiguration? configuration,
+    bool lightweightPreview = false,
+    this.externalCancellation,
+  })  : configuration = configuration ??
+            (lightweightPreview
+                ? const MultiRoomPlayerConfiguration.lightweightPreview()
+                : const MultiRoomPlayerConfiguration()),
+        _mutationQueue = mutationQueue ?? PlayerMutationQueue(),
         _ownsMutationQueue = mutationQueue == null,
         _liveLatencyAppActive = initialAppActive,
         _liveLatencyRole = initialLiveLatencyRole {
@@ -190,6 +204,9 @@ class MultiRoomPlayerController extends GetxController {
     }
     if (initialShowDanmaku != null) {
       showDanmaku.value = initialShowDanmaku;
+    }
+    if (!this.configuration.enableDanmaku) {
+      showDanmaku.value = false;
     }
     _restoreQualityIndex = initialQualityIndex;
     _restoreLineIndex = initialLineIndex;
@@ -291,6 +308,10 @@ class MultiRoomPlayerController extends GetxController {
   final bool _ownsMutationQueue;
   StreamSubscription<bool>? _bufferingSubscription;
   StreamSubscription? _logSubscription;
+  StreamSubscription<VideoParams>? _iosVideoParamsSubscription;
+  IosVideoOutputSize? _iosVideoOutputSize;
+  double? _iosVideoOutputMaxPhysicalWidth;
+  double? _iosVideoOutputMaxPhysicalHeight;
   bool _isBuffering = false;
   int _bufferingCount = 0;
   Duration _bufferingDuration = Duration.zero;
@@ -373,7 +394,7 @@ class MultiRoomPlayerController extends GetxController {
       _playbackDesired && !paused.value && !_playbackSuspendedForFocus;
 
   bool get shouldRecoverPlayback =>
-      !_disposed &&
+      !_operationCancelled &&
       !_playerDisposed &&
       !_routeTransitionClosed &&
       playbackDesired &&
@@ -381,6 +402,11 @@ class MultiRoomPlayerController extends GetxController {
 
   /// 当前线路列表。
   List<String> get playUrls => _playUrls;
+
+  Future<void> get playerMutationsIdle => _mutationQueue.idle;
+
+  bool get _operationCancelled =>
+      _disposed || (externalCancellation?.call() ?? false);
 
   /// 当前线路索引。
   int get lineIndex => _lineIndex;
@@ -399,27 +425,80 @@ class MultiRoomPlayerController extends GetxController {
     _tileControls.showTemporarily();
     unawaited(MpvOptionsService.applyToPlayer(player));
     // 流错误自动重试（对齐单直播间行为）。
-    player.stream.error.listen((event) {
-      if (_disposed || paused.value || !liveStatus.value) return;
-      if (_isStreamError(event)) {
-        unawaited(_handleStreamError(event));
-      }
-    });
-    _bufferingSubscription =
-        player.stream.buffering.listen(_onBufferingChanged);
-    _logSubscription = player.stream.log.listen((event) {
-      final type = classifyMpvLiveLinkLog(
-        prefix: event.prefix,
-        text: event.text,
-      );
-      if (type != null) {
-        _liveLinkHealth.recordEvent(type);
-        if (type == LiveLinkEventType.audioUnderrun) {
-          _protectLiveLatencyForAudioUnderrun();
+    if (configuration.enableAutomaticRecovery) {
+      player.stream.error.listen((event) {
+        if (_operationCancelled || paused.value || !liveStatus.value) return;
+        if (_isStreamError(event)) {
+          unawaited(_handleStreamError(event));
         }
-      }
-    });
+      });
+    }
+    if (configuration.enableLiveHealthSampling) {
+      _bufferingSubscription =
+          player.stream.buffering.listen(_onBufferingChanged);
+      _logSubscription = player.stream.log.listen((event) {
+        final type = classifyMpvLiveLinkLog(
+          prefix: event.prefix,
+          text: event.text,
+        );
+        if (type != null) {
+          _liveLinkHealth.recordEvent(type);
+          if (type == LiveLinkEventType.audioUnderrun) {
+            _protectLiveLatencyForAudioUnderrun();
+          }
+        }
+      });
+    }
+    if (Platform.isIOS) {
+      _iosVideoParamsSubscription = player.stream.videoParams.listen((params) {
+        unawaited(
+          _enqueue(() => _applyIosVideoOutputLimit(params: params)),
+        );
+      });
+    }
     unawaited(load());
+  }
+
+  /// Limits this player's iOS texture to the preview render box in physical
+  /// pixels. The request is ignored on every other platform.
+  Future<void> setIosVideoOutputPhysicalBounds({
+    required double width,
+    required double height,
+  }) async {
+    if (!Platform.isIOS || _disposed || _playerDisposed) return;
+    _iosVideoOutputMaxPhysicalWidth = width;
+    _iosVideoOutputMaxPhysicalHeight = height;
+    await _enqueue(_applyIosVideoOutputLimit);
+  }
+
+  /// Compatibility entrypoint used by the live-room preview overlay.
+  Future<void> updatePreviewOutputSize(double width, double height) =>
+      setIosVideoOutputPhysicalBounds(width: width, height: height);
+
+  Future<void> _applyIosVideoOutputLimit({VideoParams? params}) async {
+    if (!Platform.isIOS || _disposed || _playerDisposed) return;
+    final maxWidth = _iosVideoOutputMaxPhysicalWidth;
+    final maxHeight = _iosVideoOutputMaxPhysicalHeight;
+    if (maxWidth == null || maxHeight == null) return;
+
+    var sourceWidth = params?.dw ?? params?.w ?? player.state.width;
+    var sourceHeight = params?.dh ?? params?.h ?? player.state.height;
+    final rotate = params?.rotate ?? 0;
+    if (rotate % 180 != 0) {
+      final originalWidth = sourceWidth;
+      sourceWidth = sourceHeight;
+      sourceHeight = originalWidth;
+    }
+    if (sourceWidth == null || sourceHeight == null) return;
+    final target = calculateIosVideoOutputSizeWithinBounds(
+      sourceWidth: sourceWidth,
+      sourceHeight: sourceHeight,
+      maxPhysicalWidth: maxWidth,
+      maxPhysicalHeight: maxHeight,
+    );
+    if (target == null || target == _iosVideoOutputSize) return;
+    await videoController.setSize(width: target.width, height: target.height);
+    _iosVideoOutputSize = target;
   }
 
   static bool _isStreamError(String error) {
@@ -431,9 +510,17 @@ class MultiRoomPlayerController extends GetxController {
         error.contains('missing picture');
   }
 
-  Future<void> _enqueue(Future<void> Function() operation) {
+  Future<void> _enqueue(
+    Future<void> Function() operation, {
+    bool allowExternalCancellation = false,
+  }) {
     final result = _mutationQueue.run<void>(() async {
-      if (_disposed || _routeTransitionClosed) return;
+      if (_disposed ||
+          _routeTransitionClosed ||
+          (!allowExternalCancellation &&
+              (externalCancellation?.call() ?? false))) {
+        return;
+      }
       await operation();
     });
     _operationChain = result.catchError((Object _) {});
@@ -564,6 +651,7 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   bool get _isLiveHealthSamplingEligible =>
+      configuration.enableLiveHealthSampling &&
       !_disposed &&
       !_playerDisposed &&
       !_routeTransitionClosed &&
@@ -719,6 +807,7 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> _startLiveLatencySampling() async {
+    if (!configuration.enableLiveHealthSampling) return;
     final protocol = _activeLiveProtocol;
     if (protocol == null || !_isLiveHealthSamplingEligible) return;
     final controlToken = ++_liveLatencyControlToken;
@@ -742,6 +831,7 @@ class MultiRoomPlayerController extends GetxController {
   Future<void> _stopLiveLatencySampling({
     required MpvLiveLatencyProtectionReason reason,
   }) async {
+    if (!configuration.enableLiveHealthSampling) return;
     _liveLatencyControlToken += 1;
     _liveLatencySamplingLoop.stop();
     _nextHealthTelemetryDueAt = null;
@@ -878,13 +968,13 @@ class MultiRoomPlayerController extends GetxController {
       _activeLiveProtocol = null;
       _liveLinkHealth.stop();
       await player.stop();
-      if (_disposed) return;
+      if (_operationCancelled) return;
       // 重新加载前断开旧连接，避免刷新后同一格挂着两条长连接。
       await _stopDanmaku();
       chatMessages.clear();
       _recentDanmuFingerprints.clear();
       final roomDetail = await _fetchRoomDetail();
-      if (_disposed) {
+      if (_operationCancelled) {
         return;
       }
       detail.value = roomDetail;
@@ -893,12 +983,14 @@ class MultiRoomPlayerController extends GetxController {
         return;
       }
       await _loadQualities(roomDetail);
-      if (_disposed) return;
+      if (_operationCancelled) return;
       await _loadPlayUrls(roomDetail);
-      if (_disposed) return;
+      if (_operationCancelled) return;
       await _openCurrentUrl();
-      if (_disposed) return;
-      unawaited(_startDanmaku(roomDetail));
+      if (_operationCancelled) return;
+      if (configuration.enableDanmaku) {
+        unawaited(_startDanmaku(roomDetail));
+      }
     } catch (e) {
       Log.e(
         "多开直播间加载失败：${item.site.id}/${item.roomId} $e",
@@ -916,6 +1008,13 @@ class MultiRoomPlayerController extends GetxController {
     _qualities = await item.site.liveSite.getPlayQualites(detail: roomDetail);
     if (_qualities.isEmpty) {
       throw Exception("无法读取播放清晰度");
+    }
+    if (configuration.preferLowestQuality) {
+      _restoreQualityIndex = null;
+      _qualityIndex = _qualities.length - 1;
+      qualityInfo.value = _qualities[_qualityIndex].quality;
+      _userQualityIndex = _qualityIndex;
+      return;
     }
     // 优先恢复上次会话的画质。
     final restore = _restoreQualityIndex;
@@ -975,7 +1074,9 @@ class MultiRoomPlayerController extends GetxController {
     LiveLinkEventType? userOperation,
     LiveReconnectReason? automaticReconnectReason,
   }) async {
-    if (_disposed || _routeTransitionClosed || _playUrls.isEmpty) return;
+    if (_operationCancelled || _routeTransitionClosed || _playUrls.isEmpty) {
+      return;
+    }
     final previousSource = _liveLinkHealth.current?.source;
     final reconnectStartedAt =
         automaticReconnectReason == null ? null : DateTime.now();
@@ -987,29 +1088,36 @@ class MultiRoomPlayerController extends GetxController {
       reason: MpvLiveLatencyProtectionReason.sourceChanged,
     );
     _activeLiveProtocol = null;
-    if (_disposed || _routeTransitionClosed) return;
-    final healthOpenAttempt = _liveLinkHealth.prepareSource(source: url);
+    if (_operationCancelled || _routeTransitionClosed) return;
+    final healthOpenAttempt = configuration.enableLiveHealthSampling
+        ? _liveLinkHealth.prepareSource(source: url)
+        : null;
     final protocol = classifyLiveStreamProtocol(url);
     await MpvOptionsService.applyLiveLatencyOptions(player, protocol);
-    if (_disposed || _routeTransitionClosed) return;
+    if (_operationCancelled || _routeTransitionClosed) return;
     _playbackDesired = true;
     await player.open(
       Media(url, httpHeaders: _playHeaders),
       play: playbackDesired,
     );
-    if (_disposed || _routeTransitionClosed) return;
+    if (_operationCancelled || _routeTransitionClosed) return;
     final completedAt = DateTime.now();
-    final healthGeneration = _liveLinkHealth.beginSource(
-      target: '${item.site.id}/${item.roomId}',
-      openAttempt: healthOpenAttempt,
-      openedAt: completedAt,
-      userOperation: userOperation,
-    );
-    if (healthGeneration == null) return;
+    final healthGeneration = healthOpenAttempt == null
+        ? null
+        : _liveLinkHealth.beginSource(
+            target: '${item.site.id}/${item.roomId}',
+            openAttempt: healthOpenAttempt,
+            openedAt: completedAt,
+            userOperation: userOperation,
+          );
+    if (configuration.enableLiveHealthSampling && healthGeneration == null) {
+      return;
+    }
     _activeLiveProtocol = protocol;
     _lastOpenedAt = completedAt;
     if (automaticReconnectReason != null &&
         reconnectStartedAt != null &&
+        healthGeneration != null &&
         _isCurrentHealthGeneration(healthGeneration)) {
       _liveLinkHealth.recordEvent(
         LiveLinkEventType.cdnReconnect,
@@ -1032,7 +1140,7 @@ class MultiRoomPlayerController extends GetxController {
     }
     // iOS 上多个 libmpv Player 共享 audio session。任意一格重新 open
     // 都可能中断其他格，由页面级控制器统一恢复仍应播放的播放器。
-    if (!_disposed) {
+    if (!_operationCancelled) {
       onPlayerOpened?.call();
     }
   }
@@ -1042,12 +1150,12 @@ class MultiRoomPlayerController extends GetxController {
   /// 已被中断的原生输出。
   Future<void> ensurePlaying(bool forceRestart) {
     return _enqueue(() async {
-      if (_disposed || !playbackDesired || !liveStatus.value) {
+      if (_operationCancelled || !playbackDesired || !liveStatus.value) {
         return;
       }
       if (forceRestart) {
         await player.pause();
-        if (_disposed || !playbackDesired || !liveStatus.value) {
+        if (_operationCancelled || !playbackDesired || !liveStatus.value) {
           return;
         }
       }
@@ -1256,6 +1364,7 @@ class MultiRoomPlayerController extends GetxController {
 
   /// 低内存恢复：重建本格弹幕连接。
   Future<void> restoreDanmaku() async {
+    if (!configuration.enableDanmaku) return;
     final roomDetail = detail.value;
     if (_disposed ||
         _danmakuActive ||
@@ -1292,6 +1401,7 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> _startDanmaku(LiveRoomDetail roomDetail) async {
+    if (!configuration.enableDanmaku) return;
     final pendingStop = _danmakuStopFuture;
     if (pendingStop != null) {
       await pendingStop;
@@ -1433,6 +1543,7 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> _stopDanmaku() {
+    if (!configuration.enableDanmaku) return Future<void>.value();
     final activeStop = _danmakuStopFuture;
     if (activeStop != null) return activeStop;
     late final Future<void> trackedStop;
@@ -1489,27 +1600,31 @@ class MultiRoomPlayerController extends GetxController {
     await setMuted(!muted.value);
   }
 
-  Future<void> setMuted(bool value) async {
-    if (muted.value == value) return;
-    muted.value = value;
-    await player.setVolume(muted.value ? 0 : volume.value);
-    // 取消静音激活 audio session，可能中断其他格，通知恢复。
-    if (!muted.value && volume.value > 0) {
-      onActivateAudio?.call();
-    }
+  Future<void> setMuted(bool value) {
+    return _enqueue(() async {
+      if (muted.value == value) return;
+      muted.value = value;
+      await player.setVolume(muted.value ? 0 : volume.value);
+      // 取消静音激活 audio session，可能中断其他格，通知恢复。
+      if (!muted.value && volume.value > 0) {
+        onActivateAudio?.call();
+      }
+    }, allowExternalCancellation: true);
   }
 
   /// 设置本格音量（0-100）。静音归属只由 [setMuted] 控制。
-  Future<void> setVolume(double value) async {
-    volume.value = value.clamp(0, 100).toDouble();
-    if (muted.value) {
-      await player.setVolume(0);
-    } else {
-      await player.setVolume(volume.value);
-      if (volume.value > 0) {
-        onActivateAudio?.call();
+  Future<void> setVolume(double value) {
+    return _enqueue(() async {
+      volume.value = value.clamp(0, 100).toDouble();
+      if (muted.value) {
+        await player.setVolume(0);
+      } else {
+        await player.setVolume(volume.value);
+        if (volume.value > 0) {
+          onActivateAudio?.call();
+        }
       }
-    }
+    }, allowExternalCancellation: true);
   }
 
   /// Stops native resources before the focused room opens as a single room.
@@ -1530,6 +1645,8 @@ class MultiRoomPlayerController extends GetxController {
       _liveLinkHealth.stop();
       if (_isBuffering) _finishBuffering(DateTime.now());
       try {
+        await _iosVideoParamsSubscription?.cancel();
+        _iosVideoParamsSubscription = null;
         await _stopDanmaku();
         await player.stop();
         await player.dispose();
@@ -1544,36 +1661,60 @@ class MultiRoomPlayerController extends GetxController {
     await transition;
   }
 
+  /// Fully releases the native preview player through the same serialized,
+  /// idempotent teardown barrier used by route transitions.
+  ///
+  /// Remove the corresponding [Video] widget and wait for that Flutter frame
+  /// before awaiting this method, so iOS detaches the texture consumer before
+  /// its Player/VideoOutput is destroyed. A later [onClose] remains safe.
+  Future<void> releasePlayer() => closeForRouteTransition();
+
+  /// Compatibility entrypoint used by the live-room preview coordinator.
+  Future<void> disposePreviewPlayer() => releasePlayer();
+
   @override
   void onClose() {
     _disposed = true;
     _playbackDesired = false;
     _activeLiveProtocol = null;
     _liveLatencyControlToken += 1;
-    _liveLatencySamplingLoop.stop();
-    final liveLatencyProtection = _liveLatencyChaser.protect(
-      reason: MpvLiveLatencyProtectionReason.lifecycleInterrupted,
-      generation: _liveLatencyChaser.generation,
-    );
+    final Future<void> liveLatencyProtection;
+    if (configuration.enableLiveHealthSampling) {
+      _liveLatencySamplingLoop.stop();
+      liveLatencyProtection = _liveLatencyChaser.protect(
+        reason: MpvLiveLatencyProtectionReason.lifecycleInterrupted,
+        generation: _liveLatencyChaser.generation,
+      );
+    } else {
+      liveLatencyProtection = Future<void>.value();
+    }
     _liveLinkHealth.stop();
     if (_isBuffering) _finishBuffering(DateTime.now());
     unawaited(_bufferingSubscription?.cancel());
     _bufferingSubscription = null;
     unawaited(_logSubscription?.cancel());
     _logSubscription = null;
+    unawaited(_iosVideoParamsSubscription?.cancel());
+    _iosVideoParamsSubscription = null;
     _danmakuActive = false;
     // 必须断开弹幕长连接，否则移除格子后连接和心跳会泄漏。
-    liveDanmaku.onMessage = null;
-    liveDanmaku.onClose = null;
-    liveDanmaku.onReady = null;
+    if (configuration.enableDanmaku) {
+      liveDanmaku.onMessage = null;
+      liveDanmaku.onClose = null;
+      liveDanmaku.onReady = null;
+    }
     _danmakuReconnectTimer?.cancel();
     _tileControls.dispose();
-    unawaited(liveDanmaku.stop());
+    if (configuration.enableDanmaku) {
+      unawaited(liveDanmaku.stop());
+    }
     danmakuController = null;
     // 等当前串行的 open/load 收尾后再释放 Player，避免异步回调操作已释放实例。
     unawaited(_operationChain.whenComplete(() async {
       await liveLatencyProtection;
-      await _liveLatencyChaser.stop();
+      if (configuration.enableLiveHealthSampling) {
+        await _liveLatencyChaser.stop();
+      }
       if (!_playerDisposed) {
         await player.stop();
         await player.dispose();

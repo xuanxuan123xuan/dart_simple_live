@@ -40,7 +40,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: "3.41.x"
+  # Flutter 3.44.7 includes the Android external-texture fence leak fix.
+  FLUTTER_VERSION: "3.44.7"
   # iOS 当前构建已验证通过 Xcode 26.0；macOS 的 Icon Composer 资源使用
   # 与 macOS 26 主机匹配的较新工具链，避免 AssetCatalogAgent 崩溃。
   APPLE_XCODE_VERSION: "26.0"
@@ -285,7 +286,7 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: ${{ env.IOS_XCODE_VERSION }}
+          xcode-version: ${{ env.APPLE_XCODE_VERSION }}
 
       - uses: subosito/flutter-action@v2
         with:
@@ -306,7 +307,10 @@ jobs:
       - name: 校验 Liquid Glass 图标资源
         shell: bash
         run: |
-          test -f simple_live_app/ios/Runner/AppIconModern.icon/icon.json
+          # actool 要求 .icon 与 catalog 主 appiconset 同名，两边都叫 AppIcon：
+          # iOS 26+ 用 .icon 出液态玻璃，更低版本回落到 appiconset 的扁平图。
+          test -f simple_live_app/ios/Runner/AppIcon.icon/icon.json
+          test -f simple_live_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
           xcode_major="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
           test "$xcode_major" -ge 26
 
@@ -421,7 +425,8 @@ jobs:
   macos:
     name: macOS DMG
     needs: prepare
-    runs-on: macos-14
+    # Liquid Glass 的 .icon 包需要在 macOS 26 主机上编译。
+    runs-on: macos-26
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
@@ -430,7 +435,19 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: ${{ env.XCODE_VERSION }}
+          xcode-version: ${{ env.MACOS_XCODE_VERSION }}
+
+      - name: 校验 Liquid Glass 图标资源
+        shell: bash
+        run: |
+          # .icon 与同名 AppIcon.appiconset 并存：macOS 26+ 用前者出液态玻璃，
+          # 更低版本回落到后者的扁平图。
+          test -f simple_live_app/macos/Runner/AppIcon.icon/icon.json
+          test -f simple_live_app/macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
+          macos_major="$(sw_vers -productVersion | cut -d. -f1)"
+          xcode_major="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
+          test "$macos_major" -ge 26
+          test "$xcode_major" -ge 26
 
       - uses: subosito/flutter-action@v2
         with:
@@ -485,7 +502,7 @@ jobs:
   windows:
     name: Windows EXE 与 ZIP
     needs: prepare
-    # Flutter 3.41 支持 VS 2022/2026；保留 windows-2022 镜像稳定构建。
+    # Flutter 3.44 支持 VS 2022/2026；保留 windows-2022 镜像稳定构建。
     runs-on: windows-2022
     timeout-minutes: 75
     steps:
@@ -517,6 +534,7 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --yes --no-progress
+          pwsh -NoProfile -File .github/scripts/install_inno_setup_chinese.ps1
           dart pub global activate fastforge $env:FASTFORGE_VERSION
           $pubBin = Join-Path $env:LOCALAPPDATA "Pub\Cache\bin"
           $pubBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -767,7 +785,7 @@ jobs:
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    # 仅最终发布 job 可创建 Release、更新固定 tag 和 ipa-source。
+    # 仅最终发布 job 可创建 Release、更新固定 tag 和独立 IPA 源分支。
     # prepare 与各平台构建 job 保持 contents: read，不能回写源码分支。
     permissions:
       contents: write
@@ -928,7 +946,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          # dev 与 stable 分别写入 ipa-source / ipa-stable，互不覆盖。
+          # dev 与 stable 使用独立的 IPA 源分支，避免相互覆盖。
           if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
             CHANNEL="dev"
             SOURCE_BRANCH="ipa-source"
@@ -940,7 +958,6 @@ jobs:
             SOURCE_FILE="apps.json"
             IOS_TAG="ios-stable"
           fi
-
           # 先发布固定 IPA；成功后再更新源元数据，避免源版本领先于实际附件。
           if [[ ! -f "$RUNNER_TEMP/simple-live.ipa" ]]; then
             echo "::warning::无 iOS IPA（可能未勾 iOS 构建），跳过 IPA 源发布。"

@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:get/get.dart';
 import 'package:lottie/lottie.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
 import 'package:simple_live_tv_app/app/app_style.dart';
+import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/modules/home/home_controller.dart';
+import 'package:simple_live_tv_app/modules/follow_user/tv_follow_grid_layout.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
@@ -195,29 +196,7 @@ class HomePage extends GetView<HomeController> {
                   ),
                 ),
                 AppStyle.vGap32,
-                Obx(
-                  () => MasonryGridView.count(
-                    padding: AppStyle.edgeInsetsH48,
-                    itemCount: FollowUserService.instance.list.length,
-                    crossAxisCount: 3,
-                    crossAxisSpacing: 48.w,
-                    mainAxisSpacing: 48.w,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemBuilder: (_, i) {
-                      var item = FollowUserService.instance.list[i];
-                      return Obx(
-                        () => AnchorCard(
-                          face: item.face,
-                          name: item.userName,
-                          siteId: item.siteId,
-                          liveStatus: item.liveStatus.value,
-                          roomId: item.roomId,
-                        ),
-                      );
-                    },
-                  ),
-                ),
+                Obx(_buildHomeFollowGrid),
                 Obx(
                   () => Visibility(
                     visible: FollowUserService.instance.allList.isEmpty,
@@ -254,6 +233,82 @@ class HomePage extends GetView<HomeController> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildHomeFollowGrid() {
+    final settings = AppSettingsController.instance;
+    settings.followOnlyLive.value;
+    final items = FollowUserService.instance.list.toList();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final style = settings.followDisplayStyle.value;
+        final showLiveCover = settings.followShowLiveCover.value;
+        final availableWidth = constraints.maxWidth - 96.w;
+        late final int columns;
+        late final double mainExtent;
+        late final double crossSpacing;
+        late final double mainSpacing;
+        late final AnchorCardDisplayStyle displayStyle;
+        if (style == 'card') {
+          final layout = TvFollowGridLayout.resolve(
+            availableWidth: availableWidth,
+            availableHeight: 620.w,
+            density: settings.followCardDensity.value,
+            showLiveCover: showLiveCover,
+            crossAxisSpacing: 24.w,
+            mainAxisSpacing: 20.w,
+            detailsExtent: TvFollowGridLayout.cardDetailsExtent.w,
+            avatarMinimumExtent: 168.w,
+            avatarMaximumExtent: 230.w,
+          );
+          columns = layout.crossAxisCount;
+          mainExtent = layout.mainAxisExtent;
+          crossSpacing = 24.w;
+          mainSpacing = 20.w;
+          displayStyle = AnchorCardDisplayStyle.card;
+        } else if (style == 'compact') {
+          columns = 4;
+          mainExtent = showLiveCover ? 178.w : 118.w;
+          crossSpacing = 24.w;
+          mainSpacing = showLiveCover ? 20.w : 16.w;
+          displayStyle = AnchorCardDisplayStyle.compact;
+        } else {
+          columns = 3;
+          mainExtent = showLiveCover ? 210.w : 140.w;
+          crossSpacing = 28.w;
+          mainSpacing = showLiveCover ? 24.w : 18.w;
+          displayStyle = AnchorCardDisplayStyle.defaultList;
+        }
+        return GridView.builder(
+          padding: AppStyle.edgeInsetsH48,
+          itemCount: items.length,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            crossAxisSpacing: crossSpacing,
+            mainAxisSpacing: mainSpacing,
+            mainAxisExtent: mainExtent,
+          ),
+          itemBuilder: (_, i) {
+            final item = items[i];
+            return Obx(
+              () => AnchorCard(
+                face: item.face,
+                name: item.userName,
+                roomTitle: item.roomTitle,
+                roomCover: item.roomCover,
+                siteId: item.siteId,
+                liveStatus: item.liveStatus.value,
+                roomId: item.roomId,
+                showLiveCover: showLiveCover,
+                displayStyle: displayStyle,
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

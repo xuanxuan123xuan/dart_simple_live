@@ -20,16 +20,28 @@ class MultiRoomPlaybackRecoveryTarget {
 /// progress in the same observation window. Every request is guarded by
 /// [MultiRoomPlaybackRecoveryTarget.shouldPlay], so a pause selected while a
 /// recovery pass is queued always wins over the automatic recovery.
+///
+/// [forceRestartOnFirstAttempt] 用于中断必现的路径（如 iOS 长按预览关闭），
+/// 让首轮请求直接 pause/play 重建，跳过首轮无效的幂等试探；默认 false，
+/// 保持多开路径首轮非破坏性的现状。
 class MultiRoomPlaybackRecoveryCoordinator {
   const MultiRoomPlaybackRecoveryCoordinator({
     this.maxAttempts = 3,
     this.confirmTimeout = const Duration(milliseconds: 700),
     this.retryDelay = const Duration(milliseconds: 250),
+    this.forceRestartOnFirstAttempt = false,
   }) : assert(maxAttempts > 0);
 
   final int maxAttempts;
   final Duration confirmTimeout;
   final Duration retryDelay;
+
+  /// 首轮恢复是否直接强制重建（pause/play）。
+  ///
+  /// 中断必现的场景无需首轮的非破坏性试探，应在首轮就 pause/play 重建被
+  /// 中断的原生输出；默认 false 时首轮保持非破坏性，仅在验证失败后的
+  /// 重试轮才强制重建。
+  final bool forceRestartOnFirstAttempt;
 
   Future<bool> recover({
     required List<MultiRoomPlaybackRecoveryTarget> targets,
@@ -47,11 +59,11 @@ class MultiRoomPlaybackRecoveryCoordinator {
         }
 
         try {
-          // The first pass is non-disruptive. A target which still fails the
-          // real-progress check gets a pause/play cycle on the next pass to
-          // rebuild an interrupted native output without restarting healthy
-          // players.
-          await target.requestPlay(attempt > 0);
+          // The first pass is non-disruptive unless forced. A target which
+          // still fails the real-progress check gets a pause/play cycle on
+          // the next pass to rebuild an interrupted native output without
+          // restarting healthy players.
+          await target.requestPlay(attempt > 0 || forceRestartOnFirstAttempt);
           if (isCancelled()) return false;
         } catch (_) {
           // Disposal or route changes can close a shared mutation queue while

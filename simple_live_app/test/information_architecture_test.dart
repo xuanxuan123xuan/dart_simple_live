@@ -21,8 +21,8 @@ void main() {
       '链接解析',
       '外观设置',
       '主页设置',
-      '播放页设置',
-      '直播设置',
+      '直播间界面与快捷键',
+      '播放与网络',
       '多开设置',
       '弹幕设置',
       '关注设置',
@@ -31,6 +31,15 @@ void main() {
     ]) {
       expect(mine, isNot(contains(oldFirstLevelEntry)));
     }
+  });
+
+  test('mine page logo follows the active brightness', () {
+    final mine = File('lib/modules/mine/mine_page.dart').readAsStringSync();
+
+    expect(mine, contains('Theme.of(context).brightness == Brightness.dark'));
+    expect(mine, contains("'assets/images/logo_dark.png'"));
+    expect(mine, contains("'assets/images/logo.png'"));
+    expect(File('assets/images/logo_dark.png').existsSync(), isTrue);
   });
 
   test('settings, support and sync destinations have dedicated routes', () {
@@ -57,7 +66,14 @@ void main() {
     ).readAsStringSync();
     final sync = File('lib/modules/sync/sync_page.dart').readAsStringSync();
 
-    expect(follow, contains('管理备份'));
+    // 关注页的入口改名为「数据管理」，并直接带 kFollowDataArgument 跳到
+    // 配置包页的关注分类，不再走 kSync 总入口。守的仍是同一条：
+    // 关注页只留一个数据入口，不散落导入/导出文本。
+    expect(follow, contains('数据管理'));
+    expect(follow, contains('RoutePath.kProfileBackup'));
+    expect(follow, contains('ProfileBackupController.kFollowDataArgument'));
+    expect(follow, isNot(contains('导出文本')));
+    expect(follow, isNot(contains('导入文本')));
     expect(shields, contains('管理备份'));
     expect(sync, contains('高级连接设置'));
     expect(sync, contains('配置包导入导出'));

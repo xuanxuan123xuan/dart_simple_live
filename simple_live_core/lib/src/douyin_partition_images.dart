@@ -11,23 +11,74 @@ library;
 
 /// key 为抖音分区 id_str（如 "101"、"103"）。
 const Map<String, String> douyinPartitionImages = {
-  '101': 'https://i0.hdslb.com/bfs/live/fe112b439e34d4ef3e254c00a9c0d3bd998043bd.png', // 聊天
-  '102': 'https://i0.hdslb.com/bfs/live/a7adae1f7571a97f51d60f685823acc610d00a7e.png', // 音乐
-  '103': 'https://i0.hdslb.com/bfs/live/3aa12550186a2f8c4dd9352f6c3fcc82054e594d.png', // 游戏
-  '104': 'https://i0.hdslb.com/bfs/live/cdf8c5a456de00c456bc6dede3c19569ef2c40bf.png', // 二次元
-  '105': 'https://i0.hdslb.com/bfs/vc/5837fa9608fab6c1465ec29c5abecab44f7bc376.png', // 舞蹈
-  '106': 'https://i0.hdslb.com/bfs/live/c8e6d780a3182c37a96e79f4ed26fcb576f2520a.png', // 文化
-  '107': 'https://i0.hdslb.com/bfs/live/fd7a23073b7ff9c7260c2fa8bf50e3738ecdc60a.png', // 生活
-  '108': 'https://i0.hdslb.com/bfs/live/828cdd0bdce7dd20d599f1b19521139f1dc05300.png', // 运动
+  '101':
+      'https://i0.hdslb.com/bfs/live/fe112b439e34d4ef3e254c00a9c0d3bd998043bd.png', // 聊天
+  '102':
+      'https://i0.hdslb.com/bfs/live/a7adae1f7571a97f51d60f685823acc610d00a7e.png', // 音乐
+  '103':
+      'https://i0.hdslb.com/bfs/live/3aa12550186a2f8c4dd9352f6c3fcc82054e594d.png', // 游戏
+  '104':
+      'https://i0.hdslb.com/bfs/live/cdf8c5a456de00c456bc6dede3c19569ef2c40bf.png', // 二次元
+  '105':
+      'https://i0.hdslb.com/bfs/vc/5837fa9608fab6c1465ec29c5abecab44f7bc376.png', // 舞蹈
+  '106':
+      'https://i0.hdslb.com/bfs/live/c8e6d780a3182c37a96e79f4ed26fcb576f2520a.png', // 文化
+  '107':
+      'https://i0.hdslb.com/bfs/live/fd7a23073b7ff9c7260c2fa8bf50e3738ecdc60a.png', // 生活
+  '108':
+      'https://i0.hdslb.com/bfs/live/828cdd0bdce7dd20d599f1b19521139f1dc05300.png', // 运动
   // 游戏（103）子分区，id_str 为分区内编号（type 1），借 B站对应类型图：
-  '1': 'https://i0.hdslb.com/bfs/live/34de48c290b2565ed9d5dbf1dba56105788040f6.png', // 射击游戏（CS2）
-  '2': 'https://i0.hdslb.com/bfs/vc/0e808167886ad2299971ea49aade69b3663db9b9.png', // 竞技游戏（英雄联盟）
-  '3': 'https://i0.hdslb.com/bfs/vc/edb636ee59f902e3134a2790545045bddd70978e.png', // 单机游戏（主机游戏）
-  '4': 'https://i0.hdslb.com/bfs/live/4d76208f31b3bc020c633e39cdc5c465a7075b50.png', // 棋牌游戏（棋牌玩法）
-  '5': 'https://i0.hdslb.com/bfs/live/167020f7bf38360f127f4612e82dc25674f0040c.png', // 休闲益智（休闲玩法）
-  '6': 'https://i0.hdslb.com/bfs/vc/32a5b7da3e79feb394f538c9d95a858fea97b113.png', // 角色扮演（最终幻想14）
-  '7': 'https://i0.hdslb.com/bfs/vc/ce83319ab4ebc2f0c357fc101f20c785c655f9e6.png', // 策略卡牌（炉石传说）
+  '1':
+      'https://i0.hdslb.com/bfs/live/34de48c290b2565ed9d5dbf1dba56105788040f6.png', // 射击游戏（CS2）
+  '2':
+      'https://i0.hdslb.com/bfs/vc/0e808167886ad2299971ea49aade69b3663db9b9.png', // 竞技游戏（英雄联盟）
+  '3':
+      'https://i0.hdslb.com/bfs/vc/edb636ee59f902e3134a2790545045bddd70978e.png', // 单机游戏（主机游戏）
+  '4':
+      'https://i0.hdslb.com/bfs/live/4d76208f31b3bc020c633e39cdc5c465a7075b50.png', // 棋牌游戏（棋牌玩法）
+  '5':
+      'https://i0.hdslb.com/bfs/live/167020f7bf38360f127f4612e82dc25674f0040c.png', // 休闲益智（休闲玩法）
+  '6':
+      'https://i0.hdslb.com/bfs/vc/32a5b7da3e79feb394f538c9d95a858fea97b113.png', // 角色扮演（最终幻想14）
+  '7':
+      'https://i0.hdslb.com/bfs/vc/ce83319ab4ebc2f0c357fc101f20c785c655f9e6.png', // 策略卡牌（炉石传说）
 };
+
+/// B站同名分区的平替图，用于抖音更深层、没有稳定分区 id 的节点。
+///
+/// 这里按分区标题匹配，不继承父级图片，避免「绝地求生」等叶子节点看起来
+/// 和父级「游戏」完全一样。
+const Map<String, String> douyinPartitionImagesByName = {
+  '射击游戏':
+      'https://i0.hdslb.com/bfs/live/34de48c290b2565ed9d5dbf1dba56105788040f6.png',
+  '竞技游戏':
+      'https://i0.hdslb.com/bfs/vc/0e808167886ad2299971ea49aade69b3663db9b9.png',
+  '单机游戏':
+      'https://i0.hdslb.com/bfs/vc/edb636ee59f902e3134a2790545045bddd70978e.png',
+  '棋牌游戏':
+      'https://i0.hdslb.com/bfs/live/4d76208f31b3bc020c633e39cdc5c465a7075b50.png',
+  '休闲益智':
+      'https://i0.hdslb.com/bfs/live/167020f7bf38360f127f4612e82dc25674f0040c.png',
+  '角色扮演':
+      'https://i0.hdslb.com/bfs/vc/32a5b7da3e79feb394f538c9d95a858fea97b113.png',
+  '策略卡牌':
+      'https://i0.hdslb.com/bfs/vc/ce83319ab4ebc2f0c357fc101f20c785c655f9e6.png',
+  'CS2':
+      'https://i0.hdslb.com/bfs/live/34de48c290b2565ed9d5dbf1dba56105788040f6.png',
+  '绝地求生':
+      'https://i0.hdslb.com/bfs/vc/43ca83fdcd10505eaeef1b76cf8ce642a53b94da.png',
+};
+
+/// 不同平台对同一款游戏使用的分区名称。仅列出明确的同游戏别名，
+/// 避免用模糊文本匹配把相似但不同的游戏分区混在一起。
+const List<List<String>> douyinPartitionImageNameAliases = [
+  ['CSGO', 'CS:GO', 'CS2', '反恐精英2'],
+  ['PUBG', '绝地求生'],
+  ['LOL', '英雄联盟'],
+  ['DOTA2', 'DOTA 2', '刀塔2'],
+  ['VALORANT', '无畏契约'],
+  ['APEX', 'Apex英雄', 'APEX英雄'],
+];
 
 /// 判断字符串是否为可加载的 http(s) 图片地址。
 ///

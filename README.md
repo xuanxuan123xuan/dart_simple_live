@@ -4,7 +4,7 @@
 <h2 align="center">Simple Live — 稳定版</h2>
 
 <p align="center">
-简简单单的看直播 · <code>v1.13.3</code> · 分支 <code>stable</code>
+简简单单的看直播 · <code>v26.4.1</code> · 分支 <code>stable</code>
 </p>
 
 ![浅色模式](/assets/screenshot_light.jpg)
@@ -65,7 +65,7 @@ Simple Live 会一直坚持**免费、开源、不向用户收费**。目前项�
 5. **跨平台聚合搜索**：一个入口并发搜索虎牙、斗鱼、哔哩哔哩、抖音和快手，按平台分区展示，并保留单站完整分页。
 6. **移动播放体验**：统一管理常亮锁和全屏系统栏，改善 iOS 状态栏隐藏、前后台恢复、播放器刷新、音量保持及视频方向跟随。
 
-> 开发中的新功能在 [dev 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/dev)，稳定后合入本分支（两分支同处 Flutter 3.41 线）。stable 本次准备版本为 `1.13.3`。
+> 开发中的新功能在 [dev 分支](https://github.com/xuanxuan123xuan/dart_simple_live/tree/dev)，稳定后合入本分支（两分支同处 Flutter 3.44.7 线）。stable 本次准备版本为 `26.4.1`。
 
 **本次合入 dev 后的重点变化**：
 - **应用内更新检查**：关于页可检查 GitHub Release，并区分 dev / stable 发布通道。
@@ -163,26 +163,26 @@ Simple Live 会一直坚持**免费、开源、不向用户收费**。目前项�
 
 | 构建目标 | Flutter 版本 | 说明 |
 |---|---|---|
-| **本分支所有目标** | **3.41.x** | `stable`，随 dev 升级线 |
+| **本分支所有目标** | **3.44.7** | `stable`，随 dev 升级线 |
 | 鸿蒙 HAP | oh-3.41.9-release（[GitHub 镜像](https://github.com/xuanxuan123xuan/flutter_flutter_ohos)） | runner 预装 |
 
-本分支与 dev 同为 Flutter 3.41.x 线（Dart 3.11.x、intl 0.20.2、`onPopInvokedWithResult` 适配），不再有 3.22 依赖钉死。
+本分支与 dev 同为 Flutter 3.44.7 线（Dart 3.11.x、intl 0.20.2、`onPopInvokedWithResult` 适配），不再有 3.22 依赖钉死。
 
 注意：`simple_live_app/.fvmrc` 不被任何构建流程读取。
 
 ### 版本号维护
 
-应用构建版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。dev 分支的版本号用于区分开发测试构建，不作为正式版本号；本次 stable 准备版本为 `1.13.3`，对应构建号 `11303`，规则为：
+应用构建版本以 `simple_live_app/pubspec.yaml` 的 `version` 为唯一来源。dev 分支的版本号用于区分开发测试构建，不作为正式版本号；本次 stable 准备版本为 `26.4.1`，对应构建号 `26401`，规则为：
 
 ```text
-major × 10000 + minor × 100 + patch
+major × 1000 + minor × 100 + patch
 ```
 
 正式构建前在 `simple_live_app` 目录执行以下命令，同步 `pubspec.yaml` 与所有派生版本文件：
 
 ```bash
 # 直接设置版本并同步所有派生文件
-dart run tool/app_version.dart set 1.13.3
+dart run tool/app_version.dart set 26.4.1
 ```
 
 ---

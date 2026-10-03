@@ -7,6 +7,8 @@ class LocalStorageService extends GetxService {
 
   static const String kFirstRun = "FirstRun";
   static const String kPlayerScaleMode = "ScaleMode";
+  static const String kPlayerDualScreenLayoutMode =
+      "PlayerDualScreenLayoutMode";
   static const String kSiteSort = "SiteSort";
   static const String kHomeSort = "HomeSort";
   static const String kLiveRoomTabSort = "LiveRoomTabSort";
@@ -23,6 +25,7 @@ class LocalStorageService extends GetxService {
   static const String kLiveRoomShortcutVolumeUp = "LiveRoomShortcutVolumeUp";
   static const String kLiveRoomShortcutVolumeDown =
       "LiveRoomShortcutVolumeDown";
+  static const String kLiveRoomHoldPreviewAudio = "LiveRoomHoldPreviewAudio";
   static const String kLastSearchSiteId = "LastSearchSiteId";
   static const String kFollowGroupMode = "FollowGroupMode";
   static const String kFollowSelectedGroupId = "FollowSelectedGroupId";
@@ -45,6 +48,10 @@ class LocalStorageService extends GetxService {
   static const String kRoomQualityMemory = "RoomQualityMemory";
   static const String kMultiRoomLayout = "MultiRoomLayout";
   static const String kThemeMode = "ThemeMode";
+  static const String kGlassMode = "GlassMode";
+  // Source-level alias for callers that prefer the complete setting name.
+  // Both names intentionally point to the same stable Hive key.
+  static const String kAppGlassMode = kGlassMode;
   static const String kAppIconVariant = "AppIconVariant";
   static const String kDebugModeKey = "DebugMode";
   static const String kDanmuSize = "DanmuSize";
@@ -77,6 +84,7 @@ class LocalStorageService extends GetxService {
   static const String kOhosAutoQualityDegrade = "OhosAutoQualityDegrade";
   static const String kOhosNetworkFluctuationNotice =
       "OhosNetworkFluctuationNotice";
+  static const String kOhosPlaybackProfile = "OhosPlaybackProfile";
   static const String kAutoExitEnable = "AutoExitEnable";
   static const String kAutoExitDuration = "AutoExitDuration";
   static const String kRoomAutoExitDuration = "RoomAutoExitDuration";
@@ -114,6 +122,7 @@ class LocalStorageService extends GetxService {
   static const String kDanmuDedupeStep = "DanmuDedupeStep";
   static const String kBilibiliCookie = "BilibiliCookie";
   static const String kDouyinCookie = "DouyinCookie";
+  static const String kDouyuCookie = "DouyuCookie";
   static const String kKuaishouCookie = "KuaishouCookie";
   static const String kKuaishouKww = "KuaishouKww";
   static const String kKuaishouCookieExpiresAt = "KuaishouCookieExpiresAt";
@@ -123,6 +132,8 @@ class LocalStorageService extends GetxService {
       "KuaishouSecondaryCookieExpiresAt";
   static const String kKuaishouAccountPoolState = "KuaishouAccountPoolState";
   static const String kKuaishouCategorySnapshot = "KuaishouCategorySnapshotV1";
+  static const String kKuaishouAnonymousLoginRecommendationShown =
+      "KuaishouAnonymousLoginRecommendationShownV1";
   static const String kStyleColor = "kStyleColor";
   static const String kIsDynamic = "kIsDynamic";
   static const String kBilibiliLoginTip = "BilibiliLoginTip";
@@ -143,6 +154,7 @@ class LocalStorageService extends GetxService {
   static const String kUpdateFollowThreadCount = "UpdateFollowThreadCount";
   static const String kFollowPageSize = "FollowPageSize";
   static const String kFollowRefreshTaskState = "FollowRefreshTaskState";
+  static const String kFollowStatusSnapshot = "FollowStatusSnapshot";
   static const String kFollowRefreshTaskTargets = "FollowRefreshTaskTargets";
   static const String kUserRemarks = "UserRemarks";
   static const String kLastLiveRoom = "LastLiveRoom";
@@ -191,6 +203,7 @@ class LocalStorageService extends GetxService {
 
   bool _isSensitiveKey(dynamic key) => const {
         kKuaishouCookie,
+        kDouyuCookie,
         kKuaishouKww,
         kKuaishouSecondaryCookie,
         kKuaishouSecondaryKww,

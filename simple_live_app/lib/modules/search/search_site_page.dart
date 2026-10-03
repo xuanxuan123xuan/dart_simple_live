@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/search/search_list_controller.dart';
 import 'package:simple_live_app/modules/search/search_list_view.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 
 class SearchSiteRouteArgs {
   const SearchSiteRouteArgs({
@@ -53,54 +55,81 @@ class SearchSitePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = Get.find<SearchListController>(tag: args.scopeId);
     return Scaffold(
+      // Match the aggregate search page: the page stays neutral while the
+      // pinned search control remains the only glass surface.
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: TextField(
-          controller: controller.searchController,
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            hintText: "搜点什么吧",
-            border: OutlineInputBorder(borderRadius: AppStyle.radius24),
-            contentPadding: AppStyle.edgeInsetsH12,
-            prefixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: "返回",
-                  onPressed: Get.back,
-                  icon: const Icon(Icons.arrow_back),
-                ),
-                Obx(
-                  () => DropdownButton<int>(
-                    underline: const SizedBox(),
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        forceMaterialTransparency: true,
+        titleSpacing: 8,
+        title: GlassSurface(
+          role: GlassSurfaceRole.navigation,
+          radius: 22,
+          liveBackdrop: true,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              IconButton(
+                tooltip: "返回",
+                onPressed: Get.back,
+                icon: const Icon(Icons.arrow_back),
+              ),
+              Obx(
+                () => DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    value: controller.searchMode.value,
+                    isDense: true,
+                    alignment: Alignment.center,
+                    dropdownColor: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHigh
+                        .withAlpha(250),
+                    padding: EdgeInsets.zero,
+                    iconSize: 16,
                     items: const [
                       DropdownMenuItem(value: 0, child: Text("房间")),
                       DropdownMenuItem(value: 1, child: Text("主播")),
                     ],
-                    value: controller.searchMode.value,
                     onChanged: (value) => controller.search(mode: value ?? 0),
                   ),
                 ),
-                AppStyle.hGap8,
-              ],
-            ),
-            suffixIcon: IconButton(
-              tooltip: "搜索",
-              onPressed: controller.search,
-              icon: const Icon(Icons.search),
-            ),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: controller.searchController,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  textAlignVertical: TextAlignVertical.center,
+                  decoration: const InputDecoration(
+                    hintText: "搜点什么吧",
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onSubmitted: (_) => controller.search(),
+                ),
+              ),
+              IconButton(
+                tooltip: "搜索",
+                onPressed: controller.search,
+                icon: const Icon(Icons.search),
+              ),
+              Padding(
+                padding: AppStyle.edgeInsetsR12,
+                child: Image.asset(args.site.logo, width: 24),
+              ),
+            ],
           ),
-          onSubmitted: (_) => controller.search(),
         ),
-        actions: [
-          Padding(
-            padding: AppStyle.edgeInsetsR12,
-            child: Image.asset(args.site.logo, width: 24),
-          ),
-        ],
       ),
-      body: SearchListView(controller: controller),
+      body: SearchListView(
+        controller: controller,
+        topClearance: MediaQuery.paddingOf(context).top + 68,
+      ),
     );
   }
 }

@@ -1,6 +1,6 @@
 # HarmonyOS 自适应播放与诊断能力补齐
 
-> 状态：待实施
+> 状态：部分实施
 > 适用平台：HarmonyOS
 > 前置依赖：[02-HarmonyOS直播起播与恢复稳定性](02-HarmonyOS直播起播与恢复稳定性.md)
 > 不包含：多开同屏、照搬 mpv 参数
@@ -177,23 +177,25 @@ supportedMetrics
 
 ## 8. 低延迟能力
 
-### 8.1 首版档位
+### 8.1 已实施的稳定策略
 
-在 [02-HarmonyOS直播起播与恢复稳定性](02-HarmonyOS直播起播与恢复稳定性.md) 真机通过前，OHOS 只使用系统默认缓冲策略。
+当前不向业务层新增档位或公开 API，原生播放器按设备 SDK 分流：
 
-稳定后可以提供：
-
-| 档位 | 行为 |
+| 设备 API | AVPlayer 策略 |
 | --- | --- |
-| 稳定 | 系统默认 AVPlayer 策略 |
-| 自动 | 仅对真机验证通过的协议使用保守短缓冲参数 |
-| 低延迟（实验） | 明确提示风险，限定协议/系统版本并支持快速回滚 |
+| 12–17 | `preferredBufferDuration: 20` |
+| 18+ | `preferredBufferDuration: 20`、`preferredBufferDurationForPlaying: 5`、`thresholdForAutoQuickPlay: 60` |
+
+API 18 的系统智能追帧倍率固定为 1.2 倍，应用无法调成 1.05–1.1 倍。60 秒阈值用于让正常观看基本不触发追帧；它不是系统级关闭开关。策略设置失败时回退系统默认值，不阻断起播。
+
+无请求头 URL 继续走 `player.url`，在 `initialized` 后应用策略再 `prepare()`；带请求头 URL 继续走 `setMediaSource` 并传入相同策略。两条路径均受 generation 防重和迟到回调保护。
 
 ### 8.2 禁止事项
 
 - 不对所有 URL 强制 `preferredBufferDuration: 1`。
 - 不在缺少缓存深度时通过频繁读 position 猜测缓存。
 - 不在直播流上启用未经验证的动态倍速追帧。
+- 不通过 API 20 的倍速接口为直播设置 1.05–1.1 倍。
 - 不把 mpv 的档位名称直接映射成 AVPlayer 参数。
 
 通用追帧算法参考 [../01-直播缓存追帧策略设计.md](../01-直播缓存追帧策略设计.md)，OHOS 只有在平台提供足够遥测后才接入相应阶段。

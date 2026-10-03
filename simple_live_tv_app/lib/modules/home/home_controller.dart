@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_tv_app/app/controller/base_controller.dart';
 
 import 'package:simple_live_tv_app/routes/route_path.dart';
+import 'package:simple_live_tv_app/services/follow_user_service.dart';
 
 class HomeController extends BaseController {
   var datetime = "00:00".obs;
@@ -12,6 +13,7 @@ class HomeController extends BaseController {
   @override
   void onInit() {
     initTimer();
+    unawaited(FollowUserService.instance.onHomePageEntered());
     super.onInit();
   }
 

@@ -26,6 +26,69 @@ int? followStatusForLiveState(LiveStatusState state) {
   };
 }
 
+/// 关注直播状态快照：跨进程重启复用最近一次刷新结果，
+/// 避免快速重开 App 时重复全量刷新（降低风控风险）。
+class FollowStatusSnapshot {
+  const FollowStatusSnapshot({
+    required this.completedAt,
+    required this.statuses,
+  });
+
+  final DateTime completedAt;
+
+  /// follow id -> liveStatus（0=未知 1=未开播 2=直播中）
+  final Map<String, int> statuses;
+
+  Map<String, dynamic> toJson() => {
+        'completedAt': completedAt.toIso8601String(),
+        'statuses': statuses,
+      };
+
+  static FollowStatusSnapshot? fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    final completedAt =
+        DateTime.tryParse(json['completedAt']?.toString() ?? "");
+    if (completedAt == null) return null;
+    final raw = json['statuses'];
+    if (raw is! Map) return null;
+    final statuses = <String, int>{};
+    raw.forEach((key, value) {
+      if (key == null) return;
+      final parsed = int.tryParse(value?.toString() ?? "");
+      if (parsed != null) {
+        statuses[key.toString()] = parsed;
+      }
+    });
+    return FollowStatusSnapshot(
+      completedAt: completedAt,
+      statuses: statuses,
+    );
+  }
+
+  static FollowStatusSnapshot? decode(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      return fromJson(decoded is Map<String, dynamic> ? decoded : null);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String encode() => jsonEncode(toJson());
+
+  bool isFreshWithin(Duration window, {DateTime? now}) {
+    final checkedAt = now ?? DateTime.now();
+    if (completedAt.isAfter(checkedAt)) return false;
+    return checkedAt.difference(completedAt) < window;
+  }
+
+  /// 快照是否覆盖全部关注（关注列表有增删时视为不完整）。
+  bool coversAll(Iterable<FollowUser> items) {
+    return items.every((item) => statuses.containsKey(item.id));
+  }
+}
+
 Duration followPreviewCacheTtl(String _) => const Duration(minutes: 2);
 
 bool isFollowPreviewMetadataStale(FollowUser item, {DateTime? now}) {
@@ -72,12 +135,15 @@ bool applyFollowPreviewDetail(
 
 class FollowUserService extends BasePageController<FollowUser> {
   static const Duration updateStatusCooldown = Duration(seconds: 10);
+  static const Duration enterRefreshReuseWindow = Duration(minutes: 2);
   static const Duration refreshProgressCompletionHold = Duration(seconds: 2);
   static const int paginationThreshold = 400;
   static const String _refreshTaskStateStorageKey =
       LocalStorageService.kFollowRefreshTaskState;
   static const String _refreshTaskTargetsStorageKey =
       LocalStorageService.kFollowRefreshTaskTargets;
+  static const String _statusSnapshotStorageKey =
+      LocalStorageService.kFollowStatusSnapshot;
 
   static FollowUserService get instance => Get.find<FollowUserService>();
 
@@ -98,6 +164,7 @@ class FollowUserService extends BasePageController<FollowUser> {
   int _updateGeneration = 0;
   DateTime? _lastUpdateStatusStartedAt;
   DateTime? _lastEnterRefreshAt;
+  DateTime? _lastRefreshCompletedAt;
   bool _enterRefreshInFlight = false;
   bool _forceNextStatusRefresh = false;
 
@@ -161,6 +228,7 @@ class FollowUserService extends BasePageController<FollowUser> {
         _distinctFollowUsers(DBService.instance.getFollowList()),
       ),
     );
+    _restoreStatusSnapshotIfFresh();
     updateLivingList();
     sortList();
     if (allList.isEmpty) {
@@ -168,11 +236,86 @@ class FollowUserService extends BasePageController<FollowUser> {
     }
   }
 
+  /// 快照仍新鲜且覆盖全部关注时，恢复上次刷新出的直播状态，
+  /// 并让进页复用窗口跨进程生效（快速重开 App 不再重复刷新）。
+  void _restoreStatusSnapshotIfFresh() {
+    final snapshot = _loadStatusSnapshot();
+    if (snapshot == null) return;
+    if (!snapshot.isFreshWithin(enterRefreshReuseWindow)) return;
+    if (!snapshot.coversAll(allList)) {
+      Log.logPrint("关注列表与状态快照不一致，放弃复用并照常刷新");
+      return;
+    }
+    for (final item in allList) {
+      final status = snapshot.statuses[item.id];
+      if (status != null && item.liveStatus.value == 0) {
+        item.liveStatus.value = status;
+      }
+    }
+    final last = _lastRefreshCompletedAt;
+    if (last == null || snapshot.completedAt.isAfter(last)) {
+      _lastRefreshCompletedAt = snapshot.completedAt;
+    }
+    Log.logPrint("已恢复 ${snapshot.statuses.length} 条关注状态快照");
+  }
+
+  void _persistStatusSnapshot() {
+    try {
+      final snapshot = FollowStatusSnapshot(
+        completedAt: DateTime.now(),
+        statuses: {
+          for (final item in allList) item.id: item.liveStatus.value,
+        },
+      );
+      unawaited(
+        LocalStorageService.instance
+            .setValue(_statusSnapshotStorageKey, snapshot.encode()),
+      );
+    } catch (e) {
+      Log.logPrint("保存关注状态快照失败: $e");
+    }
+  }
+
+  FollowStatusSnapshot? _loadStatusSnapshot() {
+    try {
+      final raw = LocalStorageService.instance
+          .getValue<String>(_statusSnapshotStorageKey, "");
+      return FollowStatusSnapshot.decode(raw);
+    } catch (e) {
+      Log.logPrint("读取关注状态快照失败: $e");
+      return null;
+    }
+  }
+
   Future<void> onFollowPageEntered() async {
+    await _refreshOnEnterIfNeeded(reuseRecentResult: true);
+  }
+
+  Future<void> onHomePageEntered() async {
+    // 首页关注区始终尝试后台刷新；关注页仍由设置项控制。
+    await _refreshOnEnterIfNeeded(
+      respectSetting: false,
+      reuseRecentResult: false,
+    );
+  }
+
+  Future<void> _refreshOnEnterIfNeeded({
+    bool respectSetting = true,
+    bool reuseRecentResult = false,
+  }) async {
     loadLocalList();
+    final lastCompletedAt = _lastRefreshCompletedAt;
+    if (reuseRecentResult &&
+        lastCompletedAt != null &&
+        DateTime.now().difference(lastCompletedAt) <
+            enterRefreshReuseWindow) {
+      Log.logPrint("关注页复用首页最近一次刷新结果");
+      return;
+    }
     final now = DateTime.now();
     final shouldRefresh =
-        AppSettingsController.instance.followRefreshOnEnter.value &&
+        (!respectSetting ||
+            AppSettingsController.instance.followRefreshOnEnter.value) &&
         allList.isNotEmpty &&
         !updating.value &&
         !_enterRefreshInFlight &&
@@ -1071,8 +1214,13 @@ class FollowUserService extends BasePageController<FollowUser> {
       }
     } finally {
       if (generation == _updateGeneration) {
+        _lastRefreshCompletedAt = DateTime.now();
         updating.value = false;
         _finishRefreshProgressLifecycle(generation);
+        // 仅全量刷新范围才落盘快照；单页刷新不能代表全部关注的状态。
+        if (resolvedScope.includeAllNormals) {
+          _persistStatusSnapshot();
+        }
       }
     }
   }
@@ -1372,7 +1520,15 @@ class FollowUserService extends BasePageController<FollowUser> {
         final item = queue.removeFirst();
         try {
           final site = Sites.allSites[item.siteId]!;
-          final detail = await site.liveSite.getRoomDetail(roomId: item.roomId);
+          // 快手详情补齐与状态刷新共用同一 scope，便于页面退出时统一取消。
+          final detail = item.siteId == Constant.kKuaishou
+              ? await KuaishouRequestTrace.run(
+                  KuaishouRequestSource.followStatus,
+                  () => site.liveSite.getRoomDetail(roomId: item.roomId),
+                  scopeId: 'kuaishou:follow-refresh',
+                  forceNetwork: true,
+                )
+              : await site.liveSite.getRoomDetail(roomId: item.roomId);
           if (generation != _updateGeneration) {
             return;
           }
@@ -1443,22 +1599,31 @@ class FollowUserService extends BasePageController<FollowUser> {
     Log.w("抖音访问受限，已自动降速并继续刷新当前任务");
   }
 
-  void removeItem(FollowUser item, {bool refresh = true}) async {
+  Future<bool> removeItem(FollowUser item, {bool refresh = true}) async {
     final result = await Utils.showAlertDialog(
       "确定要取消关注 ${item.userName} 吗?",
       title: "取消关注",
     );
     if (!result) {
-      return;
+      return false;
     }
     await DBService.instance.followBox.delete(item.id);
     if (refresh) {
-      refreshData(forceStatus: false);
+      await refreshData(forceStatus: false);
     } else {
       allList.remove(item);
-      list.remove(item);
-      livingList.remove(item);
+      sortList();
     }
+    return true;
+  }
+
+  Future<void> toggleSpecialFollow(FollowUser item) async {
+    item.isSpecialFollow = !item.isSpecialFollow;
+    await DBService.instance.addFollow(item);
+    sortList();
+    SmartDialog.showToast(
+      item.isSpecialFollow ? "已设为特别关注" : "已取消特别关注",
+    );
   }
 
   @override

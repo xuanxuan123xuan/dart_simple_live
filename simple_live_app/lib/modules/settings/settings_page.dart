@@ -35,7 +35,7 @@ class SettingsPage extends StatelessWidget {
                 AppStyle.divider,
                 _entry(
                   icon: Icons.tune,
-                  title: "播放页设置",
+                  title: "直播间界面与快捷键",
                   subtitle: "直播间标签、快捷入口和页面显示项",
                   route: RoutePath.kSettingsPlaybackPage,
                 ),
@@ -48,7 +48,7 @@ class SettingsPage extends StatelessWidget {
               children: [
                 _entry(
                   icon: Remix.play_circle_line,
-                  title: "直播设置",
+                  title: "播放与网络",
                   subtitle: "画质、播放行为、网络与小窗播放",
                   route: RoutePath.kSettingsPlay,
                 ),

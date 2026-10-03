@@ -6,7 +6,12 @@ import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
+import 'package:simple_live_app/modules/live_room/player/ohos_playback_profile_policy.dart';
+import 'package:simple_live_app/modules/settings/background_playback_guide_page.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
+import 'package:simple_live_app/services/ohos_playback_capabilities_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_menu.dart';
 import 'package:simple_live_app/widgets/settings/settings_number.dart';
@@ -19,7 +24,7 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("直播间设置"),
+        title: const Text("播放与网络"),
       ),
       body: ListView(
         padding: AppStyle.pagePadding(),
@@ -104,6 +109,19 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                 ),
                 AppStyle.divider,
                 Obx(
+                  () => SettingsMenu<LivePlayerLayoutMode>(
+                    title: "抖音双屏布局",
+                    subtitle: "自动按直播流比例显示，或手动指定方向",
+                    value: controller.dualScreenLayoutMode.value,
+                    valueMap: {
+                      for (final mode in LivePlayerLayoutMode.values)
+                        mode: mode.label,
+                    },
+                    onChanged: controller.setDualScreenLayoutMode,
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
                   () => SettingsSwitch(
                     title: "使用HTTPS链接",
                     subtitle: "将http链接替换为https",
@@ -135,6 +153,20 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     },
                   ),
                 ),
+                if (supportsBackgroundPlaybackGuide) ...[
+                  AppStyle.divider,
+                  ListTile(
+                    title: const Text('后台播放保活指南'),
+                    subtitle: const Text('查看电池优化、自启动和通知设置建议'),
+                    trailing: const Icon(Icons.chevron_right),
+                    contentPadding: AppStyle.edgeInsetsL16.copyWith(right: 8),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const BackgroundPlaybackGuidePage(),
+                      ),
+                    ),
+                  ),
+                ],
                 if (Utils.isOhos) ...[
                   AppStyle.divider,
                   Obx(
@@ -155,6 +187,8 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     ),
                   ),
                 ],
+                if (Utils.isOhos)
+                  _OhosPlaybackProfileSection(controller: controller),
               ],
             ),
           ),
@@ -220,6 +254,23 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                   ),
                 ),
               ],
+            ),
+          ),
+          Padding(
+            padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
+            child: Text(
+              "关注列表长按预览",
+              style: Get.textTheme.titleSmall,
+            ),
+          ),
+          SettingsCard(
+            child: Obx(
+              () => SettingsSwitch(
+                title: "长按预览时播放声音",
+                subtitle: "关闭时预览小窗保持静音，不影响正在观看的直播",
+                value: controller.liveRoomHoldPreviewAudio.value,
+                onChanged: controller.setLiveRoomHoldPreviewAudio,
+              ),
             ),
           ),
           Padding(
@@ -314,6 +365,106 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
         ],
       ),
     );
+  }
+}
+
+class _OhosPlaybackProfileSection extends StatefulWidget {
+  const _OhosPlaybackProfileSection({required this.controller});
+
+  final AppSettingsController controller;
+
+  @override
+  State<_OhosPlaybackProfileSection> createState() =>
+      _OhosPlaybackProfileSectionState();
+}
+
+class _OhosPlaybackProfileSectionState
+    extends State<_OhosPlaybackProfileSection> {
+  late final Future<OhosPlaybackCapabilities> _capabilities =
+      OhosPlaybackCapabilitiesService.instance.getCapabilities(refresh: true);
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<OhosPlaybackCapabilities>(
+      future: _capabilities,
+      builder: (context, snapshot) {
+        // Do not expose a preference that the native bridge cannot actually
+        // honor. Capability failures are intentionally fail-closed.
+        if (snapshot.connectionState != ConnectionState.done ||
+            snapshot.data?.lowLatencyExperimentalSupported != true) {
+          return const SizedBox.shrink();
+        }
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppStyle.divider,
+            Obx(
+              () => SettingsMenu<String>(
+                title: "播放缓冲策略",
+                subtitle: _subtitleFor(
+                  widget.controller.ohosPlaybackProfile.value,
+                ),
+                value: widget.controller.ohosPlaybackProfile.value,
+                valueMap: const {
+                  AppSettingsController.kOhosPlaybackProfileStable: "稳定",
+                  AppSettingsController
+                      .kOhosPlaybackProfileLowLatencyExperimental: "低延迟（实验）",
+                },
+                onChanged: widget.controller.setOhosPlaybackProfile,
+              ),
+            ),
+            Padding(
+              padding: AppStyle.edgeInsetsH16.copyWith(bottom: 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  "低延迟（实验）仅对 HTTP-FLV 生效，可能增加首帧失败、缓冲和耗电；异常时会在当前播放会话内回退稳定档。实际生效档位以当前播放会话为准。",
+                  style: Get.textTheme.bodySmall?.copyWith(
+                    color: Colors.grey,
+                  ),
+                ),
+              ),
+            ),
+            Obx(
+              () => Padding(
+                padding: AppStyle.edgeInsetsH16.copyWith(bottom: 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _effectiveProfileLabel(),
+                    style: Get.textTheme.bodySmall?.copyWith(
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _subtitleFor(String profile) {
+    if (profile ==
+        AppSettingsController.kOhosPlaybackProfileLowLatencyExperimental) {
+      return "当前偏好：低延迟（实验）；仅 HTTP-FLV 生效，异常时自动回退稳定档";
+    }
+    return "当前偏好：稳定；优先保证起播和连续播放";
+  }
+
+  String _effectiveProfileLabel() {
+    if (!Get.isRegistered<LiveRoomController>()) {
+      return "本次会话实际生效：暂无活动播放会话";
+    }
+    final roomController = Get.find<LiveRoomController>();
+    final status = roomController.ohosPlaybackProfileStatus.value;
+    final reason = roomController.ohosPlaybackProfileReason.value;
+    if (reason == OhosPlaybackProfileDecisionReason.sessionFallback.name) {
+      return "本次会话实际生效：稳定（实验档已回退）";
+    }
+    return "本次会话实际生效：$status";
   }
 }
 

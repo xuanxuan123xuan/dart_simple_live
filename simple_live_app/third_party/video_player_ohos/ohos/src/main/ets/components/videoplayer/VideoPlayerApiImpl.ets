@@ -101,6 +101,9 @@ export class VideoPlayerApiImpl {
     let flutterRenderer = this.flutterState.getTextureRegistry();
     let uri: string = arg.getUri();
     let asset: string = arg.getAsset();
+    let playbackProfile: string = arg.getPlaybackProfile().toString();
+    let appPlayerGeneration: number | null =
+      arg.getAppPlayerGeneration()?.valueOf() ?? null;
     let header: Record<string, string> | null = null;
     arg.getHttpHeaders().forEach((value, key) => {
       if (!header) {
@@ -109,10 +112,12 @@ export class VideoPlayerApiImpl {
       header[key.toString()] = value.toString();
     })
     let textureId: number = flutterRenderer.getTextureId();
-    Log.i(TAG, "enter getRawFd, textureId=" + textureId);
+    Log.i(TAG, "create textureId=" + textureId +
+      " profile=" + playbackProfile +
+      " appGeneration=" + (appPlayerGeneration ?? "none"));
     let surfaceTextureEntry: SurfaceTextureEntry = flutterRenderer.registerTexture(textureId);
     if (asset != null) {
-      Log.i(TAG, "asset create called, asset is" + asset);
+      Log.i(TAG, "asset create called");
       let avMetaExtractor = await media.createAVMetadataExtractor();
       try {
         avMetaExtractor.fdSrc = await this.getContext().resourceManager.getRawFd("flutter_assets/" + asset);
@@ -120,7 +125,7 @@ export class VideoPlayerApiImpl {
         if (mateData.hasVideo == CommonConstants.YES) {
           let avImageGenerator = await media.createAVImageGenerator();
           try {
-            Log.i(TAG, "asset video create");
+             Log.i(TAG, "asset video create");
             avImageGenerator.fdSrc = await this.getContext().resourceManager.getRawFd("flutter_assets/" + asset);
             let pixelMap = await avImageGenerator.fetchFrameByTime(0, media.AVImageQueryOptions.AV_IMAGE_QUERY_NEXT_SYNC, {
               width: -1,
@@ -136,7 +141,7 @@ export class VideoPlayerApiImpl {
         avMetaExtractor.release();
       }
     } else if (uri != null && uri.startsWith("fd://")) {
-      Log.i(TAG, "local create called, file is" + uri);
+      Log.i(TAG, "local create called");
       let avMetaExtractor = await media.createAVMetadataExtractor();
       try {
         avMetaExtractor.fdSrc = {
@@ -146,7 +151,7 @@ export class VideoPlayerApiImpl {
         if (mateData.hasVideo == CommonConstants.YES) {
           let avImageGenerator = await media.createAVImageGenerator();
           try {
-            Log.i(TAG, "local video create");
+             Log.i(TAG, "local video create");
             avImageGenerator.fdSrc = {
               fd: Number.parseInt(uri.replace("fd://", ""))
             };
@@ -167,12 +172,12 @@ export class VideoPlayerApiImpl {
     let eventChannel: EventChannel = new EventChannel(this.flutterState.getBinaryMessenger(), "flutter.io/videoPlayer/videoEvents" + textureId.toString());
     if (asset != null) {
       let rawFileDescriptor: resourceManager.RawFileDescriptor = await this.getContext().resourceManager.getRawFd("flutter_assets/" + asset);
-      let videoPlayer = new VideoPlayer(playerModel, surfaceTextureEntry, rawFileDescriptor, null, eventChannel, this.AudioFocus, null);
+      let videoPlayer = new VideoPlayer(playerModel, surfaceTextureEntry, rawFileDescriptor, null, eventChannel, this.AudioFocus, null, playbackProfile, appPlayerGeneration);
       await videoPlayer.createAVPlayer();
       this.videoPlayers.set(textureId.toString(), videoPlayer);
       this.pipManager?.setActivePlayer(videoPlayer);
     } else if (uri != null) {
-      let videoPlayer = new VideoPlayer(playerModel, surfaceTextureEntry, null, uri, eventChannel, this.AudioFocus, header);
+      let videoPlayer = new VideoPlayer(playerModel, surfaceTextureEntry, null, uri, eventChannel, this.AudioFocus, header, playbackProfile, appPlayerGeneration);
       await videoPlayer.createAVPlayer();
       this.videoPlayers.set(textureId.toString(), videoPlayer);
       this.pipManager?.setActivePlayer(videoPlayer);

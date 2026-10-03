@@ -45,7 +45,7 @@ class RoutePath {
   /// 定时关闭设置
   static const kSettingsAutoExit = "/settings/auto_exit";
 
-  /// 直播间设置
+  /// 播放与网络
   static const kSettingsPlay = "/settings/play";
 
   /// 弹幕关键词屏蔽
@@ -63,7 +63,7 @@ class RoutePath {
   /// 主页设置
   static const kSettingsIndexed = "/settings/indexed";
 
-  /// 播放页设置
+  /// 直播间界面与快捷键
   static const kSettingsPlaybackPage = "/settings/playback_page";
 
   /// 外观设置

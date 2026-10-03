@@ -99,6 +99,7 @@ class SyncScanQRControlelr extends BaseController {
     var address = await Utils.showBottomSheet(
       title: '请选择地址',
       child: ListView.builder(
+        shrinkWrap: true,
         itemBuilder: (_, i) {
           return ListTile(
             title: Text(addressList[i]),

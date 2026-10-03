@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
@@ -6,18 +7,21 @@ import 'package:get/get.dart';
 import 'package:lottie/lottie.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:remixicon/remixicon.dart';
+import 'package:simple_live_app/app/app_glass_mode.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
+import 'package:simple_live_app/modules/live_room/widgets/live_room_tab_bar.dart';
 import 'package:simple_live_app/routes/route_path.dart';
-import 'package:simple_live_app/services/live_link_health_presentation.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/settings/settings_action.dart';
@@ -34,17 +38,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   static const double _ohosFullscreenHorizontalInset = 28.0;
 
   const LiveRoomPage({Key? key}) : super(key: key);
-
-  /// 打开网络诊断弹窗：测试当前播放端点的 TCP 连接耗时与可达性。
-  void showNetworkDiagnose(LiveRoomController controller) {
-    Utils.showModalBottomSheetSafe(
-      context: Get.context!,
-      constraints: const BoxConstraints(maxWidth: 600),
-      builder: (context) => SingleChildScrollView(
-        child: _NetworkDiagnosePanel(controller: controller),
-      ),
-    );
-  }
 
   double _bottomSafeInset(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
@@ -90,6 +83,25 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     );
   }
 
+  Widget _buildGlassAppBarButton({
+    required BuildContext context,
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: _buildStaticGlassPanel(
+        context,
+        radius: 22,
+        child: IconButton(
+          onPressed: onPressed,
+          icon: Icon(icon),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMobileAppBarTitle(BuildContext context) {
     return SizedBox(
       height: kToolbarHeight,
@@ -98,21 +110,37 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           Positioned.fill(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: kToolbarHeight),
-              child: Center(child: _buildRoomTitleText()),
+              child: Center(
+                child: _buildRoomTitleText(),
+              ),
             ),
           ),
           Align(
             alignment: Alignment.centerLeft,
-            child: IconButton(
-              onPressed: () => _handleBack(context),
-              icon: const Icon(Icons.arrow_back),
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: math.max(MediaQuery.paddingOf(context).left, 8),
+              ),
+              child: _buildGlassAppBarButton(
+                context: context,
+                tooltip: "返回",
+                onPressed: () => _handleBack(context),
+                icon: Icons.arrow_back,
+              ),
             ),
           ),
           Align(
             alignment: Alignment.centerRight,
-            child: IconButton(
-              onPressed: showMore,
-              icon: const Icon(Icons.more_horiz),
+            child: Padding(
+              padding: EdgeInsets.only(
+                right: math.max(MediaQuery.paddingOf(context).right, 8),
+              ),
+              child: _buildGlassAppBarButton(
+                context: context,
+                tooltip: "更多",
+                onPressed: showMore,
+                icon: Icons.more_horiz,
+              ),
             ),
           ),
         ],
@@ -146,14 +174,23 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                           left: kToolbarHeight,
                           right: 16,
                         ),
-                        child: Center(child: _buildRoomTitleText()),
+                        child: Center(
+                          child: _buildRoomTitleText(),
+                        ),
                       ),
                     ),
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: IconButton(
-                        onPressed: () => _handleBack(context),
-                        icon: const Icon(Icons.arrow_back),
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          left: math.max(MediaQuery.paddingOf(context).left, 8),
+                        ),
+                        child: _buildGlassAppBarButton(
+                          context: context,
+                          tooltip: "返回",
+                          onPressed: () => _handleBack(context),
+                          icon: Icons.arrow_back,
+                        ),
                       ),
                     ),
                   ],
@@ -163,9 +200,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 width: sidePanelWidth,
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: IconButton(
-                    onPressed: showMore,
-                    icon: const Icon(Icons.more_horiz),
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      right: math.max(MediaQuery.paddingOf(context).right, 8),
+                    ),
+                    child: _buildGlassAppBarButton(
+                      context: context,
+                      tooltip: "更多",
+                      onPressed: showMore,
+                      icon: Icons.more_horiz,
+                    ),
                   ),
                 ),
               ),
@@ -177,19 +221,20 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   }
 
   Widget _buildDesktopOverlayIconButton({
+    required BuildContext context,
     required String tooltip,
     required IconData icon,
     required VoidCallback onPressed,
   }) {
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: Colors.black.withAlpha(120),
-        borderRadius: AppStyle.radius24,
+      child: _buildStaticGlassPanel(
+        context,
+        radius: 24,
+        role: GlassSurfaceRole.platformViewControl,
         child: IconButton(
           onPressed: onPressed,
-          icon: Icon(icon),
-          color: Colors.white,
+          icon: Icon(icon, color: Colors.white),
         ),
       ),
     );
@@ -204,18 +249,20 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         return Stack(
           children: [
             Positioned(
-              left: 8,
-              top: 8,
+              left: 12,
+              top: 12,
               child: _buildDesktopOverlayIconButton(
+                context: context,
                 tooltip: "返回",
                 icon: Icons.arrow_back,
                 onPressed: () => _handleBack(context),
               ),
             ),
             Positioned(
-              right: 8,
-              top: controller.desktopSidePanelCollapsed.value ? 56 : 8,
+              right: 12,
+              top: controller.desktopSidePanelCollapsed.value ? 56 : 12,
               child: _buildDesktopOverlayIconButton(
+                context: context,
                 tooltip: "更多",
                 icon: Icons.more_horiz,
                 onPressed: showMore,
@@ -224,9 +271,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             if (Platform.isWindows &&
                 controller.desktopSidePanelCollapsed.value)
               Positioned(
-                right: 8,
-                top: 8,
+                right: 12,
+                top: 12,
                 child: _buildDesktopOverlayIconButton(
+                  context: context,
                   tooltip: "关闭",
                   icon: Icons.close,
                   onPressed: () => _handleBack(context),
@@ -234,11 +282,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               ),
             if (_isDesktop && controller.desktopSidePanelCollapsed.value)
               Positioned(
-                right: 8,
+                right: 12,
                 top: 0,
                 bottom: 0,
                 child: Center(
                   child: _buildDesktopOverlayIconButton(
+                    context: context,
                     tooltip: "展开聊天区",
                     icon: Icons.chevron_left,
                     onPressed: controller.toggleDesktopSidePanel,
@@ -262,7 +311,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     final page = Obx(() {
       if (controller.loadError.value) {
         return Scaffold(
-          appBar: AppBar(title: const Text("直播间加载失败")),
+          appBar: AppBar(
+            title: const Text("直播间加载失败"),
+          ),
           body: Padding(
             padding: AppStyle.edgeInsetsA12,
             child: Column(
@@ -274,23 +325,34 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   height: 140,
                   repeat: false,
                 ),
-                const Text("直播间加载失败", textAlign: TextAlign.center),
+                const Text(
+                  "直播间加载失败",
+                  textAlign: TextAlign.center,
+                ),
                 AppStyle.vGap4,
                 Text(
                   controller.error?.toString() ?? "未知错误",
                   textAlign: TextAlign.center,
-                  maxLines: 1,
+                  maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
+                if (controller.kuaishouRecoveryHint.isNotEmpty) ...[
+                  AppStyle.vGap4,
+                  Text(
+                    controller.kuaishouRecoveryHint,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
                 AppStyle.vGap4,
                 Text(
                   "${controller.rxSite.value.id} - ${controller.rxRoomId.value}",
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                Wrap(
+                  alignment: WrapAlignment.center,
                   children: [
                     TextButton.icon(
                       onPressed: controller.copyErrorDetail,
@@ -298,10 +360,30 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                       label: const Text("复制信息"),
                     ),
                     TextButton.icon(
-                      onPressed: controller.refreshRoom,
+                      onPressed: controller.kuaishouRefreshBlocked
+                          ? null
+                          : controller.refreshRoom,
                       icon: const Icon(Remix.refresh_line),
-                      label: const Text("刷新"),
+                      label: Text(
+                        controller.kuaishouRefreshBlocked
+                            ? "冷却中 ${formatKuaishouRecoveryCountdown(controller.kuaishouRecoveryRemainingSeconds.value)}"
+                            : "刷新",
+                      ),
                     ),
+                    if (controller.showKuaishouDeviceRecovery)
+                      TextButton.icon(
+                        onPressed: controller
+                                    .kuaishouDeviceRecoveryAvailable.value &&
+                                !controller.kuaishouDeviceRecoveryArmed.value
+                            ? controller.rebuildKuaishouDeviceSession
+                            : null,
+                        icon: const Icon(Remix.restart_line),
+                        label: Text(
+                          controller.kuaishouDeviceRecoveryArmed.value
+                              ? "等待自动重试"
+                              : "重建设备会话",
+                        ),
+                      ),
                   ],
                 ),
               ],
@@ -315,7 +397,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           onPopInvokedWithResult: (didPop, result) {
             controller.exitPlayerWindowMode();
           },
-          child: Scaffold(body: buildMediaPlayer()),
+          child: Scaffold(
+            body: buildMediaPlayer(),
+          ),
         );
       }
       return buildPageUI();
@@ -328,14 +412,12 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       builder: (context, orientation) {
         final shortestSide = MediaQuery.sizeOf(context).shortestSide;
         final isCompactMobile = shortestSide < 600;
-        final usePortraitLayout =
-            PlatformUtils.isMobileApp &&
+        final usePortraitLayout = PlatformUtils.isMobileApp &&
             isCompactMobile &&
             !controller.fullScreenState.value &&
             !controller.smallWindowState.value;
-        final effectiveOrientation = usePortraitLayout
-            ? Orientation.portrait
-            : orientation;
+        final effectiveOrientation =
+            usePortraitLayout ? Orientation.portrait : orientation;
         final hasLandscapeActionPanel =
             effectiveOrientation == Orientation.landscape;
         if (_isDesktop) {
@@ -356,7 +438,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 onEnter: (_) => controller.showControls(),
                 onHover: (_) => controller.showControls(),
                 child: Stack(
-                  children: [body, ..._buildDesktopOverlayButtons(context)],
+                  children: [
+                    body,
+                    ..._buildDesktopOverlayButtons(context),
+                  ],
                 ),
               ),
             ),
@@ -400,19 +485,44 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     if (_isDesktop && controller.desktopSidePanelCollapsed.value) {
       return Column(
         children: [
-          Expanded(child: buildMediaPlayer()),
+          Expanded(
+            child: buildMediaPlayer(),
+          ),
           _buildCollapsedDesktopBottomPanel(context),
         ],
       );
     }
-    return Column(
-      children: [
-        AspectRatio(aspectRatio: 16 / 9, child: buildMediaPlayer()),
-        buildUserProfile(context),
-        buildMessageArea(),
-        buildBottomActions(context),
-      ],
-    );
+    return Obx(() {
+      final glassOff =
+          AppSettingsController.instance.glassMode.value == AppGlassMode.off;
+      final profile = buildUserProfile(
+        context,
+        useStaticSurface: glassOff,
+        showDividers: !glassOff,
+      );
+      return Column(
+        children: [
+          Obx(
+            () => AspectRatio(
+              aspectRatio: controller.douyinLayoutEnabled
+                  ? (controller.douyinVideoAspectRatio ?? 16 / 9)
+                  : 16 / 9,
+              child: buildMediaPlayer(),
+            ),
+          ),
+          if (glassOff) const SizedBox(height: 8),
+          if (glassOff)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: profile,
+            )
+          else
+            profile,
+          buildMessageArea(),
+          buildBottomActions(context),
+        ],
+      );
+    });
   }
 
   Widget buildTabletUI(BuildContext context) {
@@ -424,82 +534,76 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           Expanded(
             child: Row(
               children: [
-                Expanded(child: buildMediaPlayer()),
+                Expanded(
+                  child: buildMediaPlayer(),
+                ),
                 if (!collapsed) _buildExpandedSidePanel(context),
               ],
             ),
           ),
           if (!collapsed)
-            Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                border: Border(
-                  top: BorderSide(color: Colors.grey.withAlpha(25)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+              child: _buildStaticGlassPanel(
+                context,
+                radius: 20,
+                role: GlassSurfaceRole.content,
+                padding: AppStyle.edgeInsetsV4.copyWith(
+                  bottom: _bottomActionInset(context) + 4,
                 ),
-              ),
-              padding: AppStyle.edgeInsetsV4.copyWith(
-                bottom: _bottomActionInset(context) + 4,
-              ),
-              child: Row(
-                children: [
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      textStyle: const TextStyle(fontSize: 14),
-                    ),
-                    onPressed: controller.refreshRoom,
-                    icon: const Icon(Remix.refresh_line),
-                    label: const Text("刷新"),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      _buildGlassActionButton(
+                        context,
+                        label: "刷新",
+                        icon: Remix.refresh_line,
+                        onPressed: controller.refreshRoom,
+                      ),
+                      AppStyle.hGap4,
+                      Obx(
+                        () => controller.followed.value
+                            ? _buildGlassActionButton(
+                                context,
+                                label: "取消关注",
+                                icon: Remix.heart_fill,
+                                onPressed: controller.removeFollowUser,
+                              )
+                            : _buildGlassActionButton(
+                                context,
+                                label: "关注",
+                                icon: Remix.heart_line,
+                                onPressed: controller.followUser,
+                              ),
+                      ),
+                      const Expanded(child: Center()),
+                      _buildGlassActionButton(
+                        context,
+                        label: "分享",
+                        icon: Remix.share_line,
+                        onPressed: controller.share,
+                      ),
+                      _buildGlassActionButton(
+                        context,
+                        label: "复制链接",
+                        icon: Remix.file_copy_line,
+                        onPressed: controller.copyUrl,
+                      ),
+                      Obx(
+                        () => AppSettingsController
+                                .instance.playerShowPlayUrl.value
+                            ? _buildGlassActionButton(
+                                context,
+                                label: "复制播放直链",
+                                icon: Remix.file_copy_line,
+                                onPressed: controller.copyPlayUrl,
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
                   ),
-                  AppStyle.hGap4,
-                  Obx(
-                    () => controller.followed.value
-                        ? TextButton.icon(
-                            style: TextButton.styleFrom(
-                              textStyle: const TextStyle(fontSize: 14),
-                            ),
-                            onPressed: controller.removeFollowUser,
-                            icon: const Icon(Remix.heart_fill),
-                            label: const Text("取消关注"),
-                          )
-                        : TextButton.icon(
-                            style: TextButton.styleFrom(
-                              textStyle: const TextStyle(fontSize: 14),
-                            ),
-                            onPressed: controller.followUser,
-                            icon: const Icon(Remix.heart_line),
-                            label: const Text("关注"),
-                          ),
-                  ),
-                  const Expanded(child: Center()),
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      textStyle: const TextStyle(fontSize: 14),
-                    ),
-                    onPressed: controller.share,
-                    icon: const Icon(Remix.share_line),
-                    label: const Text("分享"),
-                  ),
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      textStyle: const TextStyle(fontSize: 14),
-                    ),
-                    onPressed: controller.copyUrl,
-                    icon: const Icon(Remix.file_copy_line),
-                    label: const Text("复制链接"),
-                  ),
-                  Obx(
-                    () => AppSettingsController.instance.playerShowPlayUrl.value
-                        ? TextButton.icon(
-                            style: TextButton.styleFrom(
-                              textStyle: const TextStyle(fontSize: 14),
-                            ),
-                            onPressed: controller.copyPlayUrl,
-                            icon: const Icon(Remix.file_copy_line),
-                            label: const Text("复制播放直链"),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                ],
+                ),
               ),
             ),
         ],
@@ -511,69 +615,128 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     final showCollapseAction = _isDesktop;
     return SizedBox(
       width: _desktopSidePanelWidth,
-      child: Column(
-        children: [
-          if (showCollapseAction)
-            Container(
-              height: 40,
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                border: Border(
-                  left: BorderSide(color: Colors.grey.withAlpha(25)),
-                  bottom: BorderSide(color: Colors.grey.withAlpha(25)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        child: _buildStaticGlassPanel(
+          context,
+          radius: 24,
+          role: GlassSurfaceRole.content,
+          padding: const EdgeInsets.all(6),
+          child: Column(
+            children: [
+              if (showCollapseAction)
+                Container(
+                  height: 40,
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.grey.withAlpha(25),
+                      ),
+                    ),
+                  ),
+                  alignment: Alignment.centerLeft,
+                  child: Tooltip(
+                    message: "折叠聊天区",
+                    child: IconButton(
+                      onPressed: controller.toggleDesktopSidePanel,
+                      icon: const Icon(Icons.chevron_right),
+                    ),
+                  ),
                 ),
-              ),
-              alignment: Alignment.centerLeft,
-              child: Tooltip(
-                message: "折叠聊天区",
-                child: IconButton(
-                  onPressed: controller.toggleDesktopSidePanel,
-                  icon: const Icon(Icons.chevron_right),
-                ),
-              ),
-            ),
-          Expanded(
-            child: Column(
-              children: [buildUserProfile(context), buildMessageArea()],
-            ),
+              buildUserProfile(context, useStaticSurface: true),
+              const SizedBox(height: 8),
+              buildMessageArea(),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildCollapsedDesktopBottomPanel(BuildContext context) {
-    return Container(
-      height: 48 + _bottomActionInset(context),
-      padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        border: Border(top: BorderSide(color: Colors.grey.withAlpha(25))),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 56,
-            child: Tooltip(
-              message: "展开聊天区",
-              child: IconButton(
-                onPressed: controller.toggleDesktopSidePanel,
-                icon: const Icon(Icons.keyboard_arrow_up),
-              ),
+    return _buildStaticGlassPanel(
+      context,
+      radius: 0,
+      role: GlassSurfaceRole.navigation,
+      child: Container(
+        height: 48 + _bottomActionInset(context),
+        padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(
+              color: Colors.grey.withAlpha(25),
             ),
           ),
-          const Expanded(
-            child: Center(
-              child: Icon(
-                Icons.chat_bubble_outline,
-                size: 18,
-                color: Colors.grey,
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 56,
+              child: Tooltip(
+                message: "展开聊天区",
+                child: IconButton(
+                  onPressed: controller.toggleDesktopSidePanel,
+                  icon: const Icon(Icons.keyboard_arrow_up),
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 56),
-        ],
+            const Expanded(
+              child: Center(
+                child: Icon(
+                  Icons.chat_bubble_outline,
+                  size: 18,
+                  color: Colors.grey,
+                ),
+              ),
+            ),
+            const SizedBox(width: 56),
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildGlassActionButton(
+    BuildContext context, {
+    required String label,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return _buildStaticGlassPanel(
+      context,
+      radius: 18,
+      child: TextButton.icon(
+        style: TextButton.styleFrom(
+          textStyle: const TextStyle(fontSize: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+        onPressed: onPressed,
+        icon: Icon(icon),
+        label: Text(label),
+      ),
+    );
+  }
+
+  Widget _buildStaticGlassPanel(
+    BuildContext context, {
+    required Widget child,
+    required double radius,
+    EdgeInsetsGeometry? padding,
+    GlassSurfaceRole role = GlassSurfaceRole.control,
+  }) {
+    // Stay linked to the app's liquid-glass setting, but avoid the live video
+    // backdrop path: the latter mirrors moving frames inside the glass and is
+    // the source of both the odd refraction and extra raster work.
+    return GlassSurface(
+      role: role,
+      radius: radius,
+      padding: padding,
+      liveBackdrop: false,
+      disablePlatformViewBackdrop: true,
+      child: child,
     );
   }
 
@@ -600,8 +763,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           final revision = controller.ohosPlayerRevision.value;
           controller.ohosScaleRevision.value;
           final fullScreen = controller.fullScreenState.value;
-          final controlsVisible =
-              controller.showControlsState.value &&
+          final controlsVisible = controller.showControlsState.value &&
               !controller.lockControlsState.value;
           final mediaQuery = MediaQuery.of(context);
           final safePadding = EdgeInsets.fromLTRB(
@@ -615,7 +777,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               fit: StackFit.expand,
               children: [
                 const Center(
-                  child: Text("未开播", style: TextStyle(color: Colors.white)),
+                  child: Text(
+                    "未开播",
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ),
                 if (fullScreen)
                   _buildOhosTopBarOverlay(
@@ -677,13 +842,19 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   key: controller.ohosPlayerWidgetKey,
                   url: url,
                   revision: revision,
+                  sessionGeneration: controller.ohosPlaybackSessionGeneration,
+                  requestedPlaybackProfile:
+                      AppSettingsController.instance.ohosPlaybackProfile.value,
                   headers: controller.playHeaders,
                   onError: controller.mediaError,
                   onControllerReady: controller.attachOhosVideoController,
                   onControllerDisposed: controller.detachOhosVideoController,
                   onGenerationValueChanged:
                       controller.updateOhosVideoStateForGeneration,
+                  onTelemetry: controller.updateOhosTelemetryForGeneration,
                   onFirstFrame: controller.updateOhosFirstFrameForGeneration,
+                  onPlaybackProfileChanged:
+                      controller.updateOhosPlaybackProfileDecision,
                   onCompleted: controller.mediaEnd,
                   initialVolume: controller.ohosVolume.value,
                   fit: fit,
@@ -773,7 +944,11 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           IconButton(
             tooltip: "退出全屏",
             onPressed: controller.exitFull,
-            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
+            icon: const Icon(
+              Icons.arrow_back,
+              color: Colors.white,
+              size: 24,
+            ),
           ),
           AppStyle.hGap12,
           Expanded(
@@ -817,12 +992,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         return Container(
           height: 48 + padding.bottom,
           padding: EdgeInsets.only(
-            left: fullScreen
-                ? padding.left + _ohosFullscreenHorizontalInset
-                : 0,
-            right: fullScreen
-                ? padding.right + _ohosFullscreenHorizontalInset
-                : 0,
+            left:
+                fullScreen ? padding.left + _ohosFullscreenHorizontalInset : 0,
+            right:
+                fullScreen ? padding.right + _ohosFullscreenHorizontalInset : 0,
             bottom: padding.bottom,
           ),
           decoration: const BoxDecoration(
@@ -867,7 +1040,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   padding: const EdgeInsets.only(left: 8),
                   child: Text(
                     controller.liveDuration.value,
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
               const Spacer(),
@@ -887,7 +1063,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   onPressed: () => showQualitesInfo(controller),
                   child: Text(
                     controller.currentQualityInfo.value,
-                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                    ),
                   ),
                 ),
               if (fullScreen && !compact && controller.playUrls.isNotEmpty)
@@ -895,7 +1074,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   onPressed: () => showLinesInfo(controller),
                   child: Text(
                     controller.currentLineInfo.value,
-                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                    ),
                   ),
                 ),
               if (compact)
@@ -1000,7 +1182,19 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   Widget _buildMediaPlayerContent() {
     var boxFit = BoxFit.contain;
     double? aspectRatio;
-    if (AppSettingsController.instance.scaleMode.value == 0) {
+    if (controller.douyinLayoutEnabled) {
+      final scaleMode = AppSettingsController.instance.scaleMode.value;
+      boxFit = scaleMode == 1
+          ? BoxFit.fill
+          : scaleMode == 2
+              ? BoxFit.cover
+              : BoxFit.contain;
+      aspectRatio = scaleMode == 3
+          ? 16 / 9
+          : scaleMode == 4
+              ? 4 / 3
+              : null;
+    } else if (AppSettingsController.instance.scaleMode.value == 0) {
       boxFit = BoxFit.contain;
     } else if (AppSettingsController.instance.scaleMode.value == 1) {
       boxFit = BoxFit.fill;
@@ -1015,7 +1209,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     }
     return Stack(
       children: [
-        const Positioned.fill(child: ColoredBox(color: Colors.black)),
+        const Positioned.fill(
+          child: ColoredBox(color: Colors.black),
+        ),
         Video(
           key: controller.globalPlayerKey,
           controller: controller.videoController,
@@ -1044,8 +1240,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
         Obx(
           () => Visibility(
-            visible:
-                controller.waitingForPlaybackUrl.value &&
+            visible: controller.waitingForPlaybackUrl.value &&
                 !controller.showOfflineOverlay,
             child: const Center(
               child: Text(
@@ -1064,20 +1259,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   top: 12,
                   child: Container(
                     constraints: const BoxConstraints(maxWidth: 340),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
                       color: Colors.black.withAlpha(180),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       controller.networkHint.value,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.white70,
-                      ),
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.white70),
                     ),
                   ),
                 ),
@@ -1086,16 +1277,28 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     );
   }
 
-  Widget buildUserProfile(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        border: Border(
-          top: BorderSide(color: Colors.grey.withAlpha(25)),
-          bottom: BorderSide(color: Colors.grey.withAlpha(25)),
-        ),
+  Widget buildUserProfile(
+    BuildContext context, {
+    bool useStaticSurface = false,
+    bool showDividers = true,
+  }) {
+    final content = Container(
+      decoration: showDividers
+          ? BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                  color: Colors.grey.withAlpha(25),
+                ),
+                bottom: BorderSide(
+                  color: Colors.grey.withAlpha(25),
+                ),
+              ),
+            )
+          : null,
+      padding: AppStyle.edgeInsetsA8.copyWith(
+        left: 12,
+        right: 12,
       ),
-      padding: AppStyle.edgeInsetsA8.copyWith(left: 12, right: 12),
       child: Obx(
         () => Row(
           mainAxisAlignment: MainAxisAlignment.start,
@@ -1125,7 +1328,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   AppStyle.vGap4,
                   Row(
                     children: [
-                      Image.asset(controller.site.logo, width: 20),
+                      Image.asset(
+                        controller.site.logo,
+                        width: 20,
+                      ),
                       AppStyle.hGap4,
                       Text(
                         controller.site.name,
@@ -1143,10 +1349,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Remix.fire_fill, size: 20, color: Colors.orange),
+                const Icon(
+                  Remix.fire_fill,
+                  size: 20,
+                  color: Colors.orange,
+                ),
                 AppStyle.hGap4,
                 Text(
-                  Utils.onlineToString(controller.online.value),
+                  Utils.onlineToString(
+                    controller.online.value,
+                  ),
                   style: const TextStyle(fontSize: 14),
                 ),
               ],
@@ -1155,67 +1367,99 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
       ),
     );
+    if (useStaticSurface) {
+      return _buildStaticGlassPanel(
+        context,
+        radius: 16,
+        role: GlassSurfaceRole.content,
+        child: content,
+      );
+    }
+    return _buildStaticGlassPanel(context, radius: 0, child: content);
   }
 
   Widget buildBottomActions(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        border: Border(top: BorderSide(color: Colors.grey.withAlpha(25))),
-      ),
-      padding: EdgeInsets.only(bottom: _bottomActionInset(context)),
-      child: Row(
-        children: [
-          Expanded(
-            child: Obx(
-              () => controller.followed.value
-                  ? TextButton.icon(
-                      style: TextButton.styleFrom(
-                        textStyle: const TextStyle(fontSize: 14),
-                      ),
-                      onPressed: controller.removeFollowUser,
-                      icon: const Icon(Remix.heart_fill),
-                      label: const Text("取消关注"),
-                    )
-                  : TextButton.icon(
-                      style: TextButton.styleFrom(
-                        textStyle: const TextStyle(fontSize: 14),
-                      ),
-                      onPressed: controller.followUser,
-                      icon: const Icon(Remix.heart_line),
-                      label: const Text("关注"),
-                    ),
+    return Obx(() {
+      final glassOff =
+          AppSettingsController.instance.glassMode.value == AppGlassMode.off;
+      Widget action(Widget child) => Expanded(
+            child: Padding(
+              padding: glassOff
+                  ? const EdgeInsets.symmetric(horizontal: 4)
+                  : EdgeInsets.zero,
+              child: child,
             ),
-          ),
-          Expanded(
-            child: TextButton.icon(
-              style: TextButton.styleFrom(
-                textStyle: const TextStyle(fontSize: 14),
+          );
+      final content = Container(
+        // In the non-glass mode each action is its own surface. Keep the
+        // navigation background flat so the surfaces do not merge into one
+        // bordered strip or leave a distracting divider above it.
+        color: glassOff ? Theme.of(context).colorScheme.surface : null,
+        decoration: glassOff
+            ? null
+            : BoxDecoration(
+                border: Border(
+                  top: BorderSide(
+                    color: Colors.grey.withAlpha(25),
+                  ),
+                ),
               ),
-              onPressed: controller.refreshRoom,
-              icon: const Icon(Remix.refresh_line),
-              label: const Text("刷新"),
-            ),
-          ),
-          Expanded(
-            child: TextButton.icon(
-              style: TextButton.styleFrom(
-                textStyle: const TextStyle(fontSize: 14),
+        padding: glassOff
+            ? EdgeInsets.fromLTRB(4, 8, 4, _bottomActionInset(context) + 8)
+            : EdgeInsets.only(bottom: _bottomActionInset(context)),
+        child: Row(
+          children: [
+            action(
+              Obx(
+                () => controller.followed.value
+                    ? _buildGlassActionButton(
+                        context,
+                        label: "取消关注",
+                        icon: Remix.heart_fill,
+                        onPressed: controller.removeFollowUser,
+                      )
+                    : _buildGlassActionButton(
+                        context,
+                        label: "关注",
+                        icon: Remix.heart_line,
+                        onPressed: controller.followUser,
+                      ),
               ),
-              onPressed: controller.share,
-              icon: const Icon(Remix.share_line),
-              label: const Text("分享"),
             ),
-          ),
-        ],
-      ),
-    );
+            action(
+              _buildGlassActionButton(
+                context,
+                label: "刷新",
+                icon: Remix.refresh_line,
+                onPressed: controller.refreshRoom,
+              ),
+            ),
+            action(
+              _buildGlassActionButton(
+                context,
+                label: "分享",
+                icon: Remix.share_line,
+                onPressed: controller.share,
+              ),
+            ),
+          ],
+        ),
+      );
+      if (glassOff) {
+        return content;
+      }
+      return _buildStaticGlassPanel(
+        context,
+        radius: 0,
+        role: GlassSurfaceRole.navigation,
+        child: content,
+      );
+    });
   }
 
   Widget buildMessageArea() {
     return Obx(() {
-      final hasSuperChatTab =
-          controller.site.id == Constant.kBiliBili ||
+      final hasSuperChatTab = controller.site.id == Constant.kBiliBili ||
           controller.site.id == Constant.kHuya;
       final tabs = <Widget>[];
       final pages = <Widget>[];
@@ -1236,8 +1480,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                   controller.superChats.isNotEmpty
                       ? "${controller.site.id == Constant.kHuya ? "头条" : "SC"}(${controller.superChats.length})"
                       : controller.site.id == Constant.kHuya
-                      ? "头条"
-                      : "SC",
+                          ? "头条"
+                          : "SC",
                 ),
               ),
             );
@@ -1255,7 +1499,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             }
             keys.add(key);
             tabs.add(
-              Tab(text: controller.site.id == Constant.kDouyu ? "亲密榜" : "贡献榜"),
+              Tab(
+                text: controller.site.id == Constant.kDouyu ? "亲密榜" : "贡献榜",
+              ),
             );
             pages.add(
               KeepAliveWrapper(
@@ -1295,10 +1541,34 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         tabs.add(const Tab(text: "聊天"));
         pages.add(buildChatList());
       }
+      String tabLabel(String key) {
+        switch (key) {
+          case "chat":
+            return "聊天";
+          case "super_chat":
+            return controller.superChats.isNotEmpty
+                ? "${controller.site.id == Constant.kHuya ? "头条" : "SC"}(${controller.superChats.length})"
+                : controller.site.id == Constant.kHuya
+                    ? "头条"
+                    : "SC";
+          case "follow":
+            return "关注";
+          case "contribution_rank":
+            return controller.site.id == Constant.kDouyu ? "亲密榜" : "贡献榜";
+          case "event_flow":
+            return controller.liveEventFlows.isNotEmpty
+                ? "动态(${controller.liveEventFlows.length})"
+                : "动态";
+          case "settings":
+            return "设置";
+          default:
+            return key;
+        }
+      }
+
       final selectedKey = controller.liveRoomSelectedPanelKey.value;
-      final initialIndex = keys.contains(selectedKey)
-          ? keys.indexOf(selectedKey)
-          : 0;
+      final initialIndex =
+          keys.contains(selectedKey) ? keys.indexOf(selectedKey) : 0;
       return Expanded(
         child: DefaultTabController(
           key: ValueKey(keys.join("|")),
@@ -1306,18 +1576,27 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           initialIndex: initialIndex,
           child: Column(
             children: [
-              TabBar(
-                indicatorSize: TabBarIndicatorSize.tab,
-                labelPadding: EdgeInsets.zero,
-                indicatorWeight: 1.0,
-                onTap: (index) {
-                  if (index >= 0 && index < keys.length) {
-                    controller.liveRoomSelectedPanelKey.value = keys[index];
-                  }
+              Builder(
+                builder: (context) {
+                  final tabController = DefaultTabController.of(context);
+                  return LiveRoomTabBar(
+                    controller: tabController,
+                    labels: keys.map(tabLabel).toList(growable: false),
+                    keys: keys,
+                    onTabSelected: (index) => _selectLiveRoomTab(
+                      tabController,
+                      keys,
+                      index,
+                    ),
+                    iconBuilder: _liveRoomTabIcon,
+                  );
                 },
-                tabs: tabs,
               ),
-              Expanded(child: TabBarView(children: pages)),
+              Expanded(
+                child: TabBarView(
+                  children: pages,
+                ),
+              ),
             ],
           ),
         ),
@@ -1325,38 +1604,77 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     });
   }
 
+  void _selectLiveRoomTab(
+    TabController tabController,
+    List<String> keys,
+    int index,
+  ) {
+    if (index < 0 || index >= keys.length) return;
+    controller.liveRoomSelectedPanelKey.value = keys[index];
+    if (tabController.index != index) tabController.animateTo(index);
+  }
+
+  IconData _liveRoomTabIcon(String key, bool active) {
+    return switch (key) {
+      'chat' => active ? Icons.chat_bubble : Icons.chat_bubble_outline,
+      'super_chat' => active ? Icons.star : Icons.star_border,
+      'follow' => active ? Icons.favorite : Icons.favorite_border,
+      'contribution_rank' =>
+        active ? Icons.leaderboard : Icons.leaderboard_outlined,
+      'event_flow' => active ? Icons.bolt : Icons.bolt_outlined,
+      'settings' => active ? Icons.settings : Icons.settings_outlined,
+      _ => active ? Icons.circle : Icons.circle_outlined,
+    };
+  }
+
   Widget buildChatList() {
-    return Stack(
-      children: [
-        ListView.separated(
-          controller: controller.scrollController,
-          reverse: false,
-          separatorBuilder: (_, i) => SizedBox(
-            // *2与原来的EdgeInsets.symmetric(vertical: )做兼容
-            height: AppSettingsController.instance.chatTextGap.value * 2,
-          ),
-          padding: AppStyle.edgeInsetsA12,
-          itemCount: controller.messages.length,
-          itemBuilder: (_, i) {
-            var item = controller.messages[i];
-            return buildMessageItem(item);
-          },
-        ),
-        Visibility(
-          visible: controller.disableAutoScroll.value,
-          child: Positioned(
-            right: 12,
-            bottom: 12,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                controller.forceChatScrollToBottom();
-              },
-              icon: const Icon(Icons.expand_more),
-              label: const Text("最新"),
+    return Builder(
+      builder: (context) => Obx(
+        () => Stack(
+          children: [
+            ScrollConfiguration(
+              behavior:
+                  ScrollConfiguration.of(context).copyWith(scrollbars: false),
+              child: RawScrollbar(
+                controller: controller.scrollController,
+                thumbVisibility: _isDesktop,
+                thickness: 4,
+                radius: const Radius.circular(4),
+                mainAxisMargin: 8,
+                crossAxisMargin: 6,
+                child: ListView.separated(
+                  controller: controller.scrollController,
+                  reverse: false,
+                  separatorBuilder: (_, i) => SizedBox(
+                    // *2与原来的EdgeInsets.symmetric(vertical: )做兼容
+                    height: AppSettingsController.instance.chatTextGap.value * 2,
+                  ),
+                  padding: AppStyle.edgeInsetsA12.copyWith(right: 18),
+                  itemCount: controller.messages.length,
+                  itemBuilder: (_, i) {
+                    var item = controller.messages[i];
+                    return buildMessageItem(item);
+                  },
+                ),
+              ),
             ),
-          ),
+            Visibility(
+              visible: controller.disableAutoScroll.value,
+              child: Positioned(
+                right: 12,
+                bottom: 12,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    controller.forceChatScrollToBottom();
+                  },
+                  icon: const Icon(Icons.expand_more),
+                  label: const Text("最新"),
+                ),
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 
@@ -1462,7 +1780,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
         Padding(
           padding: AppStyle.edgeInsetsA12,
-          child: Text("当前直播间", style: Get.textTheme.titleSmall),
+          child: Text(
+            "当前直播间",
+            style: Get.textTheme.titleSmall,
+          ),
         ),
         SettingsCard(
           child: Column(
@@ -1471,14 +1792,13 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               Obx(
                 () => SettingsNumber(
                   title: "文字大小",
-                  value: AppSettingsController.instance.chatTextSize.value
-                      .toInt(),
+                  value:
+                      AppSettingsController.instance.chatTextSize.value.toInt(),
                   min: 8,
                   max: 36,
                   onChanged: (e) {
-                    AppSettingsController.instance.setChatTextSize(
-                      e.toDouble(),
-                    );
+                    AppSettingsController.instance
+                        .setChatTextSize(e.toDouble());
                   },
                 ),
               ),
@@ -1508,15 +1828,27 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
         Padding(
           padding: AppStyle.edgeInsetsA12,
-          child: Text("更多设置", style: Get.textTheme.titleSmall),
+          child: Text(
+            "更多设置",
+            style: Get.textTheme.titleSmall,
+          ),
         ),
         SettingsCard(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SettingsAction(title: "网络诊断与播放信息", onTap: _showDiagnosticsMenu),
+              SettingsAction(
+                title: "网络诊断与播放信息",
+                onTap: () => showQuickAccess(
+                  controller,
+                  openDiagnostics: true,
+                ),
+              ),
               AppStyle.divider,
-              SettingsAction(title: "关键词屏蔽", onTap: controller.showDanmuShield),
+              SettingsAction(
+                title: "关键词屏蔽",
+                onTap: controller.showDanmuShield,
+              ),
               AppStyle.divider,
               SettingsAction(
                 title: "完整弹幕设置",
@@ -1539,6 +1871,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       child: controller.buildFollowUserSelection(
         onClose: () {},
         scrollController: controller.liveRoomFollowScrollController,
+        enableHoldPreview: true,
       ),
     );
   }
@@ -1546,7 +1879,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   void showMore() {
     Utils.showModalBottomSheetSafe(
       context: Get.context!,
-      constraints: const BoxConstraints(maxWidth: 600),
+      constraints: const BoxConstraints(
+        maxWidth: 600,
+      ),
       isScrollControlled: true,
       useSafeArea: true,
       builder: (context) => Utils.bottomSheetSafeArea(
@@ -1611,7 +1946,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Get.back();
-                _showDiagnosticsMenu();
+                showQuickAccess(controller, openDiagnostics: true);
               },
             ),
           ],
@@ -1624,6 +1959,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     Utils.showBottomSheet(
       title: "播放调整",
       child: ListView(
+        shrinkWrap: true,
         children: [
           ListTile(
             leading: const Icon(Icons.play_circle_outline),
@@ -1660,6 +1996,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     Utils.showBottomSheet(
       title: "分享与链接",
       child: ListView(
+        shrinkWrap: true,
         children: [
           ListTile(
             leading: const Icon(Icons.share_outlined),
@@ -1703,35 +2040,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     );
   }
 
-  void _showDiagnosticsMenu() {
-    Utils.showBottomSheet(
-      title: "网络诊断与播放信息",
-      maxHeightFactor: 0.5,
-      child: ListView(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.network_check_outlined),
-            title: const Text("网络诊断"),
-            subtitle: const Text("检查当前播放线路和公共 DNS 的连接"),
-            onTap: () {
-              Get.back();
-              showNetworkDiagnose(controller);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.info_outline_rounded),
-            title: const Text("播放信息"),
-            subtitle: const Text("查看当前清晰度、线路和播放器状态"),
-            onTap: () {
-              Get.back();
-              controller.showDebugInfo();
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
   String parseDuration(int sec) {
     // 转为时分秒
     var h = sec ~/ 3600;
@@ -1744,222 +2052,5 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       return "${m.toString().padLeft(2, '0')}分钟${s.toString().padLeft(2, '0')}秒";
     }
     return "${s.toString().padLeft(2, '0')}秒";
-  }
-}
-
-/// 网络诊断面板：测试当前播放端点的 TCP 连接耗时与可达性。
-class _NetworkDiagnosePanel extends StatefulWidget {
-  final LiveRoomController controller;
-
-  const _NetworkDiagnosePanel({required this.controller});
-
-  @override
-  State<_NetworkDiagnosePanel> createState() => _NetworkDiagnosePanelState();
-}
-
-class _NetworkDiagnosePanelState extends State<_NetworkDiagnosePanel> {
-  final List<NetworkDiagnosisResult> _results = [];
-  LiveLinkHealthPresentation? _healthPresentation;
-  bool _running = true;
-  String _summary = "";
-
-  @override
-  void initState() {
-    super.initState();
-    _run();
-  }
-
-  Future<void> _run() async {
-    setState(() {
-      _running = true;
-      _results.clear();
-      _summary = "";
-    });
-    final playbackResult = await NetworkDiagnoseService.diagnosePlaybackUrl(
-      widget.controller.currentNetworkDiagnosePlaybackUrl,
-    );
-    final results = [if (playbackResult != null) playbackResult];
-    if (!mounted) return;
-    final summary = NetworkDiagnoseService.summarizePlaybackEndpoint(
-      playbackResult,
-    );
-    final healthSnapshot = widget.controller.currentLiveLinkHealthSnapshot;
-    setState(() {
-      _results
-        ..clear()
-        ..addAll(results);
-      _healthPresentation = healthSnapshot == null
-          ? null
-          : presentLiveLinkHealthSnapshot(
-              healthSnapshot,
-              currentBuffering:
-                  widget.controller.currentLiveLinkHealthBuffering,
-            );
-      _summary = summary;
-      _running = false;
-    });
-  }
-
-  Widget _buildHealthSection() {
-    final presentation = _healthPresentation;
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.black.withAlpha(10),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  "直播链路健康度",
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-              ),
-              Text(
-                presentation?.levelLabel ?? liveLinkHealthDataUnavailableLabel,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                presentation?.scoreLabel ?? liveLinkHealthDataUnavailableLabel,
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            "主要原因：${presentation?.primaryCauseLabel ?? liveLinkHealthDataUnavailableLabel}",
-            style: const TextStyle(fontSize: 12),
-          ),
-          if (presentation != null) ...[
-            const SizedBox(height: 8),
-            for (final row in presentation.rows)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        row.label,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: Text(
-                        row.value,
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    "网络诊断",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-                ),
-                IconButton(
-                  tooltip: "重新测试",
-                  onPressed: _running ? null : _run,
-                  icon: const Icon(Icons.refresh),
-                ),
-                IconButton(onPressed: Get.back, icon: const Icon(Icons.close)),
-              ],
-            ),
-            if (_running)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              )
-            else ...[
-              _buildHealthSection(),
-              const SizedBox(height: 8),
-              for (final r in _results)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          r.host,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      Text(
-                        r.lost == r.samples
-                            ? "不可达"
-                            : "${r.avgMs.toStringAsFixed(0)}ms",
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: r.lost == r.samples
-                              ? Colors.red
-                              : r.lost > 0 || r.avgMs > 250
-                              ? Colors.orange
-                              : Colors.green,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        r.lost > 0 ? "连接失败 ${r.lost}/${r.samples}" : "连接正常",
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        r.lost == r.samples ? "不可达" : r.latencyLabel,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.black.withAlpha(10),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(_summary, style: const TextStyle(fontSize: 13)),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
   }
 }

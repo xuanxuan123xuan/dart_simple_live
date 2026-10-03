@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/modules/sync/profile_backup/profile_backup_controller.dart';
+import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 
 class ProfileBackupPage extends GetView<ProfileBackupController> {
@@ -11,41 +12,187 @@ class ProfileBackupPage extends GetView<ProfileBackupController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("配置包"),
-      ),
+      appBar: AppBar(title: const Text("配置包")),
       body: ListView(
         padding: AppStyle.pagePadding(),
         children: [
           Padding(
             padding: AppStyle.edgeInsetsA12.copyWith(top: 0),
-            child: Text(
-              "跨平台迁移",
-              style: Get.textTheme.titleSmall,
+            child: Text("导出内容", style: Get.textTheme.titleSmall),
+          ),
+          _buildExportCard(),
+          Padding(
+            padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
+            child: Text("导入配置包", style: Get.textTheme.titleSmall),
+          ),
+          _buildImportCard(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExportCard() {
+    return SettingsCard(
+      child: Column(
+        children: [
+          _buildOptionTile(
+            icon: Icons.settings_outlined,
+            title: "设置",
+            subtitle: "播放、显示、刷新等偏好设置",
+            value: controller.exportSettings,
+            onChanged: (value) => controller.exportSettings.value = value,
+            supportedUpstreamModes: const {UpstreamExportMode.dataAndSync},
+          ),
+          AppStyle.divider,
+          _buildOptionTile(
+            icon: Icons.people_outline,
+            title: "关注列表与标签",
+            subtitle: "关注主播、标签和特别关注标记",
+            value: controller.exportFollows,
+            onChanged: (value) => controller.exportFollows.value = value,
+            supportedUpstreamModes: const {UpstreamExportMode.followList},
+          ),
+          AppStyle.divider,
+          _buildOptionTile(
+            icon: Icons.history,
+            title: "观看历史",
+            subtitle: "本机直播间观看记录",
+            value: controller.exportHistories,
+            onChanged: (value) => controller.exportHistories.value = value,
+            supportedUpstreamModes: const {},
+          ),
+          AppStyle.divider,
+          _buildOptionTile(
+            icon: Icons.shield_outlined,
+            title: "弹幕屏蔽规则",
+            subtitle: "关键词和用户屏蔽规则",
+            value: controller.exportShields,
+            onChanged: (value) => controller.exportShields.value = value,
+            supportedUpstreamModes: const {UpstreamExportMode.dataAndSync},
+          ),
+          AppStyle.divider,
+          _buildOptionTile(
+            icon: Icons.bookmarks_outlined,
+            title: "屏蔽预设",
+            subtitle: "已保存的屏蔽规则预设",
+            value: controller.exportShieldPresets,
+            onChanged: (value) => controller.exportShieldPresets.value = value,
+            supportedUpstreamModes: const {},
+          ),
+          AppStyle.divider,
+          _buildOptionTile(
+            icon: Icons.lock_outline,
+            title: "账号登录信息",
+            subtitle: "包含平台 Cookie，默认不导出",
+            value: controller.exportAccounts,
+            onChanged: (value) => controller.exportAccounts.value = value,
+            supportedUpstreamModes: const {},
+          ),
+          AppStyle.divider,
+          _buildUpstreamModeTile(
+            mode: UpstreamExportMode.dataAndSync,
+            title: "兼容上游旧版配置包",
+            subtitle: "适用于上游“我的 - 数据与同步”，导出设置和关键词屏蔽规则",
+          ),
+          AppStyle.divider,
+          _buildUpstreamModeTile(
+            mode: UpstreamExportMode.followList,
+            title: "兼容上游关注列表",
+            subtitle: "适用于上游关注页导入，导出为顶层关注数组",
+          ),
+          AppStyle.divider,
+          Padding(
+            padding: AppStyle.edgeInsetsA12,
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: controller.exportProfile,
+                icon: const Icon(Remix.download_2_line),
+                label: const Text("导出配置包"),
+              ),
             ),
           ),
-          SettingsCard(
-            child: Column(
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImportCard() {
+    return SettingsCard(
+      child: Column(
+        children: [
+          Padding(
+            padding: AppStyle.edgeInsetsA12,
+            child: Row(
               children: [
-                ListTile(
-                  leading: const Icon(Remix.download_2_line),
-                  title: const Text("导出配置包"),
-                  subtitle: const Text("包含设置、关注、历史、屏蔽词、屏蔽用户和预设"),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: controller.exportProfile,
-                ),
-                AppStyle.divider,
-                ListTile(
-                  leading: const Icon(Remix.upload_2_line),
-                  title: const Text("导入配置包"),
-                  subtitle: const Text("支持合并或覆盖，不导入 WebDAV 密码"),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: controller.importProfile,
+                const Icon(Icons.checklist_rtl_outlined),
+                AppStyle.hGap12,
+                Expanded(
+                  child: Text(
+                    "选择配置包后会自动识别包内含有的内容，再勾选需要导入的分类并确认。",
+                    style: Get.textTheme.bodySmall,
+                  ),
                 ),
               ],
             ),
           ),
+          AppStyle.divider,
+          Padding(
+            padding: AppStyle.edgeInsetsA12,
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: controller.importProfile,
+                icon: const Icon(Remix.upload_2_line),
+                label: const Text("选择配置包"),
+              ),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildOptionTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required RxBool value,
+    required ValueChanged<bool> onChanged,
+    Set<UpstreamExportMode>? supportedUpstreamModes,
+  }) {
+    return Obx(() {
+      final mode = controller.exportUpstreamMode.value;
+      final enabled =
+          mode == UpstreamExportMode.none ||
+          supportedUpstreamModes == null ||
+          supportedUpstreamModes.contains(mode);
+      return CheckboxListTile(
+        secondary: Icon(icon),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        value: value.value,
+        onChanged: enabled ? (checked) => onChanged(checked ?? false) : null,
+        controlAffinity: ListTileControlAffinity.trailing,
+      );
+    });
+  }
+
+  Widget _buildUpstreamModeTile({
+    required UpstreamExportMode mode,
+    required String title,
+    required String subtitle,
+  }) {
+    return Obx(
+      () => CheckboxListTile(
+        secondary: const Icon(Icons.swap_horiz_outlined),
+        title: Text(title),
+        subtitle: Text(subtitle, style: Get.textTheme.bodySmall),
+        value: controller.exportUpstreamMode.value == mode,
+        onChanged: (checked) => controller.setUpstreamMode(
+          checked == true ? mode : UpstreamExportMode.none,
+        ),
+        controlAffinity: ListTileControlAffinity.trailing,
       ),
     );
   }

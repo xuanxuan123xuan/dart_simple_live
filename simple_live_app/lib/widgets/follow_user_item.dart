@@ -18,6 +18,8 @@ class FollowUserItem extends StatelessWidget {
   final Function()? onSpecialTap;
   final Function()? onTap;
   final Function()? onLongPress;
+  final GestureLongPressEndCallback? onLongPressEnd;
+  final VoidCallback? onLongPressCancel;
   final bool playing;
   final bool showSpecialMark;
   final bool showLiveCover;
@@ -29,6 +31,8 @@ class FollowUserItem extends StatelessWidget {
     this.onSpecialTap,
     this.onTap,
     this.onLongPress,
+    this.onLongPressEnd,
+    this.onLongPressCancel,
     this.playing = false,
     this.showSpecialMark = false,
     this.showLiveCover = false,
@@ -38,21 +42,45 @@ class FollowUserItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Obx(() {
-      switch (style) {
-        case FollowUserItemStyle.compactList:
-          return _buildListCard(context, compact: true);
-        case FollowUserItemStyle.card:
-          return _buildPreviewCard(context);
-        case FollowUserItemStyle.defaultList:
-          return _buildListCard(context, compact: false);
-      }
-    });
+    return _FollowUserLongPressSurface(
+      onLongPress: onLongPress,
+      onLongPressEnd: onLongPressEnd,
+      onLongPressCancel: onLongPressCancel,
+      builder: (handleLongPress) => Obx(() {
+        switch (style) {
+          case FollowUserItemStyle.compactList:
+            return _buildListCard(
+              context,
+              compact: true,
+              handleLongPress: handleLongPress,
+            );
+          case FollowUserItemStyle.card:
+            return _buildPreviewCard(
+              context,
+              handleLongPress: handleLongPress,
+            );
+          case FollowUserItemStyle.defaultList:
+            return _buildListCard(
+              context,
+              compact: false,
+              handleLongPress: handleLongPress,
+            );
+        }
+      }),
+    );
   }
 
-  Widget _buildListCard(BuildContext context, {required bool compact}) {
+  Widget _buildListCard(
+    BuildContext context, {
+    required bool compact,
+    required VoidCallback? handleLongPress,
+  }) {
     if (!showLiveCover) {
-      return _buildAvatarListCard(context, compact: compact);
+      return _buildAvatarListCard(
+        context,
+        compact: compact,
+        handleLongPress: handleLongPress,
+      );
     }
     final theme = Theme.of(context);
     final coverWidth = compact ? 122.0 : 152.0;
@@ -136,7 +164,7 @@ class FollowUserItem extends StatelessWidget {
       child: InkWell(
         borderRadius: radius,
         onTap: onTap,
-        onLongPress: onLongPress,
+        onLongPress: handleLongPress,
         child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -158,7 +186,7 @@ class FollowUserItem extends StatelessWidget {
                           context,
                           radius: compact ? 10 : 12,
                           showTitleOverlay: false,
-                          showStatusPlaceholder: false,
+                          compact: compact,
                         ),
                       ),
                     ),
@@ -241,7 +269,11 @@ class FollowUserItem extends StatelessWidget {
     );
   }
 
-  Widget _buildAvatarListCard(BuildContext context, {required bool compact}) {
+  Widget _buildAvatarListCard(
+    BuildContext context, {
+    required bool compact,
+    required VoidCallback? handleLongPress,
+  }) {
     final theme = Theme.of(context);
     final avatarSize = compact ? 48.0 : 58.0;
     final radius = BorderRadius.circular(compact ? 12 : 14);
@@ -258,7 +290,7 @@ class FollowUserItem extends StatelessWidget {
       child: InkWell(
         borderRadius: radius,
         onTap: onTap,
-        onLongPress: onLongPress,
+        onLongPress: handleLongPress,
         child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: EdgeInsets.symmetric(
@@ -354,9 +386,15 @@ class FollowUserItem extends StatelessWidget {
     );
   }
 
-  Widget _buildPreviewCard(BuildContext context) {
+  Widget _buildPreviewCard(
+    BuildContext context, {
+    required VoidCallback? handleLongPress,
+  }) {
     if (!showLiveCover) {
-      return _buildAvatarCard(context);
+      return _buildAvatarCard(
+        context,
+        handleLongPress: handleLongPress,
+      );
     }
     final theme = Theme.of(context);
     final radius = BorderRadius.circular(16);
@@ -377,7 +415,7 @@ class FollowUserItem extends StatelessWidget {
       child: InkWell(
         borderRadius: radius,
         onTap: onTap,
-        onLongPress: onLongPress,
+        onLongPress: handleLongPress,
         child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           child: Column(
@@ -402,6 +440,11 @@ class FollowUserItem extends StatelessWidget {
                       borderColor: cardColor,
                     ),
                   ),
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: _buildCoverActions(context),
+                  ),
                 ],
               ),
               Expanded(
@@ -415,14 +458,18 @@ class FollowUserItem extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(width: avatarNameOffset),
-                          if (showHeaderUserName)
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 1),
+                      // 操作按钮已移到封面右上角，这一行整宽留给主播名；未开播时
+                      // 名字下移到标题位，这里仅为头像下沉预留高度。
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          minHeight: avatarOverlap + 4,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            const SizedBox(width: avatarNameOffset),
+                            if (showHeaderUserName)
+                              Expanded(
                                 child: Text(
                                   item.userName,
                                   maxLines: 1,
@@ -433,17 +480,11 @@ class FollowUserItem extends StatelessWidget {
                                     height: 1.05,
                                   ),
                                 ),
-                              ),
-                            )
-                          else
-                            const Spacer(),
-                          if (showHeaderUserName) const SizedBox(width: 6),
-                          _buildActionArea(
-                            context,
-                            compact: true,
-                            vertical: false,
-                          ),
-                        ],
+                              )
+                            else
+                              const Spacer(),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Flexible(
@@ -485,15 +526,7 @@ class FollowUserItem extends StatelessWidget {
                               ),
                             ),
                           ],
-                          if (showSpecialMark && item.isSpecialFollow)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 6),
-                              child: Icon(
-                                Icons.star,
-                                color: Colors.amber,
-                                size: 15,
-                              ),
-                            ),
+                          // 特别关注状态由封面右上角的星标按钮呈现，此处不再重复。
                         ],
                       ),
                     ],
@@ -503,6 +536,77 @@ class FollowUserItem extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// 封面右上角的操作条：特别关注 + 取关。
+  ///
+  /// 放在封面上而非正文，是为了让名字行拿到整宽（小屏开启星标后名字会被挤成
+  /// 省略号），同时不受正文行高约束，点击区可以保持 36px。
+  Widget _buildCoverActions(BuildContext context) {
+    const buttonSize = 36.0;
+    final children = <Widget>[
+      if (showSpecialMark && onSpecialTap != null)
+        _buildCoverActionButton(
+          size: buttonSize,
+          tooltip: item.isSpecialFollow ? "取消特别关注" : "特别关注",
+          onPressed: onSpecialTap,
+          icon: item.isSpecialFollow ? Icons.star : Icons.star_border,
+          color: item.isSpecialFollow ? Colors.amber : Colors.white,
+        )
+      else if (showSpecialMark && item.isSpecialFollow)
+        const SizedBox.square(
+          dimension: buttonSize,
+          child: Center(
+            child: Icon(Icons.star, color: Colors.amber, size: 18),
+          ),
+        ),
+      if (onRemove != null)
+        _buildCoverActionButton(
+          size: buttonSize,
+          tooltip: "取消关注",
+          onPressed: onRemove,
+          icon: Remix.dislike_line,
+          color: Colors.white,
+        ),
+    ];
+    if (children.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(82),
+        borderRadius: BorderRadius.circular(buttonSize / 2),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: children,
+      ),
+    );
+  }
+
+  Widget _buildCoverActionButton({
+    required double size,
+    required String tooltip,
+    required IconData icon,
+    required Color color,
+    required Function()? onPressed,
+  }) {
+    return SizedBox.square(
+      dimension: size,
+      child: IconButton(
+        tooltip: tooltip,
+        iconSize: 18,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints(),
+        style: IconButton.styleFrom(
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: const CircleBorder(),
+        ),
+        onPressed: onPressed,
+        icon: Icon(icon, color: color),
       ),
     );
   }
@@ -528,7 +632,10 @@ class FollowUserItem extends StatelessWidget {
     );
   }
 
-  Widget _buildAvatarCard(BuildContext context) {
+  Widget _buildAvatarCard(
+    BuildContext context, {
+    required VoidCallback? handleLongPress,
+  }) {
     final theme = Theme.of(context);
     final radius = BorderRadius.circular(16);
     return Material(
@@ -538,7 +645,7 @@ class FollowUserItem extends StatelessWidget {
       child: InkWell(
         borderRadius: radius,
         onTap: onTap,
-        onLongPress: onLongPress,
+        onLongPress: handleLongPress,
         child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: const EdgeInsets.all(12),
@@ -602,10 +709,9 @@ class FollowUserItem extends StatelessWidget {
   }
 
   Color _cardBackgroundColor(ThemeData theme) {
-    if (theme.brightness == Brightness.dark) {
-      return theme.colorScheme.surfaceContainerHigh;
-    }
-    return theme.cardColor;
+    return theme.colorScheme.surface.withAlpha(
+      theme.brightness == Brightness.dark ? 182 : 214,
+    );
   }
 
   BoxDecoration _cardFrameDecoration(
@@ -615,7 +721,7 @@ class FollowUserItem extends StatelessWidget {
     final borderColor = playing
         ? theme.colorScheme.primary
         : theme.colorScheme.outlineVariant.withAlpha(
-            theme.brightness == Brightness.dark ? 230 : 180,
+            theme.brightness == Brightness.dark ? 175 : 145,
           );
     return BoxDecoration(
       border: Border.all(
@@ -630,7 +736,7 @@ class FollowUserItem extends StatelessWidget {
     BuildContext context, {
     required double radius,
     bool showTitleOverlay = true,
-    bool showStatusPlaceholder = true,
+    bool compact = false,
   }) {
     final theme = Theme.of(context);
     if (item.liveStatus.value != 2) {
@@ -638,15 +744,19 @@ class FollowUserItem extends StatelessWidget {
       return Container(
         color: theme.colorScheme.surfaceContainerHighest,
         alignment: Alignment.center,
-        child: showStatusPlaceholder || isUnconfirmed
-            ? Text(
-                isUnconfirmed ? "未确认" : "未直播",
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w600,
-                ),
-              )
-            : null,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Text(
+          isUnconfirmed ? "未确认" : "未直播",
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: (compact
+                  ? theme.textTheme.titleSmall
+                  : theme.textTheme.titleMedium)
+              ?.copyWith(
+            color: Colors.grey.shade600,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       );
     }
     final coverImage = _coverImage;
@@ -670,8 +780,6 @@ class FollowUserItem extends StatelessWidget {
                   coverImage,
                   fit: BoxFit.cover,
                   borderRadius: radius,
-                  cacheWidth: 640,
-                  cacheHeight: 360,
                   clearMemoryCacheWhenDispose: true,
                   imageCacheName: NetImage.liveCoverCacheName,
                   cacheMaxAge: const Duration(minutes: 10),
@@ -745,6 +853,8 @@ class FollowUserItem extends StatelessWidget {
     required bool vertical,
   }) {
     final iconSize = compact ? 18.0 : 20.0;
+    // M3 的 IconButton 以 minimumSize(48) + visualDensity 结算尺寸，下面的
+    // constraints 不生效，压到 28px 必须走 tapTargetSize.shrinkWrap。
     Widget constrainVerticalAction(Widget child) {
       return vertical ? SizedBox.square(dimension: 28, child: child) : child;
     }
@@ -875,5 +985,68 @@ class FollowUserItem extends StatelessWidget {
       Log.logPrint('格式化开播时长出错: $e');
       return "";
     }
+  }
+}
+
+typedef _FollowUserLongPressBuilder = Widget Function(
+  VoidCallback? handleLongPress,
+);
+
+/// `InkWell` only exposes the moment a long press is recognized. This wrapper
+/// keeps that visual/tap behavior while observing the raw pointer end/cancel
+/// events needed by the temporary live preview.
+class _FollowUserLongPressSurface extends StatefulWidget {
+  const _FollowUserLongPressSurface({
+    required this.builder,
+    this.onLongPress,
+    this.onLongPressEnd,
+    this.onLongPressCancel,
+  });
+
+  final _FollowUserLongPressBuilder builder;
+  final VoidCallback? onLongPress;
+  final GestureLongPressEndCallback? onLongPressEnd;
+  final VoidCallback? onLongPressCancel;
+
+  @override
+  State<_FollowUserLongPressSurface> createState() =>
+      _FollowUserLongPressSurfaceState();
+}
+
+class _FollowUserLongPressSurfaceState
+    extends State<_FollowUserLongPressSurface> {
+  bool _longPressActive = false;
+
+  void _handleLongPress() {
+    _longPressActive = true;
+    widget.onLongPress?.call();
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    if (!_longPressActive) return;
+    _longPressActive = false;
+    widget.onLongPressEnd?.call(
+      LongPressEndDetails(
+        globalPosition: event.position,
+        localPosition: event.localPosition,
+      ),
+    );
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (!_longPressActive) return;
+    _longPressActive = false;
+    widget.onLongPressCancel?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerUp: _handlePointerUp,
+      onPointerCancel: _handlePointerCancel,
+      child: widget.builder(
+        widget.onLongPress == null ? null : _handleLongPress,
+      ),
+    );
   }
 }

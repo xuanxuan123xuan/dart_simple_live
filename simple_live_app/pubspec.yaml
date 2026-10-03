@@ -1,9 +1,10 @@
 name: simple_live_app
-version: 1.13.3+11303
+version: 26.4.1+26401
 publish_to: none
 description: "Simple Live APP"
 environment:
-  sdk: ">=3.0.5 <4.0.0"
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.44.7"
 
 dependencies:
   simple_live_core:
@@ -20,9 +21,13 @@ dependencies:
   hive: 2.2.3 #持久化存储
   hive_flutter: 1.1.0 #持久化存储
   logger: ^2.6.2 #日志
-  intl: 0.20.2 # Flutter 3.41 SDK pin（flutter_localizations 要求 ^0.20.2）
+  intl: 0.20.2 # Flutter 3.44.7 SDK pin（flutter_localizations 要求 ^0.20.2）
   qr_flutter: ^4.1.0 #二维码生成
   dynamic_color: 1.6.8
+  # Liquid Glass surface primitives (pinned: the API is intentionally treated
+  # as part of the app's rendering contract).
+  liquid_glass_widgets:
+    path: third_party/liquid_glass_widgets
   path: any
   collection: any
   udp: ^5.0.3 #UDP
@@ -54,12 +59,12 @@ dependencies:
   path_provider: any
   cross_file: 0.3.4+2 # Dart 3.4 compatible
   permission_handler: 11.3.1 # Dart 3.4 compatible
-  image_gallery_saver_plus: 5.1.1 # Flutter 3.41 compatible（3.0.5 的 v1 Registrar 已被 3.41 移除）
+  image_gallery_saver_plus: 5.1.1 # Flutter 3.44 compatible（3.0.5 的 v1 Registrar 已被 3.41 移除）
   screen_brightness:
     path: third_party/screen_brightness
   screen_brightness_ohos:
     path: third_party/screen_brightness_ohos
-  # 2.4.4 的插件元数据会让 Flutter 3.41 在非移动平台生成无效注册，
+  # 2.4.4 的插件元数据会让 Flutter 3.44 在非移动平台生成无效注册，
   # Android 注册类也与包内实现不一致；固定到已通过全平台 Release 的版本。
   auto_orientation_v2: 2.3.8 #屏幕方向
   wakelock_plus: 1.2.10 # Dart 3.4 compatible; OHOS calls are guarded. 1.3.0 改用
@@ -89,7 +94,7 @@ dependencies:
   # 视频播放
   media_kit: ^1.2.2
   media_kit_video:
-    path: third_party/media_kit_video
+    path: ../third_party/media_kit_video
   media_kit_libs_video: ^1.0.7
   video_player:
     git:
@@ -135,7 +140,7 @@ dependency_overrides:
     path: third_party/dynamic_color
   # volume_controller >= 3.4.2 与 screen_brightness_ios >= 2.1.3 使用
   # FlutterSceneLifeCycleDelegate / addSceneDelegate / registrar.viewController，
-  # 这些 Scene Lifecycle API 需 Flutter 3.35+；本分支（dev）已是 3.41，
+  # 这些 Scene Lifecycle API 需 Flutter 3.35+；本分支（dev）已是 3.44，
   # 可升到最新，暂保持 3.4.1 / 2.1.2 避免多余改动。
   volume_controller: 3.4.1
   screen_brightness_ios: 2.1.2

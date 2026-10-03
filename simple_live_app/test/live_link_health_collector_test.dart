@@ -155,9 +155,19 @@ void main() {
       playerController,
       contains('audioUnderrunEvents: !Utils.isOhos'),
     );
+    // 鸿蒙的重连由 OhosReconnectConfirmation 与原生播放确认（initialized /
+    // 首帧 / 心跳）配对后才记账，与 mpv 侧"重开完成即计次"语义一致，
+    // 因此两端都按支持上报，不再硬编码 !Utils.isOhos。
     expect(
       playerController,
-      contains('automaticReconnectEvents: !Utils.isOhos'),
+      contains('automaticReconnectEvents: true'),
+    );
+    // 两条采样分支都要喂端点可达性，否则 intake 维度在鸿蒙侧永远不可用。
+    expect(
+      'playbackEndpointReachable: currentPlaybackEndpointReachable('
+          .allMatches(sampleMethod)
+          .length,
+      2,
     );
     final mixinEnd = playerController.indexOf('mixin PlayerStateMixin');
     final playerMixin = playerController.substring(0, mixinEnd);
@@ -301,9 +311,13 @@ void main() {
 
     expect(currentRequestCheck, greaterThanOrEqualTo(0));
     expect(reconnectEvent, greaterThan(currentRequestCheck));
-    expect(method, contains('recordedReason != null && !Utils.isOhos'));
+    expect(method, contains('recordedReason != null'));
     expect(method, contains('reconnectHostChanged:'));
     expect(method, contains('reconnectRecoveryDuration:'));
+    // 鸿蒙分支不在这里直接记账：initPlaylist 返回时 AVPlayer 还没接受地址，
+    // 必须挂起等原生确认，否则恢复耗时只反映"请求已发出"。
+    final armCall = method.indexOf('_armOhosReconnect(');
+    expect(armCall, greaterThan(currentRequestCheck));
   });
 
   test('default decoder reopen records health only after a current open', () {

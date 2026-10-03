@@ -4,12 +4,13 @@ import 'dart:io';
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:simple_live_tv_app/app/controller/base_controller.dart';
 import 'package:get/get.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_tv_app/app/controller/base_controller.dart';
 import 'package:simple_live_tv_app/app/log.dart';
+import 'package:simple_live_tv_app/modules/live_room/player/playback_stall_tracker.dart';
 import 'package:simple_live_tv_app/services/mpv_options_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -27,11 +28,27 @@ mixin PlayerMixin {
     ),
   );
 
-  /// 视频控制器
-  late final videoController = VideoController(
-    player,
-    configuration: MpvOptionsService.videoControllerConfiguration(),
-  );
+  VideoController? _videoController;
+
+  /// 渲染降级重建次数，页面据此重建 Video 组件
+  final playerRenderGeneration = 0.obs;
+
+  /// 视频控制器（惰性创建；渲染降级后可重建）
+  VideoController get videoController =>
+      _videoController ??= VideoController(
+        player,
+        configuration: MpvOptionsService.videoControllerConfiguration(),
+      );
+
+  /// 渲染降级档位变更后重建视频控制器与 Video 组件。
+  Future<void> rebuildVideoControllerForRenderStage() async {
+    _videoController = VideoController(
+      player,
+      configuration: MpvOptionsService.videoControllerConfiguration(),
+    );
+    globalPlayerKey = GlobalKey<VideoState>();
+    playerRenderGeneration.value++;
+  }
 
   Future<void> initializePlayer() async {
     await MpvOptionsService.applyToPlayer(player);
@@ -221,6 +238,14 @@ class PlayerController extends BaseController
   StreamSubscription? _widthSubscription;
   StreamSubscription? _heightSubscription;
   StreamSubscription? _logSubscription;
+  Timer? _playbackStallWatchdogTimer;
+  Timer? _startupVideoWatchdog;
+  int _startupWatchdogGeneration = -1;
+  bool _renderFallbackReopening = false;
+  static const Duration _startupVideoTimeout = Duration(seconds: 8);
+  final PlaybackStallTracker _playbackStallTracker = PlaybackStallTracker();
+  int playbackGeneration = 0;
+  int _playbackDiagnosticsLoggedGeneration = -1;
 
   void initStream() {
     _errorSubscription = player.stream.error.listen((event) {
@@ -244,6 +269,7 @@ class PlayerController extends BaseController
       Log.w(
           'width:$event  W:${(player.state.width)}  H:${(player.state.height)}');
       width.value = event ?? 0;
+      _maybeLogPlaybackDiagnostics();
       // isVertical.value =
       //     (player.state.height ?? 9) > (player.state.width ?? 16);
     });
@@ -251,10 +277,183 @@ class PlayerController extends BaseController
       Log.w(
           'height:$event  W:${(player.state.width)}  H:${(player.state.height)}');
       height.value = event ?? 0;
+      _maybeLogPlaybackDiagnostics();
       // isVertical.value =
       //     (player.state.height ?? 9) > (player.state.width ?? 16);
     });
+    _playbackStallWatchdogTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _checkPlaybackStall(),
+    );
   }
+
+  void _checkPlaybackStall() {
+    if (playbackRecoveryInFlight) return;
+    final state = player.state;
+    final playlist = state.playlist;
+    final media = playlist.medias.isNotEmpty &&
+            playlist.index >= 0 &&
+            playlist.index < playlist.medias.length
+        ? playlist.medias[playlist.index]
+        : null;
+    final activeUri = media?.uri.toString() ?? "";
+    final source =
+        activeUri.isEmpty ? "" : playbackStallSourceIdentity(activeUri);
+    final previousAttempts = _playbackStallTracker.recoveryAttempts;
+    final shouldRecover = _playbackStallTracker.observe(
+      now: DateTime.now(),
+      generation: playbackGeneration,
+      source: source,
+      position: state.position,
+      playing: state.playing,
+      buffering: state.buffering,
+      completed: state.completed,
+    );
+    if (previousAttempts > 0 && _playbackStallTracker.recoveryAttempts == 0) {
+      playbackStable();
+    }
+    if (!shouldRecover) return;
+    Log.w(
+      "检测到直播画面长时间无进度，自动恢复 "
+      "(${_playbackStallTracker.recoveryAttempts}/3)",
+    );
+    mediaError("直播流停滞，自动刷新");
+  }
+
+  void beginPlaybackGeneration() {
+    playbackGeneration += 1;
+    _armStartupVideoWatchdog();
+  }
+
+  /// 起播看门狗：仅监测"从未出画面"的场景；播中卡顿由
+  /// [PlaybackStallTracker] 负责。
+  void _armStartupVideoWatchdog() {
+    _startupVideoWatchdog?.cancel();
+    _startupWatchdogGeneration = playbackGeneration;
+    if (!Platform.isAndroid) {
+      return;
+    }
+    _startupVideoWatchdog = Timer(
+      _startupVideoTimeout,
+      () => unawaited(_handleStartupVideoWatchdog()),
+    );
+  }
+
+  Future<void> _handleStartupVideoWatchdog() async {
+    if (_startupWatchdogGeneration != playbackGeneration) return;
+    if ((player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0) {
+      return;
+    }
+    if (player.platform is NativePlayer) {
+      final voConfigured = await _readVoConfigured();
+      if (_startupWatchdogGeneration != playbackGeneration) return;
+      // vo 已配置但从未上报尺寸：交给卡顿看门狗，不做渲染降级。
+      if (voConfigured) return;
+    }
+    final settings = AppSettingsController.instance;
+    final currentStage = settings.renderFallbackStage.value;
+    final nextStage = MpvOptionsService.nextRenderFallbackStage(currentStage);
+    if (nextStage < 0) {
+      Log.w("起播看门狗：所有渲染降级档位均未出画面，恢复默认渲染配置");
+      settings.resetRenderFallbackStage();
+      return;
+    }
+    Log.w(
+      "起播 ${_startupVideoTimeout.inSeconds}s 未获得画面，"
+      "渲染降级：${MpvOptionsService.renderStageLabels[currentStage] ?? currentStage}"
+      " → ${MpvOptionsService.renderStageLabels[nextStage] ?? nextStage}",
+    );
+    settings.setRenderFallbackStage(nextStage);
+    await _reopenWithRenderStage(nextStage);
+  }
+
+  Future<bool> _readVoConfigured() async {
+    final platform = player.platform;
+    if (platform is! NativePlayer) return true;
+    try {
+      final value = await platform.getProperty('vo-configured');
+      return value.trim().toLowerCase() == 'yes';
+    } catch (e) {
+      Log.d("读取 mpv 属性 vo-configured 失败: $e");
+      return true;
+    }
+  }
+
+  Future<void> _reopenWithRenderStage(int stage) async {
+    if (_renderFallbackReopening) return;
+    _renderFallbackReopening = true;
+    try {
+      await rebuildVideoControllerForRenderStage();
+      if (_startupWatchdogGeneration != playbackGeneration) return;
+      Log.i("渲染降级：应用档位 $stage 后重新打开播放流");
+      await reopenPlaybackForRenderFallback();
+    } catch (e, stackTrace) {
+      Log.e("渲染降级重开播放流失败: $e", stackTrace);
+    } finally {
+      _renderFallbackReopening = false;
+    }
+  }
+
+  /// 渲染降级后需要重开播放流；由具体房间控制器覆盖实现。
+  Future<void> reopenPlaybackForRenderFallback() async {}
+
+  void _maybeLogPlaybackDiagnostics() {
+    final generation = playbackGeneration;
+    if (generation <= 0 ||
+        _playbackDiagnosticsLoggedGeneration == generation ||
+        (player.state.width ?? 0) <= 0 ||
+        (player.state.height ?? 0) <= 0) {
+      return;
+    }
+    _playbackDiagnosticsLoggedGeneration = generation;
+    unawaited(_logPlaybackDiagnostics(generation));
+  }
+
+  Future<void> _logPlaybackDiagnostics(int generation) async {
+    // Let mpv finish selecting tracks & the hardware decoder before sampling.
+    await Future<void>.delayed(const Duration(seconds: 1));
+    if (generation != playbackGeneration || player.platform is! NativePlayer) {
+      return;
+    }
+
+    final nativePlayer = player.platform as NativePlayer;
+    final properties = <String, String>{};
+    for (final name in const [
+      'hwdec-current',
+      'video-codec',
+      'video-bitrate',
+      'estimated-vf-fps',
+      'avsync',
+    ]) {
+      try {
+        final value = (await nativePlayer.getProperty(name)).trim();
+        if (value.isNotEmpty) {
+          properties[name] = value;
+        }
+      } catch (e) {
+        Log.d("读取 mpv 播放属性 $name 失败: $e");
+      }
+    }
+
+    if (generation != playbackGeneration) return;
+    final sourceResolution =
+        '${player.state.width ?? 0}x${player.state.height ?? 0}';
+    Log.i(
+      '播放诊断：${MpvOptionsService.diagnosticsSummary()}, '
+      'actualHwdec=${properties['hwdec-current'] ?? 'none'}, '
+      'codec=${properties['video-codec'] ?? 'unknown'}, '
+      'bitrate=${properties['video-bitrate'] ?? 'unknown'}, '
+      'fps=${properties['estimated-vf-fps'] ?? 'unknown'}, '
+      'resolution=$sourceResolution, '
+      'avsync=${properties['avsync'] ?? 'unknown'}',
+    );
+  }
+
+  String playbackStallSourceIdentity(String activeUri) => activeUri;
+
+  bool get playbackRecoveryInFlight => false;
+
+  void playbackStable() {}
 
   void disposeStream() {
     _errorSubscription?.cancel();
@@ -262,6 +461,11 @@ class PlayerController extends BaseController
     _widthSubscription?.cancel();
     _heightSubscription?.cancel();
     _logSubscription?.cancel();
+    _playbackStallWatchdogTimer?.cancel();
+    _playbackStallWatchdogTimer = null;
+    _startupVideoWatchdog?.cancel();
+    _startupVideoWatchdog = null;
+    _playbackStallTracker.reset();
   }
 
   void mediaEnd() {}

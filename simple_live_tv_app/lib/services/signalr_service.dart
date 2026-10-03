@@ -15,10 +15,26 @@ enum SignalRConnectionState {
 
 class SignalRService {
   static const int kRoomIdLength = 6;
-  static const String kDefaultUrl =
+  static const String kDefaultUrl = "wss://june6699.top/sync";
+  static const String kCloudflareUrl =
       "wss://simple-live-sync.3439394104.workers.dev/sync";
   static const String kDefaultLocalProxy = "127.0.0.1:51888";
   static const String kDirectProxyValue = "direct";
+
+  static const List<SyncServerPreset> kServerPresets = [
+    SyncServerPreset(
+      label: "国内站点（推荐，可直连）",
+      shortLabel: "国内站点",
+      wsUrl: kDefaultUrl,
+      note: "临时国内站点，无需代理即可使用",
+    ),
+    SyncServerPreset(
+      label: "Cloudflare 站点（需代理）",
+      shortLabel: "Cloudflare 站点",
+      wsUrl: kCloudflareUrl,
+      note: "workers.dev 域名，部分网络必须走代理才能连接",
+    ),
+  ];
 
   SignalRConnectionState state = SignalRConnectionState.connecting;
 
@@ -46,6 +62,16 @@ class SignalRService {
       StreamController<RoomSyncPayload>.broadcast();
   Stream<RoomSyncPayload> get onBiliAccountStream =>
       _onBiliAccountStreamController.stream;
+
+  final _onDouyinAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onDouyinAccountStream =>
+      _onDouyinAccountStreamController.stream;
+
+  final _onKuaishouAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onKuaishouAccountStream =>
+      _onKuaishouAccountStreamController.stream;
 
   final _onRoomDestroyedStreamController = StreamController<String>.broadcast();
   Stream<String> get onRoomDestroyedStream =>
@@ -110,6 +136,79 @@ class SignalRService {
       return true;
     }
     return _normalizeProxyAddress(text) != null;
+  }
+
+  static SyncServerPreset? presetForUrl(String url) {
+    final text = url.trim();
+    for (final preset in kServerPresets) {
+      if (preset.wsUrl == text) {
+        return preset;
+      }
+    }
+    return null;
+  }
+
+  /// 通过站点的 /health?format=json 探测连通性，自动按当前代理配置走。
+  static Future<SyncServerProbeResult> probeServer(String wsUrl) async {
+    final uri = Uri.tryParse(wsUrl.trim());
+    if (uri == null ||
+        !(uri.scheme == "wss" || uri.scheme == "ws") ||
+        uri.host.isEmpty) {
+      return const SyncServerProbeResult(false, 0, "地址无效");
+    }
+    final healthUrl = uri
+        .replace(
+          scheme: uri.scheme == "wss" ? "https" : "http",
+        )
+        .resolve("/health?format=json");
+    final proxyAddress = await resolveProxyAddress();
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 5);
+    if (proxyAddress != null) {
+      client.findProxy = (_) => "PROXY $proxyAddress; DIRECT";
+    }
+    final stopwatch = Stopwatch()..start();
+    try {
+      final request = await client
+          .getUrl(healthUrl)
+          .timeout(const Duration(seconds: 5));
+      final response =
+          await request.close().timeout(const Duration(seconds: 5));
+      await response.drain<void>();
+      stopwatch.stop();
+      if (response.statusCode >= 200 && response.statusCode < 400) {
+        return SyncServerProbeResult(
+          true,
+          stopwatch.elapsedMilliseconds,
+          proxyAddress == null ? "直连" : "经代理 $proxyAddress",
+        );
+      }
+      return SyncServerProbeResult(
+        false,
+        stopwatch.elapsedMilliseconds,
+        "HTTP ${response.statusCode}",
+      );
+    } catch (e) {
+      stopwatch.stop();
+      return SyncServerProbeResult(
+        false,
+        stopwatch.elapsedMilliseconds,
+        _formatProbeError(e),
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static String _formatProbeError(Object error) {
+    final text = error.toString();
+    if (error is TimeoutException || text.contains("TimeoutException")) {
+      return "连接超时";
+    }
+    if (text.contains("SocketException") || text.contains("HandshakeException")) {
+      return "无法连接";
+    }
+    return text.replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
   }
 
   Future<void> connect() async {
@@ -196,6 +295,8 @@ class SignalRService {
       payload: {
         "overlay": overlay,
         "content": content,
+        if (action == "SendDouyinAccount") "accountType": "douyin",
+        if (action == "SendKuaishouAccount") "accountType": "kuaishou",
         ...extraPayload,
       },
       successTypes: const {"ack"},
@@ -214,6 +315,8 @@ class SignalRService {
     _onHistoryStreamController.close();
     _onShieldWordStreamController.close();
     _onBiliAccountStreamController.close();
+    _onDouyinAccountStreamController.close();
+    _onKuaishouAccountStreamController.close();
     _onRoomDestroyedStreamController.close();
     _onRoomUserUpdatedStreamController.close();
     _stopHeartbeat();
@@ -303,7 +406,13 @@ class SignalRService {
           _emitBoolString(data, _onShieldWordStreamController);
           break;
         case "biliAccountReceived":
-          _emitBoolString(data, _onBiliAccountStreamController);
+          _emitAccountPayload(data);
+          break;
+        case "douyinAccountReceived":
+          _emitBoolString(data, _onDouyinAccountStreamController);
+          break;
+        case "kuaishouAccountReceived":
+          _emitBoolString(data, _onKuaishouAccountStreamController);
           break;
         case "roomDestroyed":
           _onRoomDestroyedStreamController
@@ -337,6 +446,32 @@ class SignalRService {
       return;
     }
     controller.add(RoomSyncPayload.fromMap(Map<String, dynamic>.from(payload)));
+  }
+
+  void _emitAccountPayload(Map<String, dynamic> message) {
+    final payload = message["payload"];
+    var accountType = payload is Map
+        ? payload["accountType"]?.toString().toLowerCase()
+        : null;
+    if (accountType == null || accountType.isEmpty) {
+      final content = payload is Map ? payload["content"] : null;
+      if (content is String) {
+        try {
+          final decoded = jsonDecode(content);
+          if (decoded is Map) {
+            accountType = decoded["accountType"]?.toString().toLowerCase();
+          }
+        } catch (_) {
+          // The normal account handlers report malformed content.
+        }
+      }
+    }
+    final target = switch (accountType) {
+      "douyin" => _onDouyinAccountStreamController,
+      "kuaishou" => _onKuaishouAccountStreamController,
+      _ => _onBiliAccountStreamController,
+    };
+    _emitBoolString(message, target);
   }
 
   void _handleSocketError(Object error, StackTrace stackTrace) {
@@ -385,7 +520,7 @@ class SignalRService {
   }
 
   Future<HttpClient?> _createWebSocketHttpClient() async {
-    final proxyAddress = await _resolveProxyAddress();
+    final proxyAddress = await resolveProxyAddress();
     if (proxyAddress == null) {
       return null;
     }
@@ -395,7 +530,7 @@ class SignalRService {
     return client;
   }
 
-  Future<String?> _resolveProxyAddress() async {
+  static Future<String?> resolveProxyAddress() async {
     final configured = configuredProxyUrl;
     if (configured.toLowerCase() == kDirectProxyValue) {
       return null;
@@ -434,7 +569,7 @@ class SignalRService {
     return "${uri.host}:${uri.port}";
   }
 
-  Future<bool> _isTcpPortOpen(String host, int port) async {
+  static Future<bool> _isTcpPortOpen(String host, int port) async {
     try {
       final socket = await Socket.connect(
         host,
@@ -464,6 +599,9 @@ class SignalRService {
         return "sendShieldWord";
       case "SendBiliAccount":
         return "sendBiliAccount";
+      case "SendDouyinAccount":
+      case "SendKuaishouAccount":
+        return "sendBiliAccount";
       default:
         return action;
     }
@@ -483,8 +621,11 @@ class SignalRService {
     final text = error.toString();
     if (error is TimeoutException || text.contains("TimeoutException")) {
       return "同步服务连接超时，请检查网络或同步服务地址。"
-          "当前默认 workers.dev 域名在部分网络下可能无法访问。"
-          "如果本机代理可用，请确认同步代理地址为自动或 http://$kDefaultLocalProxy。";
+          "可在同步设置中切换同步站点（国内站点 june6699.top 可直连，"
+          "workers.dev 站点必须走代理）。"
+          "如果本机代理可用，请确认同步代理地址为自动或 http://$kDefaultLocalProxy。"
+          "注意 51888 只是作者的常用端口，连不上请查看代理软件的实际端口"
+          "（如 v2rayN：参数设置 → 本地混合监控端口）。";
     }
     if (text.contains("SocketException")) {
       return "无法连接同步服务，请检查网络或同步服务地址";
@@ -497,6 +638,35 @@ class SignalRConnectionInfo {
   String? connectionId;
 }
 
+class SyncServerPreset {
+  final String label;
+  final String shortLabel;
+  final String wsUrl;
+  final String note;
+
+  const SyncServerPreset({
+    required this.label,
+    required this.shortLabel,
+    required this.wsUrl,
+    required this.note,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) || (other is SyncServerPreset && other.wsUrl == wsUrl);
+
+  @override
+  int get hashCode => wsUrl.hashCode;
+}
+
+class SyncServerProbeResult {
+  final bool ok;
+  final int latencyMs;
+  final String detail;
+
+  const SyncServerProbeResult(this.ok, this.latencyMs, this.detail);
+}
+
 class Resp<T> {
   final bool isSuccess;
   final String message;
@@ -507,6 +677,7 @@ class Resp<T> {
 class RoomSyncPayload {
   final bool overlay;
   final String content;
+  final String accountType;
   final int chunkIndex;
   final int chunkTotal;
   final int itemStart;
@@ -516,6 +687,7 @@ class RoomSyncPayload {
   const RoomSyncPayload({
     required this.overlay,
     required this.content,
+    this.accountType = "",
     this.chunkIndex = 1,
     this.chunkTotal = 1,
     this.itemStart = 0,
@@ -524,9 +696,22 @@ class RoomSyncPayload {
   });
 
   factory RoomSyncPayload.fromMap(Map<String, dynamic> payload) {
+    var accountType = payload["accountType"]?.toString().toLowerCase() ?? "";
+    if (accountType.isEmpty) {
+      final content = payload["content"];
+      if (content is String) {
+        try {
+          final decoded = jsonDecode(content);
+          if (decoded is Map) {
+            accountType = decoded["accountType"]?.toString().toLowerCase() ?? "";
+          }
+        } catch (_) {}
+      }
+    }
     return RoomSyncPayload(
       overlay: payload["overlay"] == true,
       content: payload["content"]?.toString() ?? "",
+      accountType: accountType,
       chunkIndex: _readInt(payload["chunkIndex"], fallback: 1),
       chunkTotal: _readInt(payload["chunkTotal"], fallback: 1),
       itemStart: _readInt(payload["itemStart"], fallback: 0),

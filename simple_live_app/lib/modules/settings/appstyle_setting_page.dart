@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:simple_live_app/app/app_glass_mode.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/services/app_icon_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
+import 'package:simple_live_app/widgets/settings/settings_menu.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 
 class AppstyleSettingPage extends GetView<AppSettingsController> {
   const AppstyleSettingPage({Key? key}) : super(key: key);
+
+  // Every platform now ships the Modern artwork in its primary icon slot, so
+  // both options in the picker would render the same mark. The picker and the
+  // switching code behind it are kept intact — flip this to true to expose it.
+  static const bool _showAppIconPicker = false;
 
   @override
   Widget build(BuildContext context) {
@@ -65,57 +72,25 @@ class AppstyleSettingPage extends GetView<AppSettingsController> {
           AppStyle.vGap12,
           Padding(
             padding: AppStyle.edgeInsetsA12,
-            child: Text("应用图标", style: Get.textTheme.titleSmall),
+            child: Text(
+              "液态玻璃",
+              style: Get.textTheme.titleSmall,
+            ),
           ),
           SettingsCard(
             child: Obx(
-              () => RadioGroup<String>(
-                groupValue: controller.appIconVariant.value,
-                onChanged: controller.appIconChanging.value
-                    ? (_) {}
-                    : (value) async {
-                        if (value == null) return;
-                        final error = await controller.setAppIconVariant(value);
-                        if (error == null || !context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(error)),
-                        );
-                      },
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    RadioListTile<String>(
-                      value: AppIconVariant.classic.storageValue,
-                      title: const Text("Classic"),
-                      subtitle: Text(
-                        AppIconService.isSupported
-                            ? "蓝色播放图标"
-                            : "蓝色播放图标（当前平台不支持运行时切换）",
-                      ),
-                      secondary: const _AppIconPreview(
-                        asset: "assets/images/logo.png",
-                      ),
-                      contentPadding: AppStyle.edgeInsetsH12,
-                    ),
-                    AppStyle.divider,
-                    RadioListTile<String>(
-                      value: AppIconVariant.modern.storageValue,
-                      title: const Text("Modern"),
-                      subtitle: Text(
-                        AppIconService.isSupported
-                            ? "弹幕、直播信号与花体字标"
-                            : "弹幕、直播信号与花体字标（当前平台不支持运行时切换）",
-                      ),
-                      secondary: const _AppIconPreview(
-                        asset: "assets/images/app_icon_simplelive.png",
-                      ),
-                      contentPadding: AppStyle.edgeInsetsH12,
-                    ),
-                  ],
-                ),
+              () => SettingsMenu<AppGlassMode>(
+                title: "显示效果",
+                subtitle: "档位越高越清透，同时提升折射与模糊质量；部分平台仅回退渲染质量",
+                value: controller.glassMode.value,
+                valueMap: {
+                  for (final mode in AppGlassMode.values) mode: mode.label,
+                },
+                onChanged: controller.setGlassMode,
               ),
             ),
           ),
+          ..._buildAppIconSection(context),
           AppStyle.vGap12,
           Padding(
             padding: AppStyle.edgeInsetsA12,
@@ -195,6 +170,71 @@ class AppstyleSettingPage extends GetView<AppSettingsController> {
         ],
       ),
     );
+  }
+
+  /// The app icon picker. Hidden while [_showAppIconPicker] is false; the
+  /// runtime switching path (AppSettingsController.setAppIconVariant ->
+  /// AppIconService -> the platform channels) stays wired up either way.
+  List<Widget> _buildAppIconSection(BuildContext context) {
+    if (!_showAppIconPicker) {
+      return const [];
+    }
+    return [
+      AppStyle.vGap12,
+      Padding(
+        padding: AppStyle.edgeInsetsA12,
+        child: Text("应用图标", style: Get.textTheme.titleSmall),
+      ),
+      SettingsCard(
+        child: Obx(
+          () => RadioGroup<String>(
+            groupValue: controller.appIconVariant.value,
+            onChanged: controller.appIconChanging.value
+                ? (_) {}
+                : (value) async {
+                    if (value == null) return;
+                    final error = await controller.setAppIconVariant(value);
+                    if (error == null || !context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(error)),
+                    );
+                  },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                RadioListTile<String>(
+                  value: AppIconVariant.classic.storageValue,
+                  title: const Text("Classic"),
+                  subtitle: Text(
+                    AppIconService.isSupported
+                        ? "蓝色播放图标"
+                        : "蓝色播放图标（当前平台不支持运行时切换）",
+                  ),
+                  secondary: const _AppIconPreview(
+                    asset: "assets/images/logo.png",
+                  ),
+                  contentPadding: AppStyle.edgeInsetsH12,
+                ),
+                AppStyle.divider,
+                RadioListTile<String>(
+                  value: AppIconVariant.modern.storageValue,
+                  title: const Text("Modern"),
+                  subtitle: Text(
+                    AppIconService.isSupported
+                        ? "弹幕、直播信号与花体字标"
+                        : "弹幕、直播信号与花体字标（当前平台不支持运行时切换）",
+                  ),
+                  secondary: const _AppIconPreview(
+                    asset: "assets/images/app_icon_simplelive.png",
+                  ),
+                  contentPadding: AppStyle.edgeInsetsH12,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ];
   }
 }
 

@@ -16,6 +16,15 @@ export class QueuingEventSink implements EventSink {
     this.delegate = delegate;
     this.maybeFlush();
   }
+
+  /// Whether a Flutter listener is currently attached.
+  ///
+  /// High-frequency telemetry (one event per second per player) must not be
+  /// enqueued before the listener attaches, otherwise the unbounded queue
+  /// grows for the whole detached window.
+  hasDelegate(): boolean {
+    return this.delegate != null;
+  }
   success(event: Object): void {
     this.enqueue(event);
     this.maybeFlush();
