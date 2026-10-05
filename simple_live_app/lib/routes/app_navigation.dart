@@ -30,6 +30,9 @@ class AppNavigator {
   static int _categoryDetailSequence = 0;
 
   /// Return to the root page before selecting a main navigation destination.
+  ///
+  /// Main destinations are the app shell, so opening one from a detail route
+  /// must not leave the detail route (or a live-room route) underneath it.
   static void toIndexedDestination(int index) {
     Get.offAllNamed(
       RoutePath.kIndex,
