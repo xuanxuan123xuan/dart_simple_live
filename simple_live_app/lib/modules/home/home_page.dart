@@ -79,6 +79,7 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
               radius: _homeTopBarSearchExtent / 2,
               liveBackdrop: true,
               fallbackBorder: true,
+              showEdgeHighlight: false,
               child: IconButton(
                 onPressed: onSearch,
                 icon: const Icon(Icons.search),
