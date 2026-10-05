@@ -49,6 +49,13 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   /// must not write a second position into [tabXAlign].
   bool get usesExternalIndicatorPosition => false;
 
+  /// Whether a native tap should commit its selection on pointer-up.
+  ///
+  /// The bottom and inline indicators use this to keep a press from changing
+  /// the host page before the user releases the pointer. Searchable indicators
+  /// retain their historical behavior unless they opt in.
+  bool get deferTapSelection => false;
+
   /// Called once per gesture lifecycle when the active tab should change.
   ///
   /// Always invoked unconditionally — callers may use repeat-tap to trigger
@@ -57,8 +64,8 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
 
   // ── Shared state ──────────────────────────────────────────────────────────
 
-  /// Stores the target tab index during a hybrid tap (platform view backdrop).
-  int? _pendingHybridTabIndex;
+  /// Stores the target tab index until the current tap is released.
+  int? _pendingTapIndex;
 
   /// True while the pointer is physically held down.
   ///
@@ -162,8 +169,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
           _gestureActive = false;
           tabIsDragging = false;
           tabIsDown = false;
-          _pendingHybridTabIndex =
-              null; // abort any in-flight hybrid tab switch
+          _pendingTapIndex = null; // abort any in-flight tap
           _forceSnapToNearestTab();
           _gestureId++;
           _gestureStartTabIndex = null;
@@ -278,6 +284,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
       _gestureStartTabIndex = tabIndex;
       _gestureActive = true;
       tabIsDown = true;
+      _pendingTapIndex = null;
     });
   }
 
@@ -401,6 +408,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
     }
 
     _gestureActive = false;
+    _pendingTapIndex = null;
     _applyDragResolution(() {
       setState(() {
         tabIsDragging = false;
@@ -417,6 +425,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   /// `onHorizontalDragCancel` — snap to nearest tab without velocity.
   void onBarDragCancel() {
     _gestureActive = false;
+    _pendingTapIndex = null;
     if (tabIsDragging) {
       final relX = (tabXAlign + 1) / 2;
       final target = (relX * (tabCount - 1)).round().clamp(0, tabCount - 1);
@@ -443,7 +452,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
     }
   }
 
-  /// `onTapDown` — selects tab instantly, or animates indicator in hybrid mode.
+  /// `onTapDown` — records the target tab and activates the press state.
   ///
   /// DX1: [tabIsDown] is already set on the same frame as the touch by the
   /// raw Listener ([onBarPointerDown]), keeping jelly visible on desktop taps.
@@ -454,33 +463,32 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   void onBarTapDown(TapDownDetails d) {
     final index = tabIndexFromGlobal(d.globalPosition);
 
-    if (isPlatformViewBackdrop) {
-      // Hybrid mode: delay the content swap (PlatformView unmount) until
-      // onTapUp to prevent iOS mid-gesture touch drops. Do not move the
-      // indicator here: the host TabController will drive the single visual
-      // transition when the pending selection is committed on tap up.
+    if (isPlatformViewBackdrop || deferTapSelection) {
+      // Delay the content swap until onTapUp. Do not move the indicator here:
+      // the host drives the single visual transition when the pending
+      // selection is committed on release.
       setState(() {
-        _pendingHybridTabIndex = index;
+        _pendingTapIndex = index;
       });
     } else {
-      // Standard native behavior: swap everything instantly on down.
+      // Preserve the historical behavior for searchable indicators.
       notifyTabChanged(index);
     }
   }
 
-  /// `onTapUp` — clears active state and resolves hybrid tab changes.
+  /// `onTapUp` — clears active state and commits a deferred tab selection.
   void onBarTapUp(TapUpDetails d) {
     if (!mounted) return;
+    final target = _pendingTapIndex;
     setState(() {
       _gestureActive = false;
       tabIsDown = false;
       _gestureStartTabIndex = null;
+      _pendingTapIndex = null;
     });
 
-    if (isPlatformViewBackdrop && _pendingHybridTabIndex != null) {
-      final target = _pendingHybridTabIndex!;
+    if (target != null) {
       notifyTabChanged(target);
-      _pendingHybridTabIndex = null;
       reconcileWithHost(target);
     }
   }
@@ -488,7 +496,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   /// `onTapCancel` — clears visual press state if the tap loses the gesture arena.
   void onBarTapCancel() {
     if (!mounted) return;
-    _pendingHybridTabIndex = null;
+    _pendingTapIndex = null;
     if (!tabIsDragging) {
       _applyDragResolution(() {
         setState(() => tabIsDown = false);
@@ -535,6 +543,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
         _gestureActive = false;
         tabIsDragging = false;
         tabIsDown = false;
+        _pendingTapIndex = null;
         setLocalTabXAlign(computeTabAlignment(target));
         barSwayOffset = 0.0;
         _gestureStartTabIndex = null;

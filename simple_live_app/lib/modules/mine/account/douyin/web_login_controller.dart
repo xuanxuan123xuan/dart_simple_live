@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -11,16 +10,11 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/mine/account/account_controller.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 import 'package:webview_flutter/webview_flutter.dart' as ohos_webview;
 
 class DouyinWebLoginController extends BaseController {
   static const _loginUrl = 'https://www.douyin.com/';
-  static const _desktopChromeUserAgent =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-      '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0';
-  static const _desktopSafariUserAgent =
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-      'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
   static const _ohosWebCookieChannel = MethodChannel(
     'simple_live/ohos_web_cookie',
   );
@@ -205,15 +199,18 @@ class DouyinWebLoginController extends BaseController {
       'https://live.douyin.com',
     ]) {
       if (Utils.isOhos) {
-        final cookie =
-            await _ohosWebCookieChannel.invokeMethod<String>('getCookie', {
-              'url': url,
-            }) ??
+        final cookie = await _ohosWebCookieChannel.invokeMethod<String>(
+              'getCookie',
+              {'url': url},
+            ) ??
             '';
-        _mergeCookieString(values, cookie);
+        mergeDouyinCookieString(values, cookie);
       } else {
         final manager = cookieManager ??= CookieManager.instance();
-        final cookies = await manager.getCookies(url: WebUri(url));
+        final cookies = await manager.getCookies(
+          url: WebUri(url),
+          webViewController: webViewController,
+        );
         for (final item in cookies) {
           final name = item.name.trim();
           final value = item.value.trim();
@@ -251,36 +248,50 @@ class DouyinWebLoginController extends BaseController {
       if (result == null) {
         return '';
       }
-      final text = result.toString().trim();
-      if (text.isEmpty || text == 'null') {
-        return '';
-      }
-      if (text.startsWith('"') && text.endsWith('"')) {
-        final decoded = jsonDecode(text);
-        return decoded is String ? decoded.trim() : '';
-      }
-      return text;
+      return normalizeDouyinJavascriptValue(result);
     } catch (_) {
       // Cookie extraction remains usable when localStorage is unavailable.
       return '';
     }
   }
 
-  void _mergeCookieString(Map<String, String> values, String cookie) {
-    for (final part in cookie.split(';')) {
-      final item = part.trim();
-      final separator = item.indexOf('=');
-      if (separator <= 0) continue;
-      final name = item.substring(0, separator).trim();
-      final value = item.substring(separator + 1).trim();
-      if (name.isNotEmpty && value.isNotEmpty) {
-        values[name] = value;
-      }
+  String get userAgent => DouyinSite.kSearchUserAgent;
+}
+
+Map<String, String> mergeDouyinCookieString(
+  Map<String, String> values,
+  String cookie,
+) {
+  for (final part in cookie.split(';')) {
+    final item = part.trim();
+    final separator = item.indexOf('=');
+    if (separator <= 0) continue;
+    final name = item.substring(0, separator).trim();
+    final value = item.substring(separator + 1).trim();
+    if (name.isNotEmpty && value.isNotEmpty) {
+      values[name] = value;
     }
   }
+  return values;
+}
 
-  String get userAgent =>
-      Platform.isIOS ? _desktopSafariUserAgent : _desktopChromeUserAgent;
+String normalizeDouyinJavascriptValue(Object? result) {
+  if (result == null) {
+    return '';
+  }
+  final text = result.toString().trim();
+  if (text.isEmpty || text == 'null') {
+    return '';
+  }
+  if (!text.startsWith('"') || !text.endsWith('"')) {
+    return text;
+  }
+  try {
+    final decoded = jsonDecode(text);
+    return decoded is String ? decoded.trim() : '';
+  } on FormatException {
+    return '';
+  }
 }
 
 bool hasDouyinAuthenticatedSession(String cookie) {

@@ -16,6 +16,7 @@ class GlassSurface extends StatelessWidget {
     this.liveBackdrop = false,
     this.disablePlatformViewBackdrop = false,
     this.fallbackBorder = false,
+    this.showEdgeHighlight = true,
     super.key,
   });
 
@@ -41,6 +42,11 @@ class GlassSurface extends StatelessWidget {
   /// opt in so their per-message outline survives when liquid glass is
   /// disabled; every other surface renders flat instead.
   final bool fallbackBorder;
+
+  /// Whether the glass surface draws its directional and Fresnel edge
+  /// highlights. Disable this for compact circular controls where the rim can
+  /// collapse into short horizontal marks at the top and bottom.
+  final bool showEdgeHighlight;
 
   @override
   Widget build(BuildContext context) {
@@ -100,12 +106,22 @@ class GlassSurface extends StatelessWidget {
       );
     }
 
+    final glassSettings = showEdgeHighlight
+        ? LiquidGlassSettings(
+            glassColor: colors.surface.withAlpha(glassTintAlpha),
+          )
+        : LiquidGlassSettings(
+            glassColor: colors.surface.withAlpha(glassTintAlpha),
+            lightIntensity: 0,
+            glowIntensity: 0,
+            fresnelStrength: 0,
+            ambientRim: 0,
+          );
+
     return GlassContainer(
       useOwnLayer: true,
       quality: quality,
-      settings: LiquidGlassSettings(
-        glassColor: colors.surface.withAlpha(glassTintAlpha),
-      ),
+      settings: glassSettings,
       shape: LiquidRoundedSuperellipse(borderRadius: radius),
       padding: padding,
       clipBehavior: clipBehavior,

@@ -7,6 +7,91 @@ import 'package:simple_live_app/modules/home/home_list_view.dart';
 import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/glass/site_glass_tab_bar.dart';
 
+const double _homeTopBarCompactLeftInset = 12;
+const double _homeTopBarSearchExtent = 56;
+const double _homeTopBarSearchRightInset = 12;
+const double _homeTopBarSelectorSearchGap = 8;
+
+/// The transparent app bar shared by the home page's platform selector and
+/// search action.
+class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
+  const HomeTopBar({
+    required this.controller,
+    required this.onSearch,
+    this.iconOnly,
+    super.key,
+  });
+
+  final TabController controller;
+  final VoidCallback onSearch;
+  final bool? iconOnly;
+
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+
+  @override
+  Widget build(BuildContext context) {
+    return AppBar(
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      forceMaterialTransparency: true,
+      title: null,
+      flexibleSpace: SafeArea(
+        bottom: false,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 600;
+            const compactRightInset = _homeTopBarSearchExtent +
+                _homeTopBarSearchRightInset +
+                _homeTopBarSelectorSearchGap;
+            return Padding(
+              // Reserve the search action and an 8px visual gap so the
+              // selector cannot reach the action on narrow phone windows.
+              padding: compact
+                  ? const EdgeInsets.only(
+                      left: _homeTopBarCompactLeftInset,
+                      right: compactRightInset,
+                    )
+                  : const EdgeInsets.symmetric(horizontal: 64),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: SiteGlassTabBar(
+                    controller: controller,
+                    iconOnly: iconOnly,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: _homeTopBarSearchRightInset),
+          child: SizedBox.square(
+            key: const ValueKey<String>('home-top-search-action'),
+            dimension: _homeTopBarSearchExtent,
+            child: GlassSurface(
+              role: GlassSurfaceRole.navigation,
+              radius: _homeTopBarSearchExtent / 2,
+              liveBackdrop: true,
+              fallbackBorder: true,
+              showEdgeHighlight: false,
+              child: IconButton(
+                onPressed: onSearch,
+                icon: const Icon(Icons.search),
+              ),
+            ),
+          ),
+        )
+      ],
+    );
+  }
+}
+
 class HomePage extends GetView<HomeController> {
   const HomePage({Key? key}) : super(key: key);
 
@@ -15,54 +100,9 @@ class HomePage extends GetView<HomeController> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        forceMaterialTransparency: true,
-        title: null,
-        flexibleSpace: SafeArea(
-          bottom: false,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth < 600;
-              return Padding(
-                // The compact selector is centered in the space left of the
-                // search action, so its fixed icon slots cannot be occluded.
-                padding: compact
-                    ? const EdgeInsets.only(left: 12, right: 64)
-                    : const EdgeInsets.symmetric(horizontal: 64),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
-                    child: SiteGlassTabBar(
-                      controller: controller.tabController,
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: SizedBox.square(
-              dimension: 56,
-              child: GlassSurface(
-                role: GlassSurfaceRole.navigation,
-                radius: 28,
-                liveBackdrop: true,
-                fallbackBorder: true,
-                child: IconButton(
-                  onPressed: controller.toSearch,
-                  icon: const Icon(Icons.search),
-                ),
-              ),
-            ),
-          )
-        ],
+      appBar: HomeTopBar(
+        controller: controller.tabController,
+        onSearch: controller.toSearch,
       ),
       body: TabBarView(
         controller: controller.tabController,

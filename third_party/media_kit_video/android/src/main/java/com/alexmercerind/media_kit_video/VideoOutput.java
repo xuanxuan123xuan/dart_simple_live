@@ -42,6 +42,8 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
 
     private long id = 0;
     private long wid = 0;
+    private int publishedWidth = 0;
+    private int publishedHeight = 0;
 
     private final TextureUpdateCallback textureUpdateCallback;
 
@@ -57,6 +59,12 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
         // prevents stale native surfaces from being reused after a surface
         // recreation and lets the texture bridge release old references.
         surfaceProducer.setCallback(this);
+
+        // SurfaceProducer does not necessarily emit onSurfaceAvailable for
+        // its first surface until it has been sized. Keep the initial 1x1
+        // allocation used by the 26.3.12 baseline so AndroidVideoController
+        // can receive its texture id before Player.open is awaited.
+        setSurfaceSize(1, 1, true);
     }
 
     public void dispose() {
@@ -86,7 +94,7 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
                     return;
                 }
                 surfaceProducer.setSize(width, height);
-                onSurfaceAvailable();
+                publishSurfaceIfNeeded();
             } catch (Throwable e) {
                 Log.e(TAG, "setSurfaceSize", e);
             }
@@ -97,9 +105,7 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
     public void onSurfaceAvailable() {
         synchronized (lock) {
             Log.i(TAG, "onSurfaceAvailable");
-            id = surfaceProducer.id();
-            wid = newGlobalObjectRef(surfaceProducer.getSurface());
-            textureUpdateCallback.onTextureUpdate(id, wid, surfaceProducer.getWidth(), surfaceProducer.getHeight());
+            publishSurfaceIfNeeded();
         }
     }
 
@@ -107,12 +113,55 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
     public void onSurfaceCleanup() {
         synchronized (lock) {
             Log.i(TAG, "onSurfaceCleanup");
-            textureUpdateCallback.onTextureUpdate(id, 0, surfaceProducer.getWidth(), surfaceProducer.getHeight());
-            if (wid != 0) {
-                final long widReference = wid;
+            final long oldId = id;
+            final long oldWid = wid;
+            if (oldId == 0 && oldWid == 0) {
+                return;
+            }
+
+            textureUpdateCallback.onTextureUpdate(oldId, 0, surfaceProducer.getWidth(), surfaceProducer.getHeight());
+            id = 0;
+            wid = 0;
+            publishedWidth = 0;
+            publishedHeight = 0;
+            if (oldWid != 0) {
+                final long widReference = oldWid;
                 handler.postDelayed(() -> deleteGlobalObjectRef(widReference), 5000);
             }
         }
+    }
+
+    private void publishSurfaceIfNeeded() {
+        final long surfaceId = surfaceProducer.id();
+        if (surfaceId == 0) {
+            return;
+        }
+        final int width = surfaceProducer.getWidth();
+        final int height = surfaceProducer.getHeight();
+        if (id == surfaceId && wid != 0) {
+            if (publishedWidth != width || publishedHeight != height) {
+                publishedWidth = width;
+                publishedHeight = height;
+                textureUpdateCallback.onTextureUpdate(id, wid, width, height);
+            }
+            return;
+        }
+
+        if (wid != 0) {
+            final long oldWid = wid;
+            handler.postDelayed(() -> deleteGlobalObjectRef(oldWid), 5000);
+        }
+
+        final long surfaceWid = newGlobalObjectRef(surfaceProducer.getSurface());
+        id = surfaceId;
+        wid = surfaceWid;
+        publishedWidth = width;
+        publishedHeight = height;
+        textureUpdateCallback.onTextureUpdate(
+                id,
+                wid,
+                width,
+                height);
     }
 
     private static long newGlobalObjectRef(Object object) {

@@ -27,6 +27,7 @@ class SearchListController extends BasePageController<Object> {
   final Set<String> _seenSearchKeys = <String>{};
   LiveSearchMetadata? searchMetadata;
   final RxBool paginationUnavailable = false.obs;
+  final RxBool canConfigureDouyinCookie = false.obs;
 
   @override
   void onInit() {
@@ -111,6 +112,7 @@ class SearchListController extends BasePageController<Object> {
     _activeCancellation = cancellation;
     pageError.value = false;
     pageEmpty.value = false;
+    canConfigureDouyinCookie.value = false;
     pageLoadding.value = page == 1;
 
     try {
@@ -159,6 +161,8 @@ class SearchListController extends BasePageController<Object> {
       return;
     } catch (error) {
       if (_isCurrent(version)) {
+        canConfigureDouyinCookie.value =
+            site.id == "douyin" && error is DouyinSearchAuthError;
         handleError(error, showPageError: page == 1);
       }
     } finally {
@@ -177,6 +181,7 @@ class SearchListController extends BasePageController<Object> {
     canLoadMore.value = false;
     pageError.value = false;
     pageEmpty.value = false;
+    canConfigureDouyinCookie.value = false;
     searchMetadata = null;
     paginationUnavailable.value = false;
     _seenSearchKeys.clear();

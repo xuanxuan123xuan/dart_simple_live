@@ -39,7 +39,8 @@ class SearchListView extends StatelessWidget {
             SliverToBoxAdapter(child: SizedBox(height: topClearance)),
             if (controller.site.id == "douyin" &&
                 controller.searchMode.value == 1 &&
-                !controller.pageEmpty.value)
+                !controller.pageEmpty.value &&
+                !controller.pageError.value)
               const SliverToBoxAdapter(child: DouyinAnchorSearchNotice()),
           ];
           return Column(
@@ -55,6 +56,13 @@ class SearchListView extends StatelessWidget {
                         crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
                         crossAxisCount: roomLayout.crossAxisCount,
                         showPageLoadding: true,
+                        errorActionLabel:
+                            controller.canConfigureDouyinCookie.value
+                                ? "去配置 Cookie"
+                                : null,
+                        onErrorAction: controller.canConfigureDouyinCookie.value
+                            ? AppNavigator.toDouyinCookieConfig
+                            : null,
                         itemBuilder: (_, i) {
                           var item = controller.list[i] as LiveRoomItem;
                           return LiveRoomCard(controller.site, item);
@@ -68,6 +76,13 @@ class SearchListView extends StatelessWidget {
                         firstRefresh: false,
                         emptyWidget: controller.site.id == "douyin"
                             ? const DouyinAnchorSearchEmpty()
+                            : null,
+                        errorActionLabel:
+                            controller.canConfigureDouyinCookie.value
+                                ? "去配置 Cookie"
+                                : null,
+                        onErrorAction: controller.canConfigureDouyinCookie.value
+                            ? AppNavigator.toDouyinCookieConfig
                             : null,
                         itemBuilder: (_, i) {
                           var item = controller.list[i] as LiveAnchorItem;

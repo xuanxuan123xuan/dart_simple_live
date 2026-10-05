@@ -522,6 +522,8 @@ class TabIndicatorState extends State<TabIndicator>
   @override
   bool get isPlatformViewBackdrop => widget.platformViewBackdrop;
   @override
+  bool get deferTapSelection => true;
+  @override
   bool get usesExternalIndicatorPosition => widget.indicatorPosition != null;
 
   bool get _forceLiveIndicatorBackdrop =>

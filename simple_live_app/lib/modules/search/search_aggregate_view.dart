@@ -119,6 +119,15 @@ class _SiteSection extends StatelessWidget {
             icon: Icons.hourglass_empty,
             message: "正在加载",
           )
+        else if (state.hasError)
+          _SectionStatus(
+            icon: Icons.error_outline,
+            message: SearchAggregateErrorPresentation.message(state.error),
+            actionLabel: isDouyinAuthFailure ? "去配置" : null,
+            onAction: isDouyinAuthFailure
+                ? AppNavigator.toDouyinCookieConfig
+                : null,
+          )
         else if (state.site.id == "douyin" &&
             query.searchMode == 1 &&
             state.isEmpty)
@@ -130,15 +139,6 @@ class _SiteSection extends StatelessWidget {
             const _SectionStatus(
               icon: Icons.remove_circle_outline,
               message: "暂无结果",
-            )
-          else if (state.hasError)
-            _SectionStatus(
-              icon: Icons.error_outline,
-              message: SearchAggregateErrorPresentation.message(state.error),
-              actionLabel: isDouyinAuthFailure ? "去配置" : null,
-              onAction: isDouyinAuthFailure
-                  ? AppNavigator.toDouyinCookieConfig
-                  : null,
             )
           else if (query.searchMode == 0)
             MasonryGridView.count(

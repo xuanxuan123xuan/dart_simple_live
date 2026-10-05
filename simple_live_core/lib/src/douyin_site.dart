@@ -14,6 +14,7 @@ enum DouyinSearchAuthFailureReason {
   incompleteCookie,
   expired,
   rejected,
+  challenge,
 }
 
 class DouyinSearchAuthError extends CoreError {
@@ -39,6 +40,8 @@ class DouyinSearchAuthError extends CoreError {
         return "抖音 Cookie 已过期，请重新获取";
       case DouyinSearchAuthFailureReason.rejected:
         return "已配置 Cookie，但抖音仍拒绝搜索；可能是 Cookie 失效或触发风控，请稍后重试或重新获取 Cookie";
+      case DouyinSearchAuthFailureReason.challenge:
+        return "抖音返回了验证页面或风控挑战，请重新网页登录后再试";
     }
   }
 }
@@ -1505,6 +1508,16 @@ class DouyinSite implements LiveSite {
     CoreCancellation? cancellation,
   }) async {
     _throwIfCancelled(cancellation);
+    // Douyin's live-search endpoint requires a warm, authenticated web
+    // session. The built-in ttwid remains useful for playback, but it cannot
+    // unlock search and anonymous preflights only add another rate-limitable
+    // request.
+    final configuredCookie = DouyinCookieHelper.normalizeInput(cookie);
+    final expiry = DouyinCookieHelper.parseExpiry(configuredCookie);
+    if (!DouyinCookieHelper.hasLoginSession(configuredCookie) ||
+        (expiry != null && !expiry.isAfter(DateTime.now()))) {
+      throw _douyinSearchAuthError();
+    }
     String serverUrl = "https://www.douyin.com/aweme/v1/web/live/search/";
     var uri = Uri.parse(serverUrl).replace(
       scheme: "https",
@@ -1562,45 +1575,6 @@ class DouyinSite implements LiveSite {
         ..._searchSessionQueryParameters(configuredCookies),
       },
     );
-    // A user-provided Cookie already represents one coherent browser session.
-    // Do not precede every search with an anonymous live.douyin.com HEAD: that
-    // extra request can itself be rate-limited (444), and any fresh anonymous
-    // ttwid/nonce does not belong to the configured login session. Only obtain
-    // a fresh anonymous ttwid when the built-in fallback Cookie is being used.
-    if (cookie.trim().isEmpty) {
-      dynamic headResp;
-      try {
-        headResp = await HttpClient.instance.head(
-          'https://live.douyin.com',
-          header: requestHeaders,
-          cancellation: cancellation,
-        );
-        if (headResp.statusCode == 444) {
-          throw CoreError("", statusCode: 444, kind: CoreErrorKind.http);
-        }
-      } catch (error) {
-        if (error is CoreCancelledError ||
-            (error is CoreError && error.statusCode == 444)) {
-          rethrow;
-        }
-        _logDebug("抖音搜索预取 Cookie 失败，使用内置 ttwid 继续：$error");
-      }
-      final headCookies = <String>[];
-      headResp?.headers["set-cookie"]?.forEach((element) {
-        final headCookie = element.split(";").first.trim();
-        final separatorIndex = headCookie.indexOf("=");
-        if (separatorIndex <= 0) {
-          return;
-        }
-        final cookieName =
-            headCookie.substring(0, separatorIndex).trim().toLowerCase();
-        if (cookieName == "ttwid" || cookieName == "__ac_nonce") {
-          headCookies.add(headCookie);
-        }
-      });
-      dyCookie = _mergeCookieValues(savedCookie, headCookies.join("; "));
-    }
-    // HEAD has completed; do not begin the search GET after cancellation.
     _throwIfCancelled(cancellation);
     late final String requestUrl;
     try {
@@ -1651,12 +1625,13 @@ class DouyinSite implements LiveSite {
       final upstreamResult = await _trySearchWithUpstreamCompatibility(
         uri: uri,
         keyword: keyword,
-        requestHeaders: requestHeaders,
         savedCookie: savedCookie,
         cancellation: cancellation,
       );
       if (upstreamResult == null) {
-        throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
+        throw DouyinSearchAuthError(
+          DouyinSearchAuthFailureReason.challenge,
+        );
       }
       result = upstreamResult;
       statusCode = 0;
@@ -1671,10 +1646,8 @@ class DouyinSite implements LiveSite {
             lowerResponse.startsWith('<html') ||
             lowerResponse.contains('__ac_nonce') ||
             lowerResponse.contains('captcha')) {
-          throw CoreError(
-            "抖音直播搜索返回了验证页面，请重新网页登录后再试",
-            kind: CoreErrorKind.search,
-            cause: error,
+          throw DouyinSearchAuthError(
+            DouyinSearchAuthFailureReason.challenge,
           );
         }
         throw _invalidDouyinSearchResponse(error);
@@ -1697,7 +1670,6 @@ class DouyinSite implements LiveSite {
       final upstreamResult = await _trySearchWithUpstreamCompatibility(
         uri: uri,
         keyword: keyword,
-        requestHeaders: requestHeaders,
         savedCookie: savedCookie,
         cancellation: cancellation,
       );
@@ -1712,14 +1684,23 @@ class DouyinSite implements LiveSite {
       final upstreamResult = await _trySearchWithUpstreamCompatibility(
         uri: uri,
         keyword: keyword,
-        requestHeaders: requestHeaders,
         savedCookie: savedCookie,
         cancellation: cancellation,
       );
-      if (upstreamResult != null) {
-        result = upstreamResult;
-        statusCode = 0;
-        responseData = upstreamResult["data"];
+      if (upstreamResult == null) {
+        throw CoreError(
+          "抖音直播搜索返回空结果，可能触发风控，请重新登录后再试",
+          kind: CoreErrorKind.search,
+        );
+      }
+      result = upstreamResult;
+      statusCode = 0;
+      responseData = upstreamResult["data"];
+      if (responseData is! List || responseData.isEmpty) {
+        throw CoreError(
+          "抖音直播搜索返回空结果，可能触发风控，请重新登录后再试",
+          kind: CoreErrorKind.search,
+        );
       }
     }
     final data = responseData;
@@ -1771,7 +1752,6 @@ class DouyinSite implements LiveSite {
   Future<Map<dynamic, dynamic>?> _trySearchWithUpstreamCompatibility({
     required Uri uri,
     required String keyword,
-    required Map<String, dynamic> requestHeaders,
     required String savedCookie,
     CoreCancellation? cancellation,
   }) async {
@@ -1779,7 +1759,6 @@ class DouyinSite implements LiveSite {
       final upstreamResult = await _retrySearchWithUpstreamStrategy(
         uri: uri,
         keyword: keyword,
-        requestHeaders: requestHeaders,
         savedCookie: savedCookie,
         cancellation: cancellation,
       );
@@ -1809,42 +1788,11 @@ class DouyinSite implements LiveSite {
   Future<Map<dynamic, dynamic>> _retrySearchWithUpstreamStrategy({
     required Uri uri,
     required String keyword,
-    required Map<String, dynamic> requestHeaders,
     required String savedCookie,
     CoreCancellation? cancellation,
   }) async {
     _throwIfCancelled(cancellation);
-    dynamic headResponse;
-    try {
-      headResponse = await HttpClient.instance.head(
-        'https://live.douyin.com',
-        header: requestHeaders,
-        cancellation: cancellation,
-      );
-    } catch (error) {
-      if (error is CoreCancelledError) {
-        rethrow;
-      }
-      _logDebug("抖音搜索上游兼容 HEAD 失败：${error.runtimeType}");
-    }
-    _throwIfCancelled(cancellation);
-
-    final headCookies = <String>[];
-    headResponse?.headers["set-cookie"]?.forEach((element) {
-      final headCookie = element.split(";").first.trim();
-      final separator = headCookie.indexOf('=');
-      if (separator <= 0) {
-        return;
-      }
-      final name = headCookie.substring(0, separator).trim().toLowerCase();
-      if (name == 'ttwid' || name == '__ac_nonce') {
-        headCookies.add(headCookie);
-      }
-    });
-    final upstreamCookie = _mergeCookieValues(
-      savedCookie,
-      headCookies.join('; '),
-    );
+    final upstreamCookie = _ensureCookieEndsWithSemicolon(savedCookie);
 
     final query = <String, String>{...uri.queryParameters}
       ..remove('msToken')
@@ -1853,8 +1801,7 @@ class DouyinSite implements LiveSite {
       ..remove('a_bogus')
       ..remove('need_filter_settings')
       ..remove('list_type')
-      ..remove('update_version_code')
-      ..['webid'] = '7382872326016435738';
+      ..remove('update_version_code');
     final upstreamUri = uri.replace(queryParameters: query);
     final responseText = await HttpClient.instance.getText(
       upstreamUri.toString(),
@@ -1874,7 +1821,7 @@ class DouyinSite implements LiveSite {
         'sec-fetch-dest': 'empty',
         'sec-fetch-mode': 'cors',
         'sec-fetch-site': 'same-origin',
-        'user-agent': kDefaultUserAgent,
+        'user-agent': kSearchUserAgent,
       },
       cancellation: cancellation,
     );
@@ -1955,7 +1902,7 @@ class DouyinSite implements LiveSite {
   }
 
   DouyinSearchAuthError _douyinSearchAuthError() {
-    final configuredCookie = cookie.trim();
+    final configuredCookie = DouyinCookieHelper.normalizeInput(cookie).trim();
     if (configuredCookie.isEmpty) {
       return DouyinSearchAuthError(
         DouyinSearchAuthFailureReason.missingCookie,

@@ -18,25 +18,24 @@ void main() {
     HttpClient.instance.dio.interceptors.remove(interceptor);
   });
 
-  test('does not issue the search GET when the cookie HEAD is cancelled',
+  test('requires a configured login Cookie before any network request',
       () async {
-    interceptor.cancelHead();
-
     await expectLater(
-      DouyinSite().searchRooms('risk-test'),
-      throwsA(isA<CoreCancelledError>()),
+      DouyinSite().searchRooms('anonymous'),
+      throwsA(
+        isA<DouyinSearchAuthError>().having(
+          (error) => error.reason,
+          'reason',
+          DouyinSearchAuthFailureReason.missingCookie,
+        ),
+      ),
     );
-
-    expect(interceptor.requests, [
-      _DouyinSearchInterceptor.headRequest,
-    ]);
+    expect(interceptor.requests, isEmpty);
   });
 
   test('derives anchors and preserves the room search continuation', () async {
-    interceptor.respondToHead();
     interceptor.respondToSearchWith(_searchResponse());
-
-    final result = await _testSite().searchAnchors('anchor');
+    final result = await _authenticatedSite().searchAnchors('anchor');
 
     expect(result.metadata.origin, SearchOrigin.derived);
     expect(result.metadata.continuation, SearchContinuation.done);
@@ -50,14 +49,12 @@ void main() {
     expect(result.items.single.userName, 'anchor');
     expect(result.items.single.avatar, isEmpty);
     expect(interceptor.requests, [
-      _DouyinSearchInterceptor.headRequest,
       _DouyinSearchInterceptor.searchRequest,
     ]);
   });
 
   test('ranks matching anchors first and removes duplicate live rooms',
       () async {
-    interceptor.respondToHead();
     interceptor.respondToSearchWith(
       _searchResponse(
         rooms: [
@@ -68,7 +65,7 @@ void main() {
       ),
     );
 
-    final result = await _testSite().searchAnchors('target');
+    final result = await _authenticatedSite().searchAnchors('target');
 
     expect(result.items.map((item) => item.roomId), ['room-2', 'room-1']);
   });
@@ -96,7 +93,6 @@ void main() {
 
     for (final entry in cases.entries) {
       test('classifies ${entry.key}', () async {
-        interceptor.respondToHead();
         interceptor.respondToSearchWith({'status_code': 2483});
         final site = _testSite()..cookie = entry.value.$1;
 
@@ -106,12 +102,17 @@ void main() {
         expect(error.kind, CoreErrorKind.search);
         expect(error.message, isNot(contains('user-ttwid')));
         expect(error.message, isNot(contains('sessionid=session')));
+        expect(
+          interceptor.requests,
+          entry.value.$2 == DouyinSearchAuthFailureReason.rejected
+              ? [_DouyinSearchInterceptor.searchRequest]
+              : isEmpty,
+        );
       });
     }
   });
 
   test('keeps non-2483 search failures generic', () async {
-    interceptor.respondToHead();
     interceptor.respondToSearchWith({'status_code': 1});
 
     await expectLater(
@@ -154,8 +155,9 @@ void main() {
     await expectLater(
       site.searchRooms('challenge'),
       throwsA(
-        isA<CoreError>()
-            .having((error) => error.kind, 'kind', CoreErrorKind.search)
+        isA<DouyinSearchAuthError>()
+            .having((error) => error.reason, 'reason',
+                DouyinSearchAuthFailureReason.challenge)
             .having(
               (error) => error.message,
               'message',
@@ -166,14 +168,14 @@ void main() {
     expect(interceptor.requests, [_DouyinSearchInterceptor.searchRequest]);
   });
 
-  test('signs the search URL after HEAD with the same user agent', () async {
-    interceptor.respondToHead();
+  test('signs the search URL with the same user agent', () async {
     interceptor.respondToSearchWith(_searchResponse());
     String? signerUserAgent;
     final site = DouyinSite(abogusSigner: (url, userAgent) {
       signerUserAgent = userAgent;
       return _signedSearchUrl(url, userAgent);
-    });
+    })
+      ..cookie = 'sessionid=user-session';
 
     await site.searchRooms('signed');
 
@@ -343,10 +345,6 @@ void main() {
 
   test('uses upstream compatibility only after a successful empty response',
       () async {
-    interceptor.respondToHeadWithCookies([
-      'ttwid=head-ttwid; Path=/',
-      '__ac_nonce=head-nonce; Path=/',
-    ]);
     interceptor.respondToSearchSequence([
       {'status_code': 0, 'data': [], 'has_more': 0},
       _searchResponse(),
@@ -359,7 +357,6 @@ void main() {
     expect(result.items, hasLength(1));
     expect(interceptor.requests, [
       _DouyinSearchInterceptor.searchRequest,
-      _DouyinSearchInterceptor.headRequest,
       _DouyinSearchInterceptor.searchRequest,
     ]);
     final primary = interceptor.searchOptionsHistory[0];
@@ -367,22 +364,20 @@ void main() {
     expect(primary.uri.queryParameters['a_bogus'], 'signature');
     expect(fallback.uri.queryParameters.containsKey('a_bogus'), isFalse);
     expect(fallback.uri.queryParameters.containsKey('msToken'), isFalse);
-    expect(fallback.uri.queryParameters['webid'], '7382872326016435738');
+    expect(
+      fallback.uri.queryParameters['webid'],
+      primary.uri.queryParameters['webid'],
+    );
     expect(fallback.uri.queryParameters.containsKey('list_type'), isFalse);
-    expect(fallback.headers['user-agent'], DouyinSite.kDefaultUserAgent);
+    expect(fallback.headers['user-agent'], DouyinSite.kSearchUserAgent);
     expect(_parseCookieHeader(fallback.headers['cookie'] as String), {
       'sessionid': 'user-session',
-      'ttwid': 'head-ttwid',
-      '__ac_nonce': 'head-nonce',
+      'ttwid': 'user-ttwid',
     });
   });
 
   test('uses upstream compatibility after a blocked primary response',
       () async {
-    interceptor.respondToHeadWithCookies([
-      'ttwid=head-ttwid; Path=/',
-      '__ac_nonce=head-nonce; Path=/',
-    ]);
     interceptor.respondToSearchTextSequence([
       'blocked',
       jsonEncode(_searchResponse()),
@@ -394,7 +389,6 @@ void main() {
     expect(result.items, hasLength(1));
     expect(interceptor.requests, [
       _DouyinSearchInterceptor.searchRequest,
-      _DouyinSearchInterceptor.headRequest,
       _DouyinSearchInterceptor.searchRequest,
     ]);
     expect(
@@ -406,9 +400,6 @@ void main() {
 
   test('uses upstream compatibility after a generic restricted status',
       () async {
-    interceptor.respondToHeadWithCookies([
-      'ttwid=head-ttwid; Path=/',
-    ]);
     interceptor.respondToSearchSequence([
       {'status_code': 1, 'data': []},
       _searchResponse(),
@@ -420,14 +411,12 @@ void main() {
     expect(result.items, hasLength(1));
     expect(interceptor.requests, [
       _DouyinSearchInterceptor.searchRequest,
-      _DouyinSearchInterceptor.headRequest,
       _DouyinSearchInterceptor.searchRequest,
     ]);
   });
 
   test('keeps the primary error when upstream compatibility is not useful',
       () async {
-    interceptor.respondToHead();
     interceptor.respondToSearchSequence([
       {'status_code': 1, 'data': []},
       {'status_code': 2483},
@@ -467,74 +456,48 @@ void main() {
     expect(interceptor.requests, [_DouyinSearchInterceptor.searchRequest]);
   });
 
-  test('keeps a genuinely empty result when both strategies are empty',
+  test('reports an empty result after compatibility retry as a restriction',
       () async {
-    interceptor.respondToHead();
     interceptor.respondToSearchSequence([
       {'status_code': 0, 'data': [], 'has_more': 0},
       {'status_code': 0, 'data': [], 'has_more': 0},
     ]);
     final site = _testSite()..cookie = 'sessionid=user-session';
 
-    final result = await site.searchRooms('empty');
-
-    expect(result.items, isEmpty);
-    expect(interceptor.searchOptionsHistory, hasLength(2));
-  });
-
-  test('lets a HEAD ttwid replace the built-in default cookie', () async {
-    interceptor.respondToHeadWithCookies([
-      'ttwid=head-ttwid; Path=/',
-      'foo_ttwid=must-not-be-copied; Path=/',
-    ]);
-    interceptor.respondToSearchWith(_searchResponse());
-
-    await _testSite().searchRooms('default-cookie');
-
-    expect(_parseCookieHeader(_searchCookie(interceptor)), {
-      'ttwid': 'head-ttwid',
-    });
-  });
-
-  test('continues to the signed GET when the cookie HEAD fails', () async {
-    interceptor.failHead();
-    interceptor.respondToSearchWith(_searchResponse());
-
-    await _testSite().searchRooms('head-failure');
-
-    expect(interceptor.requests, [
-      _DouyinSearchInterceptor.headRequest,
-      _DouyinSearchInterceptor.searchRequest,
-    ]);
-    expect(
-      interceptor.searchOptions?.uri.queryParameters['a_bogus'],
-      'signature',
+    await expectLater(
+      site.searchRooms('empty'),
+      throwsA(isA<CoreError>().having(
+        (error) => error.message,
+        'message',
+        contains('返回空结果'),
+      )),
     );
+    expect(interceptor.searchOptionsHistory, hasLength(2));
   });
 
   test('does not issue the GET when cancellation happens during signing',
       () async {
-    interceptor.respondToHead();
     final cancellation = CoreCancellationToken();
     final site = DouyinSite(abogusSigner: (url, userAgent) {
       cancellation.cancel();
       return _signedSearchUrl(url, userAgent);
-    });
+    })
+      ..cookie = 'sessionid=user-session';
 
     await expectLater(
       site.searchRooms('cancel-sign', cancellation: cancellation),
       throwsA(isA<CoreCancelledError>()),
     );
 
-    expect(interceptor.requests, [_DouyinSearchInterceptor.headRequest]);
+    expect(interceptor.requests, isEmpty);
   });
 
   test('wraps signer failures as search errors without exposing details',
       () async {
-    interceptor.respondToHead();
     final site = DouyinSite(abogusSigner: (url, userAgent) {
       throw StateError('secret-token');
-    });
+    })
+      ..cookie = 'sessionid=user-session';
 
     await expectLater(
       site.searchRooms('sign-failure'),
@@ -556,7 +519,10 @@ void main() {
   });
 }
 
-DouyinSite _testSite() => DouyinSite(abogusSigner: _signedSearchUrl);
+DouyinSite _testSite() => DouyinSite(abogusSigner: _signedSearchUrl)
+  ..cookie = 'sessionid=user-session';
+
+DouyinSite _authenticatedSite() => _testSite();
 
 String _signedSearchUrl(String url, String userAgent) {
   final uri = Uri.parse(url);
@@ -618,38 +584,14 @@ Map<String, dynamic> _searchRoom(
 }
 
 class _DouyinSearchInterceptor extends Interceptor {
-  static const headRequest = 'HEAD https://live.douyin.com';
   static const searchRequest =
       'GET https://www.douyin.com/aweme/v1/web/live/search/';
 
   final List<String> requests = [];
-  bool _cancelHead = false;
-  bool _failHead = false;
-  List<String> _headCookies = const [];
   String? _searchResponse;
   final List<String> _searchResponseSequence = [];
   RequestOptions? searchOptions;
   final List<RequestOptions> searchOptionsHistory = [];
-
-  void cancelHead() {
-    _cancelHead = true;
-  }
-
-  void respondToHead() {
-    _cancelHead = false;
-    _failHead = false;
-    _headCookies = const [];
-  }
-
-  void respondToHeadWithCookies(List<String> cookies) {
-    respondToHead();
-    _headCookies = cookies;
-  }
-
-  void failHead() {
-    _cancelHead = false;
-    _failHead = true;
-  }
 
   void respondToSearchWith(Object response) {
     _searchResponse = jsonEncode(response);
@@ -681,31 +623,6 @@ class _DouyinSearchInterceptor extends Interceptor {
         '${options.method} ${options.uri.scheme}://${options.uri.host}'
         '${options.uri.path}';
     requests.add(request);
-
-    if (request == headRequest) {
-      if (_cancelHead) {
-        handler.reject(
-          DioException(
-            requestOptions: options,
-            type: DioExceptionType.cancel,
-          ),
-        );
-      } else if (_failHead) {
-        handler.reject(
-          DioException(
-            requestOptions: options,
-            type: DioExceptionType.connectionError,
-          ),
-        );
-      } else {
-        handler.resolve(Response<void>(
-          requestOptions: options,
-          statusCode: 200,
-          headers: Headers.fromMap({'set-cookie': _headCookies}),
-        ));
-      }
-      return;
-    }
 
     if (request == searchRequest &&
         (_searchResponseSequence.isNotEmpty || _searchResponse != null)) {

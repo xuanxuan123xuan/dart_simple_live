@@ -4,9 +4,16 @@ import 'package:lottie/lottie.dart';
 
 class AppErrorWidget extends StatelessWidget {
   final Function()? onRefresh;
+  final String? actionLabel;
+  final Function()? onAction;
   final String errorMsg;
-  const AppErrorWidget({this.errorMsg = "", this.onRefresh, Key? key})
-      : super(key: key);
+  const AppErrorWidget({
+    this.errorMsg = "",
+    this.onRefresh,
+    this.actionLabel,
+    this.onAction,
+    Key? key,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +37,11 @@ class AppErrorWidget extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
+              if (actionLabel != null && onAction != null)
+                TextButton(
+                  onPressed: onAction,
+                  child: Text(actionLabel!),
+                ),
             ],
           ),
         ),

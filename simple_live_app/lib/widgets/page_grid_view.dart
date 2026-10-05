@@ -23,6 +23,8 @@ class PageGridView extends StatelessWidget {
   final double? mainAxisExtent;
   final bool useFixedGrid;
   final Widget? emptyWidget;
+  final String? errorActionLabel;
+  final VoidCallback? onErrorAction;
   final int refreshHeaderIndex;
 
   /// Scrollable content rendered before the grid, under the same refresh and
@@ -42,6 +44,8 @@ class PageGridView extends StatelessWidget {
     this.mainAxisExtent,
     this.useFixedGrid = false,
     this.emptyWidget,
+    this.errorActionLabel,
+    this.onErrorAction,
     this.refreshHeaderIndex = 0,
     this.headerSlivers = const [],
     required this.crossAxisCount,
@@ -127,6 +131,8 @@ class PageGridView extends StatelessWidget {
           child: AppErrorWidget(
             errorMsg: pageController.errorMsg.value,
             onRefresh: pageController.refreshData,
+            actionLabel: errorActionLabel,
+            onAction: onErrorAction,
           ),
         ),
       );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:liquid_glass_widgets/src/widgets/surfaces/tab_bar_bottom_internal.dart';
@@ -8,7 +9,7 @@ void main() {
 
   for (final placement in _TestPlacement.values) {
     testWidgets(
-      '${placement.name} bar does not fling past a tab selected on tap-down',
+      '${placement.name} bar commits a tap selection on tap-up',
       (tester) async {
         final selections = <int>[];
         await tester.binding.setSurfaceSize(const Size(400, 200));
@@ -38,16 +39,67 @@ void main() {
           find.byType(TabIndicator),
         );
 
-        // Reproduce the callback order seen on a real device: onTapDown first
-        // updates the host selection, then a small movement wins the horizontal
-        // drag recognizer. Drag-end must compare against the selection from
-        // pointer-down instead of applying velocity to the updated host index.
+        // A press only activates the indicator interaction. The host selection
+        // must remain unchanged until the tap is released.
         indicator.onBarPointerDown(secondTabCenter);
         indicator.onBarTapDown(
           TapDownDetails(globalPosition: secondTabCenter),
         );
         await tester.pump();
-        expect(selections.last, 1);
+        expect(selections, isEmpty);
+
+        indicator.onBarTapUp(
+          TapUpDetails(
+            globalPosition: secondTabCenter,
+            kind: PointerDeviceKind.touch,
+          ),
+        );
+        await tester.pump();
+
+        expect(selections, [1]);
+      },
+    );
+
+    testWidgets(
+      '${placement.name} bar does not fling past a tab selected during drag',
+      (tester) async {
+        final selections = <int>[];
+        await tester.binding.setSurfaceSize(const Size(400, 200));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: LiquidGlassScope(
+              child: Center(
+                child: SizedBox(
+                  width: 400,
+                  child: _SelectionHarness(
+                    placement: placement,
+                    selections: selections,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final rect = tester.getRect(find.byKey(gestureRegionKey));
+        final secondTabCenter =
+            Offset(rect.left + rect.width * 3 / 8, rect.center.dy);
+        final indicator = tester.state<TabIndicatorState>(
+          find.byType(TabIndicator),
+        );
+
+        // A small movement wins the horizontal drag recognizer after the
+        // pointer-down callback. The canceled tap must not submit its pending
+        // target; drag-end remains the only selection callback.
+        indicator.onBarPointerDown(secondTabCenter);
+        indicator.onBarTapDown(
+          TapDownDetails(globalPosition: secondTabCenter),
+        );
+        await tester.pump();
+        expect(selections, isEmpty);
 
         indicator.onBarDragStart(
           DragStartDetails(globalPosition: secondTabCenter),
@@ -69,6 +121,48 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(selections.last, 1);
+      },
+    );
+
+    testWidgets(
+      '${placement.name} bar drops a canceled pending tap',
+      (tester) async {
+        final selections = <int>[];
+        await tester.binding.setSurfaceSize(const Size(400, 200));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: LiquidGlassScope(
+              child: Center(
+                child: SizedBox(
+                  width: 400,
+                  child: _SelectionHarness(
+                    placement: placement,
+                    selections: selections,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final rect = tester.getRect(find.byKey(gestureRegionKey));
+        final secondTabCenter =
+            Offset(rect.left + rect.width * 3 / 8, rect.center.dy);
+        final indicator = tester.state<TabIndicatorState>(
+          find.byType(TabIndicator),
+        );
+
+        indicator.onBarPointerDown(secondTabCenter);
+        indicator.onBarTapDown(
+          TapDownDetails(globalPosition: secondTabCenter),
+        );
+        indicator.onBarTapCancel();
+        await tester.pump();
+
+        expect(selections, isEmpty);
       },
     );
 

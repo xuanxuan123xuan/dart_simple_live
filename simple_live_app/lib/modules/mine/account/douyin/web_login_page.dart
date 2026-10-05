@@ -88,6 +88,7 @@ class DouyinWebLoginPage extends GetView<DouyinWebLoginController> {
                       userAgent: controller.userAgent,
                       javaScriptEnabled: true,
                       domStorageEnabled: true,
+                      databaseEnabled: true,
                       sharedCookiesEnabled: true,
                       thirdPartyCookiesEnabled: true,
                       javaScriptCanOpenWindowsAutomatically: true,
