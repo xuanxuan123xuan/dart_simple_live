@@ -101,7 +101,8 @@ class SiteGlassTabBar extends StatelessWidget {
               // TabBarView swipes should drive the indicator directly so it
               // cannot lag behind the page. Keep the internal spring for a
               // platform-selector tap while TabController.animateTo runs.
-              indicatorPosition: controller.indexIsChanging ? null : position,
+              indicatorPosition:
+                  controller.indexIsChanging ? null : position,
               onTabSelected: controller.animateTo,
               backgroundKey: LiquidGlassScope.of(context),
               quality: quality,
