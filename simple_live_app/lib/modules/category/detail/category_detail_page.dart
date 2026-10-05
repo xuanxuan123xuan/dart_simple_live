@@ -8,7 +8,6 @@ import 'package:simple_live_app/modules/category/detail/category_detail_controll
 import 'package:simple_live_app/modules/indexed/indexed_controller.dart';
 import 'package:simple_live_app/modules/indexed/indexed_page.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
-import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/live_room_card.dart';
 import 'package:simple_live_app/widgets/live_room_grid_layout.dart';
@@ -148,10 +147,7 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
       child: IndexedBottomNavigationBar(
         items: indexed.items,
         selectedIndex: indexed.index,
-        onDestinationSelected: (index) {
-          Get.until((route) => route.settings.name == RoutePath.kIndex);
-          indexed.setIndex(index);
-        },
+        onDestinationSelected: AppNavigator.toIndexedDestination,
         glassEnabled: true,
         backgroundKey: null,
       ),

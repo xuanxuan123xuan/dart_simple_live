@@ -64,7 +64,14 @@ class IndexedController extends GetxController {
     items.value = AppSettingsController.instance.homeSort
         .map((key) => Constant.allHomePages[key]!)
         .toList();
-    setIndex(0);
+    final arguments = Get.arguments;
+    final requestedIndex = arguments is Map ? arguments["initialIndex"] : null;
+    final initialIndex = requestedIndex is int &&
+            requestedIndex >= 0 &&
+            requestedIndex < items.length
+        ? requestedIndex
+        : 0;
+    setIndex(initialIndex);
     super.onInit();
   }
 

@@ -29,6 +29,14 @@ class AppNavigator {
   static bool _kuaishouLoginRecommendationShowing = false;
   static int _categoryDetailSequence = 0;
 
+  /// Return to the root page before selecting a main navigation destination.
+  static void toIndexedDestination(int index) {
+    Get.offAllNamed(
+      RoutePath.kIndex,
+      arguments: <String, dynamic>{"initialIndex": index},
+    );
+  }
+
   /// 跳转至观看记录
   static Future<dynamic> toHistory({
     RoomSelectionCallback? onRoomSelected,
