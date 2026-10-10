@@ -133,9 +133,6 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
 
     private void publishSurfaceIfNeeded() {
         final long surfaceId = surfaceProducer.id();
-        if (surfaceId == 0) {
-            return;
-        }
         final int width = surfaceProducer.getWidth();
         final int height = surfaceProducer.getHeight();
         if (id == surfaceId && wid != 0) {
@@ -147,12 +144,19 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
             return;
         }
 
+        // Texture ID 0 is a valid Flutter texture ID (it is commonly the
+        // first texture allocated by the engine). The JNI surface reference
+        // is the reliable signal that the surface can be handed to libmpv.
+        final long surfaceWid = newGlobalObjectRef(surfaceProducer.getSurface());
+        if (surfaceWid == 0) {
+            return;
+        }
+
         if (wid != 0) {
             final long oldWid = wid;
             handler.postDelayed(() -> deleteGlobalObjectRef(oldWid), 5000);
         }
 
-        final long surfaceWid = newGlobalObjectRef(surfaceProducer.getSurface());
         id = surfaceId;
         wid = surfaceWid;
         publishedWidth = width;
