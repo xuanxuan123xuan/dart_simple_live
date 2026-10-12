@@ -7,6 +7,8 @@ export 'src/bilibili_site.dart';
 export 'src/douyu_site.dart';
 export 'src/douyin_site.dart';
 export 'src/kuaishou_site.dart';
+export 'src/xiaohongshu_danmaku.dart';
+export 'src/xiaohongshu_site.dart';
 export 'src/common/core_error.dart';
 export 'src/common/core_cancellation.dart';
 export 'src/common/core_log.dart';
