@@ -29,6 +29,12 @@ class Sites {
       name: "抖音直播",
       liveSite: DouyinSite(),
     ),
+    Constant.kXiaohongshu: Site(
+      id: Constant.kXiaohongshu,
+      logo: "assets/images/xiaohongshu.png",
+      name: "小红书直播",
+      liveSite: XiaohongshuSite(),
+    ),
     Constant.kKuaishou: Site(
       id: Constant.kKuaishou,
       logo: "assets/images/kuaishou.png",

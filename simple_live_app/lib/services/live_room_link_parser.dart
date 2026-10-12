@@ -33,6 +33,15 @@ class LiveRoomLinkParser {
     'www.huya.com',
     'm.huya.com',
   };
+  static const Set<String> _xiaohongshuHosts = {
+    'xiaohongshu.com',
+    'www.xiaohongshu.com',
+    'live-room.xiaohongshu.com',
+  };
+  static const Set<String> _xiaohongshuShortHosts = {
+    'xhslink.com',
+    'www.xhslink.com',
+  };
   final Dio _redirectClient;
   final Future<String> Function(String url)? _locationResolver;
 
@@ -106,7 +115,45 @@ class LiveRoomLinkParser {
       final location = await _resolveLocation(extractedUrl);
       return location.isEmpty ? null : parse(location);
     }
+    if (_xiaohongshuHosts.contains(host)) {
+      return _target(Constant.kXiaohongshu, _xiaohongshuRoomId(uri));
+    }
+    if (_xiaohongshuShortHosts.contains(host)) {
+      final location = _locationResolver != null
+          ? await _locationResolver(extractedUrl)
+          : await _resolveLocation(
+              extractedUrl,
+              isAllowed: isTrustedXiaohongshuRedirectTarget,
+            );
+      if (!isTrustedXiaohongshuRedirectTarget(location)) return null;
+      return parse(location);
+    }
     return null;
+  }
+
+  static String _xiaohongshuRoomId(Uri uri) {
+    final segments = uri.pathSegments
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    final liveIndex = segments.indexOf('livestream');
+    if (liveIndex >= 0 && liveIndex + 1 < segments.length) {
+      final candidate = segments[liveIndex + 1];
+      if (RegExp(r'^\d{8,32}$').hasMatch(candidate)) return candidate;
+      if (liveIndex + 2 < segments.length &&
+          RegExp(r'^\d{8,32}$').hasMatch(segments[liveIndex + 2])) {
+        return segments[liveIndex + 2];
+      }
+    }
+    return '';
+  }
+
+  static bool isTrustedXiaohongshuRedirectTarget(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !_isHttpUri(uri)) return false;
+    final host = uri.host.toLowerCase();
+    return _xiaohongshuHosts.contains(host) ||
+        _xiaohongshuShortHosts.contains(host);
   }
 
   LiveRoomLinkTarget? _target(String siteId, String roomId) {
@@ -123,6 +170,9 @@ class LiveRoomLinkParser {
   bool _isValidRoomId(String siteId, String roomId) {
     if (roomId.isEmpty || roomId == '.' || roomId == '..') {
       return false;
+    }
+    if (siteId == Constant.kXiaohongshu) {
+      return RegExp(r'^\d{8,32}$').hasMatch(roomId);
     }
     final pattern = siteId == Constant.kDouyin
         ? RegExp(r'^[A-Za-z0-9_.-]+$')

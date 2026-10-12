@@ -468,13 +468,15 @@ class AppSettingsController extends GetxController {
           Sites.allSites.keys.join(","),
         )
         .split(",");
-    //如果数量与allSites的数量不一致，将缺失的添加上
-    if (sort.length != Sites.allSites.length) {
-      var keys = Sites.allSites.keys.toList();
-      for (var i = 0; i < keys.length; i++) {
-        if (!sort.contains(keys[i])) {
-          sort.add(keys[i]);
-        }
+    // Remove retired site ids from older settings, then append newly added
+    // sites so an update never makes supportSites index a missing map entry.
+    sort = sort
+        .map((item) => item.trim())
+        .where((item) => Sites.allSites.containsKey(item))
+        .toList();
+    for (final key in Sites.allSites.keys) {
+      if (!sort.contains(key)) {
+        sort.add(key);
       }
     }
 
