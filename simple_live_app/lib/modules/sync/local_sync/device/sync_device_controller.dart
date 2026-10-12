@@ -26,7 +26,11 @@ class SyncDeviceController extends BaseController {
     try {
       SyncProgressDialog.update(SyncProgress(stage: "生成$label配置包"));
       package = await ProfileBackupService.instance
-          .createTemporaryProfilePackage(options: options);
+          .createTemporaryProfilePackage(
+            options: options,
+            // XHS account transport remains disabled until its targets are specified.
+            includeXiaohongshuAccount: false,
+          );
       final itemCount = _selectedProfileItemCount(package);
       final summary = _profileSummaryMessage(package);
       Log.i(

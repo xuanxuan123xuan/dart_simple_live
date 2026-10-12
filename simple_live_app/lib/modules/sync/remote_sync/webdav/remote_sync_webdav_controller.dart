@@ -180,7 +180,9 @@ class RemoteSyncWebDAVController extends BaseController {
     final archive = Archive();
     List<int> zipBytes = [];
     try {
-      final profileMap = ProfileBackupService.instance.exportProfileMap();
+      final profileMap = ProfileBackupService.instance.exportProfileMap(
+        includeXiaohongshuAccount: false,
+      );
       final profileJson =
           const JsonEncoder.withIndent("  ").convert(profileMap);
       archive.addFile(
@@ -223,10 +225,13 @@ class RemoteSyncWebDAVController extends BaseController {
           'data': {'cookie': DouyinAccountService.instance.cookie}
         },
       );
+      final transportSettings = Map<dynamic, dynamic>.from(
+        LocalStorageService.instance.settingsBox.toMap(),
+      )..remove(LocalStorageService.kXiaohongshuCookie);
       _addJsonFile(
         archive,
         _userSettingsJsonName,
-        {'data': LocalStorageService.instance.settingsBox.toMap()},
+        {'data': transportSettings},
       );
       final zipEncoder = ZipEncoder();
       zipBytes = zipEncoder.encode(archive) ?? <int>[];

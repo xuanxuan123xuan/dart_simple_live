@@ -71,6 +71,7 @@ class ProfileBackupService extends GetxService {
 
   Map<String, dynamic> exportProfileMap({
     ProfileExportOptions options = const ProfileExportOptions(),
+    bool includeXiaohongshuAccount = true,
   }) {
     if (options.upstreamMode == UpstreamExportMode.dataAndSync) {
       return _exportUpstreamProfileMap(options);
@@ -90,7 +91,7 @@ class ProfileBackupService extends GetxService {
         ? _exportSettings()
         : <String, dynamic>{};
     final accountsPayload = options.accounts
-        ? _exportAccounts()
+        ? _exportAccounts(includeXiaohongshuAccount: includeXiaohongshuAccount)
         : {"items": const []};
     final shieldPresetsPayload = options.shieldPresets
         ? _exportShieldPresets()
@@ -142,11 +143,15 @@ class ProfileBackupService extends GetxService {
   /// 因此不能复用只返回 Map 的 [exportProfileMap]。
   Object exportProfilePayload({
     ProfileExportOptions options = const ProfileExportOptions(),
+    bool includeXiaohongshuAccount = true,
   }) {
     if (options.upstreamMode == UpstreamExportMode.followList) {
       return _exportUpstreamFollowList();
     }
-    return exportProfileMap(options: options);
+    return exportProfileMap(
+      options: options,
+      includeXiaohongshuAccount: includeXiaohongshuAccount,
+    );
   }
 
   List<Map<String, dynamic>> _exportUpstreamFollowList() {
@@ -194,8 +199,12 @@ class ProfileBackupService extends GetxService {
 
   Future<TemporaryProfilePackage> createTemporaryProfilePackage({
     ProfileExportOptions options = const ProfileExportOptions(),
+    bool includeXiaohongshuAccount = true,
   }) async {
-    final payload = exportProfilePayload(options: options);
+    final payload = exportProfilePayload(
+      options: options,
+      includeXiaohongshuAccount: includeXiaohongshuAccount,
+    );
     final content = const JsonEncoder.withIndent("  ").convert(payload);
     final dir = await Directory.systemTemp.createTemp("simple_live_profile_");
     final file = File("${dir.path}${Platform.pathSeparator}profile.json");
@@ -767,7 +776,9 @@ class ProfileBackupService extends GetxService {
     return result;
   }
 
-  Map<String, dynamic> _exportAccounts() {
+  Map<String, dynamic> _exportAccounts({
+    bool includeXiaohongshuAccount = true,
+  }) {
     return {
       "items": [
         {
@@ -784,7 +795,7 @@ class ProfileBackupService extends GetxService {
             "",
           ),
         },
-        {
+        if (includeXiaohongshuAccount) {
           "siteId": Constant.kXiaohongshu,
           "cookie": LocalStorageService.instance.getValue(
             LocalStorageService.kXiaohongshuCookie,

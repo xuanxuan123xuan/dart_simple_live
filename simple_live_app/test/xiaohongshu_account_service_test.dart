@@ -126,6 +126,24 @@ void main() {
         histories: false,
       ),
     );
+    final transport = ProfileBackupService().exportProfileMap(
+      options: const ProfileExportOptions(
+          settings: true,
+          accounts: true,
+          shields: false,
+          shieldPresets: false,
+          follows: false,
+          histories: false),
+      includeXiaohongshuAccount: false,
+    );
+    expect(
+        (transport['accounts']['items'] as List)
+            .any((item) => item['siteId'] == Constant.kXiaohongshu),
+        isFalse);
+    expect(
+        (transport['settings'] as Map)
+            .containsKey(LocalStorageService.kXiaohongshuCookie),
+        isFalse);
     final settings = backup['settings'] as Map<String, dynamic>;
     final accounts = backup['accounts'] as Map<String, dynamic>;
     final accountItems = accounts['items'] as List;
