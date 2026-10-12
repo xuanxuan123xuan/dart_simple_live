@@ -116,6 +116,7 @@ class LiveRoomLinkParser {
       return location.isEmpty ? null : parse(location);
     }
     if (_xiaohongshuHosts.contains(host)) {
+      if (!isTrustedXiaohongshuRedirectTarget(extractedUrl)) return null;
       return _target(Constant.kXiaohongshu, _xiaohongshuRoomId(uri));
     }
     if (_xiaohongshuShortHosts.contains(host)) {
@@ -126,7 +127,9 @@ class LiveRoomLinkParser {
               isAllowed: isTrustedXiaohongshuRedirectTarget,
             );
       if (!isTrustedXiaohongshuRedirectTarget(location)) return null;
-      return parse(location);
+      final destination = Uri.tryParse(location);
+      if (destination == null || !_xiaohongshuHosts.contains(destination.host.toLowerCase())) return null;
+      return _target(Constant.kXiaohongshu, _xiaohongshuRoomId(destination));
     }
     return null;
   }
@@ -136,21 +139,22 @@ class LiveRoomLinkParser {
         .map((segment) => segment.trim())
         .where((segment) => segment.isNotEmpty)
         .toList();
-    final liveIndex = segments.indexOf('livestream');
-    if (liveIndex >= 0 && liveIndex + 1 < segments.length) {
-      final candidate = segments[liveIndex + 1];
-      if (RegExp(r'^\d{8,32}$').hasMatch(candidate)) return candidate;
-      if (liveIndex + 2 < segments.length &&
-          RegExp(r'^\d{8,32}$').hasMatch(segments[liveIndex + 2])) {
-        return segments[liveIndex + 2];
-      }
+    if (segments.length == 2 && segments[0] == 'livestream') {
+      return segments[1];
+    }
+    if (segments.length == 3 && segments[0] == 'livestream') {
+      return segments[2];
+    }
+    if (segments.length == 4 && segments[0] == 'hina' &&
+        segments[1] == 'livestream' && RegExp(r'^\d+$').hasMatch(segments[3])) {
+      return segments[2];
     }
     return '';
   }
 
   static bool isTrustedXiaohongshuRedirectTarget(String url) {
     final uri = Uri.tryParse(url);
-    if (uri == null || !_isHttpUri(uri)) return false;
+    if (uri == null || !_isHttpUri(uri) || uri.userInfo.isNotEmpty || (uri.port != 443 && uri.port != 80)) return false;
     final host = uri.host.toLowerCase();
     return _xiaohongshuHosts.contains(host) ||
         _xiaohongshuShortHosts.contains(host);

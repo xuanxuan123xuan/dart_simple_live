@@ -333,11 +333,18 @@ bool shouldCommitRoomDetailRefresh({
       incomingState == decision.state;
 }
 
-/// Keeps known Kuaishou presentation metadata when a fresh playback/status
+/// Keeps known presentation metadata when a fresh playback/status
 /// snapshot omits it. Session-bound data always comes from [incoming], so
 /// account cookies, danmaku credentials, and playback URLs are never mixed.
 @visibleForTesting
 LiveRoomDetail mergeKuaishouRoomDetailMetadata({
+  required LiveRoomDetail current,
+  required LiveRoomDetail incoming,
+}) =>
+    mergeLiveRoomDetailMetadata(current: current, incoming: incoming);
+
+@visibleForTesting
+LiveRoomDetail mergeLiveRoomDetailMetadata({
   required LiveRoomDetail current,
   required LiveRoomDetail incoming,
 }) {
@@ -2121,8 +2128,10 @@ class LiveRoomController extends PlayerController
       )) {
         final currentDetail = detail.value;
         final committedDetail =
-            site.id == Constant.kKuaishou && currentDetail != null
-                ? mergeKuaishouRoomDetailMetadata(
+            (site.id == Constant.kKuaishou ||
+                        site.id == Constant.kXiaohongshu) &&
+                    currentDetail != null
+                ? mergeLiveRoomDetailMetadata(
                     current: currentDetail,
                     incoming: roomDetail,
                   )
@@ -2132,7 +2141,7 @@ class LiveRoomController extends PlayerController
         _syncBackgroundPlaybackMetadata(committedDetail);
       }
       if (incomingState == LiveStatusState.live) {
-        if (site.id == Constant.kDouyin &&
+        if ((site.id == Constant.kDouyin || site.id == Constant.kXiaohongshu) &&
             shouldStartDouyinDanmaku(previousState, incomingState)) {
           initDanmau();
           unawaited(liveDanmaku.start(detail.value?.danmakuData));
@@ -2178,6 +2187,9 @@ class LiveRoomController extends PlayerController
       errorStackTrace = null;
     } else if (decision.state == LiveStatusState.offline) {
       waitingForPlaybackUrl.value = false;
+      if (site.id == Constant.kXiaohongshu) {
+        unawaited(liveDanmaku.stop());
+      }
     }
     if (statusChanged) {
       _restartSuperChatRefreshTimer();
@@ -3381,10 +3393,12 @@ class LiveRoomController extends PlayerController
       }
       detail.value = roomDetail;
       setDouyinLayoutHint(
-        enabled: site.id == Constant.kDouyin,
+        enabled: site.id == Constant.kDouyin || site.id == Constant.kXiaohongshu,
         aspectRatio: site.id == Constant.kDouyin
             ? DouyinSite.resolveStreamAspectRatio(roomDetail.data)
-            : null,
+            : site.id == Constant.kXiaohongshu
+                ? XiaohongshuSite.resolveStreamAspectRatio(roomDetail.data)
+                : null,
       );
       updateScaleMode();
       addSysMsg("直播间信息读取完成");

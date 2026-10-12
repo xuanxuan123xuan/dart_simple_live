@@ -1,3 +1,4 @@
+import 'package:simple_live_app/widgets/xiaohongshu_link_only_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_easyrefresh/easy_refresh.dart';
 
@@ -20,6 +21,9 @@ class CategoryListView extends StatelessWidget {
   Widget build(BuildContext context) {
     // The body scrolls behind the transparent app bar; only keep the
     // status-bar inset and a small gap below the floating selector.
+    if (controller.site.id == Constant.kXiaohongshu) {
+      return const Center(child: XiaohongshuLinkOnlyNotice());
+    }
     final topClearance = MediaQuery.paddingOf(context).top + 8;
     return KeepAliveWrapper(
       child: Obx(

@@ -28,6 +28,7 @@ void main() {
       Constant.kHuya,
       Constant.kDouyin,
       Constant.kKuaishou,
+      Constant.kXiaohongshu,
     ]);
     settings.glassMode.value = AppGlassMode.off;
   });
@@ -69,7 +70,7 @@ void main() {
 
     expect(
       tester.getSize(find.byKey(const ValueKey('site-tab-bar-fallback'))).width,
-      280,
+      56.0 * Sites.supportSites.length,
     );
     final slotWidths = {
       for (final site in Sites.supportSites)
@@ -87,7 +88,7 @@ void main() {
 
     expect(
       tester.getSize(find.byKey(const ValueKey('site-tab-bar-fallback'))).width,
-      560,
+      112.0 * Sites.supportSites.length,
     );
     for (final site in Sites.supportSites) {
       expect(find.text(site.name), findsOneWidget);
@@ -100,7 +101,7 @@ void main() {
 
     expect(find.byKey(const ValueKey('site-glass-tab-bar')), findsOneWidget);
     final glassBar = find.byKey(const ValueKey('site-glass-tab-bar'));
-    expect(tester.getSize(glassBar).width, 280);
+    expect(tester.getSize(glassBar).width, 56.0 * Sites.supportSites.length);
     expect(tester.getRect(glassBar).center.dx, closeTo(195, 0.5));
     final slotWidths = {
       for (final site in Sites.supportSites)
@@ -119,7 +120,7 @@ void main() {
     await pumpBar(tester, width: 1200, iconOnly: false, glass: true);
 
     final glassBar = find.byKey(const ValueKey('site-glass-tab-bar'));
-    expect(tester.getSize(glassBar).width, 560);
+    expect(tester.getSize(glassBar).width, 112.0 * Sites.supportSites.length);
     expect(tester.getRect(glassBar).center.dx, closeTo(600, 0.5));
   });
 
@@ -192,8 +193,13 @@ void main() {
     final draggedLeft = tester.getRect(indicator).left;
     // Selection index does not change on a mid-drag frame; the indicator moves.
     expect(controller!.index, 0);
-    // tabWidth is 112 (560 / 5 sites), so a quarter slot is +28 px.
-    expect(draggedLeft, closeTo(initialLeft + 28, 0.5));
+    // A quarter drag moves a quarter of one slot, also when six tabs
+    // share a constrained bar.
+    final width = tester
+        .getSize(find.byKey(const ValueKey('site-tab-bar-fallback')))
+        .width;
+    expect(draggedLeft,
+        closeTo(initialLeft + width / Sites.supportSites.length * 0.25, 0.5));
   });
 
   testWidgets('auto glass indicator follows a fractional swipe position',

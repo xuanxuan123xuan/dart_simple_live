@@ -473,6 +473,7 @@ class AppSettingsController extends GetxController {
     sort = sort
         .map((item) => item.trim())
         .where((item) => Sites.allSites.containsKey(item))
+        .toSet()
         .toList();
     for (final key in Sites.allSites.keys) {
       if (!sort.contains(key)) {

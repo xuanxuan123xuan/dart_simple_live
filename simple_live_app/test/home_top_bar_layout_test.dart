@@ -26,6 +26,7 @@ void main() {
       Constant.kHuya,
       Constant.kDouyin,
       Constant.kKuaishou,
+      Constant.kXiaohongshu,
     ]);
     settings.glassMode.value = AppGlassMode.off;
   });
@@ -77,13 +78,13 @@ void main() {
 
   testWidgets('wide-enough compact top bar keeps 56px controls',
       (tester) async {
-    await pumpTopBar(tester, 390);
+    await pumpTopBar(tester, 480);
 
     expect(
       tester.getSize(
         find.byKey(const ValueKey<String>('site-tab-bar-fallback')),
       ),
-      const Size(280, 56),
+      Size(56.0 * Sites.supportSites.length, 56),
     );
     expect(
       tester.getSize(

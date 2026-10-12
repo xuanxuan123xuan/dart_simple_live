@@ -1,3 +1,4 @@
+import 'package:simple_live_app/widgets/xiaohongshu_link_only_notice.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -128,6 +129,8 @@ class _SiteSection extends StatelessWidget {
                 ? AppNavigator.toDouyinCookieConfig
                 : null,
           )
+        else if (state.site.id == "xiaohongshu")
+          const XiaohongshuLinkOnlyNotice()
         else if (state.site.id == "douyin" &&
             query.searchMode == 1 &&
             state.isEmpty)

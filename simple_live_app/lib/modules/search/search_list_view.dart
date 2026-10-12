@@ -1,3 +1,4 @@
+import 'package:simple_live_app/widgets/xiaohongshu_link_only_notice.dart';
 import 'package:flutter/material.dart';
 
 import 'package:get/get.dart';
@@ -24,6 +25,9 @@ class SearchListView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (controller.site.id == "xiaohongshu") {
+      return const Center(child: XiaohongshuLinkOnlyNotice());
+    }
     // Masonry 自适应高度，mainAxisExtent 仅 useFixedGrid 预留。
     final roomLayout = LiveRoomGridLayout.resolve(
       MediaQuery.sizeOf(context).width,

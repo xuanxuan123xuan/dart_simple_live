@@ -1,3 +1,4 @@
+import 'package:simple_live_app/widgets/xiaohongshu_link_only_notice.dart';
 import 'package:flutter/material.dart';
 
 import 'package:get/get.dart';
@@ -30,6 +31,7 @@ class HomeListView extends StatelessWidget {
     return KeepAliveWrapper(
       child: PageGridView(
         pageController: controller,
+        emptyWidget: controller.site.id == "xiaohongshu" ? const XiaohongshuLinkOnlyNotice() : null,
         padding: AppStyle.edgeInsetsH8.copyWith(
           top: 0,
           bottom: 96,
