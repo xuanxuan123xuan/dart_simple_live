@@ -14,6 +14,11 @@ import 'package:simple_live_core/src/model/live_search_result.dart';
 import 'package:simple_live_core/src/model/live_contribution_rank.dart';
 import 'package:simple_live_core/src/model/live_message.dart';
 import 'xiaohongshu_danmaku.dart';
+import 'xiaohongshu_discovery_client.dart';
+
+abstract interface class XiaohongshuSessionLifecycle {
+  Future<void> releaseRoom(String roomId);
+}
 
 abstract interface class XiaohongshuRequestBridge {
   Future<dynamic> request({
@@ -73,7 +78,9 @@ class XiaohongshuRoomSnapshot {
 
   LiveStatusState get liveStatusState {
     if (live) return LiveStatusState.live;
-    if (liveStatus == 'end' || roomStatus == 0) return LiveStatusState.offline;
+    if (liveStatus == 'end' || (liveStatus == 'success' && roomStatus == 0)) {
+      return LiveStatusState.offline;
+    }
     return LiveStatusState.unknown;
   }
 }
@@ -94,7 +101,13 @@ class XiaohongshuSite implements LiveSite {
   static const String statusPath =
       '/api/sns/red/live/h5/v1/core/current_live_status';
 
+  static const aggregatePath =
+      '/api/sns/red/live/h5/v1/room/aggregate_business_info';
+  static const stopInfoPath = '/api/sns/red/live/h5/v1/room/stop_info_2c';
+
   XiaohongshuRequestBridge? requestBridge;
+  final discovery = XiaohongshuDiscoveryClient();
+  bool _requiresSignature = false;
   String cookie = '';
 
   @override
@@ -115,32 +128,71 @@ class XiaohongshuSite implements LiveSite {
     try {
       final html = await HttpClient.instance.getText(
         '$webBaseUrl/livestream/$normalized',
-        header: _headers(),
+        header: {..._headers(), 'xy-common-params': 'platform=iOS'},
+        redactResponse: true,
       );
       return _toDetail(parseRoomSnapshot(html, roomId: normalized));
     } catch (error) {
       if (requestBridge == null) rethrow;
-      final response = await requestBridge!.request(
-        method: 'GET',
-        path: roomInfoPath,
-        query: {'roomId': normalized},
-      );
-      return _toDetail(parseRoomSnapshotFromMap(response, roomId: normalized));
+      final response = await _requestH5(roomInfoPath, {'roomId': normalized});
+      final data = Map<String, dynamic>.from(_responseData(response));
+      try {
+        final status =
+            _responseData(await _requestH5(statusPath, {'roomId': normalized}));
+        if (status['status'] != null) {
+          final value = int.tryParse('${status['status']}');
+          data['liveStatus'] = value == 2
+              ? 'success'
+              : (value == 0 || value == 1 || value == 3 ? 'end' : 'unknown');
+        }
+      } catch (_) {
+        // Metadata and playback remain available when status cannot be signed.
+      }
+      return _toDetail(parseRoomSnapshotFromMap(data, roomId: normalized));
     }
   }
 
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
     try {
-      return (await getRoomDetail(roomId: roomId)).resolvedLiveStatus;
+      final detail = await getRoomDetail(roomId: roomId);
+      if (detail.resolvedLiveStatus != LiveStatusState.unknown) {
+        return detail.resolvedLiveStatus;
+      }
     } catch (_) {
+      // The signed status endpoint may still work after a failed SSR request.
+    }
+    final normalized = normalizeRoomId(roomId);
+    if (normalized == null || requestBridge == null) {
       return LiveStatusState.unknown;
     }
+    try {
+      final data =
+          _responseData(await _requestH5(statusPath, {'roomId': normalized}));
+      final status = data['status'];
+      if (status == null) return LiveStatusState.unknown;
+      final value = int.tryParse(status.toString());
+      if (value == 2) return LiveStatusState.live;
+      if (value == 0 || value == 1 || value == 3) {
+        return LiveStatusState.offline;
+      }
+    } catch (_) {}
+    return LiveStatusState.unknown;
   }
 
   @override
   Future<bool> getLiveStatus({required String roomId}) async =>
       (await getLiveStatusState(roomId: roomId)) == LiveStatusState.live;
+
+  static double? resolveStreamAspectRatio(dynamic data) {
+    if (data is! XiaohongshuRoomSnapshot) return null;
+    for (final stream in data.streams) {
+      final width = stream.width ?? 0;
+      final height = stream.height ?? 0;
+      if (width > 0 && height > 0) return width / height;
+    }
+    return null;
+  }
 
   @override
   Future<List<LivePlayQuality>> getPlayQualites({
@@ -174,22 +226,24 @@ class XiaohongshuSite implements LiveSite {
       if (variant.url.isNotEmpty) urls.add(variant.url);
       if (variant.flvUrl?.isNotEmpty ?? false) urls.add(variant.flvUrl!);
     }
-    return LivePlayUrl(urls: urls, headers: _headers());
+    return LivePlayUrl(
+        urls: urls.toSet().toList(),
+        headers: {..._headers(), 'Referer': detail.url});
   }
 
   @override
-  Future<List<LiveCategory>> getCategores() async => const [];
+  Future<List<LiveCategory>> getCategores() => discovery.getCategories();
 
   @override
   Future<LiveCategoryResult> getRecommendRooms({int page = 1}) async =>
-      LiveCategoryResult(hasMore: false, items: []);
+      discovery.getRooms();
 
   @override
   Future<LiveCategoryResult> getCategoryRooms(
     LiveSubCategory category, {
     int page = 1,
   }) async =>
-      LiveCategoryResult(hasMore: false, items: []);
+      discovery.getRooms();
 
   @override
   Future<LiveSearchRoomResult> searchRooms(
@@ -197,13 +251,7 @@ class XiaohongshuSite implements LiveSite {
     int page = 1,
     CoreCancellation? cancellation,
   }) async =>
-      LiveSearchRoomResult(
-        items: [],
-        metadata: const LiveSearchMetadata(
-          continuation: SearchContinuation.unknown,
-          origin: SearchOrigin.fallback,
-        ),
-      );
+      discovery.searchRooms();
 
   @override
   Future<LiveSearchAnchorResult> searchAnchors(
@@ -211,13 +259,7 @@ class XiaohongshuSite implements LiveSite {
     int page = 1,
     CoreCancellation? cancellation,
   }) async =>
-      LiveSearchAnchorResult(
-        items: [],
-        metadata: const LiveSearchMetadata(
-          continuation: SearchContinuation.unknown,
-          origin: SearchOrigin.fallback,
-        ),
-      );
+      discovery.searchAnchors();
 
   @override
   Future<List<LiveSuperChatMessage>> getSuperChatMessage({
@@ -237,26 +279,51 @@ class XiaohongshuSite implements LiveSite {
     String roomId,
     int startTimestamp,
   ) async {
+    final response = await _requestH5(interactionPath, {
+      'roomId': roomId,
+      'startTimestamp': startTimestamp,
+      'size': 10,
+      'needPraise': true,
+      'needViewer': true,
+    });
+    return XiaohongshuInteractionPage.fromResponse(response);
+  }
+
+  Future<dynamic> _requestH5(String path, Map<String, dynamic> query) async {
+    if (!_requiresSignature) {
+      try {
+        final response = await HttpClient.instance.getJson(
+            '$liveRoomBaseUrl$path',
+            queryParameters: query,
+            header: _headers(),
+            redactResponse: true);
+        _responseData(response);
+        return response;
+      } catch (error) {
+        if (error is CoreCancelledError) rethrow;
+        if (requestBridge == null) rethrow;
+        if (error is CoreError &&
+            (error.statusCode == 403 || error.statusCode == 406)) {
+          _requiresSignature = true;
+        }
+      }
+    }
     final bridge = requestBridge;
     if (bridge == null) {
-      throw CoreError(
-        '小红书评论需要网页签名会话',
-        statusCode: 406,
-        kind: CoreErrorKind.http,
-      );
+      throw CoreError('小红书请求需要网页签名会话',
+          statusCode: 406, kind: CoreErrorKind.http);
     }
-    final response = await bridge.request(
-      method: 'GET',
-      path: interactionPath,
-      query: {
-        'roomId': roomId,
-        'startTimestamp': startTimestamp,
-        'size': 10,
-        'needPraise': true,
-        'needViewer': true,
-      },
-    );
-    return XiaohongshuInteractionPage.fromResponse(response);
+    final response =
+        await bridge.request(method: 'GET', path: path, query: query);
+    _responseData(response);
+    return response;
+  }
+
+  static Map<dynamic, dynamic> _responseData(dynamic response) {
+    if (response is! Map || response['success'] == false) {
+      throw CoreError('小红书接口响应不可用', kind: CoreErrorKind.response);
+    }
+    return response['data'] is Map ? response['data'] as Map : response;
   }
 
   Map<String, String> _headers() => {
@@ -278,15 +345,32 @@ class XiaohongshuSite implements LiveSite {
         danmakuData: XiaohongshuDanmakuArgs(
           roomId: snapshot.roomId,
           fetchPage: (cursor) => getInteractionPage(snapshot.roomId, cursor),
+          onStop: () async {
+            final bridge = requestBridge;
+            if (bridge is XiaohongshuSessionLifecycle) {
+              await (bridge as XiaohongshuSessionLifecycle)
+                  .releaseRoom(snapshot.roomId);
+            }
+          },
         ),
         url: snapshot.url,
       );
 
-  static String normalizeCookie(String input) => input
-      .split(';')
-      .map((item) => item.trim())
-      .where((item) => item.contains('=') && item.split('=').first.isNotEmpty)
-      .join('; ');
+  static String normalizeCookie(String input) {
+    final value = input
+        .replaceFirst(RegExp(r'^\s*cookie\s*:', caseSensitive: false), '')
+        .trim();
+    if (value.contains('\r') || value.contains('\n')) return '';
+    final values = <String, String>{};
+    for (final part in value.split(';')) {
+      final separator = part.indexOf('=');
+      if (separator <= 0) continue;
+      final name = part.substring(0, separator).trim();
+      if (!RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(name)) continue;
+      values[name] = part.substring(separator + 1).trim();
+    }
+    return values.entries.map((item) => '${item.key}=${item.value}').join('; ');
+  }
 
   static String? normalizeRoomId(String value) {
     final id = value.trim();
@@ -314,6 +398,9 @@ class XiaohongshuSite implements LiveSite {
     final roomInfo = _asMap(roomData['roomInfo']) ??
         _asMap(_findMap(root, 'roomInfo')) ??
         const <dynamic, dynamic>{};
+    if (roomInfo.isEmpty) {
+      throw CoreError('小红书房间响应不完整', kind: CoreErrorKind.response);
+    }
     final host = _asMap(roomData['hostInfo']) ??
         _asMap(roomInfo['hostInfo']) ??
         _asMap(_findMap(root, 'hostInfo')) ??
@@ -324,14 +411,17 @@ class XiaohongshuSite implements LiveSite {
             ?.toString()
             .toLowerCase() ??
         '';
-    final roomStatus = _int(roomInfo['status'] ?? roomData['status']);
+    final rawStatus = roomInfo['status'] ?? roomData['status'];
+    final roomStatus = rawStatus == null ? -1 : _int(rawStatus);
     final streams = _parseStreams(roomData['pullConfig'] ??
         roomInfo['pullConfig'] ??
         _findValue(root, 'pullConfig'));
     return XiaohongshuRoomSnapshot(
       roomId: roomId,
-      title: _text(
-          roomInfo['title'] ?? roomData['title'] ?? _findValue(root, 'title')),
+      title: _text(roomInfo['roomTitle'] ??
+          roomInfo['title'] ??
+          roomData['title'] ??
+          _findValue(root, 'title')),
       cover: _text(roomInfo['cover'] ?? roomInfo['roomCover'] ?? host['cover']),
       userName: _text(host['nickname'] ?? host['nickName'] ?? host['name']),
       userAvatar: _text(host['avatar'] ?? host['avatarUrl'] ?? host['image']),
@@ -347,6 +437,15 @@ class XiaohongshuSite implements LiveSite {
   }
 
   static List<XiaohongshuStreamVariant> _parseStreams(dynamic value) {
+    if (value is String) {
+      try {
+        value = jsonDecode(value);
+      } catch (_) {
+        return [];
+      }
+    }
+    final width = value is Map ? _nullableInt(value['width']) : null;
+    final height = value is Map ? _nullableInt(value['height']) : null;
     final result = <XiaohongshuStreamVariant>[];
     void visit(dynamic node, {String quality = '', String codec = ''}) {
       if (node is List) {
@@ -356,31 +455,45 @@ class XiaohongshuSite implements LiveSite {
         return;
       }
       if (node is! Map) return;
-      final rawQuality =
-          _text(node['quality'] ?? node['qualityName'] ?? node['name']);
+      final rawQuality = _text(node['quality_type_name'] ??
+          node['quality_type'] ??
+          node['quality'] ??
+          node['qualityName'] ??
+          node['name']);
       final rawCodec = _text(node['codec'] ?? node['videoCodec']);
       final nextQuality = rawQuality.isEmpty ? quality : rawQuality;
       final nextCodec = rawCodec.isEmpty ? codec : rawCodec;
-      final hls = _text(node['hlsUrl'] ?? node['hls'] ?? node['url']);
+      final hls = _text(
+          node['master_url'] ?? node['hlsUrl'] ?? node['hls'] ?? node['url']);
       final flv = _text(node['flvUrl'] ?? node['flv']);
       if (hls.isNotEmpty || flv.isNotEmpty) {
         final url = hls.isNotEmpty ? hls : flv;
-        final lower = '$nextCodec $url'.toLowerCase();
-        if (!lower.contains('265') && !lower.contains('hevc')) {
+        final parsedUrl = Uri.tryParse(url);
+        if (parsedUrl != null &&
+            (parsedUrl.scheme == 'https' || parsedUrl.scheme == 'http') &&
+            parsedUrl.host.isNotEmpty) {
           result.add(XiaohongshuStreamVariant(
             url: url,
             flvUrl: flv.isEmpty ? null : flv,
             quality: _qualityName(nextQuality),
             codec: nextCodec,
-            width: _nullableInt(node['width']),
-            height: _nullableInt(node['height']),
-            cdn: _text(node['cdn'] ?? node['cdnName']),
+            width: _nullableInt(node['width']) ?? width,
+            height: _nullableInt(node['height']) ?? height,
+            cdn: _text(node['cdn'] ?? node['cdnName']).isEmpty
+                ? parsedUrl.host
+                : _text(node['cdn'] ?? node['cdnName']),
           ));
         }
       }
       for (final entry in node.entries) {
         if (entry.value is Map || entry.value is List) {
-          visit(entry.value, quality: nextQuality, codec: nextCodec);
+          visit(entry.value,
+              quality: nextQuality,
+              codec: entry.key.toString().toLowerCase() == 'h265'
+                  ? 'h265'
+                  : (entry.key.toString().toLowerCase() == 'h264'
+                      ? 'h264'
+                      : nextCodec));
         }
       }
     }
@@ -390,15 +503,21 @@ class XiaohongshuSite implements LiveSite {
     for (final item in result) {
       unique['${item.url}|${item.flvUrl}'] = item;
     }
-    return unique.values.toList();
+    final variants = unique.values.toList();
+    final h264 = variants
+        .where((item) =>
+            !item.codec.toLowerCase().contains('265') &&
+            !item.codec.toLowerCase().contains('hevc'))
+        .toList();
+    return h264.isNotEmpty ? h264 : variants;
   }
 
   static String _qualityName(String value) {
     final text = value.trim().toUpperCase();
+    if (text.contains('ORIGINAL') || text.contains('原画')) return '原画';
     if (text.contains('HD') || text.contains('高清')) return 'HD';
     if (text.contains('SD') || text.contains('标清')) return 'SD';
     if (text.contains('LD') || text.contains('流畅')) return 'LD';
-    if (text.contains('ORIGINAL') || text.contains('原画')) return '原画';
     return value.trim();
   }
 
@@ -418,10 +537,9 @@ class XiaohongshuSite implements LiveSite {
   }
 
   static Map<dynamic, dynamic>? _extractInitialState(String html) {
-    const marker = 'window.__INITIAL_STATE__=';
-    final start = html.indexOf(marker);
-    if (start < 0) return null;
-    final jsonStart = html.indexOf('{', start + marker.length);
+    final marker = RegExp(r'window\.__INITIAL_STATE__\s*=\s*').firstMatch(html);
+    if (marker == null) return null;
+    final jsonStart = html.indexOf('{', marker.end);
     if (jsonStart < 0) return null;
     var depth = 0;
     var quoted = false;
@@ -444,7 +562,8 @@ class XiaohongshuSite implements LiveSite {
         depth++;
       } else if (char == '}' && --depth == 0) {
         try {
-          final decoded = json.decode(html.substring(jsonStart, i + 1));
+          final decoded =
+              json.decode(_normalizeSsrJson(html.substring(jsonStart, i + 1)));
           return decoded is Map ? decoded : null;
         } catch (_) {
           return null;
@@ -452,6 +571,35 @@ class XiaohongshuSite implements LiveSite {
       }
     }
     return null;
+  }
+
+  // Vue SSR serializes missing values as JavaScript `undefined`. Replace
+  // only unquoted tokens; text supplied by the broadcaster stays unchanged.
+  static String _normalizeSsrJson(String source) {
+    final output = StringBuffer();
+    var quoted = false;
+    var escaped = false;
+    for (var index = 0; index < source.length; index++) {
+      final char = source[index];
+      if (!quoted && source.startsWith('undefined', index)) {
+        output.write('null');
+        index += 8;
+        continue;
+      }
+      output.write(char);
+      if (quoted) {
+        if (escaped) {
+          escaped = false;
+        } else if (char == '\\') {
+          escaped = true;
+        } else if (char == '"') {
+          quoted = false;
+        }
+      } else if (char == '"') {
+        quoted = true;
+      }
+    }
+    return output.toString();
   }
 
   static Map<dynamic, dynamic>? _asMap(dynamic value) =>
@@ -497,12 +645,16 @@ class XiaohongshuSite implements LiveSite {
     final text = _text(value).replaceAll(',', '');
     final direct = int.tryParse(text);
     if (direct != null) return direct;
-    final match = RegExp(r'^(\d+(?:\.\d+)?)(万|w)?$', caseSensitive: false)
+    final match = RegExp(r'^(\d+(?:\.\d+)?)(万|千|w)?\+?$', caseSensitive: false)
         .firstMatch(text);
     if (match == null) return 0;
     final number = double.tryParse(match.group(1)!);
     if (number == null) return 0;
-    return (number * (match.group(2) == null ? 1 : 10000)).round();
+    return (number *
+            (match.group(2) == null
+                ? 1
+                : (match.group(2) == '千' ? 1000 : 10000)))
+        .round();
   }
 
   static int? _nullableInt(dynamic value) {

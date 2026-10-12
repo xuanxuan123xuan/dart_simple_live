@@ -1,0 +1,34 @@
+{
+  "liveStream": {
+    "roomData": {
+      "roomInfo": {
+        "viewerInfoDisplayType": 0,
+        "roomId": "570493541297105186",
+        "status": 2,
+        "displayViewerCount": "1万+",
+        "roomTitle": "你的情绪价值来啦！",
+        "deeplink": "xhsdiscover://live_audience?room_id=570493541297105186&roomConfig=%7B%22ver%22%3A101%2C%22cdn%22%3A%5B2%5D%2C%22bitrate%22%3A%5B0%5D%7D&host_nickname=%E5%B0%8F%E5%A5%B6%E9%85%AA%E7%9A%84%E7%A7%98%E5%AF%86%E4%BB%93%E5%BA%93%F0%9F%A7%80&flvUrl=http%3A%2F%2Flive.xhscdn.com%2Flive%2F570493541297105186.flv&host_avatar=https%3A%2F%2Fsns-avatar-qc.xhscdn.com%2Favatar%2F1040g2jo315q2db2khe005nlfkj608lgjddihe00%3FimageView2%2F2%2Fw%2F80%2Fformat%2Fjpg&source=share_out_of_app&host_id=5eafa4cc0000000001005613",
+        "displayPraiseCount": "1万+",
+        "isSportsEvent": false,
+        "wakeUpStrategy": 0,
+        "monetizeType": 0,
+        "joinLimitTypes": [
+          0
+        ],
+        "roomCover": "https://sns-na-i2.xhscdn.com/alpha_image/1040g050322vfod4k02205nlfkj608lgjtf7b2to?imageView2/2/w/640/format/webp/q/85%7CimageMogr2/strip/sharpen/1/auto-orient&redImage/frame/0&ap=6&sc=LVE_PRV",
+        "pullConfig": "{\"h265\":[],\"h264\":[{\"master_url\":\"http://live-source-play.xhscdn.com/live/570493541297105186.m3u8\",\"quality_type\":\"HD\",\"quality_type_name\":\"原画\"},{\"master_url\":\"http://live-source-play.xhscdn.com/live/570493541297105186.flv\",\"quality_type\":\"HD\",\"quality_type_name\":\"原画\"},{\"master_url\":\"http://live-source-play-bak-tx.xhscdn.com/live/570493541297105186.flv\",\"quality_type\":\"HD\",\"quality_type_name\":\"原画\"},{\"master_url\":\"http://live-source-play-hw.xhscdn.com/live/570493541297105186.flv\",\"quality_type\":\"HD\",\"quality_type_name\":\"原画\"}],\"width\":1080,\"height\":1920}",
+        "displayMemberCount": "1千+",
+        "settings": {
+          "hideViewerSwitch": 0,
+          "cameraDirection": 1,
+          "isFilterOn": true
+        }
+      },
+      "hostInfo": {
+        "avatar": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo315q2db2khe005nlfkj608lgjddihe00?imageView2/2/w/80/format/jpg",
+        "nickName": "小奶酪的秘密仓库🧀"
+      }
+    },
+    "liveStatus": "success"
+  }
+}

@@ -58,6 +58,7 @@ class HttpClient {
     CancelToken? cancel,
     CoreCancellation? cancellation,
     Duration? timeout,
+    bool redactResponse = false,
   }) async {
     final binding = _bindCancellation(cancellation, cancel);
     final requestCancel =
@@ -78,6 +79,7 @@ class HttpClient {
         options: Options(
           responseType: ResponseType.plain,
           headers: header,
+          extra: {'redactResponse': redactResponse},
         ),
         cancelToken: requestCancel,
       );
@@ -174,6 +176,7 @@ class HttpClient {
     CancelToken? cancel,
     CoreCancellation? cancellation,
     Duration? timeout,
+    bool redactResponse = false,
   }) async {
     final binding = _bindCancellation(cancellation, cancel);
     final requestCancel =
@@ -194,6 +197,7 @@ class HttpClient {
         options: Options(
           responseType: ResponseType.json,
           headers: header,
+          extra: {'redactResponse': redactResponse},
         ),
         cancelToken: requestCancel,
       );

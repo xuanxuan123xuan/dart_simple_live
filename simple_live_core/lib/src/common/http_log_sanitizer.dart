@@ -25,6 +25,10 @@ class HttpLogSanitizer {
         normalized.contains('session') ||
         normalized.contains('csrf') ||
         normalized.contains('signature') ||
+        normalized == 'xs' ||
+        normalized == 'xt' ||
+        normalized == 'xsign' ||
+        normalized == 'f' ||
         normalized == 'ttwid' ||
         normalized == 'abogus' ||
         normalized == 'sidguard';

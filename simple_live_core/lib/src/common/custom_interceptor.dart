@@ -46,7 +46,7 @@ Request Query：${HttpLogSanitizer.redact(err.requestOptions.queryParameters)}
 Request Data：${HttpLogSanitizer.redact(err.requestOptions.data)}
 Request Headers：${HttpLogSanitizer.redact(err.requestOptions.headers)}
 Response Headers：${HttpLogSanitizer.redact(err.response?.headers.map)}
-Response Data：${HttpLogSanitizer.redact(err.response?.data)}''',
+Response Data：${err.requestOptions.extra['redactResponse'] == true ? '<redacted>' : HttpLogSanitizer.redact(err.response?.data)}''',
           err.stackTrace);
     } else {
       CoreLog.e(
@@ -74,7 +74,7 @@ Request Query：${HttpLogSanitizer.redact(response.requestOptions.queryParameter
 Request Data：${HttpLogSanitizer.redact(response.requestOptions.data)}
 Request Headers：${HttpLogSanitizer.redact(response.requestOptions.headers)}
 Response Headers：${HttpLogSanitizer.redact(response.headers.map)}
-Response Data：${HttpLogSanitizer.redact(response.data)}''',
+Response Data：${response.requestOptions.extra['redactResponse'] == true ? '<redacted>' : HttpLogSanitizer.redact(response.data)}''',
       );
     } else if (CoreLog.requestLogType == RequestLogType.short) {
       CoreLog.i(
