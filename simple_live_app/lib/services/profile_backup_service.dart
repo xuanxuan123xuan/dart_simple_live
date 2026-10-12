@@ -14,6 +14,7 @@ import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class ProfileBackupService extends GetxService {
@@ -34,6 +35,7 @@ class ProfileBackupService extends GetxService {
     LocalStorageService.kWebDAVLastRecoverTime,
     LocalStorageService.kBilibiliCookie,
     LocalStorageService.kDouyinCookie,
+    LocalStorageService.kXiaohongshuCookie,
     LocalStorageService.kKuaishouCookie,
     LocalStorageService.kKuaishouKww,
     LocalStorageService.kKuaishouCookieExpiresAt,
@@ -783,6 +785,13 @@ class ProfileBackupService extends GetxService {
           ),
         },
         {
+          "siteId": Constant.kXiaohongshu,
+          "cookie": LocalStorageService.instance.getValue(
+            LocalStorageService.kXiaohongshuCookie,
+            "",
+          ),
+        },
+        {
           "siteId": Constant.kKuaishou,
           ...KuaishouAccountService.instance.exportBackupMap(),
         },
@@ -986,6 +995,14 @@ class ProfileBackupService extends GetxService {
             DouyinAccountService.instance.clearCookie();
           } else {
             DouyinAccountService.instance.setCookie(cookie);
+          }
+          importedCount++;
+          break;
+        case Constant.kXiaohongshu:
+          final restored =
+              await XiaohongshuAccountService.instance.setCookie(cookie);
+          if (!restored) {
+            throw const FormatException("小红书 Cookie 格式无效");
           }
           importedCount++;
           break;

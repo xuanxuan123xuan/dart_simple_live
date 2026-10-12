@@ -12,6 +12,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -224,6 +225,10 @@ class SyncService extends GetxService {
       serverRouter.post('/sync/profile', _syncProfileReuqest);
       serverRouter.post('/sync/account/bilibili', _syncBiliAccountReuqest);
       serverRouter.post('/sync/account/douyin', _syncDouyinAccountReuqest);
+      serverRouter.post(
+        '/sync/account/xiaohongshu',
+        _syncXiaohongshuAccountRequest,
+      );
 
       server = await shelf_io.serve(
         serverRouter,
@@ -587,6 +592,32 @@ class SyncService extends GetxService {
         'status': false,
         'message': e.toString(),
       });
+    }
+  }
+
+  /// 同步小红书账号，不输出请求体以保护 Cookie。
+  Future<shelf.Response> _syncXiaohongshuAccountRequest(
+    shelf.Request request,
+  ) async {
+    try {
+      final body = await request.readAsString();
+      Log.d('_syncXiaohongshuAccountRequest');
+      final jsonBody = json.decode(body);
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      final cookie = jsonBody['cookie']?.toString() ?? '';
+      if (cookie.trim().isEmpty) {
+        throw const FormatException("账号 Cookie 为空");
+      }
+      final saved = await XiaohongshuAccountService.instance.setCookie(cookie);
+      if (!saved) {
+        throw const FormatException("小红书 Cookie 格式无效");
+      }
+      SmartDialog.showToast('已同步小红书账号');
+      return toJsonResponse({'status': true, 'message': 'success'});
+    } catch (e) {
+      return toJsonResponse({'status': false, 'message': e.toString()});
     }
   }
 

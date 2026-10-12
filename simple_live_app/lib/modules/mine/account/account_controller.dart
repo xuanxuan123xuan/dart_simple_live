@@ -15,6 +15,7 @@ import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/kuaishou_private_browser_launcher.dart';
+import 'package:simple_live_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
@@ -158,6 +159,66 @@ class AccountController extends GetxController {
     final account = DouyuAccountService.instance;
     account.hasCookie.value;
     return account.hasCookie.value ? "已配置 Cookie" : "未配置 Cookie（可选）";
+  }
+
+  void xiaohongshuTap() {
+    final account = XiaohongshuAccountService.instance;
+    final cookieController = TextEditingController(text: account.cookie);
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
+        title: const Text("配置小红书 Cookie"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("从已登录的小红书网页复制 Cookie，粘贴后保存。"),
+            const SizedBox(height: 12),
+            TextField(
+              controller: cookieController,
+              minLines: 3,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                labelText: "Cookie",
+                hintText: "粘贴 Cookie 或包含 Cookie 请求头的文本",
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          if (account.hasCookie.value)
+            TextButton(
+              onPressed: () async {
+                await account.clearCookie();
+                Get.back();
+                SmartDialog.showToast("已清除小红书 Cookie");
+              },
+              child: const Text("清除"),
+            ),
+          TextButton(onPressed: () => Get.back(), child: const Text("取消")),
+          TextButton(
+            onPressed: () async {
+              final saved = await account.setCookie(cookieController.text);
+              if (!saved) {
+                SmartDialog.showToast("没有识别到有效 Cookie，请检查粘贴内容");
+                return;
+              }
+              Get.back();
+              SmartDialog.showToast(
+                account.hasCookie.value ? "小红书 Cookie 已保存" : "已清除小红书 Cookie",
+              );
+            },
+            child: const Text("保存"),
+          ),
+        ],
+      ),
+    ).whenComplete(cookieController.dispose);
+  }
+
+  String getXiaohongshuCookieSummaryText() {
+    final account = XiaohongshuAccountService.instance;
+    account.hasCookie.value;
+    return account.hasCookie.value ? "已配置 Cookie" : "可粘贴网页登录 Cookie";
   }
 
   void kuaishouTap() {

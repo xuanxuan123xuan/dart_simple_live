@@ -78,6 +78,19 @@ class AccountPage extends GetView<AccountController> {
           Obx(
             () => ListTile(
               leading: Image.asset(
+                'assets/images/xiaohongshu.png',
+                width: 36,
+                height: 36,
+              ),
+              title: const Text("小红书直播"),
+              subtitle: Text(controller.getXiaohongshuCookieSummaryText()),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: controller.xiaohongshuTap,
+            ),
+          ),
+          Obx(
+            () => ListTile(
+              leading: Image.asset(
                 'assets/images/kuaishou.png',
                 width: 36,
                 height: 36,

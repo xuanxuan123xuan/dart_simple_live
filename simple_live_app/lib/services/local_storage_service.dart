@@ -123,6 +123,7 @@ class LocalStorageService extends GetxService {
   static const String kBilibiliCookie = "BilibiliCookie";
   static const String kDouyinCookie = "DouyinCookie";
   static const String kDouyuCookie = "DouyuCookie";
+  static const String kXiaohongshuCookie = "XiaohongshuCookie";
   static const String kKuaishouCookie = "KuaishouCookie";
   static const String kKuaishouKww = "KuaishouKww";
   static const String kKuaishouCookieExpiresAt = "KuaishouCookieExpiresAt";
@@ -204,6 +205,7 @@ class LocalStorageService extends GetxService {
   bool _isSensitiveKey(dynamic key) => const {
         kKuaishouCookie,
         kDouyuCookie,
+        kXiaohongshuCookie,
         kKuaishouKww,
         kKuaishouSecondaryCookie,
         kKuaishouSecondaryKww,

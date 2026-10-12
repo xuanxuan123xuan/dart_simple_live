@@ -41,6 +41,9 @@ import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/guide_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_account_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_web_session_service.dart';
+import 'package:simple_live_app/widgets/xiaohongshu_web_session_host.dart';
 import 'package:simple_live_app/services/live_notification_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
@@ -633,6 +636,8 @@ Future initServices() async {
   Get.put(DouyuAccountService());
 
   Get.put(KuaishouAccountService());
+  Get.put(XiaohongshuAccountService());
+  Get.put(XiaohongshuWebSessionService());
 
   Get.put(GuideService(), permanent: true);
 
@@ -806,6 +811,11 @@ class MyApp extends StatelessWidget {
 
             final appContent = Stack(
               children: [
+                const Positioned(
+                  left: 0,
+                  top: 0,
+                  child: XiaohongshuWebSessionHost(),
+                ),
                 //侧键返回
                 RawGestureDetector(
                   excludeFromSemantics: true,
