@@ -10,6 +10,11 @@ import 'package:media_kit/media_kit.dart';
 
 import 'package:media_kit_video/src/video_controller/video_controller.dart';
 
+typedef VideoControllerDiagnosticCallback = void Function(
+  String event,
+  Map<String, Object?> fields,
+);
+
 /// {@template platform_video_controller}
 ///
 /// PlatformVideoController
@@ -121,6 +126,12 @@ class VideoControllerConfiguration {
   /// * [vo] != gpu : `false`
   final bool? androidAttachSurfaceAfterVideoParameters;
 
+  /// Receives concise video-controller lifecycle diagnostics when configured.
+  ///
+  /// Exceptions thrown by the callback are ignored so diagnostics cannot
+  /// change playback behavior.
+  final VideoControllerDiagnosticCallback? onDiagnostic;
+
   /// {@macro video_controller_configuration}
   const VideoControllerConfiguration({
     this.vo,
@@ -130,6 +141,7 @@ class VideoControllerConfiguration {
     this.scale = 1.0,
     this.enableHardwareAcceleration = true,
     this.androidAttachSurfaceAfterVideoParameters,
+    this.onDiagnostic,
   });
 
   /// Returns a copy of this class with the given fields replaced by the new values.
@@ -141,6 +153,7 @@ class VideoControllerConfiguration {
     int? height,
     bool? enableHardwareAcceleration,
     bool? androidAttachSurfaceAfterVideoParameters,
+    VideoControllerDiagnosticCallback? onDiagnostic,
   }) =>
       VideoControllerConfiguration(
         vo: vo ?? this.vo,
@@ -153,5 +166,6 @@ class VideoControllerConfiguration {
         androidAttachSurfaceAfterVideoParameters:
             androidAttachSurfaceAfterVideoParameters ??
                 this.androidAttachSurfaceAfterVideoParameters,
+        onDiagnostic: onDiagnostic ?? this.onDiagnostic,
       );
 }

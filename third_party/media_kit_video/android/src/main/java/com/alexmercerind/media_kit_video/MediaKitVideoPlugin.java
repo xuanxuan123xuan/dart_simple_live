@@ -10,6 +10,7 @@ package com.alexmercerind.media_kit_video;
 import androidx.annotation.NonNull;
 
 import java.util.HashMap;
+import java.util.Map;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.plugin.common.MethodCall;
@@ -38,17 +39,36 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler {
         switch (call.method) {
             case "VideoOutputManager.Create": {
                 final long handle = Long.parseLong(call.argument("handle"));
-                videoOutputManager.create(handle, (id, wid, width, height) -> channel.invokeMethod("VideoOutput.Resize", new HashMap<String, Object>() {{
-                    put("handle", handle);
-                    put("id", id);
-                    put("wid", wid);
-                    put("rect", new HashMap<String, Object>() {{
-                        put("left", 0);
-                        put("top", 0);
-                        put("width", width);
-                        put("height", height);
-                    }});
-                }}));
+                final boolean diagnostics = Boolean.TRUE.equals(call.argument("diagnostics"));
+                videoOutputManager.create(handle, new TextureUpdateCallback() {
+                    @Override
+                    public void onTextureUpdate(long id, long wid, int width, int height) {
+                        final HashMap<String, Object> rect = new HashMap<>();
+                        rect.put("left", 0);
+                        rect.put("top", 0);
+                        rect.put("width", width);
+                        rect.put("height", height);
+
+                        final HashMap<String, Object> arguments = new HashMap<>();
+                        arguments.put("handle", handle);
+                        arguments.put("id", id);
+                        arguments.put("wid", wid);
+                        arguments.put("rect", rect);
+                        channel.invokeMethod("VideoOutput.Resize", arguments);
+                    }
+
+                    @Override
+                    public void onDiagnostic(String event, Map<String, Object> fields) {
+                        if (!diagnostics) {
+                            return;
+                        }
+                        final HashMap<String, Object> arguments = new HashMap<>();
+                        arguments.put("handle", handle);
+                        arguments.put("event", event);
+                        arguments.put("fields", fields);
+                        channel.invokeMethod("VideoOutput.Diagnostic", arguments);
+                    }
+                });
                 result.success(null);
                 break;
             }

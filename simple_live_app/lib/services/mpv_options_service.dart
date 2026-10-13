@@ -230,12 +230,17 @@ class MpvOptionsService {
     );
   }
 
-  static VideoControllerConfiguration videoControllerConfiguration() {
+  static VideoControllerConfiguration videoControllerConfiguration({
+    void Function(String event, Map<String, Object?> fields)? onDiagnostic,
+  }) {
     final settings = AppSettingsController.instance;
     if (settings.playerCompatMode.value && Platform.isAndroid) {
-      return const VideoControllerConfiguration(
+      return androidVideoControllerConfiguration(
+        compatibilityMode: true,
+        hardwareDecode: settings.hardwareDecode.value,
         vo: 'mediacodec_embed',
         hwdec: 'mediacodec',
+        onDiagnostic: onDiagnostic,
       );
     }
     final effectiveOptions = effectiveOptionsWithSource();
@@ -249,19 +254,46 @@ class MpvOptionsService {
         enableHardwareAcceleration: settings.hardwareDecode.value,
       );
     }
-    final config = VideoControllerConfiguration(
+    final config = androidVideoControllerConfiguration(
+      compatibilityMode: false,
       vo: options["vo"],
       hwdec: resolveAndroidVideoControllerHwdec(
         effectiveOptions,
         hardwareDecode: settings.hardwareDecode.value,
         customPlayerOutput: settings.customPlayerOutput.value,
       ),
-      enableHardwareAcceleration: settings.hardwareDecode.value,
-      // Fix Issue #57: 安卓全屏后画面卡死 - 延迟attach避免surface race condition
-      androidAttachSurfaceAfterVideoParameters: true,
+      hardwareDecode: settings.hardwareDecode.value,
+      onDiagnostic: onDiagnostic,
     );
-    Log.d('[MpvOptions] Android VideoController config: vo=${config.vo}, hwdec=${config.hwdec}, attachAfterParams=true');
+    Log.d(
+        '[MpvOptions] Android VideoController config: vo=${config.vo}, hwdec=${config.hwdec}, attachAfterParams=true');
     return config;
+  }
+
+  /// Builds the Android configuration in one place so ordinary and
+  /// compatibility playback keep the diagnostic callback attached.
+  static VideoControllerConfiguration androidVideoControllerConfiguration({
+    required bool compatibilityMode,
+    required bool hardwareDecode,
+    required String? vo,
+    required String? hwdec,
+    void Function(String event, Map<String, Object?> fields)? onDiagnostic,
+  }) {
+    if (compatibilityMode) {
+      return VideoControllerConfiguration(
+        vo: 'mediacodec_embed',
+        hwdec: 'mediacodec',
+        onDiagnostic: onDiagnostic,
+      );
+    }
+    return VideoControllerConfiguration(
+      vo: vo,
+      hwdec: hwdec,
+      enableHardwareAcceleration: hardwareDecode,
+      // Fix Issue #57: 安卓全屏后画面卡死 - 延迟 attach 避免 surface race condition。
+      androidAttachSurfaceAfterVideoParameters: true,
+      onDiagnostic: onDiagnostic,
+    );
   }
 
   static Future<void> applyToPlayer(Player player) async {
@@ -431,12 +463,13 @@ class MpvOptionsService {
     final actualHwdec = compatMode
         ? "mediacodec"
         : (Platform.isAndroid
-              ? (resolveAndroidVideoControllerHwdec(
+            ? (resolveAndroidVideoControllerHwdec(
                   effectiveOptions,
                   hardwareDecode: settings.hardwareDecode.value,
                   customPlayerOutput: settings.customPlayerOutput.value,
-                ) ?? "default")
-              : value("hwdec"));
+                ) ??
+                "default")
+            : value("hwdec"));
     return "profile=${AppSettingsController.instance.mpvProfile.value}, "
         "hardwareDecode=${settings.hardwareDecode.value}, "
         "compatMode=${settings.playerCompatMode.value}, "

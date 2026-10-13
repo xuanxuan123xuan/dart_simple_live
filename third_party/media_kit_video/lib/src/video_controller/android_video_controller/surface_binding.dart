@@ -2,8 +2,12 @@ import 'dart:async';
 
 import 'package:synchronized/synchronized.dart';
 
-typedef AndroidSurfacePropertyWriter =
-    Future<void> Function(String key, String value);
+typedef AndroidSurfacePropertyWriter = Future<void> Function(
+    String key, String value);
+typedef AndroidSurfaceDiagnosticCallback = void Function(
+  String event,
+  Map<String, Object?> fields,
+);
 
 /// Serializes Android surface property updates with video lifecycle work.
 ///
@@ -15,11 +19,13 @@ class AndroidSurfaceBinding {
     required AndroidSurfacePropertyWriter writeProperty,
     required this.vo,
     required this.compatibilityMode,
-  }) : lock = lock ?? Lock(),
-       _writeProperty = writeProperty;
+    this.onDiagnostic,
+  })  : lock = lock ?? Lock(),
+        _writeProperty = writeProperty;
 
   final Lock lock;
   final AndroidSurfacePropertyWriter _writeProperty;
+  final AndroidSurfaceDiagnosticCallback? onDiagnostic;
   final String vo;
   final bool compatibilityMode;
 
@@ -35,16 +41,55 @@ class AndroidSurfaceBinding {
     return lock.synchronized(() async {
       if (_closed) return;
 
-      if (!_initialized) {
-        for (final entry in properties.entries) {
-          await _writeProperty(entry.key, entry.value);
-        }
-        _initialized = true;
-        _dirty = true;
+      final initializing = !_initialized;
+      if (initializing) {
+        _diagnose('init', {
+          'stage': 'properties_start',
+          'wid': _wid ?? 0,
+          'width': _width,
+          'height': _height,
+          'level': 'info',
+        });
       }
 
-      if (_dirty) {
-        await _bindCurrentSurface();
+      try {
+        if (initializing) {
+          for (final entry in properties.entries) {
+            await _writeProperty(entry.key, entry.value);
+          }
+          _initialized = true;
+          _dirty = true;
+        }
+
+        if (_dirty) {
+          await _bindCurrentSurface(
+            oldWid: _wid ?? 0,
+            reason: initializing ? 'initialization' : 'retry',
+          );
+        }
+
+        if (initializing) {
+          _diagnose('init', {
+            'stage': 'initialized',
+            'wid': _wid ?? 0,
+            'width': _width,
+            'height': _height,
+            'level': 'info',
+          });
+        }
+      } catch (error) {
+        if (initializing) {
+          _diagnose('init', {
+            'stage': 'initialization_failed',
+            'wid': _wid ?? 0,
+            'width': _width,
+            'height': _height,
+            'reason': 'property_write_failed',
+            'level': 'error',
+            'error': error.runtimeType.toString(),
+          });
+        }
+        rethrow;
       }
     });
   }
@@ -55,30 +100,46 @@ class AndroidSurfaceBinding {
     required int width,
     required int height,
     required FutureOr<void> Function() updateNotifiers,
+    int? textureId,
   }) {
     return lock.synchronized(() async {
       if (_closed) return;
-      _setSurface(wid: wid, width: width, height: height);
+      final oldWid = _wid ?? 0;
+      final changed = _setSurface(wid: wid, width: width, height: height);
       await updateNotifiers();
+      _diagnose('texture_update', {
+        if (textureId != null) 'textureId': textureId,
+        'oldWid': oldWid,
+        'wid': wid ?? 0,
+        'width': width,
+        'height': height,
+        'valid': wid != null && wid != 0,
+        'reason':
+            wid == null || wid == 0 ? 'surface_detached' : 'surface_updated',
+        'level': 'info',
+        'stage': 'resize_received',
+      });
       if (_initialized && _dirty) {
-        await _bindCurrentSurface();
+        await _bindCurrentSurface(
+          oldWid: oldWid,
+          reason: changed ? 'surface_update' : 'retry',
+        );
       }
     });
   }
 
-  /// Applies a wid notifier change using the same serialized property path.
+  /// Applies a surface change through the single serialized resize path.
   Future<void> updateSurface({
     required int? wid,
     required int width,
     required int height,
   }) {
-    return lock.synchronized(() async {
-      if (_closed) return;
-      _setSurface(wid: wid, width: width, height: height);
-      if (_initialized && _dirty) {
-        await _bindCurrentSurface();
-      }
-    });
+    return handleResize(
+      wid: wid,
+      width: width,
+      height: height,
+      updateNotifiers: () {},
+    );
   }
 
   /// Runs video-parameter work in the controller's serialized lifecycle.
@@ -95,13 +156,45 @@ class AndroidSurfaceBinding {
   /// check their current notifier state without taking the lock again.
   Future<void> onLoad({bool Function()? isRectValid}) {
     return lock.synchronized(() async {
-      if (_closed || !_initialized || _dirty || _wid == null || _wid == 0) {
-        return;
+      if (_closed) return;
+      final rectValid = isRectValid?.call() ?? (_width > 1 && _height > 1);
+      final hasWid = _wid != null && _wid != 0;
+      final valid = _initialized && !_dirty && hasWid && rectValid;
+      final reason = !_initialized
+          ? 'not_initialized'
+          : _dirty
+              ? 'binding_incomplete'
+              : !hasWid
+                  ? 'invalid_wid'
+                  : !rectValid
+                      ? 'invalid_rect'
+                      : 'surface_ready';
+      _diagnose('load', {
+        'wid': _wid ?? 0,
+        'width': _width,
+        'height': _height,
+        'valid': valid,
+        'reason': reason,
+        'level': valid ? 'info' : 'warning',
+        'stage': 'before_vo_enable',
+      });
+      if (!valid) return;
+
+      try {
+        await _writeProperty('vo', vo);
+      } catch (error) {
+        _diagnose('load', {
+          'wid': _wid ?? 0,
+          'width': _width,
+          'height': _height,
+          'valid': true,
+          'reason': 'property_write_failed',
+          'level': 'error',
+          'error': error.runtimeType.toString(),
+          'stage': 'vo_enable_failed',
+        });
+        rethrow;
       }
-      if (!(isRectValid?.call() ?? (_width > 1 && _height > 1))) {
-        return;
-      }
-      await _writeProperty('vo', vo);
     });
   }
 
@@ -109,7 +202,30 @@ class AndroidSurfaceBinding {
   Future<void> onUnload() {
     return lock.synchronized(() async {
       if (_closed) return;
-      await _writeProperty('vo', 'null');
+      _diagnose('unload', {
+        'wid': _wid ?? 0,
+        'width': _width,
+        'height': _height,
+        'valid': _wid != null && _wid != 0,
+        'reason': 'video_unload',
+        'level': 'info',
+        'stage': 'before_vo_detach',
+      });
+      try {
+        await _writeProperty('vo', 'null');
+      } catch (error) {
+        _diagnose('unload', {
+          'wid': _wid ?? 0,
+          'width': _width,
+          'height': _height,
+          'valid': _wid != null && _wid != 0,
+          'reason': 'property_write_failed',
+          'level': 'error',
+          'error': error.runtimeType.toString(),
+          'stage': 'vo_detach_failed',
+        });
+        rethrow;
+      }
     });
   }
 
@@ -118,37 +234,104 @@ class AndroidSurfaceBinding {
     return lock.synchronized(() async {
       if (_closed) return;
       _closed = true;
-      await cleanup();
+      _diagnose('dispose', {
+        'wid': _wid ?? 0,
+        'width': _width,
+        'height': _height,
+        'valid': _wid != null && _wid != 0,
+        'reason': 'controller_dispose',
+        'level': 'info',
+        'stage': 'closing',
+      });
+      try {
+        await cleanup();
+        _diagnose('dispose', {
+          'wid': _wid ?? 0,
+          'width': _width,
+          'height': _height,
+          'valid': _wid != null && _wid != 0,
+          'reason': 'controller_dispose',
+          'level': 'info',
+          'stage': 'closed',
+        });
+      } catch (error) {
+        _diagnose('dispose', {
+          'wid': _wid ?? 0,
+          'width': _width,
+          'height': _height,
+          'valid': _wid != null && _wid != 0,
+          'reason': 'controller_dispose_failed',
+          'level': 'error',
+          'error': error.runtimeType.toString(),
+          'stage': 'dispose_failed',
+        });
+        rethrow;
+      }
     });
   }
 
-  void _setSurface({
+  bool _setSurface({
     required int? wid,
     required int width,
     required int height,
   }) {
-    if (_wid == wid && _width == width && _height == height) return;
+    if (_wid == wid && _width == width && _height == height) return false;
     _wid = wid;
     _width = width;
     _height = height;
     _dirty = true;
+    return true;
   }
 
-  Future<void> _bindCurrentSurface() async {
+  Future<void> _bindCurrentSurface({
+    required int oldWid,
+    required String reason,
+  }) async {
     final wid = _wid ?? 0;
     final attached = wid != 0;
+    final fields = <String, Object?>{
+      'oldWid': oldWid,
+      'wid': wid,
+      'width': _width,
+      'height': _height,
+      'valid': attached,
+      'reason': reason,
+      'level': 'info',
+      'stage': 'surface_binding',
+    };
 
-    // Reinitialize --vo after the surface size and wid have been assigned.
-    await _writeProperty('vo', 'null');
-    await _writeProperty('android-surface-size', '${_width}x$_height');
-    await _writeProperty('wid', '$wid');
-    await _writeProperty('vo', attached ? vo : 'null');
+    _diagnose('bind_start', fields);
+    try {
+      // Reinitialize --vo after the surface size and wid have been assigned.
+      await _writeProperty('vo', 'null');
+      await _writeProperty('android-surface-size', '${_width}x$_height');
+      await _writeProperty('wid', '$wid');
+      await _writeProperty('vo', attached ? vo : 'null');
 
-    // Reinitialize --vid for mediacodec_embed after changing --vo.
-    if (compatibilityMode) {
-      await _writeProperty('vid', attached ? 'auto' : 'no');
+      // Reinitialize --vid for mediacodec_embed after changing --vo.
+      if (compatibilityMode) {
+        await _writeProperty('vid', attached ? 'auto' : 'no');
+      }
+
+      _dirty = false;
+      _diagnose('bind_complete', fields);
+    } catch (error) {
+      _diagnose('bind_error', {
+        ...fields,
+        'reason': 'property_write_failed',
+        'level': 'error',
+        'error': error.runtimeType.toString(),
+        'stage': 'surface_binding',
+      });
+      rethrow;
     }
+  }
 
-    _dirty = false;
+  void _diagnose(String event, Map<String, Object?> fields) {
+    try {
+      onDiagnostic?.call(event, Map<String, Object?>.from(fields));
+    } catch (_) {
+      // Diagnostic callbacks must not change surface or playback behavior.
+    }
   }
 }

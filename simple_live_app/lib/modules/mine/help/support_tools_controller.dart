@@ -26,12 +26,22 @@ class SupportToolsController extends BaseController {
   }
 
   void setLogEnable(bool enabled) {
-    AppSettingsController.instance.setLogEnable(enabled);
     if (enabled) {
       Log.initWriter();
-      Future.delayed(const Duration(milliseconds: 100), loadLogFiles);
+      AppSettingsController.instance.setLogEnable(true);
+      unawaited(_loadFilesAfterWriterReady());
     } else {
-      unawaited(Log.disposeWriter());
+      AppSettingsController.instance.setLogEnable(false);
+      unawaited(Log.disposeWriter().catchError((Object _) {}));
+    }
+  }
+
+  Future<void> _loadFilesAfterWriterReady() async {
+    try {
+      await Log.flushWriter();
+      await loadLogFiles();
+    } catch (_) {
+      // Logging may be unavailable; the setting still takes effect.
     }
   }
 
@@ -60,6 +70,7 @@ class SupportToolsController extends BaseController {
       SmartDialog.showToast("请先关闭日志记录");
       return;
     }
+    await Log.flushWriter();
     final supportDir = await getApplicationSupportDirectory();
     final logDir = Directory("${supportDir.path}/log");
     if (await logDir.exists()) await logDir.delete(recursive: true);
@@ -70,6 +81,7 @@ class SupportToolsController extends BaseController {
     SupportLogFile item, {
     Rect? sharePositionOrigin,
   }) async {
+    await Log.flushWriter();
     if (Utils.isOhos) {
       await OhosDocumentService.shareFile(item.path, title: item.name);
       return;
@@ -83,6 +95,7 @@ class SupportToolsController extends BaseController {
   }
 
   Future<void> saveLogFile(SupportLogFile item) async {
+    await Log.flushWriter();
     if (Utils.isOhos) {
       final saved = await OhosDocumentService.saveBytes(
         fileName: item.name,

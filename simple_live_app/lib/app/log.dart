@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -11,14 +12,38 @@ import 'package:simple_live_app/app/utils.dart';
 
 class Log {
   static LogFileWriter? logFileWriter;
+  static Future<void>? _closingWriter;
   static void initWriter() {
-    logFileWriter = LogFileWriter();
+    logFileWriter ??= LogFileWriter();
   }
 
   static Future<void> disposeWriter() async {
     final writer = logFileWriter;
     logFileWriter = null;
-    await writer?.close();
+    if (writer == null) {
+      await _closingWriter;
+      return;
+    }
+    final previous = _closingWriter;
+    final closing = () async {
+      try {
+        await previous;
+      } catch (_) {
+        // A failed old writer must not prevent this writer from closing.
+      }
+      await writer.close();
+    }();
+    _closingWriter = closing;
+    try {
+      await closing;
+    } finally {
+      if (identical(_closingWriter, closing)) _closingWriter = null;
+    }
+  }
+
+  static Future<void> flushWriter() async {
+    await _closingWriter;
+    await logFileWriter?.flush();
   }
 
   static void writeLog(content, [Level level = Level.info]) {
@@ -103,58 +128,119 @@ class Log {
 }
 
 class LogFileWriter {
-  late String fileName;
-  LogFileWriter() {
-    var dt = DateFormat("yyyy-MM-dd HH-mm-ss").format(DateTime.now());
-    fileName = "$dt.log";
-    initFile();
+  LogFileWriter({
+    IOSink? sink,
+    String? fileName,
+    Future<Directory> Function()? supportDirectoryProvider,
+  })  : fileName = fileName ??
+            "${DateFormat("yyyy-MM-dd HH-mm-ss").format(DateTime.now())}.log",
+        _supportDirectoryProvider =
+            supportDirectoryProvider ?? getApplicationSupportDirectory {
+    if (sink != null) {
+      fileWriter = sink;
+      _ready = Future<void>.value();
+    } else {
+      _ready = _openFile();
+      // Queue the header before callers can queue their first log line.
+      unawaited(writeSystemInfo());
+    }
   }
+
+  final String fileName;
+  final Future<Directory> Function() _supportDirectoryProvider;
   IOSink? fileWriter;
-  void initFile() async {
-    var supportDir = await getApplicationSupportDirectory();
+  late final Future<void> _ready;
+  Future<void> _tail = Future<void>.value();
+  Future<void>? _closeFuture;
+  bool _closing = false;
+
+  Future<void> _openFile() async {
+    final supportDir = await _supportDirectoryProvider();
     var logDir = Directory("${supportDir.path}/log");
     if (!await logDir.exists()) {
       await logDir.create();
     }
-    var logFile = File("${logDir.path}/$fileName");
+    final logFile = File("${logDir.path}/$fileName");
     fileWriter = logFile.openWrite(mode: FileMode.append);
-    writeSystemInfo();
   }
 
-  void write(String content) {
-    fileWriter?.write(content);
-    fileWriter?.write("\r\n");
+  void write(Object? content) {
+    if (_closing) return;
+    unawaited(_enqueue(() async {
+      await _ready;
+      final writer = fileWriter;
+      if (writer == null) return;
+      writer.write(content);
+      writer.write("\r\n");
+    }).then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    ));
   }
 
-  Future close() async {
-    final writer = fileWriter;
-    fileWriter = null;
-    if (writer == null) {
-      return;
-    }
-    await writer.flush();
-    await writer.close();
+  Future<void> flush() {
+    return _enqueue(() async {
+      await _ready;
+      await fileWriter?.flush();
+    });
   }
 
-  void writeSystemInfo() async {
-    DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+  Future<void> close() {
+    return _closeFuture ??= _close();
+  }
+
+  Future<void> _close() {
+    _closing = true;
+    return _enqueue(() async {
+      try {
+        await _ready;
+      } catch (_) {
+        // The logger can still be closed when the support directory is not
+        // available (for example, during an early startup failure).
+      }
+      final writer = fileWriter;
+      fileWriter = null;
+      if (writer == null) return;
+      try {
+        await writer.flush();
+      } finally {
+        await writer.close();
+      }
+    });
+  }
+
+  Future<void> _enqueue(Future<void> Function() action) {
+    final operation = _tail.then((_) => action());
+    _tail = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return operation;
+  }
+
+  Future<void> writeSystemInfo() async {
     write("System Info:");
     write("Current Time: ${DateTime.now()}");
     write("Platform: ${Platform.operatingSystem}");
     write("Version: ${Platform.operatingSystemVersion}");
     write("Local: ${Platform.localeName}");
-    write(
-        "App Version: ${Utils.packageInfo.version}+${Utils.packageInfo.buildNumber}");
-    if (Platform.isAndroid) {
-      write((await deviceInfo.androidInfo).data.toString());
-    } else if (Platform.isIOS) {
-      write((await deviceInfo.iosInfo).data.toString());
-    } else if (Platform.isLinux) {
-      write((await deviceInfo.linuxInfo).data.toString());
-    } else if (Platform.isMacOS) {
-      write((await deviceInfo.macOsInfo).data.toString());
-    } else if (Platform.isWindows) {
-      write((await deviceInfo.windowsInfo).data.toString());
+    try {
+      write(
+          "App Version: ${Utils.packageInfo.version}+${Utils.packageInfo.buildNumber}");
+      final deviceInfo = DeviceInfoPlugin();
+      if (Platform.isAndroid) {
+        write((await deviceInfo.androidInfo).data.toString());
+      } else if (Platform.isIOS) {
+        write((await deviceInfo.iosInfo).data.toString());
+      } else if (Platform.isLinux) {
+        write((await deviceInfo.linuxInfo).data.toString());
+      } else if (Platform.isMacOS) {
+        write((await deviceInfo.macOsInfo).data.toString());
+      } else if (Platform.isWindows) {
+        write((await deviceInfo.windowsInfo).data.toString());
+      }
+    } catch (error) {
+      write("Device Info unavailable: ${error.runtimeType}");
     }
     write("End System Info");
   }

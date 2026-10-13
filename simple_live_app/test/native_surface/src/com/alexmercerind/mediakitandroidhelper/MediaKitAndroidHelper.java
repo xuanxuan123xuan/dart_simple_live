@@ -20,10 +20,16 @@ public final class MediaKitAndroidHelper {
     public static final List<Long> deleted = new ArrayList<>();
     public static long nextId = 100;
     public static boolean returnZeroNext;
+    public static RuntimeException throwNext;
 
     private MediaKitAndroidHelper() {}
 
     public static long newGlobalObjectRef(Object object) {
+        if (throwNext != null) {
+            final RuntimeException error = throwNext;
+            throwNext = null;
+            throw error;
+        }
         if (returnZeroNext) {
             returnZeroNext = false;
             return 0;
@@ -41,5 +47,6 @@ public final class MediaKitAndroidHelper {
         created.clear();
         deleted.clear();
         returnZeroNext = false;
+        throwNext = null;
     }
 }

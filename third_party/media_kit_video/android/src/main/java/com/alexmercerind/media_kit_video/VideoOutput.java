@@ -12,9 +12,13 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.Surface;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 import io.flutter.view.TextureRegistry;
@@ -22,8 +26,11 @@ import io.flutter.view.TextureRegistry;
 public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
     private static final String TAG = "VideoOutput";
     private static final long SURFACE_RELEASE_DELAY_MS = 5000;
+    private static final String DIAGNOSTIC_LEVEL_INFO = "info";
+    private static final String DIAGNOSTIC_LEVEL_ERROR = "error";
     private static final Method newGlobalObjectRef;
     private static final Method deleteGlobalObjectRef;
+    private static final ThreadLocal<Throwable> lastGlobalObjectRefError = new ThreadLocal<>();
     private static final Object pendingReferenceLock = new Object();
     private static final HashSet<Long> pendingGlobalObjectRefs = new HashSet<>();
     private static final Handler handler = new Handler(Looper.getMainLooper());
@@ -47,6 +54,7 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
     private long wid = 0;
     private int publishedWidth = 0;
     private int publishedHeight = 0;
+    private long bindRevision;
     private Surface publishedSurface;
     private boolean hasPublishedUpdate;
     private boolean closed;
@@ -59,6 +67,19 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
         this.textureUpdateCallback = textureUpdateCallback;
         surfaceProducer = textureRegistryReference.createSurfaceProducer();
         surfaceProducer.setCallback(this);
+        emitDiagnostic(
+                "surface_create",
+                safeTextureId(),
+                null,
+                bindRevision,
+                0,
+                0,
+                0,
+                0,
+                false,
+                "created",
+                DIAGNOSTIC_LEVEL_INFO,
+                null);
 
         // Allocate early so AndroidVideoController receives its texture ID
         // before Player.open is awaited.
@@ -71,7 +92,20 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
                 return;
             }
             closed = true;
-            clearPublishedSurface();
+            final PublishedSurface old = clearPublishedSurface();
+            emitDiagnostic(
+                    "dispose",
+                    old.id,
+                    old.surface,
+                    bindRevision,
+                    old.wid,
+                    0,
+                    old.width,
+                    old.height,
+                    false,
+                    "disposed",
+                    DIAGNOSTIC_LEVEL_INFO,
+                    null);
             try {
                 // SurfaceProducer owns and releases its Surface.
                 surfaceProducer.release();
@@ -90,14 +124,37 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
             if (closed) {
                 return;
             }
+            emitDiagnostic(
+                    "surface_size_requested",
+                    safeTextureId(),
+                    publishedSurface,
+                    bindRevision,
+                    wid,
+                    wid,
+                    width,
+                    height,
+                    isSurfaceValid(publishedSurface),
+                    "requested",
+                    DIAGNOSTIC_LEVEL_INFO,
+                    null);
+            final boolean needsResize;
             try {
-                if (force || surfaceProducer.getWidth() != width || surfaceProducer.getHeight() != height) {
-                    surfaceProducer.setSize(width, height);
-                }
+                needsResize = force
+                        || surfaceProducer.getWidth() != width
+                        || surfaceProducer.getHeight() != height;
             } catch (Throwable e) {
                 Log.e(TAG, "setSurfaceSize", e);
-                disconnectFromProducer(width, height);
+                disconnectFromProducer(width, height, "surface_size_read_failed", e);
                 return;
+            }
+            if (needsResize) {
+                try {
+                    surfaceProducer.setSize(width, height);
+                } catch (Throwable e) {
+                    Log.e(TAG, "setSurfaceSize", e);
+                    disconnectFromProducer(width, height, "set_size_failed", e);
+                    return;
+                }
             }
 
             // Always inspect the current Surface, even when its dimensions
@@ -124,7 +181,20 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
                 return;
             }
             Log.i(TAG, "onSurfaceCleanup");
-            clearPublishedSurface();
+            final PublishedSurface old = clearPublishedSurface();
+            emitDiagnostic(
+                    "surface_cleanup",
+                    old.id,
+                    old.surface,
+                    bindRevision,
+                    old.wid,
+                    0,
+                    old.width,
+                    old.height,
+                    false,
+                    old.wid == 0 ? "no_active_reference" : "producer_cleanup",
+                    DIAGNOSTIC_LEVEL_INFO,
+                    null);
         }
     }
 
@@ -136,7 +206,13 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
             surfaceId = surfaceProducer.id();
         } catch (Throwable e) {
             Log.e(TAG, "surfaceProducer.id", e);
-            disconnectSurface(surfaceId, width, height);
+            disconnectSurface(
+                    surfaceId,
+                    publishedSurface,
+                    width,
+                    height,
+                    "texture_id_read_failed",
+                    e);
             return;
         }
         try {
@@ -144,20 +220,56 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
             height = surfaceProducer.getHeight();
         } catch (Throwable e) {
             Log.e(TAG, "surfaceProducer.getSize", e);
-            disconnectSurface(surfaceId, width, height);
+            disconnectSurface(
+                    surfaceId,
+                    publishedSurface,
+                    width,
+                    height,
+                    "surface_size_read_failed",
+                    e);
             return;
         }
 
         final Surface currentSurface;
         try {
             currentSurface = surfaceProducer.getSurface();
-            if (currentSurface == null || !currentSurface.isValid()) {
-                disconnectSurface(surfaceId, width, height);
-                return;
-            }
         } catch (Throwable e) {
             Log.e(TAG, "surfaceProducer.getSurface", e);
+            disconnectSurface(
+                    surfaceId,
+                    null,
+                    width,
+                    height,
+                    "get_surface_failed",
+                    e);
+            return;
+        }
+        if (currentSurface == null) {
             disconnectSurface(surfaceId, width, height);
+            return;
+        }
+        final boolean surfaceValid;
+        try {
+            surfaceValid = currentSurface.isValid();
+        } catch (Throwable e) {
+            Log.e(TAG, "surfaceProducer.surfaceValidity", e);
+            disconnectSurface(
+                    surfaceId,
+                    currentSurface,
+                    width,
+                    height,
+                    "surface_validity_check_failed",
+                    e);
+            return;
+        }
+        if (!surfaceValid) {
+            disconnectSurface(
+                    surfaceId,
+                    currentSurface,
+                    width,
+                    height,
+                    "invalid_surface",
+                    null);
             return;
         }
 
@@ -169,11 +281,18 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
             return;
         }
 
+        final String reason = rebindReason(surfaceId, currentSurface, width, height);
         // Texture ID 0 is valid. Only the JNI reference indicates whether the
         // Surface can be handed to libmpv.
         final long surfaceWid = newGlobalObjectRef(currentSurface);
         if (surfaceWid == 0) {
-            disconnectSurface(surfaceId, width, height);
+            disconnectSurface(
+                    surfaceId,
+                    currentSurface,
+                    width,
+                    height,
+                    "jni_ref_zero",
+                    consumeGlobalObjectRefError());
             return;
         }
 
@@ -183,14 +302,51 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
         publishedSurface = currentSurface;
         publishedWidth = width;
         publishedHeight = height;
+        bindRevision++;
         hasPublishedUpdate = true;
         if (oldWid != 0 && oldWid != surfaceWid) {
             releaseGlobalObjectRefLater(oldWid);
         }
         notifyTextureUpdate(id, wid, width, height);
+        emitDiagnostic(
+                "surface_publish",
+                id,
+                currentSurface,
+                bindRevision,
+                oldWid,
+                wid,
+                width,
+                height,
+                true,
+                reason,
+                DIAGNOSTIC_LEVEL_INFO,
+                null);
     }
 
-    private void disconnectFromProducer(int fallbackWidth, int fallbackHeight) {
+    private String rebindReason(long surfaceId, Surface surface, int width, int height) {
+        if (!hasPublishedUpdate) {
+            return "initial_publish";
+        }
+        if (wid == 0) {
+            return "previous_reference_unavailable";
+        }
+        if (id != surfaceId) {
+            return "texture_id_changed";
+        }
+        if (publishedSurface != surface) {
+            return "surface_identity_changed";
+        }
+        if (publishedWidth != width || publishedHeight != height) {
+            return "dimensions_changed";
+        }
+        return "surface_rebound";
+    }
+
+    private void disconnectFromProducer(
+            int fallbackWidth,
+            int fallbackHeight,
+            String reason,
+            Throwable error) {
         long surfaceId = id;
         int width = fallbackWidth;
         int height = fallbackHeight;
@@ -205,10 +361,16 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
         } catch (Throwable e) {
             Log.e(TAG, "surfaceProducer.getSize", e);
         }
-        disconnectSurface(surfaceId, width, height);
+        disconnectSurface(surfaceId, publishedSurface, width, height, reason, error);
     }
 
-    private void disconnectSurface(long surfaceId, int width, int height) {
+    private void disconnectSurface(
+            long surfaceId,
+            Surface surface,
+            int width,
+            int height,
+            String reason,
+            Throwable error) {
         final long oldWid = wid;
         final boolean changed = !hasPublishedUpdate
                 || id != surfaceId
@@ -223,19 +385,46 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
         publishedWidth = width;
         publishedHeight = height;
         hasPublishedUpdate = true;
+        if (changed) {
+            bindRevision++;
+        }
         if (oldWid != 0) {
             releaseGlobalObjectRefLater(oldWid);
         }
         if (changed) {
             notifyTextureUpdate(surfaceId, 0, width, height);
         }
+        emitDiagnostic(
+                "surface_error",
+                surfaceId,
+                surface,
+                bindRevision,
+                oldWid,
+                0,
+                width,
+                height,
+                false,
+                reason,
+                DIAGNOSTIC_LEVEL_ERROR,
+                error);
     }
 
-    private void clearPublishedSurface() {
+    private void disconnectSurface(long surfaceId, int width, int height) {
+        disconnectSurface(
+                surfaceId,
+                publishedSurface,
+                width,
+                height,
+                "surface_unavailable",
+                null);
+    }
+
+    private PublishedSurface clearPublishedSurface() {
         final long oldId = id;
         final long oldWid = wid;
         final int oldWidth = publishedWidth;
         final int oldHeight = publishedHeight;
+        final Surface oldSurface = publishedSurface;
 
         id = 0;
         wid = 0;
@@ -244,8 +433,63 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
         publishedHeight = 0;
         hasPublishedUpdate = false;
         if (oldWid != 0) {
+            bindRevision++;
             releaseGlobalObjectRefLater(oldWid);
             notifyTextureUpdate(oldId, 0, oldWidth, oldHeight);
+        }
+        return new PublishedSurface(oldId, oldWid, oldSurface, oldWidth, oldHeight);
+    }
+
+    private long safeTextureId() {
+        try {
+            return surfaceProducer.id();
+        } catch (Throwable e) {
+            Log.e(TAG, "surfaceProducer.id", e);
+            return id;
+        }
+    }
+
+    private boolean isSurfaceValid(Surface surface) {
+        if (surface == null) {
+            return false;
+        }
+        try {
+            return surface.isValid();
+        } catch (Throwable e) {
+            Log.e(TAG, "surfaceProducer.surfaceValidity", e);
+            return false;
+        }
+    }
+
+    private void emitDiagnostic(
+            String event,
+            long textureId,
+            Surface surface,
+            long revision,
+            long oldWid,
+            long newWid,
+            int width,
+            int height,
+            boolean valid,
+            String reason,
+            String level,
+            Throwable error) {
+        final Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("textureId", textureId);
+        fields.put("surfaceIdentity", surface == null ? 0 : System.identityHashCode(surface));
+        fields.put("bindRevision", revision);
+        fields.put("oldWid", oldWid);
+        fields.put("wid", newWid);
+        fields.put("width", width);
+        fields.put("height", height);
+        fields.put("valid", valid);
+        fields.put("reason", reason);
+        fields.put("level", level);
+        fields.put("error", error == null ? null : error.getClass().getName());
+        try {
+            textureUpdateCallback.onDiagnostic(event, Collections.unmodifiableMap(fields));
+        } catch (Throwable e) {
+            Log.e(TAG, "onDiagnostic", e);
         }
     }
 
@@ -258,13 +502,24 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
     }
 
     private static long newGlobalObjectRef(Object object) {
+        lastGlobalObjectRefError.remove();
         Log.i(TAG, String.format(Locale.ENGLISH, "newGlobalRef: object = %s", object));
         try {
             return (long) Objects.requireNonNull(newGlobalObjectRef.invoke(null, object));
         } catch (Throwable e) {
+            final Throwable diagnosticError = e instanceof InvocationTargetException && e.getCause() != null
+                    ? e.getCause()
+                    : e;
+            lastGlobalObjectRefError.set(diagnosticError);
             Log.e(TAG, "newGlobalRef", e);
             return 0;
         }
+    }
+
+    private static Throwable consumeGlobalObjectRefError() {
+        final Throwable error = lastGlobalObjectRefError.get();
+        lastGlobalObjectRefError.remove();
+        return error;
     }
 
     private static void releaseGlobalObjectRefLater(long ref) {
@@ -296,6 +551,22 @@ public class VideoOutput implements TextureRegistry.SurfaceProducer.Callback {
             deleteGlobalObjectRef.invoke(null, ref);
         } catch (Throwable e) {
             Log.e(TAG, "deleteGlobalObjectRef", e);
+        }
+    }
+
+    private static final class PublishedSurface {
+        final long id;
+        final long wid;
+        final Surface surface;
+        final int width;
+        final int height;
+
+        PublishedSurface(long id, long wid, Surface surface, int width, int height) {
+            this.id = id;
+            this.wid = wid;
+            this.surface = surface;
+            this.width = width;
+            this.height = height;
         }
     }
 }

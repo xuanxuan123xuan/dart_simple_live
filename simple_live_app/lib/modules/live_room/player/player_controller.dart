@@ -25,6 +25,7 @@ import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_
 import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/player/player_volume_session_policy.dart';
 import 'package:simple_live_app/services/android_resource_diagnostics.dart';
+import 'package:simple_live_app/services/android_video_diagnostic_service.dart';
 import 'package:simple_live_app/services/background_playback_service.dart';
 import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart';
@@ -130,6 +131,7 @@ const int _kDanmakuReplayLimit = 300;
 
 mixin PlayerMixin {
   bool _playerInitialized = false;
+  StreamSubscription? _androidTrackSubscription;
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
   GlobalKey globalDanmuKey = GlobalKey();
   GlobalKey ohosScreenshotKey = GlobalKey();
@@ -251,6 +253,21 @@ mixin PlayerMixin {
 
   bool? get currentLiveLinkHealthBuffering => _livePlaybackBuffering;
 
+  /// Hook for a concrete player controller's Android diagnostics sampler.
+  void onAndroidVideoDiagnosticGenerationChanged(int generation) {}
+
+  void _onAndroidVideoDiagnosticEvent(
+    String event,
+    Map<String, Object?> fields,
+  ) {}
+
+  /// Hook used when the room controller observes an app foreground restore.
+  void onAndroidVideoDiagnosticAppResumed() {}
+
+  void onAndroidVideoTrackCountsChanged(int video, int audio) {}
+
+  void onAndroidVideoParamsAvailable() {}
+
   Future<void> _writeLiveLatencyChaseSpeed(double speed) async {
     final platform = player.platform;
     if (platform is! NativePlayer) {
@@ -299,11 +316,17 @@ mixin PlayerMixin {
     // media_kit 仓库更新导致的问题，临时解决办法
     if (Platform.isAndroid) {
       await nativePlayer.setProperty('force-seekable', 'yes');
-      Log.d('[PlayerController] Android player initialized with force-seekable workaround');
+      Log.d(
+          '[PlayerController] Android player initialized with force-seekable workaround');
 
       // 监听视频轨道变化，帮助诊断无画面问题
-      player.stream.tracks.listen((tracks) {
-        Log.d('[PlayerController] Tracks: video=${tracks.video.length}, audio=${tracks.audio.length}');
+      _androidTrackSubscription = player.stream.tracks.listen((tracks) {
+        onAndroidVideoTrackCountsChanged(
+          tracks.video.length,
+          tracks.audio.length,
+        );
+        Log.d(
+            '[PlayerController] Tracks: video=${tracks.video.length}, audio=${tracks.audio.length}');
       });
     }
     if (Platform.isAndroid || Platform.isIOS) {
@@ -595,6 +618,7 @@ mixin PlayerMixin {
   Future<void> resumeLiveLatencyChase({bool appForegrounded = false}) {
     if (appForegrounded) {
       _liveLatencyChaseAppActive = true;
+      onAndroidVideoDiagnosticAppResumed();
     } else {
       _liveLatencyChaseUserPaused = false;
     }
@@ -716,6 +740,7 @@ mixin PlayerMixin {
     _liveLatencyChaseActivationRevision += 1;
     _liveLatencyChaseSuspended = true;
     _livePlaybackGeneration += 1;
+    onAndroidVideoDiagnosticGenerationChanged(_livePlaybackGeneration);
     _liveLatencyChaseServiceGeneration = null;
     _lastLiveLatencyChaseAudioUnderrunAt = null;
     _latestLivePlaybackCacheSampledAt = null;
@@ -743,6 +768,7 @@ mixin PlayerMixin {
     _liveLatencyChaseActivationRevision += 1;
     _liveLatencyChaseSuspended = true;
     _livePlaybackGeneration += 1;
+    onAndroidVideoDiagnosticGenerationChanged(_livePlaybackGeneration);
     _liveLatencyChaseServiceGeneration = null;
     _lastLiveLatencyChaseAudioUnderrunAt = null;
     _latestLivePlaybackCacheSampledAt = null;
@@ -759,8 +785,13 @@ mixin PlayerMixin {
 
   late final VideoController _mpvVideoController = VideoController(
     _mpvPlayer,
-    configuration: MpvOptionsService.videoControllerConfiguration(),
+    configuration: MpvOptionsService.videoControllerConfiguration(
+      onDiagnostic: Platform.isAndroid && !Utils.isOhos
+          ? _onAndroidVideoDiagnosticEvent
+          : null,
+    ),
   );
+  bool _mpvVideoControllerCreated = false;
 
   /// 视频控制器
   ///
@@ -772,7 +803,9 @@ mixin PlayerMixin {
         '（ohosVideoController）播放。此调用点缺少 Utils.isOhos 守卫。',
       );
     }
-    return _mpvVideoController;
+    final controller = _mpvVideoController;
+    _mpvVideoControllerCreated = true;
+    return controller;
   }
 
   VideoPlayerController? _ohosVideoController;
@@ -1655,7 +1688,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           if (exited) {
             await WidgetsBinding.instance.endOfFrame;
           } else {
-            Log.d('Desktop fullscreen: exit settled without native confirmation');
+            Log.d(
+                'Desktop fullscreen: exit settled without native confirmation');
           }
           Log.d('Desktop fullscreen: exit complete');
         } catch (e, stackTrace) {
@@ -1735,7 +1769,8 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       return await WindowsFullscreenService.setFullScreen(value)
           .timeout(const Duration(seconds: 2));
     } catch (e, stackTrace) {
-      Log.d('Desktop fullscreen: native transition($value) timed out or failed: $e');
+      Log.d(
+          'Desktop fullscreen: native transition($value) timed out or failed: $e');
       Log.e('Desktop fullscreen: native transition($value) failed', stackTrace);
     }
     return false;
@@ -2831,6 +2866,128 @@ class PlayerController extends BaseController
         PlayerDanmakuMixin,
         PlayerSystemMixin,
         PlayerGestureControlMixin {
+  AndroidVideoDiagnosticService? _androidVideoDiagnosticService;
+  Worker? _androidVideoDiagnosticLogWorker;
+  int? _androidVideoDiagnosticHandle;
+  int? _androidVideoTrackCount;
+  int? _androidAudioTrackCount;
+  bool _androidVideoParamsAvailable = false;
+
+  @override
+  void onAndroidVideoDiagnosticGenerationChanged(int generation) {
+    _androidVideoTrackCount = null;
+    _androidAudioTrackCount = null;
+    _androidVideoParamsAvailable = false;
+    _androidVideoDiagnosticService?.updateGeneration(generation);
+  }
+
+  @override
+  void onAndroidVideoDiagnosticAppResumed() {
+    _androidVideoDiagnosticService?.onAppResumed();
+  }
+
+  @override
+  void onAndroidVideoTrackCountsChanged(int video, int audio) {
+    _androidVideoTrackCount = video;
+    _androidAudioTrackCount = audio;
+  }
+
+  @override
+  void onAndroidVideoParamsAvailable() {
+    _androidVideoParamsAvailable = true;
+    unawaited(_androidVideoDiagnosticService?.sampleNow());
+  }
+
+  void _initializeAndroidVideoDiagnostics() {
+    if (!Platform.isAndroid || Utils.isOhos) return;
+
+    final settings = AppSettingsController.instance;
+    _androidVideoDiagnosticService = AndroidVideoDiagnosticService(
+      readLocalSnapshot: _readAndroidVideoDiagnosticLocalSnapshot,
+      readNativeProperty: _readAndroidVideoDiagnosticProperty,
+      write: (line) => Log.writeLog(line),
+      flush: Log.flushWriter,
+      readGeneration: () => _livePlaybackGeneration,
+      isLogEnabled: () => settings.logEnable.value,
+    );
+    _androidVideoDiagnosticLogWorker = ever<bool>(
+      settings.logEnable,
+      _androidVideoDiagnosticService!.setEnabled,
+    );
+    _androidVideoDiagnosticService!.setEnabled(settings.logEnable.value);
+    unawaited(
+      player.handle.then<void>(
+        (handle) {
+          if (!isPlayerClosing) _androidVideoDiagnosticHandle = handle;
+        },
+        onError: (Object _, StackTrace __) {},
+      ),
+    );
+  }
+
+  @override
+  void _onAndroidVideoDiagnosticEvent(
+    String event,
+    Map<String, Object?> fields,
+  ) {
+    if (!Platform.isAndroid || Utils.isOhos) return;
+    final service = _androidVideoDiagnosticService;
+    if (service == null) return;
+    try {
+      service.recordNativeEvent(
+        event,
+        <String, Object?>{
+          ...fields,
+          if (!fields.containsKey('handle'))
+            'handle': _androidVideoDiagnosticHandle,
+        },
+        generation: _livePlaybackGeneration,
+      );
+    } catch (_) {
+      // Diagnostics are best-effort and must not interfere with playback.
+    }
+  }
+
+  Map<String, Object?> _readAndroidVideoDiagnosticLocalSnapshot() {
+    if (isPlayerClosing) return const {};
+    final state = player.state;
+    final video = _mpvVideoControllerCreated ? _mpvVideoController : null;
+    final outputRect = video?.rect.value;
+    Object? wid;
+    try {
+      final dynamic platformController = video?.notifier.value;
+      wid = platformController?.wid.value;
+    } catch (_) {
+      wid = null;
+    }
+    return <String, Object?>{
+      'handle': _androidVideoDiagnosticHandle,
+      'playing': state.playing,
+      'buffering': state.buffering,
+      'videoTrackCount': _androidVideoTrackCount,
+      'audioTrackCount': _androidAudioTrackCount,
+      'sourceWidth': state.width,
+      'sourceHeight': state.height,
+      'outputWidth': outputRect?.width,
+      'outputHeight': outputRect?.height,
+      'textureId': video?.id.value,
+      'wid': wid,
+      'videoParamsAvailable': _androidVideoParamsAvailable,
+    };
+  }
+
+  Future<Object?> _readAndroidVideoDiagnosticProperty(String property) async {
+    if (isPlayerClosing) throw StateError('player closing');
+    final native = player.platform;
+    if (native is! NativePlayer) throw StateError('native player unavailable');
+    // Do not wait for VideoController initialization: that can be the exact
+    // surface-bind operation whose failure this sampler needs to expose.
+    return native.getProperty(
+      property,
+      waitForInitialization: false,
+    );
+  }
+
   void setDualScreenLayoutMode(LivePlayerLayoutMode mode) {
     AppSettingsController.instance.setDualScreenLayoutMode(mode);
     updateScaleMode();
@@ -2855,6 +3012,7 @@ class PlayerController extends BaseController
     }
     initSystem();
     initStream();
+    _initializeAndroidVideoDiagnostics();
     unawaited(restoreUserIntentPlayerVolumeForRoom());
     super.onInit();
   }
@@ -3234,9 +3392,12 @@ class PlayerController extends BaseController
           (player.state.height ?? 9) > (player.state.width ?? 16);
       unawaited(_syncAndroidExternalWindowLandscapeOrientation());
     });
-    _videoParamsSubscription = player.stream.videoParams.listen(
-      _handleVideoParamsForIosOutput,
-    );
+    _videoParamsSubscription = player.stream.videoParams.listen((params) {
+      if (Platform.isAndroid && !Utils.isOhos) {
+        onAndroidVideoParamsAvailable();
+      }
+      _handleVideoParamsForIosOutput(params);
+    });
 
     // Fix Issue #57: 启动Surface健康检查
     _startSurfaceHealthCheck();
@@ -3340,6 +3501,8 @@ class PlayerController extends BaseController
     _widthSubscription?.cancel();
     _heightSubscription?.cancel();
     _videoParamsSubscription?.cancel();
+    _androidTrackSubscription?.cancel();
+    _androidTrackSubscription = null;
     _logSubscription?.cancel();
     _pipSubscription?.cancel();
     _ohosPipSubscription?.cancel();
@@ -3819,7 +3982,8 @@ class PlayerController extends BaseController
     if (playing &&
         AppSettingsController.instance.allowBackgroundPlayback.value) {
       await BackgroundPlaybackService.instance.start();
-      await BackgroundPlaybackService.instance.updatePlaybackState(playing: true);
+      await BackgroundPlaybackService.instance
+          .updatePlaybackState(playing: true);
     } else if (!playing ||
         !AppSettingsController.instance.allowBackgroundPlayback.value) {
       await BackgroundPlaybackService.instance.stop();
@@ -4042,67 +4206,77 @@ class PlayerController extends BaseController
       return;
     }
     _playerClosing = true;
-    _setKeepScreenAwake(false);
-    await releasePlaybackDisplayLease();
-    if (Utils.isOhos) {
-      if (fullScreenState.value) {
-        await exitFull();
+    _androidVideoDiagnosticLogWorker?.dispose();
+    _androidVideoDiagnosticLogWorker = null;
+    final diagnosticService = _androidVideoDiagnosticService;
+    diagnosticService?.stopSamplingForClose();
+    try {
+      _setKeepScreenAwake(false);
+      await releasePlaybackDisplayLease();
+      if (Utils.isOhos) {
+        if (fullScreenState.value) {
+          await exitFull();
+        }
+        hideControlsTimer?.cancel();
+        try {
+          await OhosPipService.instance.exit();
+        } catch (e) {
+          Log.logPrint("鸿蒙画中画关闭失败: $e");
+        }
+        hideMouseCursorTimer?.cancel();
+        final ohosController = _ohosVideoController;
+        try {
+          await ohosController?.pause();
+        } catch (e) {
+          Log.logPrint("鸿蒙播放器暂停失败: $e");
+        }
+        if (ohosController != null) {
+          BackgroundPlaybackService.instance
+              .detachOhosController(ohosController);
+        }
+        await BackgroundPlaybackService.instance.release();
+        try {
+          await ScreenBrightness.instance.resetApplicationScreenBrightness();
+        } catch (e) {
+          Log.logPrint("鸿蒙应用亮度恢复失败: $e");
+        }
+        // 最终兜底：无论是否处于全屏过渡（此时 exitFull 只会置
+        // _pendingExitFullscreen 标记而无法真正退出），都无条件强制恢复
+        // 屏幕方向与系统栏，避免 fullScreenState 残留横屏锁死/系统栏消失。
+        fullScreenState.value = false;
+        ohosFullscreenTransition.value = false;
+        _pendingExitFullscreen = false;
+        await _runOhosSystemUiOperation(
+          SystemChrome.setPreferredOrientations(DeviceOrientation.values),
+          "强制恢复屏幕方向",
+        );
+        await _runOhosSystemUiOperation(
+          SystemChrome.setEnabledSystemUIMode(
+            SystemUiMode.manual,
+            overlays: SystemUiOverlay.values,
+          ),
+          "强制恢复系统栏",
+        );
+        _ohosVideoController = null;
+        disposeDanmakuController();
+        await stopLiveLatencyChase();
+        return;
       }
-      hideControlsTimer?.cancel();
-      try {
-        await OhosPipService.instance.exit();
-      } catch (e) {
-        Log.logPrint("鸿蒙画中画关闭失败: $e");
-      }
-      hideMouseCursorTimer?.cancel();
-      final ohosController = _ohosVideoController;
-      try {
-        await ohosController?.pause();
-      } catch (e) {
-        Log.logPrint("鸿蒙播放器暂停失败: $e");
-      }
-      if (ohosController != null) {
-        BackgroundPlaybackService.instance.detachOhosController(ohosController);
-      }
-      await BackgroundPlaybackService.instance.release();
-      try {
-        await ScreenBrightness.instance.resetApplicationScreenBrightness();
-      } catch (e) {
-        Log.logPrint("鸿蒙应用亮度恢复失败: $e");
-      }
-      // 最终兜底：无论是否处于全屏过渡（此时 exitFull 只会置
-      // _pendingExitFullscreen 标记而无法真正退出），都无条件强制恢复
-      // 屏幕方向与系统栏，避免 fullScreenState 残留横屏锁死/系统栏消失。
-      fullScreenState.value = false;
-      ohosFullscreenTransition.value = false;
-      _pendingExitFullscreen = false;
-      await _runOhosSystemUiOperation(
-        SystemChrome.setPreferredOrientations(DeviceOrientation.values),
-        "强制恢复屏幕方向",
-      );
-      await _runOhosSystemUiOperation(
-        SystemChrome.setEnabledSystemUIMode(
-          SystemUiMode.manual,
-          overlays: SystemUiOverlay.values,
-        ),
-        "强制恢复系统栏",
-      );
-      _ohosVideoController = null;
-      disposeDanmakuController();
+      await stopBackgroundPlaybackService();
+      BackgroundPlaybackService.instance.setAndroidControlHandler(null);
       await stopLiveLatencyChase();
-      return;
+      await player.stop();
+      if (smallWindowState.value) {
+        await exitSmallWindow();
+      }
+      disposeStream();
+      disposeDanmakuController();
+      await resetSystem();
+      await player.dispose();
+    } finally {
+      diagnosticService?.dispose();
+      _androidVideoDiagnosticService = null;
     }
-    await stopBackgroundPlaybackService();
-    BackgroundPlaybackService.instance.setAndroidControlHandler(null);
-    await stopLiveLatencyChase();
-    await player.stop();
-    if (smallWindowState.value) {
-      await exitSmallWindow();
-    }
-    disposeStream();
-    disposeDanmakuController();
-    await resetSystem();
-    await player.dispose();
   }
 
   @override

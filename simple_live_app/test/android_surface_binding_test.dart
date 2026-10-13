@@ -2,8 +2,22 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit_video/src/video_controller/android_video_controller/surface_binding.dart';
+import 'package:media_kit_video/src/video_controller/platform_video_controller.dart';
 
 void main() {
+  group('VideoControllerConfiguration diagnostics', () {
+    test('copyWith preserves the diagnostic callback', () {
+      void onDiagnostic(String event, Map<String, Object?> fields) {}
+
+      final configuration = VideoControllerConfiguration(
+        onDiagnostic: onDiagnostic,
+      );
+
+      expect(
+          configuration.copyWith(hwdec: 'no').onDiagnostic, same(onDiagnostic));
+    });
+  });
+
   group('AndroidSurfaceBinding', () {
     test(
       'initializes with a safe 1x1 detached surface before wid arrives',
@@ -237,8 +251,59 @@ void main() {
       expect(writes, hasLength(writeCountAtClose));
     });
 
+    test('reports close while ignoring a resize queued during cleanup',
+        () async {
+      final writes = <String>[];
+      final diagnostics = <MapEntry<String, Map<String, Object?>>>[];
+      final cleanupEntered = Completer<void>();
+      final releaseCleanup = Completer<void>();
+      final binding = AndroidSurfaceBinding(
+        writeProperty: (key, value) async {
+          writes.add('$key=$value');
+        },
+        vo: 'gpu',
+        compatibilityMode: false,
+        onDiagnostic: (event, fields) {
+          diagnostics.add(MapEntry(event, fields));
+        },
+      );
+      await binding.initialize(_initialProperties);
+      final writesBeforeClose = writes.length;
+      final close = binding.close(() async {
+        cleanupEntered.complete();
+        await releaseCleanup.future;
+      });
+      await cleanupEntered.future;
+
+      var notifierUpdated = false;
+      final lateResize = binding.handleResize(
+        wid: 72,
+        width: 1280,
+        height: 720,
+        updateNotifiers: () {
+          notifierUpdated = true;
+        },
+      );
+      releaseCleanup.complete();
+      await Future.wait([close, lateResize]);
+
+      expect(notifierUpdated, isFalse);
+      expect(writes, hasLength(writesBeforeClose));
+      expect(
+        diagnostics
+            .where((entry) => entry.key == 'dispose')
+            .map((entry) => entry.value['stage']),
+        ['closing', 'closed'],
+      );
+      expect(
+        diagnostics.where((entry) => entry.key == 'texture_update'),
+        isEmpty,
+      );
+    });
+
     test('continues serialized work after a property writer failure', () async {
       final writes = <String>[];
+      final diagnostics = <MapEntry<String, Map<String, Object?>>>[];
       var failOnce = true;
       final binding = AndroidSurfaceBinding(
         writeProperty: (key, value) async {
@@ -250,6 +315,9 @@ void main() {
         },
         vo: 'gpu',
         compatibilityMode: false,
+        onDiagnostic: (event, fields) {
+          diagnostics.add(MapEntry(event, fields));
+        },
       );
 
       await expectLater(
@@ -269,6 +337,39 @@ void main() {
       expect(exclusiveActionRan, isTrue);
       expect(writes.last, 'vo=gpu');
       expect(writes, contains('wid=52'));
+      final bindError = diagnostics.singleWhere(
+        (entry) => entry.key == 'bind_error',
+      );
+      expect(bindError.value['error'], 'StateError');
+      expect(bindError.value['reason'], 'property_write_failed');
+      expect(bindError.value.containsKey('message'), isFalse);
+    });
+
+    test('ignores diagnostic callback failures during surface binding',
+        () async {
+      final writes = <String>[];
+      final binding = AndroidSurfaceBinding(
+        writeProperty: (key, value) async {
+          writes.add('$key=$value');
+        },
+        vo: 'gpu',
+        compatibilityMode: false,
+        onDiagnostic: (event, fields) {
+          throw StateError('diagnostic callback failure');
+        },
+      );
+
+      await binding.initialize(_initialProperties);
+      await binding.handleResize(
+        wid: 53,
+        width: 960,
+        height: 540,
+        updateNotifiers: () {},
+      );
+      await binding.onLoad();
+
+      expect(writes, contains('wid=53'));
+      expect(writes.last, 'vo=gpu');
     });
   });
 }

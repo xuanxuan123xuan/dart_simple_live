@@ -34,6 +34,8 @@ class AndroidVideoController extends PlatformVideoController {
   /// Shared lock for surface bindings and video lifecycle operations.
   final lock = Lock();
 
+  final int _handle;
+
   late final AndroidSurfaceBinding _surfaceBinding;
 
   NativePlayer get platform => player.platform as NativePlayer;
@@ -56,8 +58,7 @@ class AndroidVideoController extends PlatformVideoController {
     // "native_window_api_connect returned an error: Invalid argument (-22)" & next less-efficient hwdec will be used redundantly.
     return _surfaceBinding.onLoad(
       isRectValid: () =>
-          (rect.value?.width ?? 0.0) > 1.0 &&
-          (rect.value?.height ?? 0.0) > 1.0,
+          (rect.value?.width ?? 0.0) > 1.0 && (rect.value?.height ?? 0.0) > 1.0,
     );
   }
 
@@ -70,15 +71,15 @@ class AndroidVideoController extends PlatformVideoController {
   StreamSubscription<VideoParams>? videoParamsSubscription;
 
   /// {@macro android_video_controller}
-  AndroidVideoController._(
-    super.player,
-    super.configuration,
-  ) {
+  AndroidVideoController._(super.player, super.configuration,
+      {required int handle})
+      : _handle = handle {
     _surfaceBinding = AndroidSurfaceBinding(
       lock: lock,
       writeProperty: setProperty,
       vo: configuration.vo!,
       compatibilityMode: configuration.vo == 'mediacodec_embed',
+      onDiagnostic: _emitBindingDiagnostic,
     );
     platform.onLoadHooks.add(onLoadHook);
     platform.onUnloadHooks.add(onUnloadHook);
@@ -87,8 +88,6 @@ class AndroidVideoController extends PlatformVideoController {
         if ([0, null].contains(event.dw) || [0, null].contains(event.dh)) {
           return;
         }
-
-        final int handle = await player.handle;
 
         final int width;
         final int height;
@@ -101,10 +100,25 @@ class AndroidVideoController extends PlatformVideoController {
           height = event.dw ?? 0;
         }
 
+        _emitDiagnostic(
+          'video_params',
+          stage: 'video_parameters_available',
+          fields: {
+            'width': width,
+            'height': height,
+            'rotate': event.rotate,
+            'valid': true,
+            'reason': 'video_params_available',
+            'source': 'video_params',
+            'renderConfirmed': 'unknown',
+            'level': 'info',
+          },
+        );
+
         await _channel.invokeMethod(
           'VideoOutputManager.SetSurfaceSize',
           {
-            'handle': handle.toString(),
+            'handle': _handle.toString(),
             'width': width.toString(),
             'height': height.toString(),
           },
@@ -122,6 +136,87 @@ class AndroidVideoController extends PlatformVideoController {
         }
       }),
     );
+  }
+
+  static const Set<String> _diagnosticFieldAllowlist = {
+    'textureId',
+    'surfaceIdentity',
+    'bindRevision',
+    'oldWid',
+    'wid',
+    'width',
+    'height',
+    'rotate',
+    'valid',
+    'reason',
+    'level',
+    'error',
+    'source',
+    'renderConfirmed',
+  };
+  static final RegExp _diagnosticTokenPattern =
+      RegExp(r'^[A-Za-z0-9_.$-]{1,128}$');
+  static final RegExp _diagnosticEventPattern =
+      RegExp(r'^[A-Za-z0-9_.-]{1,64}$');
+
+  void _emitBindingDiagnostic(String event, Map<String, Object?> fields) {
+    final Object? rawStage = fields['stage'];
+    _emitDiagnostic(
+      event,
+      stage: rawStage is String ? rawStage : 'surface_binding',
+      fields: fields,
+    );
+  }
+
+  /// Emits a small allowlisted record and isolates callback failures.
+  void _emitDiagnostic(
+    String event, {
+    required String stage,
+    Map<String, Object?> fields = const {},
+  }) {
+    final callback = configuration.onDiagnostic;
+    if (callback == null) return;
+
+    final safeFields = <String, Object?>{};
+    for (final entry in fields.entries) {
+      if (!_diagnosticFieldAllowlist.contains(entry.key)) continue;
+      final value = entry.value;
+      if (value is bool || value is int) {
+        safeFields[entry.key] = value;
+      } else if (value is double && value.isFinite) {
+        safeFields[entry.key] = value;
+      } else if (value is String && _isDiagnosticToken(value)) {
+        safeFields[entry.key] = value;
+      }
+    }
+
+    safeFields.addAll({
+      'handle': _handle,
+      'vo': _safeConfigurationValue(configuration.vo),
+      'hwdec': _safeConfigurationValue(configuration.hwdec),
+      'stage': _safeConfigurationValue(stage),
+    });
+
+    final safeEvent =
+        _diagnosticEventPattern.hasMatch(event) ? event : 'unknown_event';
+    try {
+      callback(safeEvent, Map<String, Object?>.unmodifiable(safeFields));
+    } catch (_) {
+      // Diagnostics must not affect playback or native surface operations.
+    }
+  }
+
+  static bool _isDiagnosticToken(String value) =>
+      _diagnosticTokenPattern.hasMatch(value);
+
+  static String _safeConfigurationValue(String? value) =>
+      value != null && _isDiagnosticToken(value) ? value : 'custom';
+
+  static int? _diagnosticHandle(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 
   /// {@macro android_video_controller}
@@ -171,6 +266,7 @@ class AndroidVideoController extends PlatformVideoController {
     final controller = AndroidVideoController._(
       player,
       configuration,
+      handle: handle,
     );
 
     // Register [_dispose] for execution upon [Player.dispose].
@@ -196,6 +292,7 @@ class AndroidVideoController extends PlatformVideoController {
       'VideoOutputManager.Create',
       {
         'handle': handle.toString(),
+        'diagnostics': configuration.onDiagnostic != null,
       },
     );
 
@@ -244,20 +341,22 @@ class AndroidVideoController extends PlatformVideoController {
   /// Disposes the instance. Releases allocated resources back to the system.
   Future<void> _dispose() async {
     await videoParamsSubscription?.cancel();
-    final handle = await player.handle;
     await _surfaceBinding.close(() async {
       platform.onLoadHooks.remove(onLoadHook);
       platform.onUnloadHooks.remove(onUnloadHook);
       super.dispose();
       wid.dispose();
-      _controllers.remove(handle);
     });
-    await _channel.invokeMethod(
-      'VideoOutputManager.Dispose',
-      {
-        'handle': handle.toString(),
-      },
-    );
+    try {
+      await _channel.invokeMethod(
+        'VideoOutputManager.Dispose',
+        {
+          'handle': _handle.toString(),
+        },
+      );
+    } finally {
+      _controllers.remove(_handle);
+    }
   }
 
   /// Currently created [AndroidVideoController]s.
@@ -270,7 +369,9 @@ class AndroidVideoController extends PlatformVideoController {
           (MethodCall call) async {
             try {
               debugPrint(call.method.toString());
-              debugPrint(call.arguments.toString());
+              if (call.method != 'VideoOutput.Diagnostic') {
+                debugPrint(call.arguments.toString());
+              }
               switch (call.method) {
                 case 'VideoOutput.Resize':
                   {
@@ -284,13 +385,15 @@ class AndroidVideoController extends PlatformVideoController {
                     );
                     final int id = call.arguments['id'];
                     final int wid = call.arguments['wid'];
-                    debugPrint('[AndroidVideoController] VideoOutput.Resize: handle=$handle, id=$id, wid=$wid, rect=$rect');
+                    debugPrint(
+                        '[AndroidVideoController] VideoOutput.Resize: handle=$handle, id=$id, wid=$wid, rect=$rect');
                     final controller = _controllers[handle];
                     if (controller != null) {
                       await controller._surfaceBinding.handleResize(
                         wid: wid,
                         width: rect.width.toInt(),
                         height: rect.height.toInt(),
+                        textureId: id,
                         updateNotifiers: () {
                           controller.rect.value = rect;
                           controller.id.value = id;
@@ -309,14 +412,53 @@ class AndroidVideoController extends PlatformVideoController {
                     final controller = _controllers[handle];
                     if (controller != null) {
                       await controller._surfaceBinding.runExclusive(() async {
+                        controller._emitDiagnostic(
+                          'first_frame_notification',
+                          stage: 'native_wait_until_first_frame_rendered',
+                          fields: {
+                            'valid': true,
+                            'reason': 'native_frame_notification',
+                            'source': 'native_wait_until_first_frame_rendered',
+                            'renderConfirmed': 'unknown',
+                            'level': 'info',
+                          },
+                        );
                         // Notify about the first frame being rendered.
-                        final completer = controller
-                            .waitUntilFirstFrameRenderedCompleter;
+                        final completer =
+                            controller.waitUntilFirstFrameRenderedCompleter;
                         if (!completer.isCompleted) {
                           completer.complete();
                         }
                       });
                     }
+                    break;
+                  }
+                case 'VideoOutput.Diagnostic':
+                  {
+                    final Object? arguments = call.arguments;
+                    if (arguments is! Map) break;
+                    final handle = _diagnosticHandle(arguments['handle']);
+                    final Object? rawEvent = arguments['event'];
+                    final Object? rawFields = arguments['fields'];
+                    if (handle == null || rawEvent is! String) break;
+                    final controller = _controllers[handle];
+                    if (controller == null) break;
+
+                    final fields = <String, Object?>{};
+                    if (rawFields is Map) {
+                      for (final entry in rawFields.entries) {
+                        if (entry.key is String) {
+                          fields[entry.key as String] = entry.value;
+                        }
+                      }
+                    }
+                    // Read-only diagnostics must remain routable while the
+                    // surface binding closes and native disposal completes.
+                    controller._emitDiagnostic(
+                      rawEvent,
+                      stage: 'native',
+                      fields: fields,
+                    );
                     break;
                   }
                 default:

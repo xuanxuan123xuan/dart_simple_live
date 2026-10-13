@@ -8,7 +8,12 @@ import com.alexmercerind.mediakitandroidhelper.MediaKitAndroidHelper;
 import io.flutter.view.TextureRegistry;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public final class VideoOutputBehaviorTest {
     private static int assertions;
@@ -21,6 +26,8 @@ public final class VideoOutputBehaviorTest {
         testCleanupThenRebuild();
         testInvalidSurfaceAndZeroReferenceRecovery();
         testProducerFailuresRecover();
+        testDiagnosticEventsAndFields();
+        testDiagnosticFailuresCannotBlockPublishing();
         testDisposeIsIdempotentAndIgnoresCallbacks();
         System.out.println("PASS: VideoOutput behavior checks (" + assertions + " assertions)");
     }
@@ -156,6 +163,17 @@ public final class VideoOutputBehaviorTest {
         check(fixture.callback.last().wid != 0, "later availability retries a zero JNI ref");
         check(MediaKitAndroidHelper.created.get(2).object == replacement,
                 "retry references current replacement Surface");
+        final Surface throwingReplacement = new Surface("throwing-reference");
+        fixture.producer.surface = throwingReplacement;
+        MediaKitAndroidHelper.throwNext = new IllegalArgumentException("https://private.invalid/path");
+        fixture.output.onSurfaceAvailable();
+        final Diagnostic referenceError = fixture.callback.lastEvent("surface_error");
+        check(referenceError.fields.get("reason").equals("jni_ref_zero")
+                        && referenceError.fields.get("wid").equals(0L),
+                "JNI creation exception publishes a wid=0 diagnostic");
+        check(referenceError.fields.get("error").equals(IllegalArgumentException.class.getName())
+                        && !referenceError.fields.toString().contains("private.invalid"),
+                "JNI diagnostic records exception type without its raw message");
 
         check(oldReference != 0, "test began with an active JNI reference");
         fixture.output.dispose();
@@ -169,6 +187,12 @@ public final class VideoOutputBehaviorTest {
         fixture.output.setSurfaceSize(1, 1);
         check(fixture.callback.last().wid == 0,
                 "getSurface exception publishes a safe disconnect");
+        final Diagnostic surfaceReadError = fixture.callback.lastEvent("surface_error");
+        check(surfaceReadError.fields.get("reason").equals("get_surface_failed")
+                        && surfaceReadError.fields.get("wid").equals(0L),
+                "getSurface failure emits a wid=0 error diagnostic");
+        check(surfaceReadError.fields.get("error").equals(IllegalStateException.class.getName()),
+                "error diagnostic contains exception type only");
         final int updatesAfterReadFailure = fixture.callback.updates.size();
         fixture.output.setSurfaceSize(1, 1);
         check(fixture.callback.last().wid != 0,
@@ -180,6 +204,10 @@ public final class VideoOutputBehaviorTest {
         fixture.output.setSurfaceSize(1920, 1080);
         check(fixture.callback.last().wid == 0,
                 "setSize exception publishes a safe disconnect");
+        final Diagnostic setSizeError = fixture.callback.lastEvent("surface_error");
+        check(setSizeError.fields.get("reason").equals("set_size_failed")
+                        && setSizeError.fields.get("wid").equals(0L),
+                "setSize failure emits a wid=0 error diagnostic");
         final int updatesAfterSizeFailure = fixture.callback.updates.size();
         fixture.output.setSurfaceSize(1920, 1080);
         check(fixture.callback.last().wid != 0,
@@ -189,6 +217,105 @@ public final class VideoOutputBehaviorTest {
 
         fixture.output.dispose();
         runAllDelayedTasks();
+    }
+
+    private static void testDiagnosticEventsAndFields() {
+        resetFakes();
+        final TextureUpdateCallback lambdaCallback = (id, wid, width, height) -> {};
+        lambdaCallback.onDiagnostic("noop", Collections.emptyMap());
+        final Surface surface = new Surface("diagnostic-events");
+        final Fixture fixture = new Fixture(7, surface);
+        final Set<String> expectedFields = new HashSet<>(Arrays.asList(
+                "textureId",
+                "surfaceIdentity",
+                "bindRevision",
+                "oldWid",
+                "wid",
+                "width",
+                "height",
+                "valid",
+                "reason",
+                "level",
+                "error"));
+        check(fixture.callback.event("surface_create") != null,
+                "surface_create diagnostic is emitted");
+        final Diagnostic sizeRequest = fixture.callback.event("surface_size_requested");
+        check(sizeRequest != null, "surface_size_requested diagnostic is emitted");
+        final Diagnostic initialPublish = fixture.callback.event("surface_publish");
+        check(initialPublish != null, "surface_publish diagnostic is emitted");
+        check(initialPublish.fields.keySet().equals(expectedFields),
+                "diagnostic fields match the allowlist");
+        for (Diagnostic diagnostic : fixture.callback.diagnostics) {
+            check(diagnostic.fields.keySet().equals(expectedFields),
+                    "all diagnostics use the allowlisted fields");
+        }
+        check(initialPublish.fields.get("textureId").equals(7L),
+                "diagnostic records the texture ID");
+        check(initialPublish.fields.get("surfaceIdentity").equals(System.identityHashCode(surface)),
+                "diagnostic records Surface identity hash");
+        check(initialPublish.fields.get("reason").equals("initial_publish"),
+                "first publish explains why it binds");
+        check(initialPublish.fields.get("wid").equals(fixture.callback.last().wid)
+                        && initialPublish.fields.get("oldWid").equals(0L),
+                "publish diagnostic includes old and new refs");
+        check(initialPublish.fields.get("width").equals(1)
+                        && initialPublish.fields.get("height").equals(1),
+                "publish diagnostic includes effective dimensions");
+
+        final long firstWid = fixture.callback.last().wid;
+        fixture.output.setSurfaceSize(1920, 1080);
+        final Diagnostic resizePublish = fixture.callback.lastEvent("surface_publish");
+        check(resizePublish.fields.get("oldWid").equals(firstWid)
+                        && resizePublish.fields.get("wid").equals(fixture.callback.last().wid),
+                "resize diagnostic records old and new JNI refs");
+        check(resizePublish.fields.get("width").equals(1920)
+                        && resizePublish.fields.get("height").equals(1080),
+                "resize diagnostic reports the new dimensions");
+        check(resizePublish.fields.get("reason").equals("dimensions_changed"),
+                "resize diagnostic explains why rebinding occurred");
+
+        final Surface replacement = new Surface("diagnostic-replacement");
+        fixture.producer.surface = replacement;
+        fixture.output.setSurfaceSize(1920, 1080);
+        final Diagnostic surfaceReplacement = fixture.callback.lastEvent("surface_publish");
+        check(surfaceReplacement.fields.get("reason").equals("surface_identity_changed"),
+                "replacement diagnostic identifies a stale Surface rebind");
+        final long activeWid = fixture.callback.last().wid;
+        fixture.output.onSurfaceCleanup();
+        final Diagnostic cleanup = fixture.callback.lastEvent("surface_cleanup");
+        check(cleanup.fields.get("oldWid").equals(activeWid)
+                        && cleanup.fields.get("wid").equals(0L),
+                "cleanup diagnostic records wid=0 and its retired ref");
+        check(((Number) cleanup.fields.get("bindRevision")).longValue()
+                        > ((Number) surfaceReplacement.fields.get("bindRevision")).longValue(),
+                "binding revision advances on cleanup");
+        fixture.output.dispose();
+        final Diagnostic dispose = fixture.callback.lastEvent("dispose");
+        check(dispose.fields.get("wid").equals(0L), "dispose diagnostic reports wid=0");
+        runAllDelayedTasks();
+    }
+
+    private static void testDiagnosticFailuresCannotBlockPublishing() {
+        resetFakes();
+        final Surface surface = new Surface("diagnostic-throws");
+        final Fixture fixture = new Fixture(0, surface, true);
+        check(fixture.callback.last().wid != 0,
+                "diagnostic callback exception cannot block initial publish");
+        fixture.output.setSurfaceSize(1920, 1080);
+        check(fixture.callback.last().wid != 0
+                        && fixture.callback.last().width == 1920
+                        && fixture.callback.last().height == 1080,
+                "diagnostic callback exception cannot block resized publish");
+
+        surface.setValid(false);
+        fixture.output.onSurfaceAvailable();
+        check(fixture.callback.last().wid == 0,
+                "invalid Surface still publishes wid=0 when diagnostics throw");
+        check(fixture.callback.lastDiagnostic("surface_error").fields.get("reason")
+                        .equals("invalid_surface"),
+                "invalid Surface error has an explicit reason");
+        runAllDelayedTasks();
+        fixture.output.dispose();
     }
 
     private static void testDisposeIsIdempotentAndIgnoresCallbacks() {
@@ -245,11 +372,16 @@ public final class VideoOutputBehaviorTest {
 
     private static final class Fixture {
         final FakeProducer producer;
-        final RecordingCallback callback = new RecordingCallback();
+        final RecordingCallback callback;
         final VideoOutput output;
 
         Fixture(long textureId, Surface surface) {
+            this(textureId, surface, false);
+        }
+
+        Fixture(long textureId, Surface surface, boolean throwDiagnostics) {
             producer = new FakeProducer(textureId, surface);
+            callback = new RecordingCallback(throwDiagnostics);
             output = new VideoOutput(() -> producer, callback);
         }
     }
@@ -333,9 +465,25 @@ public final class VideoOutputBehaviorTest {
         }
     }
 
+    private static final class Diagnostic {
+        final String event;
+        final Map<String, Object> fields;
+
+        Diagnostic(String event, Map<String, Object> fields) {
+            this.event = event;
+            this.fields = fields;
+        }
+    }
+
     private static final class RecordingCallback implements TextureUpdateCallback {
         final List<Update> updates = new ArrayList<>();
+        final List<Diagnostic> diagnostics = new ArrayList<>();
         boolean throwNext;
+        final boolean throwDiagnostics;
+
+        RecordingCallback(boolean throwDiagnostics) {
+            this.throwDiagnostics = throwDiagnostics;
+        }
 
         @Override
         public void onTextureUpdate(long id, long wid, int width, int height) {
@@ -346,8 +494,38 @@ public final class VideoOutputBehaviorTest {
             }
         }
 
+        @Override
+        public void onDiagnostic(String event, Map<String, Object> fields) {
+            diagnostics.add(new Diagnostic(event, fields));
+            if (throwDiagnostics) {
+                throw new IllegalStateException("diagnostics callback failed");
+            }
+        }
+
         Update last() {
             return updates.get(updates.size() - 1);
+        }
+
+        Diagnostic event(String name) {
+            for (Diagnostic diagnostic : diagnostics) {
+                if (diagnostic.event.equals(name)) {
+                    return diagnostic;
+                }
+            }
+            return null;
+        }
+
+        Diagnostic lastEvent(String name) {
+            for (int i = diagnostics.size() - 1; i >= 0; i--) {
+                if (diagnostics.get(i).event.equals(name)) {
+                    return diagnostics.get(i);
+                }
+            }
+            throw new AssertionError("Missing diagnostic event: " + name);
+        }
+
+        Diagnostic lastDiagnostic(String name) {
+            return lastEvent(name);
         }
     }
 }
