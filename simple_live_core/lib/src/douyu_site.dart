@@ -33,6 +33,18 @@ class _DouyuPlayUrlAttempt {
   final StackTrace? stackTrace;
 }
 
+class _DouyuRoomStatus {
+  const _DouyuRoomStatus({
+    required this.state,
+    required this.isRecord,
+    required this.isLiveStream,
+  });
+
+  final LiveStatusState state;
+  final bool isRecord;
+  final bool isLiveStream;
+}
+
 class DouyuSite implements LiveSite {
   /// Optional authenticated web cookie. Empty preserves anonymous behavior.
   String cookie = "";
@@ -46,11 +58,11 @@ class DouyuSite implements LiveSite {
     if (cookie.trim().isNotEmpty) headers['Cookie'] = cookie.trim();
     return headers;
   }
+
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
-    return await getLiveStatus(roomId: roomId)
-        ? LiveStatusState.live
-        : LiveStatusState.offline;
+    final roomInfo = await _getRoomInfo(roomId);
+    return _parseRoomStatus(roomInfo).state;
   }
 
   @override
@@ -236,9 +248,8 @@ class DouyuSite implements LiveSite {
     }
     final data = result["data"] as Map;
     final baseUrl = data["rtmp_url"]?.toString().trim() ?? "";
-    final streamName = HtmlUnescape()
-        .convert(data["rtmp_live"]?.toString() ?? "")
-        .trim();
+    final streamName =
+        HtmlUnescape().convert(data["rtmp_live"]?.toString() ?? "").trim();
     if (baseUrl.isEmpty || streamName.isEmpty) {
       throw CoreError("斗鱼取流响应缺少可播放地址", kind: CoreErrorKind.response);
     }
@@ -256,7 +267,16 @@ class DouyuSite implements LiveSite {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
       },
     );
-    final decoded = json.decode(jsEncResult);
+    dynamic decoded;
+    try {
+      decoded = json.decode(jsEncResult);
+    } on FormatException catch (error) {
+      throw CoreError(
+        "斗鱼签名脚本响应格式错误",
+        kind: CoreErrorKind.response,
+        cause: error,
+      );
+    }
     final roomScript = decoded is Map && decoded["data"] is Map
         ? (decoded["data"] as Map)["room$roomId"]
         : null;
@@ -293,46 +313,45 @@ class DouyuSite implements LiveSite {
 
   @override
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
-    Map roomInfo = await _getRoomInfo(roomId);
+    final roomInfo = await _getRoomInfo(roomId);
+    final canonicalRoomId = roomInfo["room_id"].toString().trim();
+    final roomStatus = _parseRoomStatus(roomInfo);
+    final roomBizAll = roomInfo["room_biz_all"];
+    if (roomBizAll is! Map) {
+      throw CoreError("斗鱼房间详情响应格式错误", kind: CoreErrorKind.response);
+    }
 
-    Map h5RoomInfo = await HttpClient.instance.getJson(
-      "https://www.douyu.com/swf_api/h5room/$roomId",
+    final h5RoomInfo = await HttpClient.instance.getJson(
+      "https://www.douyu.com/swf_api/h5room/$canonicalRoomId",
       queryParameters: {},
-      header: {
-        if (cookie.trim().isNotEmpty) 'Cookie': cookie.trim(),
-        'referer': 'https://www.douyu.com/$roomId',
-        'user-agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43',
-      },
+      header: _roomHeaders(canonicalRoomId),
     );
-    String? showTime = h5RoomInfo["data"]?["show_time"]?.toString();
+    if (h5RoomInfo is! Map ||
+        (h5RoomInfo["data"] != null && h5RoomInfo["data"] is! Map)) {
+      throw CoreError("斗鱼房间详情响应格式错误", kind: CoreErrorKind.response);
+    }
+    final h5Data = h5RoomInfo["data"] as Map?;
+    final showTime = h5Data?["show_time"]?.toString();
 
-    var jsEncResult = await HttpClient.instance.getText(
-      "https://www.douyu.com/swf_api/homeH5Enc?rids=$roomId",
-      queryParameters: {},
-      header: {
-        if (cookie.trim().isNotEmpty) 'Cookie': cookie.trim(),
-        'referer': 'https://www.douyu.com/$roomId',
-        'user-agent':
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
-      },
-    );
-    var crptext = json.decode(jsEncResult)["data"]["room$roomId"].toString();
+    final signedArgs = roomStatus.state == LiveStatusState.live
+        ? await _getFreshPlayArgs(canonicalRoomId)
+        : "";
 
     return LiveRoomDetail(
       cover: roomInfo["room_pic"].toString(),
-      online: int.tryParse(roomInfo["room_biz_all"]["hot"].toString()) ?? 0,
-      roomId: roomInfo["room_id"].toString(),
+      online: int.tryParse(roomBizAll["hot"].toString()) ?? 0,
+      roomId: canonicalRoomId,
       title: roomInfo["room_name"].toString(),
       userName: roomInfo["owner_name"].toString(),
       userAvatar: roomInfo["owner_avatar"].toString(),
       introduction: roomInfo["show_details"].toString(),
       notice: "",
-      status: roomInfo["show_status"] == 1 && roomInfo["videoLoop"] != 1,
-      danmakuData: roomInfo["room_id"].toString(),
-      data: DouyuSign.getSign(crptext, roomInfo["room_id"].toString()),
+      status: roomStatus.isLiveStream,
+      liveStatusState: roomStatus.state,
+      danmakuData: canonicalRoomId,
+      data: signedArgs,
       url: "https://www.douyu.com/$roomId",
-      isRecord: roomInfo["videoLoop"] == 1,
+      isRecord: roomStatus.isRecord,
       showTime: showTime,
       categoryId: roomInfo["cate2Id"]?.toString() ??
           roomInfo["cate_id"]?.toString() ??
@@ -437,13 +456,53 @@ class DouyuSite implements LiveSite {
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43',
       },
     );
-    Map roomInfo;
+    dynamic decoded = result;
     if (result is String) {
-      roomInfo = json.decode(result)["room"];
-    } else {
-      roomInfo = result["room"];
+      try {
+        decoded = json.decode(result);
+      } on FormatException catch (error) {
+        throw CoreError(
+          "斗鱼房间信息响应格式错误",
+          kind: CoreErrorKind.response,
+          cause: error,
+        );
+      }
+    }
+    if (decoded is! Map || decoded["room"] is! Map) {
+      throw CoreError("斗鱼房间信息响应格式错误", kind: CoreErrorKind.response);
+    }
+
+    final roomInfo = decoded["room"] as Map;
+    final canonicalRoomId = roomInfo["room_id"]?.toString().trim() ?? "";
+    final numericRoomId = int.tryParse(canonicalRoomId);
+    if (!RegExp(r'^\d+$').hasMatch(canonicalRoomId) ||
+        numericRoomId == null ||
+        numericRoomId <= 0) {
+      throw CoreError("斗鱼房间信息缺少有效房间号", kind: CoreErrorKind.response);
     }
     return roomInfo;
+  }
+
+  _DouyuRoomStatus _parseRoomStatus(Map roomInfo) {
+    final showStatus = _parseIntegerFlag(roomInfo["show_status"]);
+    final videoLoop = _parseIntegerFlag(roomInfo["videoLoop"]);
+    final isRecord = videoLoop == 1;
+    final state = isRecord || showStatus == 1
+        ? LiveStatusState.live
+        : showStatus == 2 && videoLoop == 0
+            ? LiveStatusState.offline
+            : LiveStatusState.unknown;
+    return _DouyuRoomStatus(
+      state: state,
+      isRecord: isRecord,
+      isLiveStream: showStatus == 1 && !isRecord,
+    );
+  }
+
+  int? _parseIntegerFlag(dynamic value) {
+    if (value is int) return value;
+    if (value is String) return int.tryParse(value.trim());
+    return null;
   }
 
   //生成指定长度的16进制随机字符串
@@ -545,8 +604,12 @@ class DouyuSite implements LiveSite {
 
   @override
   Future<bool> getLiveStatus({required String roomId}) async {
-    var roomInfo = await _getRoomInfo(roomId);
-    return roomInfo["show_status"] == 1 && roomInfo["videoLoop"] != 1;
+    final roomInfo = await _getRoomInfo(roomId);
+    final status = _parseRoomStatus(roomInfo);
+    if (status.state == LiveStatusState.unknown) {
+      throw CoreError("斗鱼直播状态未知", kind: CoreErrorKind.response);
+    }
+    return status.isLiveStream;
   }
 
   int parseHotNum(String hn) {

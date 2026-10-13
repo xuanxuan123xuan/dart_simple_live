@@ -8,7 +8,8 @@ void main() {
       final start = DateTime(2026, 1, 1);
 
       expect(_observe(tracker, start), isFalse);
-      expect(_observe(tracker, start.add(const Duration(seconds: 14))), isFalse);
+      expect(
+          _observe(tracker, start.add(const Duration(seconds: 14))), isFalse);
       expect(_observe(tracker, start.add(const Duration(seconds: 15))), isTrue);
       expect(tracker.recoveryAttempts, 1);
     });
@@ -117,6 +118,69 @@ void main() {
       );
       expect(tracker.recoveryAttempts, 0);
     });
+
+    test(
+        'direct player recovery clears after 30 seconds without using stall budget',
+        () {
+      final tracker = PlaybackStallTracker();
+      final start = DateTime(2026, 1, 1);
+      _observe(tracker, start, recoveryPending: true);
+      _observe(
+        tracker,
+        start.add(const Duration(seconds: 1)),
+        position: const Duration(seconds: 1),
+        recoveryPending: true,
+      );
+      _observe(
+        tracker,
+        start.add(const Duration(seconds: 30)),
+        position: const Duration(seconds: 30),
+        recoveryPending: true,
+      );
+      expect(tracker.stableRecoveryCompleted, isFalse);
+      expect(tracker.recoveryAttempts, 0);
+      _observe(
+        tracker,
+        start.add(const Duration(seconds: 31)),
+        position: const Duration(seconds: 31),
+        recoveryPending: true,
+      );
+      expect(tracker.stableRecoveryCompleted, isTrue);
+      expect(tracker.recoveryAttempts, 0);
+    });
+
+    test('blocked recovery watches stable progress without spending retries',
+        () {
+      final tracker = PlaybackStallTracker();
+      final start = DateTime(2026, 1, 1);
+      _observe(tracker, start, recoveryPending: true, allowRecovery: false);
+      expect(
+        _observe(
+          tracker,
+          start.add(const Duration(seconds: 20)),
+          recoveryPending: true,
+          allowRecovery: false,
+        ),
+        isFalse,
+      );
+      expect(tracker.recoveryAttempts, 0);
+      _observe(
+        tracker,
+        start.add(const Duration(seconds: 21)),
+        position: const Duration(seconds: 1),
+        recoveryPending: true,
+        allowRecovery: false,
+      );
+      _observe(
+        tracker,
+        start.add(const Duration(seconds: 51)),
+        position: const Duration(seconds: 2),
+        recoveryPending: true,
+        allowRecovery: false,
+      );
+      expect(tracker.stableRecoveryCompleted, isTrue);
+      expect(tracker.recoveryAttempts, 0);
+    });
   });
 }
 
@@ -129,6 +193,8 @@ bool _observe(
   bool buffering = false,
   int generation = 1,
   bool completed = false,
+  bool recoveryPending = false,
+  bool allowRecovery = true,
 }) {
   return tracker.observe(
     now: now,
@@ -138,5 +204,7 @@ bool _observe(
     playing: playing,
     buffering: buffering,
     completed: completed,
+    recoveryPending: recoveryPending,
+    allowRecovery: allowRecovery,
   );
 }

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:simple_live_core/simple_live_core.dart' show LiveStatusState;
 import 'package:simple_live_tv_app/app/app_style.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/log.dart';
@@ -161,7 +162,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         Obx(
           () => Visibility(
             visible:
-                !controller.liveStatus.value && !controller.pageLoadding.value,
+                controller.roomLiveState.value == LiveStatusState.offline &&
+                    !controller.pageLoadding.value,
             child: Center(
               child: Text(
                 "未开播",

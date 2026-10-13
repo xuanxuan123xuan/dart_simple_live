@@ -20,8 +20,10 @@ class PlaybackStallTracker {
   DateTime? _stableProgressSince;
   DateTime? _lastRecoveryAt;
   int _recoveryAttempts = 0;
+  bool _stableRecoveryCompleted = false;
 
   int get recoveryAttempts => _recoveryAttempts;
+  bool get stableRecoveryCompleted => _stableRecoveryCompleted;
 
   bool observe({
     required DateTime now,
@@ -31,7 +33,10 @@ class PlaybackStallTracker {
     required bool playing,
     required bool buffering,
     required bool completed,
+    bool recoveryPending = false,
+    bool allowRecovery = true,
   }) {
+    _stableRecoveryCompleted = false;
     if (!playing || completed || source.isEmpty) {
       _lastPosition = null;
       _lastProgressAt = null;
@@ -58,12 +63,13 @@ class PlaybackStallTracker {
     if (_lastPosition == null || position != _lastPosition) {
       _lastPosition = position;
       _lastProgressAt = now;
-      if (_recoveryAttempts > 0) {
+      if (_recoveryAttempts > 0 || recoveryPending) {
         _stableProgressSince ??= now;
         if (now.difference(_stableProgressSince!) >= stableResetDuration) {
           _recoveryAttempts = 0;
           _lastRecoveryAt = null;
           _stableProgressSince = null;
+          _stableRecoveryCompleted = true;
         }
       }
       return false;
@@ -72,7 +78,8 @@ class PlaybackStallTracker {
     _stableProgressSince = null;
     final lastProgressAt = _lastProgressAt ?? now;
     final timeout = buffering ? bufferingStallTimeout : stallTimeout;
-    if (now.difference(lastProgressAt) < timeout ||
+    if (!allowRecovery ||
+        now.difference(lastProgressAt) < timeout ||
         _recoveryAttempts >= maximumRecoveryAttempts ||
         (_lastRecoveryAt != null &&
             now.difference(_lastRecoveryAt!) < recoveryCooldown)) {
@@ -92,5 +99,6 @@ class PlaybackStallTracker {
     _stableProgressSince = null;
     _lastRecoveryAt = null;
     _recoveryAttempts = 0;
+    _stableRecoveryCompleted = false;
   }
 }

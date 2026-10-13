@@ -34,8 +34,7 @@ mixin PlayerMixin {
   final playerRenderGeneration = 0.obs;
 
   /// 视频控制器（惰性创建；渲染降级后可重建）
-  VideoController get videoController =>
-      _videoController ??= VideoController(
+  VideoController get videoController => _videoController ??= VideoController(
         player,
         configuration: MpvOptionsService.videoControllerConfiguration(),
       );
@@ -254,12 +253,12 @@ class PlayerController extends BaseController
         return;
       }
       //SmartDialog.showToast(event);
-      mediaError(event);
+      unawaited(mediaError(event));
     });
 
     _completedSubscription = player.stream.completed.listen((event) {
       if (event) {
-        mediaEnd();
+        unawaited(mediaEnd());
       }
     });
     _logSubscription = player.stream.log.listen((event) {
@@ -299,8 +298,7 @@ class PlayerController extends BaseController
     final activeUri = media?.uri.toString() ?? "";
     final source =
         activeUri.isEmpty ? "" : playbackStallSourceIdentity(activeUri);
-    final previousAttempts = _playbackStallTracker.recoveryAttempts;
-    final shouldRecover = _playbackStallTracker.observe(
+    final shouldRecover = observePlaybackProgress(
       now: DateTime.now(),
       generation: playbackGeneration,
       source: source,
@@ -309,20 +307,58 @@ class PlayerController extends BaseController
       buffering: state.buffering,
       completed: state.completed,
     );
-    if (previousAttempts > 0 && _playbackStallTracker.recoveryAttempts == 0) {
-      playbackStable();
-    }
     if (!shouldRecover) return;
     Log.w(
       "检测到直播画面长时间无进度，自动恢复 "
       "(${_playbackStallTracker.recoveryAttempts}/3)",
     );
-    mediaError("直播流停滞，自动刷新");
+    unawaited(mediaError("直播流停滞，自动刷新"));
+  }
+
+  @protected
+  bool observePlaybackProgress({
+    required DateTime now,
+    required int generation,
+    required String source,
+    required Duration position,
+    required bool playing,
+    required bool buffering,
+    required bool completed,
+  }) {
+    final shouldRecover = _playbackStallTracker.observe(
+      now: now,
+      generation: generation,
+      source: source,
+      position: position,
+      playing: playing,
+      buffering: buffering,
+      completed: completed,
+      recoveryPending: playbackRecoveryPending,
+      allowRecovery: !playbackRecoveryBlocked,
+    );
+    if (_playbackStallTracker.stableRecoveryCompleted) {
+      playbackStable();
+    }
+    return shouldRecover;
   }
 
   void beginPlaybackGeneration() {
     playbackGeneration += 1;
     _armStartupVideoWatchdog();
+  }
+
+  /// 清除当前播放的卡顿预算并使已排队的起播看门狗失效。
+  /// 手动重试和换房间会在新的播放请求开始前调用。
+  void resetPlaybackRecoveryTracking() {
+    _playbackStallTracker.reset();
+    _startupVideoWatchdog?.cancel();
+    _startupVideoWatchdog = null;
+    _startupWatchdogGeneration = -1;
+  }
+
+  void invalidatePlaybackGeneration() {
+    playbackGeneration += 1;
+    resetPlaybackRecoveryTracking();
   }
 
   /// 起播看门狗：仅监测"从未出画面"的场景；播中卡顿由
@@ -340,17 +376,24 @@ class PlayerController extends BaseController
   }
 
   Future<void> _handleStartupVideoWatchdog() async {
-    if (_startupWatchdogGeneration != playbackGeneration) return;
+    if (playbackRecoveryBlocked ||
+        _startupWatchdogGeneration != playbackGeneration) {
+      return;
+    }
     if ((player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0) {
       return;
     }
     if (player.platform is NativePlayer) {
       final voConfigured = await _readVoConfigured();
-      if (_startupWatchdogGeneration != playbackGeneration) return;
+      if (playbackRecoveryBlocked ||
+          _startupWatchdogGeneration != playbackGeneration) {
+        return;
+      }
       // vo 已配置但从未上报尺寸：交给卡顿看门狗，不做渲染降级。
       if (voConfigured) return;
     }
     final settings = AppSettingsController.instance;
+    if (playbackRecoveryBlocked) return;
     final currentStage = settings.renderFallbackStage.value;
     final nextStage = MpvOptionsService.nextRenderFallbackStage(currentStage);
     if (nextStage < 0) {
@@ -380,11 +423,14 @@ class PlayerController extends BaseController
   }
 
   Future<void> _reopenWithRenderStage(int stage) async {
-    if (_renderFallbackReopening) return;
+    if (_renderFallbackReopening || playbackRecoveryBlocked) return;
     _renderFallbackReopening = true;
     try {
       await rebuildVideoControllerForRenderStage();
-      if (_startupWatchdogGeneration != playbackGeneration) return;
+      if (playbackRecoveryBlocked ||
+          _startupWatchdogGeneration != playbackGeneration) {
+        return;
+      }
       Log.i("渲染降级：应用档位 $stage 后重新打开播放流");
       await reopenPlaybackForRenderFallback();
     } catch (e, stackTrace) {
@@ -453,6 +499,10 @@ class PlayerController extends BaseController
 
   bool get playbackRecoveryInFlight => false;
 
+  bool get playbackRecoveryBlocked => false;
+
+  bool get playbackRecoveryPending => false;
+
   void playbackStable() {}
 
   void disposeStream() {
@@ -468,9 +518,12 @@ class PlayerController extends BaseController
     _playbackStallTracker.reset();
   }
 
-  void mediaEnd() {}
+  Future<void> mediaEnd() async {}
 
-  void mediaError(String error) {}
+  Future<void> mediaError(String error) async {}
+
+  @protected
+  Future<void> disposePlayer() => player.dispose();
 
   @override
   void onClose() async {
@@ -478,7 +531,7 @@ class PlayerController extends BaseController
     disposeStream();
     disposeDanmakuController();
     await resetSystem();
-    await player.dispose();
+    await disposePlayer();
     super.onClose();
   }
 }
