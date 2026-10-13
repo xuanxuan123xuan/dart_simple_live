@@ -301,12 +301,14 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
 
   /// `onPointerCancel` (raw Listener) — called regardless of gesture arena result.
   ///
-  /// Mirrors [onBarPointerUp]. The cancel event is delivered when the OS or a
-  /// parent widget takes ownership of the pointer stream.
+  /// A canceled pointer must not enter the pointer-up recovery path, which
+  /// can select the tab under the lift point. Drag cleanup remains owned by
+  /// the drag recognizer.
   void onBarPointerCancel(Offset position) {
     if (!mounted) return;
+    _gestureActive = false;
+    _pendingTapIndex = null;
     if (!tabIsDragging) setState(() => tabIsDown = false);
-    recoverIfGestureStuck(position);
   }
 
   /// `onHorizontalDragDown` — marks pointer as pressed for jelly activation.
@@ -320,6 +322,8 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   void onBarDragStart(DragStartDetails d) {
     if (!mounted) return;
     setState(() {
+      _gestureActive = true;
+      _pendingTapIndex = null;
       tabIsDragging = true;
       setLocalTabXAlign(alignmentFromGlobal(d.globalPosition));
     });
@@ -424,32 +428,25 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
 
   /// `onHorizontalDragCancel` — snap to nearest tab without velocity.
   void onBarDragCancel() {
+    // A tap winning the arena also cancels the horizontal recognizer. Until
+    // a drag has started, the tap recognizer owns selection and cleanup;
+    // clearing its pending target here would silently discard held clicks.
+    if (!tabIsDragging) return;
     _gestureActive = false;
     _pendingTapIndex = null;
-    if (tabIsDragging) {
-      final relX = (tabXAlign + 1) / 2;
-      final target = (relX * (tabCount - 1)).round().clamp(0, tabCount - 1);
-      _applyDragResolution(() {
-        setState(() {
-          tabIsDragging = false;
-          tabIsDown = false;
-          setLocalTabXAlign(computeTabAlignment(target));
-          barSwayOffset = 0.0; // spring back to center
-          _gestureStartTabIndex = null;
-        });
-        notifyTabChanged(target);
-        reconcileWithHost(target);
+    final relX = (tabXAlign + 1) / 2;
+    final target = (relX * (tabCount - 1)).round().clamp(0, tabCount - 1);
+    _applyDragResolution(() {
+      setState(() {
+        tabIsDragging = false;
+        tabIsDown = false;
+        setLocalTabXAlign(computeTabAlignment(target));
+        barSwayOffset = 0.0; // spring back to center
+        _gestureStartTabIndex = null;
       });
-    } else {
-      // Not dragging (e.g. same-tab tap): reset indicator to exact tab center.
-      _applyDragResolution(() {
-        setState(() {
-          tabIsDown = false;
-          setLocalTabXAlign(computeTabAlignment(tabIndex));
-          _gestureStartTabIndex = null;
-        });
-      });
-    }
+      notifyTabChanged(target);
+      reconcileWithHost(target);
+    });
   }
 
   /// `onTapDown` — records the target tab and activates the press state.
@@ -498,6 +495,7 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
     if (!mounted) return;
     _pendingTapIndex = null;
     if (!tabIsDragging) {
+      _gestureActive = false;
       _applyDragResolution(() {
         setState(() => tabIsDown = false);
       });
