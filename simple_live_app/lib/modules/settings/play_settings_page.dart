@@ -66,8 +66,8 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                   () => Visibility(
                     visible: Platform.isAndroid,
                     child: SettingsSwitch(
-                      title: "兼容模式",
-                      subtitle: "若播放卡顿可尝试打开此选项",
+                      title: "播放器兼容模式",
+                      subtitle: "适用于部分设备出现黑屏、无画面、播放卡顿等问题。启用后使用 MediaCodec 嵌入式渲染。",
                       value: controller.playerCompatMode.value,
                       onChanged: (e) {
                         controller.setPlayerCompatMode(e);

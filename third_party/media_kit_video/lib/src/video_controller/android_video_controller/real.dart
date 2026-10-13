@@ -49,6 +49,7 @@ class AndroidVideoController extends PlatformVideoController {
   /// Listener for updating the --wid property.
   Future<void> widListener() {
     return lock.synchronized(() async {
+      debugPrint('[AndroidVideoController] widListener: wid=${wid.value}, rect=${rect.value}');
       final width = rect.value?.width.toInt() ?? 1;
       final height = rect.value?.height.toInt() ?? 1;
       final androidSurfaceSizeValue = [width, height].join('x');
@@ -68,6 +69,7 @@ class AndroidVideoController extends PlatformVideoController {
           if (configuration.vo == 'mediacodec_embed') 'vid': vidValue,
         },
       );
+      debugPrint('[AndroidVideoController] widListener complete: vo=$voValue, wid=$widValue, size=${androidSurfaceSizeValue}');
     });
   }
 
@@ -239,6 +241,7 @@ class AndroidVideoController extends PlatformVideoController {
         'hwdec-codecs': 'h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1',
       },
     );
+    debugPrint('[AndroidVideoController] Initialized: vo=null (will be set after wid assignment), hwdec=${configuration.hwdec}');
 
     // Return the [PlatformVideoController].
     return controller;
@@ -302,6 +305,7 @@ class AndroidVideoController extends PlatformVideoController {
                     );
                     final int id = call.arguments['id'];
                     final int wid = call.arguments['wid'];
+                    debugPrint('[AndroidVideoController] VideoOutput.Resize: handle=$handle, id=$id, wid=$wid, rect=$rect');
                     _controllers[handle]?.rect.value = rect;
                     _controllers[handle]?.id.value = id;
                     // Only on Android:

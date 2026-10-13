@@ -1,0 +1,121 @@
+--- a/video/out/placebo/ra_pl.c
++++ b/video/out/placebo/ra_pl.c
+@@ -392,6 +392,13 @@
+     struct pl_desc_binding *binds;
+     struct pl_var_update *varups;
+     int num_varups;
++    /* Kept so we can rebuild the pass when a YCbCr immutable sampler appears.
++     * vo/gpu binds textures only at run time; Vulkan requires YCbCr conversion
++     * samplers to be in pImmutableSamplers of the descriptor set layout. */
++    struct pl_pass_params pl_params;
++    struct pl_blend_params blend_params;
++    struct pl_desc *descs;
++    int num_descs;
+ };
+ 
+ static struct ra_renderpass *renderpass_create_pl(struct ra *ra,
+@@ -439,8 +446,10 @@
+ 
+     // Allocate space to store the bindings map persistently
+     priv->binds = talloc_zero_array(priv, struct pl_desc_binding, num_descs);
++    priv->descs = descs;
++    priv->num_descs = num_descs;
+ 
+-    struct pl_pass_params pl_params = {
++    priv->pl_params = (struct pl_pass_params) {
+         .type = pass_type[params->type],
+         .variables = vars,
+         .num_variables = num_vars,
+@@ -452,24 +461,22 @@
+                             : params->frag_shader,
+     };
+ 
+-    struct pl_blend_params blend_params;
+-
+     if (params->type == RA_RENDERPASS_TYPE_RASTER) {
+-        pl_params.vertex_shader = params->vertex_shader;
+-        pl_params.vertex_type = PL_PRIM_TRIANGLE_LIST;
+-        pl_params.vertex_stride = params->vertex_stride;
+-        pl_params.load_target = !params->invalidate_target;
+-        pl_params.target_format = params->target_format->priv;
++        priv->pl_params.vertex_shader = params->vertex_shader;
++        priv->pl_params.vertex_type = PL_PRIM_TRIANGLE_LIST;
++        priv->pl_params.vertex_stride = params->vertex_stride;
++        priv->pl_params.load_target = !params->invalidate_target;
++        priv->pl_params.target_format = params->target_format->priv;
+ 
+         if (params->enable_blend) {
+-            pl_params.blend_params = &blend_params;
+-            blend_params = (struct pl_blend_params) {
++            priv->blend_params = (struct pl_blend_params) {
+                 // Same enum order as ra_blend
+                 .src_rgb = (enum pl_blend_mode) params->blend_src_rgb,
+                 .dst_rgb = (enum pl_blend_mode) params->blend_dst_rgb,
+                 .src_alpha = (enum pl_blend_mode) params->blend_src_alpha,
+                 .dst_alpha = (enum pl_blend_mode) params->blend_dst_alpha,
+             };
++            priv->pl_params.blend_params = &priv->blend_params;
+         }
+ 
+         for (int i = 0; i < params->num_vertex_attribs; i++) {
+@@ -488,12 +495,23 @@
+                 goto error;
+             }
+ 
+-            MP_TARRAY_APPEND(tmp, pl_params.vertex_attribs,
+-                             pl_params.num_vertex_attribs, attrib);
++            MP_TARRAY_APPEND(tmp, priv->pl_params.vertex_attribs,
++                             priv->pl_params.num_vertex_attribs, attrib);
+         }
+     }
+ 
+-    priv->pass = pl_pass_create(gpu, &pl_params);
++    /* Steal dynamic arrays so they outlive `tmp` and can rebuild the pass. */
++    talloc_steal(priv, vars);
++    talloc_steal(priv, descs);
++    talloc_steal(priv, priv->pl_params.vertex_attribs);
++    if (params->type == RA_RENDERPASS_TYPE_COMPUTE)
++        priv->pl_params.glsl_shader = talloc_strdup(priv, params->compute_shader);
++    else
++        priv->pl_params.glsl_shader = talloc_strdup(priv, params->frag_shader);
++    if (params->type == RA_RENDERPASS_TYPE_RASTER && params->vertex_shader)
++        priv->pl_params.vertex_shader = talloc_strdup(priv, params->vertex_shader);
++
++    priv->pass = pl_pass_create(gpu, &priv->pl_params);
+     if (!priv->pass)
+         goto error;
+ 
+@@ -557,6 +575,33 @@
+         };
+     }
+ 
++    /* Rebuild pass if bound textures carry a YCbCr immutable sampler that was
++     * unknown at create time (ra binds tex only at run). */
++    bool rebuild = false;
++    for (int i = 0; i < params->num_values; i++) {
++        const struct ra_renderpass_input *inp = &params->pass->params.inputs[i];
++        if (inp->type != RA_VARTYPE_TEX)
++            continue;
++        int di = p->inp_index[params->values[i].index];
++        pl_tex tex = p->binds[di].object;
++        if (!tex || p->descs[di].immutable_sampler == tex->immutable_sampler)
++            continue;
++        p->descs[di].immutable_sampler = tex->immutable_sampler;
++        rebuild = true;
++    }
++    if (rebuild) {
++        pl_gpu gpu = get_gpu(ra);
++        pl_pass_destroy(gpu, (pl_pass *) &p->pass);
++        p->pl_params.descriptors = p->descs;
++        p->pl_params.num_descriptors = p->num_descs;
++        p->pass = pl_pass_create(gpu, &p->pl_params);
++        if (!p->pass) {
++            MP_ERR(ra, "Failed rebuilding pass for YCbCr immutable sampler\n");
++            return;
++        }
++        MP_VERBOSE(ra, "Rebuilt renderpass with YCbCr immutable sampler(s)\n");
++    }
++
+     struct pl_pass_run_params pl_params = {
+         .pass = p->pass,
+         .var_updates = p->varups,

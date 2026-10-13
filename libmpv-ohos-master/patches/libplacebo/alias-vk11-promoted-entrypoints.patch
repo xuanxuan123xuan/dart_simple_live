@@ -1,0 +1,24 @@
+diff --git a/src/vulkan/context.c b/src/vulkan/context.c
+--- a/src/vulkan/context.c
++++ b/src/vulkan/context.c
+@@ -441,6 +441,20 @@ static void load_vk_fun(struct vk_ctx *vk, const struct vk_fun *fun)
+ 
+     if (fun->device_level) {
+         *pfn = vk->GetDeviceProcAddr(vk->dev, fun->name);
++        /* Vulkan 1.1: core 1.2 names (vkWaitSemaphores, vkResetQueryPool) are
++         * NULL; the same entry points live on VK_KHR_timeline_semaphore /
++         * VK_EXT_host_query_reset. Calling the NULL pfn SIGSEGVs on Mali-G610. */
++        if (!*pfn && vk->api_ver < VK_API_VERSION_1_2) {
++            char alt[128];
++            snprintf(alt, sizeof(alt), "%sKHR", fun->name);
++            *pfn = vk->GetDeviceProcAddr(vk->dev, alt);
++            if (!*pfn) {
++                snprintf(alt, sizeof(alt), "%sEXT", fun->name);
++                *pfn = vk->GetDeviceProcAddr(vk->dev, alt);
++            }
++            if (*pfn)
++                PL_INFO(vk, "Aliased %s -> %s", fun->name, alt);
++        }
+     } else {
+         *pfn = vk->GetInstanceProcAddr(vk->inst, fun->name);
+     };

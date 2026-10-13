@@ -249,7 +249,7 @@ class MpvOptionsService {
         enableHardwareAcceleration: settings.hardwareDecode.value,
       );
     }
-    return VideoControllerConfiguration(
+    final config = VideoControllerConfiguration(
       vo: options["vo"],
       hwdec: resolveAndroidVideoControllerHwdec(
         effectiveOptions,
@@ -260,6 +260,8 @@ class MpvOptionsService {
       // Fix Issue #57: 安卓全屏后画面卡死 - 延迟attach避免surface race condition
       androidAttachSurfaceAfterVideoParameters: true,
     );
+    Log.d('[MpvOptions] Android VideoController config: vo=${config.vo}, hwdec=${config.hwdec}, attachAfterParams=true');
+    return config;
   }
 
   static Future<void> applyToPlayer(Player player) async {

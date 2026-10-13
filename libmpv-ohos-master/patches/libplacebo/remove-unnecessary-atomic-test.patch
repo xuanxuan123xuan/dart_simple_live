@@ -1,0 +1,14 @@
+diff --git a/src/meson.build b/src/meson.build
+index 71a6168..21c975a 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -46,9 +46,6 @@ int main(void) {
+   atomic_init(&x32, 0);
+ }'''
+ 
+-if not cc.links(atomic_test)
+-  build_deps += cc.find_library('atomic')
+-endif
+ 
+ 
+ ### Common source files

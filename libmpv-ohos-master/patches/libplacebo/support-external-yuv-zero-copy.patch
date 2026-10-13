@@ -1,0 +1,262 @@
+diff --git a/src/dispatch.c b/src/dispatch.c
+index 218b556a..38fb627c 100644
+--- a/src/dispatch.c
++++ b/src/dispatch.c
+@@ -323,7 +323,8 @@ static void generate_shaders(pl_dispatch dp,
+ 
+     // Enable all extensions needed for different types of input
+     bool has_ssbo = false, has_ubo = false, has_img = false, has_texel = false,
+-         has_ext = false, has_nofmt = false, has_gather = false;
++         has_ext = false, has_ext_yuv = false, has_nofmt = false,
++         has_gather = false;
+     for (int i = 0; i < sh->descs.num; i++) {
+         switch (sh->descs.elem[i].desc.type) {
+         case PL_DESC_BUF_UNIFORM: has_ubo = true; break;
+@@ -348,6 +349,7 @@ static void generate_shaders(pl_dispatch dp,
+             case PL_SAMPLER_NORMAL: break;
+             case PL_SAMPLER_RECT: break;
+             case PL_SAMPLER_EXTERNAL: has_ext = true; break;
++            case PL_SAMPLER_EXTERNAL_YUV: has_ext_yuv = true; break;
+             case PL_SAMPLER_TYPE_COUNT: pl_unreachable();
+             }
+             break;
+@@ -374,6 +376,8 @@ static void generate_shaders(pl_dispatch dp,
+             ADD(pre, "#extension GL_OES_EGL_image_external : enable\n");
+         }
+     }
++    if (has_ext_yuv)
++        ADD(pre, "#extension GL_EXT_YUV_target : require\n");
+     if (has_nofmt)
+         ADD(pre, "#extension GL_EXT_shader_image_load_formatted : enable\n");
+     if (has_gather && !gpu->glsl.gles)
+@@ -471,6 +475,7 @@ static void generate_shaders(pl_dispatch dp,
+                 [PL_SAMPLER_NORMAL][3]  = "sampler3D",
+                 [PL_SAMPLER_RECT][2]    = "sampler2DRect",
+                 [PL_SAMPLER_EXTERNAL][2] = "samplerExternalOES",
++                [PL_SAMPLER_EXTERNAL_YUV][2] = "highp __samplerExternal2DY2YEXT",
+             };
+ 
+             pl_tex tex = sd->binding.object;
+@@ -887,6 +892,11 @@ static struct pass *finalize_pass(pl_dispatch dp, pl_shader sh,
+         struct pl_desc *desc = &params.descriptors[i];
+         *desc = sh->descs.elem[i].desc;
+         desc->binding = binding[pl_desc_namespace(dp->gpu, desc->type)]++;
++        if (desc->type == PL_DESC_SAMPLED_TEX) {
++            pl_tex tex = sh->descs.elem[i].binding.object;
++            desc->immutable_sampler = tex->immutable_sampler;
++            pl_hash_merge(&pass->signature, desc->immutable_sampler);
++        }
+     }
+ 
+     // Finalize the shader and look it up in the pass cache
+diff --git a/src/include/libplacebo/gpu.h b/src/include/libplacebo/gpu.h
+index fcaca197..c0d8b2ca 100644
+--- a/src/include/libplacebo/gpu.h
++++ b/src/include/libplacebo/gpu.h
+@@ -735,6 +735,7 @@ enum pl_sampler_type {
+     PL_SAMPLER_NORMAL,      // gsampler2D, gsampler3D etc.
+     PL_SAMPLER_RECT,        // gsampler2DRect
+     PL_SAMPLER_EXTERNAL,    // gsamplerExternalOES
++    PL_SAMPLER_EXTERNAL_YUV,// __samplerExternal2DY2YEXT (raw Y/Cb/Cr)
+     PL_SAMPLER_TYPE_COUNT,
+ };
+ 
+@@ -778,6 +779,11 @@ struct pl_tex_t {
+     // If `params.sampleable` is true, this indicates the correct sampler type
+     // to use when sampling from this texture.
+     enum pl_sampler_type sampler_type;
++
++    // Backend-owned immutable sampler identity. Vulkan YCbCr conversion
++    // samplers must be baked into the descriptor set layout. Zero for normal
++    // textures and non-Vulkan backends.
++    uint64_t immutable_sampler;
+ };
+ 
+ // Create a texture (with undefined contents). Returns NULL on failure. This is
+@@ -1139,6 +1145,10 @@ struct pl_desc {
+     // the other descriptor types (uniform buffers and sampled textures are
+     // always read-only).
+     enum pl_desc_access access;
++
++    // Optional backend sampler identity copied from the bound texture when a
++    // pass is compiled. Vulkan uses this for pImmutableSamplers.
++    uint64_t immutable_sampler;
+ };
+ 
+ // Framebuffer blending mode (for raster passes)
+diff --git a/src/include/libplacebo/opengl.h b/src/include/libplacebo/opengl.h
+index 168281e1..c50908f8 100644
+--- a/src/include/libplacebo/opengl.h
++++ b/src/include/libplacebo/opengl.h
+@@ -201,6 +201,11 @@ struct pl_opengl_wrap_params {
+ 
+     // The texture's GLint sized internal format (e.g. GL_RGBA16F). Required.
+     int iformat;
++
++    // Optional explicit sampler type. In particular,
++    // PL_SAMPLER_EXTERNAL_YUV selects GL_EXT_YUV_target raw Y/Cb/Cr sampling.
++    // PL_SAMPLER_NORMAL keeps the target-based inference above.
++    enum pl_sampler_type sampler_type;
+ };
+ 
+ #define pl_opengl_wrap_params(...) (&(struct pl_opengl_wrap_params) { __VA_ARGS__ })
+diff --git a/src/include/libplacebo/vulkan.h b/src/include/libplacebo/vulkan.h
+index a121da30..ddd83768 100644
+--- a/src/include/libplacebo/vulkan.h
++++ b/src/include/libplacebo/vulkan.h
+@@ -500,6 +500,16 @@ struct pl_vulkan_wrap_params {
+     // pl_fmt. If no compatible pl_fmt is found, wrapping will fail.
+     VkFormat format;
+ 
++    // Optional virtual format used for libplacebo's channel description when
++    // the real VkImage is backed by an external format.
++    pl_fmt pl_format;
++
++    // Optional caller-owned view and sampler. These are useful for externally
++    // formatted images with an attached VkSamplerYcbcrConversion. Neither
++    // object is destroyed by libplacebo.
++    VkImageView image_view;
++    VkSampler sampler;
++
+     // The usage flags the image was created with. libplacebo will set the
+     // pl_tex capabilities to include whatever it can, as determined by the set
+     // of enabled usage flags.
+diff --git a/src/opengl/gpu_tex.c b/src/opengl/gpu_tex.c
+index 69e118bf..36977de0 100644
+--- a/src/opengl/gpu_tex.c
++++ b/src/opengl/gpu_tex.c
+@@ -718,12 +718,16 @@ pl_tex pl_opengl_wrap(pl_gpu gpu, const struct pl_opengl_wrap_params *params)
+                    "`pl_sampler_type`", params->target);
+             goto error;
+         }
++
++        if (params->sampler_type != PL_SAMPLER_NORMAL)
++            tex->sampler_type = params->sampler_type;
+     }
+ 
+     // Create optional extra fbo if needed/possible
+     bool can_fbo = tex_gl->texture &&
+                    (fmt->caps & PL_FMT_CAP_RENDERABLE) &&
+                    tex->sampler_type != PL_SAMPLER_EXTERNAL &&
++                   tex->sampler_type != PL_SAMPLER_EXTERNAL_YUV &&
+                    dims < 3;
+ 
+     if (can_fbo && !tex_gl->fbo) {
+diff --git a/src/shaders.c b/src/shaders.c
+index d27134ac..058ef7b6 100644
+--- a/src/shaders.c
++++ b/src/shaders.c
+@@ -642,6 +642,7 @@ static const char *samplers2D[] = {
+     [PL_SAMPLER_NORMAL]     = "sampler2D",
+     [PL_SAMPLER_RECT]       = "sampler2DRect",
+     [PL_SAMPLER_EXTERNAL]   = "samplerExternalOES",
++    [PL_SAMPLER_EXTERNAL_YUV] = "highp __samplerExternal2DY2YEXT",
+ };
+ 
+ ident_t sh_subpass(pl_shader sh, pl_shader sub)
+diff --git a/src/vulkan/gpu.h b/src/vulkan/gpu.h
+index 0318eaea..33d04946 100644
+--- a/src/vulkan/gpu.h
++++ b/src/vulkan/gpu.h
+@@ -111,6 +111,7 @@ struct pl_tex_vk {
+     VkImageUsageFlags usage_flags;
+     // for sampling
+     VkImageView view;
++    bool external_view;
+     // for rendering
+     VkFramebuffer framebuffer;
+     // for vk_tex_upload/download fallback code
+diff --git a/src/vulkan/gpu_pass.c b/src/vulkan/gpu_pass.c
+index 99188020..e92fdba4 100644
+--- a/src/vulkan/gpu_pass.c
++++ b/src/vulkan/gpu_pass.c
+@@ -338,6 +338,8 @@ pl_pass vk_pass_create(pl_gpu gpu, const struct pl_pass_params *params)
+ 
+     int dsSize[PL_DESC_TYPE_COUNT] = {0};
+     VkDescriptorSetLayoutBinding *bindings = pl_calloc_ptr(tmp, num_desc, bindings);
++    VkSampler *immutable_samplers = pl_calloc_ptr(tmp, num_desc,
++                                                  immutable_samplers);
+ 
+     uint32_t max_tex = vk->props.limits.maxPerStageDescriptorSampledImages,
+              max_img = vk->props.limits.maxPerStageDescriptorStorageImages,
+@@ -368,6 +370,10 @@ pl_pass vk_pass_create(pl_gpu gpu, const struct pl_pass_params *params)
+             .descriptorCount = 1,
+             .stageFlags = stageFlags[params->type],
+         };
++        if (desc->immutable_sampler) {
++            immutable_samplers[i] = (VkSampler) desc->immutable_sampler;
++            bindings[i].pImmutableSamplers = &immutable_samplers[i];
++        }
+     }
+ 
+     VkDescriptorSetLayoutCreateInfo dinfo = {
+@@ -672,7 +678,10 @@ static void vk_update_descriptor(pl_gpu gpu, struct vk_cmd *cmd, pl_pass pass,
+ 
+         VkDescriptorImageInfo *iinfo = &pass_vk->dsiinfo[idx];
+         *iinfo = (VkDescriptorImageInfo) {
+-            .sampler = p->samplers[db.sample_mode][db.address_mode],
++            /* HM_GPU: write real handle; OHOS sample does this too. */
++            .sampler = tex->immutable_sampler
++                     ? (VkSampler) tex->immutable_sampler
++                     : p->samplers[db.sample_mode][db.address_mode],
+             .imageView = tex_vk->view,
+             .imageLayout = tex_vk->layout,
+         };
+diff --git a/src/vulkan/gpu_tex.c b/src/vulkan/gpu_tex.c
+index 4e19298a..27560e1a 100644
+--- a/src/vulkan/gpu_tex.c
++++ b/src/vulkan/gpu_tex.c
+@@ -101,7 +101,8 @@ static void vk_tex_destroy(pl_gpu gpu, struct pl_tex_t *tex)
+     struct pl_tex_vk *tex_vk = PL_PRIV(tex);
+ 
+     vk->DestroyFramebuffer(vk->dev, tex_vk->framebuffer, PL_VK_ALLOC);
+-    vk->DestroyImageView(vk->dev, tex_vk->view, PL_VK_ALLOC);
++    if (!tex_vk->external_view)
++        vk->DestroyImageView(vk->dev, tex_vk->view, PL_VK_ALLOC);
+     for (int i = 0; i < tex_vk->num_planes; i++)
+         vk_tex_deref(gpu, tex->planes[i]);
+     if (!tex_vk->external_img) {
+@@ -182,8 +183,10 @@ static bool vk_init_image(pl_gpu gpu, pl_tex tex, pl_debug_tag debug_tag)
+             },
+         };
+ 
+-        VK(vk->CreateImageView(vk->dev, &vinfo, PL_VK_ALLOC, &tex_vk->view));
+-        PL_VK_NAME(IMAGE_VIEW, tex_vk->view, debug_tag);
++        if (!tex_vk->view) {
++            VK(vk->CreateImageView(vk->dev, &vinfo, PL_VK_ALLOC, &tex_vk->view));
++            PL_VK_NAME(IMAGE_VIEW, tex_vk->view, debug_tag);
++        }
+     }
+ 
+     if (params->renderable) {
+@@ -1289,12 +1292,14 @@ skip_blocking:
+ 
+ pl_tex pl_vulkan_wrap(pl_gpu gpu, const struct pl_vulkan_wrap_params *params)
+ {
+-    pl_fmt fmt = NULL;
+-    for (int i = 0; i < gpu->num_formats; i++) {
+-        const struct vk_format **vkfmt = PL_PRIV(gpu->formats[i]);
+-        if ((*vkfmt)->tfmt == params->format) {
+-            fmt = gpu->formats[i];
+-            break;
++    pl_fmt fmt = params->pl_format;
++    if (!fmt) {
++        for (int i = 0; i < gpu->num_formats; i++) {
++            const struct vk_format **vkfmt = PL_PRIV(gpu->formats[i]);
++            if ((*vkfmt)->tfmt == params->format) {
++                fmt = gpu->formats[i];
++                break;
++            }
+         }
+     }
+ 
+@@ -1361,6 +1366,9 @@ pl_tex pl_vulkan_wrap(pl_gpu gpu, const struct pl_vulkan_wrap_params *params)
+     tex_vk->held = !fmt->num_planes;
+     tex_vk->img = params->image;
+     tex_vk->img_fmt = params->format;
++    tex_vk->view = params->image_view;
++    tex_vk->external_view = params->image_view != VK_NULL_HANDLE;
++    ((struct pl_tex_t *) tex)->immutable_sampler = (uint64_t) params->sampler;
+     tex_vk->num_planes = fmt->num_planes;
+     tex_vk->usage_flags = usage;
+     tex_vk->aspect = params->aspect;

@@ -299,6 +299,12 @@ mixin PlayerMixin {
     // media_kit 仓库更新导致的问题，临时解决办法
     if (Platform.isAndroid) {
       await nativePlayer.setProperty('force-seekable', 'yes');
+      Log.d('[PlayerController] Android player initialized with force-seekable workaround');
+
+      // 监听视频轨道变化，帮助诊断无画面问题
+      player.stream.tracks.listen((tracks) {
+        Log.d('[PlayerController] Tracks: video=${tracks.video.length}, audio=${tracks.audio.length}');
+      });
     }
     if (Platform.isAndroid || Platform.isIOS) {
       BackgroundPlaybackService.instance.setAndroidControlHandler(
