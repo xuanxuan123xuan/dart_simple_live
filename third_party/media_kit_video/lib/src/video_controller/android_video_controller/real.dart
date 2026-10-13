@@ -14,6 +14,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'package:media_kit_video/src/utils/query_decoders.dart';
 import 'package:media_kit_video/src/video_controller/platform_video_controller.dart';
+import 'package:media_kit_video/src/video_controller/android_video_controller/surface_binding.dart';
 
 /// {@template android_video_controller}
 ///
@@ -30,8 +31,10 @@ class AndroidVideoController extends PlatformVideoController {
   /// Pointer address to the global object reference of `android.view.Surface` i.e. `(intptr_t)(*android.view.Surface)`.
   final ValueNotifier<int?> wid = ValueNotifier<int?>(null);
 
-  /// [Lock] used to synchronize [onLoadHooks], [onUnloadHooks] & [subscription].
+  /// Shared lock for surface bindings and video lifecycle operations.
   final lock = Lock();
+
+  late final AndroidSurfaceBinding _surfaceBinding;
 
   NativePlayer get platform => player.platform as NativePlayer;
 
@@ -46,53 +49,21 @@ class AndroidVideoController extends PlatformVideoController {
     }
   }
 
-  /// Listener for updating the --wid property.
-  Future<void> widListener() {
-    return lock.synchronized(() async {
-      debugPrint('[AndroidVideoController] widListener: wid=${wid.value}, rect=${rect.value}');
-      final width = rect.value?.width.toInt() ?? 1;
-      final height = rect.value?.height.toInt() ?? 1;
-      final androidSurfaceSizeValue = [width, height].join('x');
-      final widValue = wid.value?.toString() ?? '0';
-      // When --wid is 0, vo=null is required to avoid SIGSEGV.
-      final voValue = widValue == '0' ? 'null' : configuration.vo!;
-      final vidValue = widValue == '0' ? 'no' : 'auto';
-      // It is important to re-initialize --vo after --android-surface-size.
-      await setProperty('vo', 'null');
-      await setProperties(
-        {
-          'android-surface-size': androidSurfaceSizeValue,
-          'wid': widValue,
-          'vo': voValue,
-          // It is important to re-initialize --vid in-case of --vo=mediacodec_embed.
-          // Not doing so causes error "Could not open codec." & video never gets rendered.
-          if (configuration.vo == 'mediacodec_embed') 'vid': vidValue,
-        },
-      );
-      debugPrint('[AndroidVideoController] widListener complete: vo=$voValue, wid=$widValue, size=${androidSurfaceSizeValue}');
-    });
-  }
-
   /// Hook to attach --wid & --vo properties before video output is initialized.
   Future<void> onLoadHook() async {
     // This setup is important to take away control of android.view.Surface from libmpv, when the currently playing gets switched.
     // Not doing so will cause MediaCodec usage inside libavcodec to incorrectly fail with error (because this android.view.Surface would be used twice):
     // "native_window_api_connect returned an error: Invalid argument (-22)" & next less-efficient hwdec will be used redundantly.
-    return lock.synchronized(() async {
-      if ((rect.value?.width ?? 0.0) <= 1.0 ||
-          (rect.value?.height ?? 0.0) <= 1.0) {
-        // Do not set --vo if the rect is currently not available.
-        return;
-      }
-      await setProperty('vo', configuration.vo!);
-    });
+    return _surfaceBinding.onLoad(
+      isRectValid: () =>
+          (rect.value?.width ?? 0.0) > 1.0 &&
+          (rect.value?.height ?? 0.0) > 1.0,
+    );
   }
 
   /// Hook to detach --wid & --vo properties before video output is disposed.
   Future<void> onUnloadHook() async {
-    return lock.synchronized(() async {
-      await setProperty('vo', 'null');
-    });
+    return _surfaceBinding.onUnload();
   }
 
   /// [StreamSubscription] for listening to video [Rect].
@@ -103,11 +74,16 @@ class AndroidVideoController extends PlatformVideoController {
     super.player,
     super.configuration,
   ) {
-    wid.addListener(widListener);
+    _surfaceBinding = AndroidSurfaceBinding(
+      lock: lock,
+      writeProperty: setProperty,
+      vo: configuration.vo!,
+      compatibilityMode: configuration.vo == 'mediacodec_embed',
+    );
     platform.onLoadHooks.add(onLoadHook);
     platform.onUnloadHooks.add(onUnloadHook);
     videoParamsSubscription = player.stream.videoParams.listen(
-      (event) => lock.synchronized(() async {
+      (event) => _surfaceBinding.runExclusive(() async {
         if ([0, null].contains(event.dw) || [0, null].contains(event.dh)) {
           return;
         }
@@ -226,7 +202,7 @@ class AndroidVideoController extends PlatformVideoController {
     await completer.future;
     controller.id.removeListener(listener);
 
-    await controller.setProperties(
+    await controller._surfaceBinding.initialize(
       {
         // It is necessary to set vo=null here to avoid SIGSEGV, --wid must be assigned before vo=gpu is set.
         'vo': 'null',
@@ -241,7 +217,9 @@ class AndroidVideoController extends PlatformVideoController {
         'hwdec-codecs': 'h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1',
       },
     );
-    debugPrint('[AndroidVideoController] Initialized: vo=null (will be set after wid assignment), hwdec=${configuration.hwdec}');
+    debugPrint(
+      '[AndroidVideoController] Initialized and surface bound: wid=${controller.wid.value}, hwdec=${configuration.hwdec}',
+    );
 
     // Return the [PlatformVideoController].
     return controller;
@@ -265,14 +243,15 @@ class AndroidVideoController extends PlatformVideoController {
 
   /// Disposes the instance. Releases allocated resources back to the system.
   Future<void> _dispose() async {
-    super.dispose();
-    wid.dispose();
-    wid.removeListener(widListener);
-    platform.onLoadHooks.remove(onLoadHook);
-    platform.onUnloadHooks.remove(onUnloadHook);
     await videoParamsSubscription?.cancel();
     final handle = await player.handle;
-    _controllers.remove(handle);
+    await _surfaceBinding.close(() async {
+      platform.onLoadHooks.remove(onLoadHook);
+      platform.onUnloadHooks.remove(onUnloadHook);
+      super.dispose();
+      wid.dispose();
+      _controllers.remove(handle);
+    });
     await _channel.invokeMethod(
       'VideoOutputManager.Dispose',
       {
@@ -306,10 +285,20 @@ class AndroidVideoController extends PlatformVideoController {
                     final int id = call.arguments['id'];
                     final int wid = call.arguments['wid'];
                     debugPrint('[AndroidVideoController] VideoOutput.Resize: handle=$handle, id=$id, wid=$wid, rect=$rect');
-                    _controllers[handle]?.rect.value = rect;
-                    _controllers[handle]?.id.value = id;
-                    // Only on Android:
-                    _controllers[handle]?.wid.value = wid;
+                    final controller = _controllers[handle];
+                    if (controller != null) {
+                      await controller._surfaceBinding.handleResize(
+                        wid: wid,
+                        width: rect.width.toInt(),
+                        height: rect.height.toInt(),
+                        updateNotifiers: () {
+                          controller.rect.value = rect;
+                          controller.id.value = id;
+                          // Only on Android:
+                          controller.wid.value = wid;
+                        },
+                      );
+                    }
                     break;
                   }
                 case 'VideoOutput.WaitUntilFirstFrameRenderedNotify':
@@ -317,11 +306,16 @@ class AndroidVideoController extends PlatformVideoController {
                     // Notify about updated texture ID & [Rect].
                     final int handle = call.arguments['handle'];
                     debugPrint(handle.toString());
-                    // Notify about the first frame being rendered.
-                    final completer = _controllers[handle]
-                        ?.waitUntilFirstFrameRenderedCompleter;
-                    if (!(completer?.isCompleted ?? true)) {
-                      completer?.complete();
+                    final controller = _controllers[handle];
+                    if (controller != null) {
+                      await controller._surfaceBinding.runExclusive(() async {
+                        // Notify about the first frame being rendered.
+                        final completer = controller
+                            .waitUntilFirstFrameRenderedCompleter;
+                        if (!completer.isCompleted) {
+                          completer.complete();
+                        }
+                      });
                     }
                     break;
                   }
