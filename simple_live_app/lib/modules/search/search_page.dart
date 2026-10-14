@@ -71,6 +71,7 @@ class _SearchPageState extends State<SearchPage> {
         AppNavigator.toLiveRoomDetail(
           site: target.site,
           roomId: target.roomId,
+          douyinSecUserId: target.douyinSecUserId,
         );
         return;
       }

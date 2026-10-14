@@ -86,6 +86,7 @@ class AppNavigator {
   static Future<dynamic> toLiveRoomDetail({
     required Site site,
     required String roomId,
+    String? douyinSecUserId,
     bool initialDesktopSidePanelCollapsed = false,
     bool replace = false,
   }) async {
@@ -128,6 +129,9 @@ class AppNavigator {
     final arguments = {
       "site": site,
       "initialDesktopSidePanelCollapsed": initialDesktopSidePanelCollapsed,
+      if (site.id == Constant.kDouyin &&
+          (douyinSecUserId?.trim().isNotEmpty ?? false))
+        "douyinSecUserId": douyinSecUserId!.trim(),
     };
     final parameters = {"roomId": roomId};
     return (replace

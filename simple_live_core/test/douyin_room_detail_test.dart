@@ -135,6 +135,173 @@ void main() {
     expect(responses.requests, hasLength(1));
   });
 
+  test('getRoomDetail forwards secUserId through a recovered room lookup',
+      () async {
+    final recoveredWebRid = webRid;
+    responses.reflowSequence.addAll([
+      {'status_code': 0, 'data': <String, dynamic>{}},
+      _endedRoomResponse(recoveredWebRid, includeStatusCode: false),
+    ]);
+    _setOfflineRoomResponse(responses, recoveredWebRid);
+
+    final detail = await site.getRoomDetail(
+      roomId: '7376429659866598196',
+      secUserId: 'sec_user_for_test',
+    );
+
+    expect(detail.roomId, recoveredWebRid);
+    expect(
+      responses.requests
+          .where((request) => request.uri.path.contains('/reflow/info/'))
+          .map((request) => request.uri.queryParameters['sec_user_id'])
+          .toList(),
+      ['sec_user_for_test', 'sec_user_for_test'],
+    );
+    expect(responses.reflowRequestCount, 2);
+  });
+
+  for (final entry in <String, Object?>{
+    'missing data': {'status_code': 0},
+    'null data': {'status_code': 0, 'data': null},
+    'empty room map': {
+      'status_code': 0,
+      'data': {'room': <String, dynamic>{}},
+    },
+    'null room': {
+      'status_code': 0,
+      'data': {'room': null},
+    },
+  }.entries) {
+    test('${entry.key} response recovers when the retry has a room',
+        () async {
+      responses.reflowSequence.addAll([
+        entry.value,
+        _endedRoomResponse(webRid, includeStatusCode: false),
+      ]);
+      _setOfflineRoomResponse(responses, webRid);
+
+      final detail = await site.getRoomDetail(
+        roomId: '7376429659866598196',
+      );
+
+      expect(detail.roomId, webRid);
+      expect(responses.reflowRequestCount, 2);
+    });
+  }
+
+  test('getRoomDetailByRoomId forwards optional secUserId', () async {
+    _setOfflineRoomResponse(responses, webRid);
+    responses.reflow = _endedRoomResponse(webRid);
+
+    final detail = await site.getRoomDetailByRoomId(
+      '7376429659866598196',
+      secUserId: 'sec_user_for_test',
+    );
+
+    expect(detail.roomId, webRid);
+    expect(
+      responses.requests
+          .singleWhere((request) =>
+              request.uri.path.contains('/reflow/info/'))
+          .uri
+          .queryParameters['sec_user_id'],
+      'sec_user_for_test',
+    );
+    expect(responses.reflowRequestCount, 1);
+  });
+
+  test('empty room response is retried once then returns the retry hint',
+      () async {
+    responses.reflow = {'status_code': 0, 'data': <String, dynamic>{}};
+
+    await expectLater(
+      site.getRoomDetail(roomId: '7376429659866598196'),
+      throwsA(
+        isA<CoreError>()
+            .having((error) => error.message, 'message',
+                '抖音暂未返回直播间数据，请稍后重试，或通过主播固定直播间链接重新进入')
+            .having((error) => error.kind, 'kind', CoreErrorKind.response),
+      ),
+    );
+
+    expect(responses.reflowRequestCount, 2);
+  });
+
+  for (final statusCode in [444, 1234]) {
+    test('business status_code $statusCode is preserved without retry',
+        () async {
+      responses.reflow = {
+        'status_code': statusCode,
+        'data': {'room': <String, dynamic>{}},
+      };
+
+      await expectLater(
+        site.getRoomDetail(roomId: '7376429659866598196'),
+        throwsA(isA<CoreError>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          statusCode,
+        )),
+      );
+
+      expect(responses.reflowRequestCount, 1);
+    });
+  }
+
+  test('HTTP failure is not retried', () async {
+    responses.reflowHttpErrorStatus = 503;
+
+    await expectLater(
+      site.getRoomDetail(roomId: '7376429659866598196'),
+      throwsA(isA<CoreError>().having(
+        (error) => error.statusCode,
+        'statusCode',
+        503,
+      )),
+    );
+
+    expect(responses.reflowRequestCount, 1);
+  });
+
+  test('cancelled room lookup is not retried', () async {
+    responses.cancelReflow = true;
+
+    await expectLater(
+      site.getRoomDetail(roomId: '7376429659866598196'),
+      throwsA(isA<CoreCancelledError>()),
+    );
+
+    expect(responses.reflowRequestCount, 1);
+  });
+
+  for (final entry in <String, Object?>{
+    'non-map response': 'invalid response',
+    'malformed status code': {
+      'status_code': 'not-a-number',
+      'data': {'room': <String, dynamic>{}},
+    },
+    'non-map data': {'status_code': 0, 'data': <dynamic>[]},
+    'non-map room': {
+      'status_code': 0,
+      'data': {'room': 'invalid room'},
+    },
+  }.entries) {
+    test('${entry.key} is a response error without retry', () async {
+      responses.reflow = entry.value;
+
+      await expectLater(
+        site.getRoomDetail(roomId: '7376429659866598196'),
+        throwsA(isA<CoreError>().having(
+          (error) => error.kind,
+          'kind',
+          CoreErrorKind.response,
+        )),
+      );
+
+      expect(responses.reflowRequestCount, 1);
+    });
+  }
+
   test('refresh after offline retrieves live streams and danmaku credentials',
       () async {
     responses.api = {
@@ -210,6 +377,29 @@ void main() {
   }
 }
 
+Map<String, dynamic> _endedRoomResponse(
+  String webRid, {
+  bool includeStatusCode = true,
+}) => {
+      if (includeStatusCode) 'status_code': 0,
+      'data': {
+        'room': {
+          'status': 4,
+          'owner': {'web_rid': webRid}
+        }
+      }
+    };
+
+void _setOfflineRoomResponse(_Responses responses, String webRid) {
+  responses.apiByWebRid[webRid] = {
+    'status_code': 0,
+    'data': {
+      'data': <dynamic>[],
+      'user': _anchor()..['web_rid'] = webRid,
+    }
+  };
+}
+
 Map<String, dynamic> _anchor() => {
       'id_str': '1234567890123456789',
       'nickname': '主播',
@@ -232,7 +422,11 @@ String _page(Map info) =>
 class _Responses extends Interceptor {
   Object api = const {};
   final Map<String, Object> apiByWebRid = {};
-  Object reflow = const {};
+  Object? reflow = const {};
+  final List<Object?> reflowSequence = [];
+  int reflowRequestCount = 0;
+  int? reflowHttpErrorStatus;
+  bool cancelReflow = false;
   String html = '';
   bool failHead = false;
   final requests = <RequestOptions>[];
@@ -250,15 +444,50 @@ class _Responses extends Interceptor {
     }
     final isApi = options.uri.path.contains('/web/enter/');
     final isReflow = options.uri.path.contains('/reflow/info/');
+    if (isReflow) {
+      reflowRequestCount++;
+      if (cancelReflow) {
+        handler.reject(
+          DioException(
+            requestOptions: options,
+            type: DioExceptionType.cancel,
+          ),
+        );
+        return;
+      }
+      final httpErrorStatus = reflowHttpErrorStatus;
+      if (httpErrorStatus != null) {
+        handler.reject(
+          DioException(
+            requestOptions: options,
+            response: Response<dynamic>(
+              requestOptions: options,
+              statusCode: httpErrorStatus,
+            ),
+            type: DioExceptionType.badResponse,
+          ),
+        );
+        return;
+      }
+      final payload = reflowSequence.isNotEmpty
+          ? reflowSequence.removeAt(0)
+          : reflow;
+      handler.resolve(
+        Response<dynamic>(
+          requestOptions: options,
+          statusCode: 200,
+          data: payload,
+        ),
+      );
+      return;
+    }
     final payload = isApi
         ? apiByWebRid[options.uri.queryParameters['web_rid']] ?? api
-        : isReflow
-            ? reflow
-            : html;
+        : html;
     handler.resolve(Response<dynamic>(
       requestOptions: options,
       statusCode: 200,
-      data: isApi || isReflow ? payload : payload.toString(),
+      data: isApi ? payload : payload.toString(),
     ));
   }
 }

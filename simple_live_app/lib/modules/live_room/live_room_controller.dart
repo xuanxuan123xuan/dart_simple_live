@@ -74,6 +74,7 @@ export 'ohos_reconnect_confirmation.dart'
     show OhosReconnectConfirmation, OhosReconnectOutcome;
 
 import 'live_room_auto_quality_buffer_tracker.dart';
+import 'live_room_detail_loader.dart';
 import 'ohos_playback_degrade_evidence.dart';
 import 'ohos_reconnect_confirmation.dart';
 import 'kuaishou_playback_recovery_tracker.dart';
@@ -616,15 +617,22 @@ class LiveRoomController extends PlayerController
   final String pRoomId;
   final bool initialDesktopSidePanelCollapsed;
   late LiveDanmaku liveDanmaku;
+  late final LiveRoomDetailLoader _roomDetailLoader;
   LiveRoomController({
     required this.pSite,
     required this.pRoomId,
+    String? douyinSecUserId,
     this.initialDesktopSidePanelCollapsed = false,
   }) {
     rxSite = pSite.obs;
     rxRoomId = pRoomId.obs;
     desktopSidePanelCollapsed.value = initialDesktopSidePanelCollapsed;
     liveDanmaku = site.liveSite.getDanmaku();
+    _roomDetailLoader = LiveRoomDetailLoader(
+      site: pSite.liveSite,
+      roomId: pRoomId,
+      douyinSecUserId: douyinSecUserId,
+    );
   }
 
   late Rx<Site> rxSite;
@@ -2035,12 +2043,10 @@ class LiveRoomController extends PlayerController
   Future<LiveRoomDetail> _fetchRoomDetailWithSource({
     KuaishouRequestSource? source,
   }) {
-    if (source == null) {
-      return site.liveSite.getRoomDetail(roomId: roomId);
-    }
-    return KuaishouRequestTrace.run(
-      source,
-      () => site.liveSite.getRoomDetail(roomId: roomId),
+    return _roomDetailLoader.load(
+      site: site.liveSite,
+      roomId: roomId,
+      source: source,
     );
   }
 
@@ -6657,6 +6663,8 @@ class LiveRoomController extends PlayerController
     if (this.site == site && this.roomId == roomId) {
       return;
     }
+
+    _roomDetailLoader.clearDouyinShareContext();
 
     if (_roomSwitching) {
       _pendingRoomSite = site;

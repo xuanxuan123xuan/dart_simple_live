@@ -39,6 +39,37 @@ void main() {
       );
     });
 
+    test('retains trimmed sec_user_id on both live routes', () async {
+      final parser = LiveRoomLinkParser();
+
+      final liveTarget = await parser.parse(
+        'https://www.douyin.com/live/24680?sec_user_id=%20live-user%20',
+      );
+      expect(liveTarget?.douyinSecUserId, 'live-user');
+
+      final followTarget = await parser.parse(
+        'https://www.douyin.com/follow/live/13579'
+        '?sec_user_id=follow-user',
+      );
+      expect(followTarget?.douyinSecUserId, 'follow-user');
+
+      final targetWithoutUser = await parser.parse(
+        'https://www.douyin.com/live/24680',
+      );
+      expect(targetWithoutUser?.douyinSecUserId, isNull);
+    });
+
+    test('decodes URL encoded sec_user_id', () async {
+      final parser = LiveRoomLinkParser();
+
+      final target = await parser.parse(
+        'https://www.douyin.com/live/24680'
+        '?sec_user_id=%20MS4wLjABAAAA%2Bsegment%2Ftail%20',
+      );
+
+      expect(target?.douyinSecUserId, 'MS4wLjABAAAA+segment/tail');
+    });
+
     test('normalizes an upper-case host', () async {
       final parser = LiveRoomLinkParser();
 

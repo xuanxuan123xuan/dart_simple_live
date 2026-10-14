@@ -8,10 +8,12 @@ class LiveRoomLinkTarget {
   const LiveRoomLinkTarget({
     required this.site,
     required this.roomId,
+    this.douyinSecUserId,
   });
 
   final Site site;
   final String roomId;
+  final String? douyinSecUserId;
 }
 
 /// Parses supported live-room links without depending on widgets or navigation.
@@ -94,14 +96,14 @@ class LiveRoomLinkParser {
       return _target(Constant.kHuya, _firstPathSegment(uri));
     }
     if (host == 'live.douyin.com') {
-      return _target(Constant.kDouyin, _firstPathSegment(uri));
+      return _douyinTarget(uri, _firstPathSegment(uri));
     }
     // 抖音网页端直播间：www.douyin.com/live/<roomId> 与
     // www.douyin.com/follow/live/<roomId>。其余 www 页面（搜索、用户、
     // 视频）一律不当作直播间。
     if (host == 'www.douyin.com' || host == 'douyin.com') {
       final roomId = _douyinWebRoomId(uri);
-      return roomId == null ? null : _target(Constant.kDouyin, roomId);
+      return roomId == null ? null : _douyinTarget(uri, roomId);
     }
     if (host == 'webcast.amemv.com') {
       final reflowIndex = uri.pathSegments.indexOf('reflow');
@@ -109,7 +111,7 @@ class LiveRoomLinkParser {
           reflowIndex >= 0 && reflowIndex + 1 < uri.pathSegments.length
               ? uri.pathSegments[reflowIndex + 1]
               : '';
-      return _target(Constant.kDouyin, roomId);
+      return _douyinTarget(uri, roomId);
     }
     if (host == 'v.douyin.com') {
       final location = await _resolveLocation(extractedUrl);
@@ -160,15 +162,36 @@ class LiveRoomLinkParser {
         _xiaohongshuShortHosts.contains(host);
   }
 
-  LiveRoomLinkTarget? _target(String siteId, String roomId) {
+  LiveRoomLinkTarget? _douyinTarget(Uri uri, String roomId) {
+    return _target(
+      Constant.kDouyin,
+      roomId,
+      douyinSecUserId: uri.queryParameters['sec_user_id'],
+    );
+  }
+
+  LiveRoomLinkTarget? _target(
+    String siteId,
+    String roomId, {
+    String? douyinSecUserId,
+  }) {
     final normalizedRoomId = roomId.trim();
     if (!_isValidRoomId(siteId, normalizedRoomId)) {
       return null;
     }
     final site = Sites.allSites[siteId];
+    final normalizedDouyinSecUserId =
+        siteId == Constant.kDouyin ? douyinSecUserId?.trim() : null;
     return site == null
         ? null
-        : LiveRoomLinkTarget(site: site, roomId: normalizedRoomId);
+        : LiveRoomLinkTarget(
+            site: site,
+            roomId: normalizedRoomId,
+            douyinSecUserId: normalizedDouyinSecUserId == null ||
+                    normalizedDouyinSecUserId.isEmpty
+                ? null
+                : normalizedDouyinSecUserId,
+          );
   }
 
   bool _isValidRoomId(String siteId, String roomId) {

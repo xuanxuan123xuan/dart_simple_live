@@ -29,6 +29,32 @@ void main() {
       client.close();
     }
   });
+
+  test('Douyin direct and reflow links retain sec_user_id only when present',
+      () async {
+    final parser = LiveRoomLinkParser();
+
+    final direct = await parser.parse(
+      'https://live.douyin.com/24680?sec_user_id=%20direct-user%20',
+    );
+    expect(direct?.douyinSecUserId, 'direct-user');
+
+    final directWithoutUser =
+        await parser.parse('https://live.douyin.com/24680');
+    expect(directWithoutUser?.douyinSecUserId, isNull);
+
+    final reflow = await parser.parse(
+      'https://webcast.amemv.com/webcast/reflow/13579'
+      '?sec_user_id=reflow-user',
+    );
+    expect(reflow?.roomId, '13579');
+    expect(reflow?.douyinSecUserId, 'reflow-user');
+
+    final nonDouyin = await parser.parse(
+      'https://www.huya.com/room_name?sec_user_id=unrelated',
+    );
+    expect(nonDouyin?.douyinSecUserId, isNull);
+  });
   group('LiveRoomLinkParser.extractHttpUrl', () {
     test('extracts a Douyin short URL from share text', () {
       const shareText =
@@ -199,7 +225,8 @@ void main() {
     test('preserves a trailing dot in a Douyin short-link destination',
         () async {
       const shortUrl = 'https://v.douyin.com/example';
-      const destination = 'https://live.douyin.com/Xzh.2022.0323.';
+      const destination =
+          'https://live.douyin.com/Xzh.2022.0323.?sec_user_id=%20redirected%2Buser%20';
       final client = Dio();
       client.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
         handler.resolve(Response<dynamic>(
@@ -210,10 +237,9 @@ void main() {
       }));
       final parser = LiveRoomLinkParser(redirectClient: client);
 
-      expect(
-        (await parser.parse(shortUrl))?.roomId,
-        'Xzh.2022.0323.',
-      );
+      final target = await parser.parse(shortUrl);
+      expect(target?.roomId, 'Xzh.2022.0323.');
+      expect(target?.douyinSecUserId, 'redirected+user');
       client.close();
     });
 

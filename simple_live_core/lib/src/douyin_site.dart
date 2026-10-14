@@ -47,6 +47,10 @@ class DouyinSearchAuthError extends CoreError {
 }
 
 class DouyinSite implements LiveSite {
+  static const _roomDataRetryDelay = Duration(milliseconds: 300);
+  static const _emptyRoomDataMessage =
+      "抖音暂未返回直播间数据，请稍后重试，或通过主播固定直播间链接重新进入";
+
   DouyinSite({DouyinAbogusSigner? abogusSigner})
       : _abogusSigner = abogusSigner ?? DouyinSign.getAbogusUrl;
 
@@ -912,7 +916,10 @@ class DouyinSite implements LiveSite {
   }
 
   @override
-  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
+  Future<LiveRoomDetail> getRoomDetail({
+    required String roomId,
+    String? secUserId,
+  }) async {
     final stopwatch = Stopwatch()..start();
     try {
       // 有两种roomId，一种是webRid，一种是roomId
@@ -940,7 +947,7 @@ class DouyinSite implements LiveSite {
         return await getRoomDetailByWebRid(roomId);
       }
 
-      return await getRoomDetailByRoomId(roomId);
+      return await getRoomDetailByRoomId(roomId, secUserId: secUserId);
     } finally {
       _logElapsed("getRoomDetail($roomId)", stopwatch);
     }
@@ -949,15 +956,29 @@ class DouyinSite implements LiveSite {
   /// 通过roomId获取直播间信息
   /// - [roomId] 直播间ID
   /// - 返回直播间信息
-  Future<LiveRoomDetail> getRoomDetailByRoomId(String roomId) async {
+  Future<LiveRoomDetail> getRoomDetailByRoomId(
+    String roomId, {
+    String? secUserId,
+  }) async {
     final stopwatch = Stopwatch()..start();
-    // 读取房间信息
-    var roomData = await _getRoomDataByRoomId(roomId);
-    final room = roomData["data"]?["room"];
-    if (room is! Map) {
-      throw CoreError(
-        "抖音直播间数据为空：该房间可能已失效（房间号为一次性ID，主播下播或重新开播后即失效），请通过搜索或主播主页重新进入",
+    var roomData = await _getRoomDataByRoomId(
+      roomId,
+      secUserId: secUserId,
+    );
+    var room = _roomFromRoomData(roomData);
+    if (room == null || room.isEmpty) {
+      await Future<void>.delayed(_roomDataRetryDelay);
+      roomData = await _getRoomDataByRoomId(
+        roomId,
+        secUserId: secUserId,
       );
+      room = _roomFromRoomData(roomData);
+      if (room == null || room.isEmpty) {
+        throw CoreError(
+          _emptyRoomDataMessage,
+          kind: CoreErrorKind.response,
+        );
+      }
     }
 
     final owner = room["owner"];
@@ -1375,20 +1396,78 @@ class DouyinSite implements LiveSite {
 
   /// 通过roomId获取直播间信息
   /// - [roomId] 直播间ID
-  Future<Map> _getRoomDataByRoomId(String roomId) async {
+  Future<Map> _getRoomDataByRoomId(
+    String roomId, {
+    String? secUserId,
+  }) async {
     var result = await HttpClient.instance.getJson(
       'https://webcast.amemv.com/webcast/room/reflow/info/',
       queryParameters: {
         "type_id": 0,
         "live_id": 1,
         "room_id": roomId,
-        "sec_user_id": "",
+        "sec_user_id": secUserId ?? "",
         "version_code": "99.99.99",
         "app_id": 6383,
       },
       header: await getRequestHeaders(),
     );
+    if (result is! Map) {
+      throw CoreError(
+        "抖音直播间接口返回格式异常",
+        kind: CoreErrorKind.response,
+      );
+    }
+
+    final rawStatusCode = result["status_code"];
+    if (rawStatusCode != null) {
+      final statusCode = rawStatusCode is int
+          ? rawStatusCode
+          : rawStatusCode is num &&
+                  rawStatusCode.isFinite &&
+                  rawStatusCode % 1 == 0
+              ? rawStatusCode.toInt()
+              : rawStatusCode is String
+                  ? int.tryParse(rawStatusCode.trim())
+                  : null;
+      if (statusCode == null) {
+        throw CoreError(
+          "抖音直播间接口状态码格式异常",
+          kind: CoreErrorKind.response,
+        );
+      }
+      if (statusCode != 0) {
+        throw CoreError(
+          "抖音直播间接口访问受限，请稍后再试",
+          statusCode: statusCode,
+        );
+      }
+    }
+
+    final data = result["data"];
+    if (data != null && data is! Map) {
+      throw CoreError(
+        "抖音直播间接口数据格式异常",
+        kind: CoreErrorKind.response,
+      );
+    }
+    final room = data is Map ? data["room"] : null;
+    if (room != null && room is! Map) {
+      throw CoreError(
+        "抖音直播间接口房间格式异常",
+        kind: CoreErrorKind.response,
+      );
+    }
     return result;
+  }
+
+  Map? _roomFromRoomData(Map roomData) {
+    final data = roomData["data"];
+    if (data is! Map) {
+      return null;
+    }
+    final room = data["room"];
+    return room is Map ? room : null;
   }
 
   @override
@@ -2061,8 +2140,8 @@ class DouyinSite implements LiveSite {
 
   Future<bool?> _getLiveStatusByRoomId(String roomId) async {
     final roomData = await _getRoomDataByRoomId(roomId);
-    final room = roomData["data"]?["room"];
-    if (room is! Map) {
+    final room = _roomFromRoomData(roomData);
+    if (room == null || room.isEmpty) {
       return null;
     }
     final status = _parseDouyinStatus(

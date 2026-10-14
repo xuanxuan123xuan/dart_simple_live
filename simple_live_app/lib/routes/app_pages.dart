@@ -210,6 +210,9 @@ class AppPages {
         return LiveRoomController(
           pSite: site,
           pRoomId: Get.parameters["roomId"] ?? "",
+          douyinSecUserId: args is Map<String, dynamic>
+              ? args["douyinSecUserId"] as String?
+              : null,
           initialDesktopSidePanelCollapsed: initialCollapsed,
         );
       }),
