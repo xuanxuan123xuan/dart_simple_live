@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
+import 'package:dio/dio.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:simple_live_core/src/common/core_cancellation.dart';
 import 'package:simple_live_core/src/common/core_error.dart';
+import 'package:simple_live_core/src/common/douyu_cookie_helper.dart';
 import 'package:simple_live_core/src/danmaku/douyu_danmaku.dart';
 import 'package:simple_live_core/src/interface/live_danmaku.dart';
 import 'package:simple_live_core/src/interface/live_site.dart';
@@ -19,18 +22,48 @@ import 'package:simple_live_core/src/model/live_room_detail.dart';
 import 'package:simple_live_core/src/model/live_play_quality.dart';
 import 'package:simple_live_core/src/model/live_category_result.dart';
 import 'package:html_unescape/html_unescape.dart';
-import 'package:simple_live_core/src/scripts/douyu_sign.dart';
 
 class _DouyuPlayUrlAttempt {
-  const _DouyuPlayUrlAttempt.success(this.url)
+  const _DouyuPlayUrlAttempt.success(
+      this.url, this.actualQuality, this.rateOrder)
       : error = null,
         stackTrace = null;
 
-  const _DouyuPlayUrlAttempt.failure(this.error, this.stackTrace) : url = '';
+  const _DouyuPlayUrlAttempt.failure(this.error, this.stackTrace)
+      : url = '',
+        actualQuality = null,
+        rateOrder = const [];
 
   final String url;
+  final LivePlayQuality? actualQuality;
+  final List<int> rateOrder;
   final Object? error;
   final StackTrace? stackTrace;
+}
+
+class _DouyuEncryptionKey {
+  const _DouyuEncryptionKey({
+    required this.key,
+    required this.randStr,
+    required this.encTime,
+    required this.isSpecial,
+    required this.encData,
+    required this.expiresAt,
+  });
+
+  final String key;
+  final String randStr;
+  final int encTime;
+  final bool isSpecial;
+  final String encData;
+  final DateTime expiresAt;
+}
+
+class _DouyuRateGroup {
+  const _DouyuRateGroup(this.rate, this.name);
+
+  final int rate;
+  final String name;
 }
 
 class _DouyuRoomStatus {
@@ -46,18 +79,103 @@ class _DouyuRoomStatus {
 }
 
 class DouyuSite implements LiveSite {
-  /// Optional authenticated web cookie. Empty preserves anonymous behavior.
-  String cookie = "";
+  static const String _defaultDid = '10000000000000000000000000001501';
+  static const String _origin = 'https://www.douyu.com';
+  static const String _userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43';
+  static const Duration _encryptionCacheTtl = Duration(minutes: 5);
+  static const Duration _authRefreshCooldown = Duration(seconds: 60);
 
-  Map<String, dynamic> _roomHeaders(String roomId) {
-    final headers = <String, dynamic>{
-      'referer': 'https://www.douyu.com/$roomId',
-      'user-agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43',
-    };
-    if (cookie.trim().isNotEmpty) headers['Cookie'] = cookie.trim();
-    return headers;
+  DouyuSite({
+    DateTime Function()? clock,
+    this.onCookieRefreshed,
+  }) : _clock = clock ?? DateTime.now;
+
+  final DateTime Function() _clock;
+
+  /// Called after a refreshed cookie has been accepted and stored in memory.
+  Future<void> Function(String cookie)? onCookieRefreshed;
+
+  String _cookie = '';
+  int _sessionGeneration = 0;
+  _DouyuEncryptionKey? _cachedEncryptionKey;
+  int? _cachedEncryptionGeneration;
+  Future<_DouyuEncryptionKey>? _encryptionKeyRequest;
+  int? _encryptionRequestGeneration;
+  Future<int>? _authRefreshRequest;
+  int? _authRefreshGeneration;
+  int? _authRefreshFailedGeneration;
+  DateTime? _authRefreshFailedUntil;
+
+  /// Optional authenticated web cookie. Empty preserves anonymous behavior.
+  String get cookie => _cookie;
+
+  set cookie(String value) {
+    final normalized = DouyuCookieHelper.normalizeInput(value);
+    if (normalized == _cookie) return;
+    _cookie = normalized;
+    _advanceSession();
   }
+
+  void _advanceSession() {
+    _sessionGeneration++;
+    _cachedEncryptionKey = null;
+    _cachedEncryptionGeneration = null;
+    _encryptionKeyRequest = null;
+    _encryptionRequestGeneration = null;
+    _authRefreshRequest = null;
+    _authRefreshGeneration = null;
+    _authRefreshFailedGeneration = null;
+    _authRefreshFailedUntil = null;
+  }
+
+  void _assertSession(int generation) {
+    if (generation != _sessionGeneration) {
+      throw CoreCancelledError(
+        cause: StateError('斗鱼登录态已改变，取消旧会话请求'),
+      );
+    }
+  }
+
+  String _requestCookie(String cookieSnapshot) {
+    if (cookieSnapshot.trim().isEmpty) {
+      return 'dy_did=$_defaultDid; acf_did=$_defaultDid';
+    }
+    final parsed = DouyuCookieHelper.parse(cookieSnapshot);
+    final hasDid = parsed.keys.any((key) =>
+        key.toLowerCase() == 'dy_did' || key.toLowerCase() == 'acf_did');
+    if (hasDid) return cookieSnapshot;
+    return '$cookieSnapshot; dy_did=$_defaultDid; acf_did=$_defaultDid';
+  }
+
+  String _didForCookie(String cookieSnapshot) {
+    final parsed = DouyuCookieHelper.parse(cookieSnapshot);
+    String valueFor(String name) {
+      for (final entry in parsed.entries) {
+        if (entry.key.toLowerCase() == name) return entry.value.trim();
+      }
+      return '';
+    }
+
+    return valueFor('dy_did').isNotEmpty
+        ? valueFor('dy_did')
+        : valueFor('acf_did').isNotEmpty
+            ? valueFor('acf_did')
+            : _defaultDid;
+  }
+
+  Map<String, dynamic> _douyuHeaders(
+    String roomId, {
+    String? cookieSnapshot,
+  }) =>
+      {
+        'Origin': _origin,
+        'Referer': '$_origin/$roomId',
+        'User-Agent': _userAgent,
+        'Cookie': _requestCookie(cookieSnapshot ?? _cookie),
+      };
+
+  Map<String, dynamic> _roomHeaders(String roomId) => _douyuHeaders(roomId);
 
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
@@ -141,40 +259,42 @@ class DouyuSite implements LiveSite {
   Future<List<LivePlayQuality>> getPlayQualites({
     required LiveRoomDetail detail,
   }) async {
-    var data = detail.data.toString();
-    data += "&cdn=&rate=-1&ver=Douyu_223061205&iar=1&ive=1&hevc=0&fa=0";
-    List<LivePlayQuality> qualities = [];
-    var result = await HttpClient.instance.postJson(
-      "https://www.douyu.com/lapi/live/getH5Play/${detail.roomId}",
-      data: data,
-      header: _roomHeaders(detail.roomId),
-      formUrlEncoded: true,
+    final generation = await _preparePlaybackSession();
+    _assertSession(generation);
+    final cookieSnapshot = _cookie;
+    final did = _didForCookie(cookieSnapshot);
+    final encryption = await _getEncryptionKey(
+      detail.roomId,
+      did: did,
+      cookieSnapshot: cookieSnapshot,
+      generation: generation,
     );
+    final result = await _requestH5Play(
+      roomId: detail.roomId,
+      rate: -1,
+      cdn: '',
+      did: did,
+      cookieSnapshot: cookieSnapshot,
+      generation: generation,
+      encryption: encryption,
+    );
+    _assertSession(generation);
 
-    var cdns = <String>[];
-    for (var item in result["data"]["cdnsWithName"]) {
-      cdns.add(item["cdn"].toString());
-    }
-
-    // 如果cdn以scdn开头，将其放到最后
-    cdns.sort((a, b) {
-      if (a.startsWith("scdn") && !b.startsWith("scdn")) {
-        return 1;
-      } else if (!a.startsWith("scdn") && b.startsWith("scdn")) {
-        return -1;
-      }
-      return 0;
-    });
-
-    for (var item in result["data"]["multirates"]) {
-      qualities.add(
-        LivePlayQuality(
-          quality: item["name"].toString(),
-          data: DouyuPlayData(item["rate"], cdns),
-        ),
-      );
-    }
-    return qualities;
+    final cdns = _readCdnList(result['cdnsWithName']);
+    final rateGroups = _readRateGroups(result['multirates']);
+    return rateGroups
+        .map(
+          (group) => LivePlayQuality(
+            quality: group.name,
+            data: DouyuPlayData(
+              group.rate,
+              cdns,
+              rateOrder: rateGroups.map((item) => item.rate).toList(),
+              rateNames: {for (final item in rateGroups) item.rate: item.name},
+            ),
+          ),
+        )
+        .toList(growable: false);
   }
 
   @override
@@ -182,26 +302,37 @@ class DouyuSite implements LiveSite {
     required LiveRoomDetail detail,
     required LivePlayQuality quality,
   }) async {
-    var args = detail.data.toString();
-    var data = quality.data as DouyuPlayData;
-
-    // CDN 签名请求之间没有依赖。Future.wait 保留输入顺序，单条失败不应
-    // 让其余可用线路也丢失。
-    final attempts = await Future.wait(
-      data.cdns.map((cdn) async {
-        try {
-          final url = await getPlayUrl(detail.roomId, args, data.rate, cdn);
-          return _DouyuPlayUrlAttempt.success(url);
-        } catch (error, stackTrace) {
-          return _DouyuPlayUrlAttempt.failure(error, stackTrace);
-        }
-      }),
+    final generation = await _preparePlaybackSession();
+    _assertSession(generation);
+    final cookieSnapshot = _cookie;
+    final did = _didForCookie(cookieSnapshot);
+    final data = quality.data as DouyuPlayData;
+    final encryption = await _getEncryptionKey(
+      detail.roomId,
+      did: did,
+      cookieSnapshot: cookieSnapshot,
+      generation: generation,
     );
-    final urls = attempts
-        .map((attempt) => attempt.url)
-        .where((url) => url.isNotEmpty)
-        .toList();
-    if (urls.isEmpty) {
+
+    // CDN 请求并发执行；Future.wait 保留线路原有顺序。
+    final attempts = await Future.wait(
+      data.cdns.map(
+        (cdn) => _getPlayUrlForCdn(
+          roomId: detail.roomId,
+          cdn: cdn,
+          requestedQuality: quality,
+          requestedRate: data.rate,
+          did: did,
+          cookieSnapshot: cookieSnapshot,
+          generation: generation,
+          encryption: encryption,
+        ),
+      ),
+    );
+    _assertSession(generation);
+    final playable =
+        attempts.where((attempt) => attempt.url.isNotEmpty).toList();
+    if (playable.isEmpty) {
       for (final attempt in attempts) {
         final error = attempt.error;
         final stackTrace = attempt.stackTrace;
@@ -210,7 +341,13 @@ class DouyuSite implements LiveSite {
         }
       }
     }
-    return LivePlayUrl(urls: urls);
+    final selected = _selectActualQuality(playable, data);
+    final urls = playable
+        .where((attempt) => _sameQuality(attempt.actualQuality, selected))
+        .map((attempt) => attempt.url)
+        .toList();
+    final actualQuality = selected;
+    return LivePlayUrl(urls: urls, actualQuality: actualQuality);
   }
 
   Future<String> getPlayUrl(
@@ -219,71 +356,471 @@ class DouyuSite implements LiveSite {
     int rate,
     String cdn,
   ) async {
-    // The signed arguments in LiveRoomDetail expire. Always fetch the current
-    // room script before requesting a playback URL instead of reusing args.
-    final freshArgs = await _getFreshPlayArgs(roomId);
-    return _requestPlayUrl(roomId, freshArgs, rate, cdn);
+    // Kept as a public compatibility method; current signing uses the cached
+    // encryption key and does not consume expired room-detail script data.
+    final generation = await _preparePlaybackSession();
+    _assertSession(generation);
+    final cookieSnapshot = _cookie;
+    final did = _didForCookie(cookieSnapshot);
+    final encryption = await _getEncryptionKey(
+      roomId,
+      did: did,
+      cookieSnapshot: cookieSnapshot,
+      generation: generation,
+    );
+    final result = await _requestH5Play(
+      roomId: roomId,
+      rate: rate,
+      cdn: cdn,
+      did: did,
+      cookieSnapshot: cookieSnapshot,
+      generation: generation,
+      encryption: encryption,
+    );
+    _assertSession(generation);
+    final url = _readStreamUrl(result);
+    if (url == null) {
+      throw CoreError('斗鱼取流响应缺少可播放地址', kind: CoreErrorKind.response);
+    }
+    return url;
   }
 
-  Future<String> _requestPlayUrl(
-    String roomId,
-    String args,
-    int rate,
-    String cdn,
-  ) async {
-    args += "&cdn=$cdn&rate=$rate";
-    var result = await HttpClient.instance.postJson(
-      "https://www.douyu.com/lapi/live/getH5Play/$roomId",
-      data: args,
-      header: {
-        'referer': 'https://www.douyu.com/$roomId',
-        'user-agent':
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
+  Future<int> _preparePlaybackSession() async {
+    final generation = _sessionGeneration;
+    final cookieSnapshot = _cookie;
+    if (!DouyuCookieHelper.needsRefresh(cookieSnapshot, _clock())) {
+      return generation;
+    }
+
+    final cookieFields = DouyuCookieHelper.parse(cookieSnapshot);
+    String field(String name) {
+      for (final entry in cookieFields.entries) {
+        if (entry.key.toLowerCase() == name) return entry.value.trim();
+      }
+      return '';
+    }
+
+    final did = field('dy_did').isNotEmpty ? field('dy_did') : field('acf_did');
+    final ltp0 = field('ltp0');
+    if (did.isEmpty || ltp0.isEmpty) return generation;
+
+    if (_authRefreshFailedGeneration == generation &&
+        _authRefreshFailedUntil != null &&
+        _clock().isBefore(_authRefreshFailedUntil!)) {
+      return generation;
+    }
+
+    final pending = _authRefreshRequest;
+    if (pending != null && _authRefreshGeneration == generation) {
+      return pending;
+    }
+
+    final future = _refreshCookie(
+      generation: generation,
+      cookieSnapshot: cookieSnapshot,
+      did: did,
+      ltp0: ltp0,
+    );
+    _authRefreshRequest = future;
+    _authRefreshGeneration = generation;
+    try {
+      return await future;
+    } finally {
+      if (identical(_authRefreshRequest, future)) {
+        _authRefreshRequest = null;
+        _authRefreshGeneration = null;
+      }
+    }
+  }
+
+  Future<int> _refreshCookie({
+    required int generation,
+    required String cookieSnapshot,
+    required String did,
+    required String ltp0,
+  }) async {
+    try {
+      final timestamp = _clock().millisecondsSinceEpoch.toString();
+      final response = await HttpClient.instance.dio.get<dynamic>(
+        'https://passport.douyu.com/lapi/passport/iframe/safeAuth',
+        queryParameters: {
+          'client_id': '1',
+          't': timestamp,
+          '_': timestamp,
+          'callback': 'axiosJsonpCallback',
+        },
+        options: Options(
+          headers: _douyuHeaders(
+            '',
+            cookieSnapshot: 'dy_did=$did; LTP0=$ltp0',
+          ),
+          extra: const {'redactResponse': true},
+        ),
+      );
+      _assertSession(generation);
+
+      final setCookies = response.headers['set-cookie'] ?? const <String>[];
+      if (!_setCookieHasJwt(setCookies)) {
+        throw const FormatException('safeAuth 未返回 JWT Cookie');
+      }
+      final refreshedCookie = DouyuCookieHelper.mergeSetCookie(
+        cookieSnapshot,
+        setCookies,
+        _clock(),
+      );
+      final jwtExpiry = DouyuCookieHelper.jwtExpiresAt(refreshedCookie);
+      if (jwtExpiry == null || !jwtExpiry.isAfter(_clock())) {
+        throw const FormatException('safeAuth 未返回仍有效的 JWT');
+      }
+
+      _cookie = DouyuCookieHelper.normalizeInput(refreshedCookie);
+      _advanceSession();
+      final refreshedGeneration = _sessionGeneration;
+      try {
+        await onCookieRefreshed?.call(_cookie);
+      } catch (_) {
+        // Playback remains usable when persistence reports an error. The
+        // account callback still receives the refreshed in-memory value.
+      }
+      _assertSession(refreshedGeneration);
+      return refreshedGeneration;
+    } catch (error) {
+      if (generation != _sessionGeneration) {
+        throw CoreCancelledError(cause: error);
+      }
+      _authRefreshFailedGeneration = generation;
+      _authRefreshFailedUntil = _clock().add(_authRefreshCooldown);
+      return generation;
+    }
+  }
+
+  bool _setCookieHasJwt(List<String> setCookies) {
+    for (final header in setCookies) {
+      final cookiePair = header.split(';').first.trim();
+      final separator = cookiePair.indexOf('=');
+      if (separator > 0 &&
+          cookiePair.substring(0, separator).trim().toLowerCase() ==
+              'acf_jwt_token') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<_DouyuEncryptionKey> _getEncryptionKey(
+    String roomId, {
+    required String did,
+    required String cookieSnapshot,
+    required int generation,
+  }) async {
+    _assertSession(generation);
+    final cached = _cachedEncryptionKey;
+    if (_cachedEncryptionGeneration == generation &&
+        cached != null &&
+        _clock().isBefore(cached.expiresAt)) {
+      return cached;
+    }
+
+    final pending = _encryptionKeyRequest;
+    if (pending != null && _encryptionRequestGeneration == generation) {
+      return pending;
+    }
+
+    final future = _loadEncryptionKey(
+      roomId,
+      did: did,
+      cookieSnapshot: cookieSnapshot,
+      generation: generation,
+    );
+    _encryptionKeyRequest = future;
+    _encryptionRequestGeneration = generation;
+    try {
+      return await future;
+    } finally {
+      if (identical(_encryptionKeyRequest, future)) {
+        _encryptionKeyRequest = null;
+        _encryptionRequestGeneration = null;
+      }
+    }
+  }
+
+  Future<_DouyuEncryptionKey> _loadEncryptionKey(
+    String roomId, {
+    required String did,
+    required String cookieSnapshot,
+    required int generation,
+  }) async {
+    final response = await HttpClient.instance.getJson(
+      '$_origin/wgapi/livenc/liveweb/websec/getEncryption',
+      queryParameters: {'did': did},
+      header: _douyuHeaders(roomId, cookieSnapshot: cookieSnapshot),
+      redactResponse: true,
+    );
+    _assertSession(generation);
+    if (response is! Map) {
+      throw CoreError('斗鱼加密参数响应格式错误', kind: CoreErrorKind.response);
+    }
+    if (_asInt(response['error']) != 0) {
+      throw CoreError('斗鱼加密参数请求失败', kind: CoreErrorKind.response);
+    }
+    if (response['data'] is! Map) {
+      throw CoreError('斗鱼加密参数响应格式错误', kind: CoreErrorKind.response);
+    }
+    final data = response['data'] as Map;
+    final key = data['key']?.toString() ?? '';
+    final randStr = data['rand_str']?.toString() ?? '';
+    final encData = data['enc_data']?.toString() ?? '';
+    final encTime = int.tryParse(data['enc_time']?.toString() ?? '');
+    final expireAt = int.tryParse(data['expire_at']?.toString() ?? '');
+    if (key.isEmpty ||
+        randStr.isEmpty ||
+        encData.isEmpty ||
+        encTime == null ||
+        encTime < 0 ||
+        encTime > 128 ||
+        expireAt == null ||
+        expireAt <= 0 ||
+        expireAt > 8640000000000) {
+      throw CoreError('斗鱼加密参数缺失', kind: CoreErrorKind.response);
+    }
+
+    final now = _clock();
+    final serverExpiry = DateTime.fromMillisecondsSinceEpoch(expireAt * 1000);
+    final localExpiry = now.add(_encryptionCacheTtl);
+    final expiresAt =
+        serverExpiry.isBefore(localExpiry) ? serverExpiry : localExpiry;
+    if (!expiresAt.isAfter(now)) {
+      throw CoreError('斗鱼加密参数已过期', kind: CoreErrorKind.response);
+    }
+    final encryption = _DouyuEncryptionKey(
+      key: key,
+      randStr: randStr,
+      encTime: encTime,
+      isSpecial: _asInt(data['is_special']) == 1,
+      encData: encData,
+      expiresAt: expiresAt,
+    );
+    _assertSession(generation);
+    _cachedEncryptionKey = encryption;
+    _cachedEncryptionGeneration = generation;
+    return encryption;
+  }
+
+  String _signedBody({
+    required String roomId,
+    required String did,
+    required int rate,
+    required String cdn,
+    required _DouyuEncryptionKey encryption,
+  }) {
+    final timestamp = (_clock().millisecondsSinceEpoch ~/ 1000).toString();
+    var secret = encryption.randStr;
+    for (var i = 0; i < encryption.encTime; i++) {
+      secret = md5.convert(utf8.encode('$secret${encryption.key}')).toString();
+    }
+    final salt = encryption.isSpecial ? '' : '$roomId$timestamp';
+    final auth =
+        md5.convert(utf8.encode('$secret${encryption.key}$salt')).toString();
+    return Uri(
+      queryParameters: {
+        'enc_data': encryption.encData,
+        'tt': timestamp,
+        'did': did,
+        'auth': auth,
+        'cdn': cdn,
+        'ver': 'Douyu_new',
+        'rate': '$rate',
+        'hevc': '0',
+        'ive': '0',
+        'fa': '0',
       },
+    ).query;
+  }
+
+  Future<Map> _requestH5Play({
+    required String roomId,
+    required int rate,
+    required String cdn,
+    required String did,
+    required String cookieSnapshot,
+    required int generation,
+    required _DouyuEncryptionKey encryption,
+  }) async {
+    final body = _signedBody(
+      roomId: roomId,
+      did: did,
+      rate: rate,
+      cdn: cdn,
+      encryption: encryption,
+    );
+    final response = await HttpClient.instance.postJson(
+      '$_origin/lapi/live/getH5PlayV1/$roomId',
+      data: body,
+      header: _douyuHeaders(roomId, cookieSnapshot: cookieSnapshot),
       formUrlEncoded: true,
     );
-
-    if (result is! Map || result["data"] is! Map) {
-      throw CoreError("斗鱼取流响应格式错误", kind: CoreErrorKind.response);
+    _assertSession(generation);
+    if (response is! Map) {
+      throw CoreError('斗鱼取流响应格式错误', kind: CoreErrorKind.response);
     }
-    final data = result["data"] as Map;
-    final baseUrl = data["rtmp_url"]?.toString().trim() ?? "";
-    final streamName =
-        HtmlUnescape().convert(data["rtmp_live"]?.toString() ?? "").trim();
-    if (baseUrl.isEmpty || streamName.isEmpty) {
-      throw CoreError("斗鱼取流响应缺少可播放地址", kind: CoreErrorKind.response);
+    if (_asInt(response['error']) != 0) {
+      throw CoreError('斗鱼取流请求失败', kind: CoreErrorKind.response);
     }
-    return "${baseUrl.replaceFirst(RegExp(r'/+$'), '')}/$streamName";
+    if (response['data'] is! Map) {
+      throw CoreError('斗鱼取流响应格式错误', kind: CoreErrorKind.response);
+    }
+    return response['data'] as Map;
   }
 
-  Future<String> _getFreshPlayArgs(String roomId) async {
-    final jsEncResult = await HttpClient.instance.getText(
-      "https://www.douyu.com/swf_api/homeH5Enc?rids=$roomId",
-      queryParameters: {},
-      header: {
-        if (cookie.trim().isNotEmpty) 'Cookie': cookie.trim(),
-        'referer': 'https://www.douyu.com/$roomId',
-        'user-agent':
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
-      },
-    );
-    dynamic decoded;
+  Future<_DouyuPlayUrlAttempt> _getPlayUrlForCdn({
+    required String roomId,
+    required String cdn,
+    required LivePlayQuality requestedQuality,
+    required int requestedRate,
+    required String did,
+    required String cookieSnapshot,
+    required int generation,
+    required _DouyuEncryptionKey encryption,
+  }) async {
     try {
-      decoded = json.decode(jsEncResult);
-    } on FormatException catch (error) {
-      throw CoreError(
-        "斗鱼签名脚本响应格式错误",
-        kind: CoreErrorKind.response,
-        cause: error,
+      final response = await _requestH5Play(
+        roomId: roomId,
+        rate: requestedRate,
+        cdn: cdn,
+        did: did,
+        cookieSnapshot: cookieSnapshot,
+        generation: generation,
+        encryption: encryption,
       );
+      final url = _readStreamUrl(response);
+      if (url == null) {
+        throw CoreError('斗鱼取流响应缺少可播放地址', kind: CoreErrorKind.response);
+      }
+      final groups = _readRateGroups(response['multirates']);
+      final rateOrder =
+          groups.map((group) => group.rate).toList(growable: false);
+      final actualRate = _asInt(response['rate']);
+      final group = actualRate == null
+          ? null
+          : _findRateGroup(groups, actualRate) ??
+              _groupFromRequestedData(requestedQuality, actualRate);
+      return _DouyuPlayUrlAttempt.success(
+        url,
+        group == null
+            ? _unknownQuality()
+            : _qualityForGroup(group, requestedQuality.data),
+        rateOrder,
+      );
+    } catch (error, stackTrace) {
+      return _DouyuPlayUrlAttempt.failure(error, stackTrace);
     }
-    final roomScript = decoded is Map && decoded["data"] is Map
-        ? (decoded["data"] as Map)["room$roomId"]
-        : null;
-    if (roomScript == null || roomScript.toString().isEmpty) {
-      throw CoreError("斗鱼签名脚本响应格式错误", kind: CoreErrorKind.response);
+  }
+
+  _DouyuRateGroup? _groupFromRequestedData(
+    LivePlayQuality requestedQuality,
+    int rate,
+  ) {
+    final data = requestedQuality.data;
+    if (data is! DouyuPlayData) return null;
+    final name = data.rateNames[rate] ??
+        (data.rate == rate ? requestedQuality.quality : null);
+    return name == null || name.isEmpty ? null : _DouyuRateGroup(rate, name);
+  }
+
+  _DouyuRateGroup? _findRateGroup(List<_DouyuRateGroup> groups, int rate) {
+    for (final group in groups) {
+      if (group.rate == rate) return group;
     }
-    return DouyuSign.getSign(roomScript.toString(), roomId);
+    return null;
+  }
+
+  LivePlayQuality _qualityForGroup(
+      _DouyuRateGroup group, dynamic requestedData) {
+    final data = requestedData is DouyuPlayData ? requestedData : null;
+    return LivePlayQuality(
+      quality: group.name,
+      data: DouyuPlayData(
+        group.rate,
+        data?.cdns ?? const <String>[],
+        rateOrder: data?.rateOrder ?? const [],
+        rateNames: data?.rateNames ?? const {},
+      ),
+    );
+  }
+
+  LivePlayQuality _unknownQuality() =>
+      LivePlayQuality(quality: '清晰度未确认', data: null);
+
+  LivePlayQuality _selectActualQuality(
+    List<_DouyuPlayUrlAttempt> playable,
+    DouyuPlayData requestedData,
+  ) {
+    final byRate = <int, LivePlayQuality>{};
+    for (final attempt in playable) {
+      final quality = attempt.actualQuality;
+      final data = quality?.data;
+      if (quality != null && data is DouyuPlayData) {
+        byRate.putIfAbsent(data.rate, () => quality);
+      }
+    }
+    if (byRate.containsKey(requestedData.rate)) {
+      return byRate[requestedData.rate]!;
+    }
+    final order = requestedData.rateOrder.isNotEmpty
+        ? requestedData.rateOrder
+        : playable.expand((attempt) => attempt.rateOrder).toList();
+    for (final rate in order) {
+      final quality = byRate[rate];
+      if (quality != null) return quality;
+    }
+    if (byRate.isNotEmpty) return byRate.values.first;
+    return _unknownQuality();
+  }
+
+  bool _sameQuality(LivePlayQuality? quality, LivePlayQuality selected) {
+    final actualData = quality?.data;
+    final selectedData = selected.data;
+    if (actualData is DouyuPlayData && selectedData is DouyuPlayData) {
+      return actualData.rate == selectedData.rate;
+    }
+    return actualData == null && selectedData == null;
+  }
+
+  int? _asInt(dynamic value) => value is int ? value : int.tryParse('$value');
+
+  List<_DouyuRateGroup> _readRateGroups(dynamic value) {
+    if (value is! List) return const [];
+    final groups = <_DouyuRateGroup>[];
+    for (final item in value) {
+      if (item is! Map) continue;
+      final rate = _asInt(item['rate']);
+      final name = item['name']?.toString().trim() ?? '';
+      if (rate == null || name.isEmpty) continue;
+      groups.add(_DouyuRateGroup(rate, name));
+    }
+    return groups;
+  }
+
+  List<String> _readCdnList(dynamic value) {
+    if (value is! List) return const [];
+    final cdns = <String>[];
+    for (final item in value) {
+      if (item is! Map) continue;
+      final cdn = item['cdn']?.toString().trim() ?? '';
+      if (cdn.isNotEmpty) cdns.add(cdn);
+    }
+    // scdn 常作为备用线路，放到稳定顺序的末尾。
+    final preferred = cdns.where((cdn) => !cdn.startsWith('scdn'));
+    final secondary = cdns.where((cdn) => cdn.startsWith('scdn'));
+    return [...preferred, ...secondary];
+  }
+
+  String? _readStreamUrl(Map data) {
+    final baseUrl = data['rtmp_url']?.toString().trim() ?? '';
+    final streamName =
+        HtmlUnescape().convert(data['rtmp_live']?.toString() ?? '').trim();
+    if (baseUrl.isEmpty || streamName.isEmpty) return null;
+    return '${baseUrl.replaceFirst(RegExp(r'/+$'), '')}/$streamName';
   }
 
   @override
@@ -333,10 +870,6 @@ class DouyuSite implements LiveSite {
     final h5Data = h5RoomInfo["data"] as Map?;
     final showTime = h5Data?["show_time"]?.toString();
 
-    final signedArgs = roomStatus.state == LiveStatusState.live
-        ? await _getFreshPlayArgs(canonicalRoomId)
-        : "";
-
     return LiveRoomDetail(
       cover: roomInfo["room_pic"].toString(),
       online: int.tryParse(roomBizAll["hot"].toString()) ?? 0,
@@ -349,7 +882,7 @@ class DouyuSite implements LiveSite {
       status: roomStatus.isLiveStream,
       liveStatusState: roomStatus.state,
       danmakuData: canonicalRoomId,
-      data: signedArgs,
+      data: "",
       url: "https://www.douyu.com/$roomId",
       isRecord: roomStatus.isRecord,
       showTime: showTime,
@@ -663,5 +1196,13 @@ class DouyuSite implements LiveSite {
 class DouyuPlayData {
   final int rate;
   final List<String> cdns;
-  DouyuPlayData(this.rate, this.cdns);
+  final List<int> rateOrder;
+  final Map<int, String> rateNames;
+
+  DouyuPlayData(
+    this.rate,
+    this.cdns, {
+    this.rateOrder = const [],
+    this.rateNames = const {},
+  });
 }

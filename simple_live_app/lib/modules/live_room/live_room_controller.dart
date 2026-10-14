@@ -50,6 +50,7 @@ import 'package:simple_live_app/services/live_latency_telemetry_service.dart';
 import 'package:simple_live_app/services/live_link_health_collector.dart'
     show didLivePlaybackHostChange;
 import 'package:simple_live_app/services/live_link_health_models.dart';
+import 'package:simple_live_app/services/live_play_quality_presentation.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_network_service.dart';
@@ -111,13 +112,14 @@ Future<T?> findNextConfirmedLiveRoom<T>({
   }
   final currentIndex = rooms.indexWhere(isCurrent);
   var checked = 0;
-  for (var offset = 1; offset <= rooms.length && checked < maxChecks; offset++) {
+  for (var offset = 1;
+      offset <= rooms.length && checked < maxChecks;
+      offset++) {
     if (shouldContinue != null && !shouldContinue()) {
       return null;
     }
-    final index = currentIndex < 0
-        ? offset - 1
-        : (currentIndex + offset) % rooms.length;
+    final index =
+        currentIndex < 0 ? offset - 1 : (currentIndex + offset) % rooms.length;
     final candidate = rooms[index];
     if (isCurrent(candidate)) {
       continue;
@@ -708,11 +710,11 @@ class LiveRoomController extends PlayerController
   // pause/play 重建原生输出，并收紧验证窗口以缩短声音交接的无声期。
   final MultiRoomPlaybackRecoveryCoordinator _holdPreviewCloseRecovery =
       const MultiRoomPlaybackRecoveryCoordinator(
-        forceRestartOnFirstAttempt: true,
-        maxAttempts: 4,
-        confirmTimeout: Duration(milliseconds: 400),
-        retryDelay: Duration(milliseconds: 100),
-      );
+    forceRestartOnFirstAttempt: true,
+    maxAttempts: 4,
+    confirmTimeout: Duration(milliseconds: 400),
+    retryDelay: Duration(milliseconds: 100),
+  );
   final List<Timer> _holdPreviewAudioWatchdogTimers = [];
   int _holdPreviewAudioWatchdogGeneration = 0;
   MultiRoomPlayerController? _holdPreviewPlayer;
@@ -738,6 +740,47 @@ class LiveRoomController extends PlayerController
   /// 当前清晰度索引
   var currentQuality = -1;
   var currentQualityInfo = "".obs;
+  final qualityPresentation = Rxn<LivePlayQualityPresentation>();
+  final _qualityMismatchTracker = LivePlayQualityMismatchTracker();
+
+  String get requestedQualityInfo =>
+      currentQuality >= 0 && currentQuality < qualites.length
+          ? qualites[currentQuality].quality
+          : "";
+
+  String? get qualityComparisonInfo {
+    final actual = qualityPresentation.value?.actualQuality;
+    if (actual == null || requestedQualityInfo.isEmpty) return null;
+    return LivePlayQualityPresentation(
+      requestedQuality: requestedQualityInfo,
+      actualQuality: actual,
+    ).comparisonLabel;
+  }
+
+  void _showRequestedQualityUntilResolved() {
+    if (qualityPresentation.value?.actualQuality == null) {
+      currentQualityInfo.value = requestedQualityInfo;
+    }
+  }
+
+  void _acceptActualQuality(LivePlayQuality? actualQuality) {
+    final requested = requestedQualityInfo;
+    if (requested.isEmpty) return;
+    final presentation = LivePlayQualityPresentation(
+      requestedQuality: requested,
+      actualQuality: actualQuality,
+    );
+    qualityPresentation.value = presentation;
+    currentQualityInfo.value = presentation.displayQuality;
+    final notice = _qualityMismatchTracker.update(presentation);
+    if (notice != null) SmartDialog.showToast(notice);
+  }
+
+  void _resetQualityPresentation() {
+    qualityPresentation.value = null;
+    _qualityMismatchTracker.reset();
+    currentQualityInfo.value = "";
+  }
 
   /// 画质是否被手动锁定（选"自动"时 false，选具体画质时 true）。
   final qualityLocked = false.obs;
@@ -782,7 +825,7 @@ class LiveRoomController extends PlayerController
     }
     if (target != currentQuality) {
       currentQuality = target;
-      currentQualityInfo.value = qualites[target].quality;
+      _showRequestedQualityUntilResolved();
       await getPlayUrl(userInitiatedQualityChange: true);
     }
   }
@@ -1186,7 +1229,7 @@ class LiveRoomController extends PlayerController
     _lastAutoQualityDownAt = now;
     _ohosFailedLineIndices.clear();
     currentQuality += 1;
-    currentQualityInfo.value = qualites[currentQuality].quality;
+    _showRequestedQualityUntilResolved();
     SmartDialog.showToast("网络波动，已自动降低清晰度");
     unawaited(
       getPlayUrl(
@@ -2133,15 +2176,14 @@ class LiveRoomController extends PlayerController
         decision: decision,
       )) {
         final currentDetail = detail.value;
-        final committedDetail =
-            (site.id == Constant.kKuaishou ||
-                        site.id == Constant.kXiaohongshu) &&
-                    currentDetail != null
-                ? mergeLiveRoomDetailMetadata(
-                    current: currentDetail,
-                    incoming: roomDetail,
-                  )
-                : roomDetail;
+        final committedDetail = (site.id == Constant.kKuaishou ||
+                    site.id == Constant.kXiaohongshu) &&
+                currentDetail != null
+            ? mergeLiveRoomDetailMetadata(
+                current: currentDetail,
+                incoming: roomDetail,
+              )
+            : roomDetail;
         detail.value = committedDetail;
         online.value = committedDetail.online;
         _syncBackgroundPlaybackMetadata(committedDetail);
@@ -3051,8 +3093,7 @@ class LiveRoomController extends PlayerController
     return error is KuaishouVerificationRequiredError ||
         (error is CoreError &&
             error.statusCode == 403 &&
-            (error.message.contains('安全验证') ||
-                error.message.contains('滑块验证')));
+            (error.message.contains('安全验证') || error.message.contains('滑块验证')));
   }
 
   Future<void> _openKuaishouChallengeFlow(int loadGeneration) async {
@@ -3205,6 +3246,7 @@ class LiveRoomController extends PlayerController
     _hasActivePlaybackSession = false;
     waitingForPlaybackUrl.value = false;
     _loadGeneration += 1;
+    _resetQualityPresentation();
     WidgetsBinding.instance.removeObserver(this);
     if (Platform.isWindows) {
       windowManager.removeListener(this);
@@ -3399,7 +3441,8 @@ class LiveRoomController extends PlayerController
       }
       detail.value = roomDetail;
       setDouyinLayoutHint(
-        enabled: site.id == Constant.kDouyin || site.id == Constant.kXiaohongshu,
+        enabled:
+            site.id == Constant.kDouyin || site.id == Constant.kXiaohongshu,
         aspectRatio: site.id == Constant.kDouyin
             ? DouyinSite.resolveStreamAspectRatio(roomDetail.data)
             : site.id == Constant.kXiaohongshu
@@ -3590,7 +3633,7 @@ class LiveRoomController extends PlayerController
         qualityLevel: await getQualityLevel(),
         preference: preference,
       );
-      currentQualityInfo.value = qualites[currentQuality].quality;
+      _showRequestedQualityUntilResolved();
 
       await getPlayUrl();
     } catch (e, stackTrace) {
@@ -3658,7 +3701,6 @@ class LiveRoomController extends PlayerController
         currentQuality >= qualites.length) {
       return false;
     }
-    currentQualityInfo.value = qualites[currentQuality].quality;
     var playUrl = await site.liveSite
         .getPlayUrls(detail: detail.value!, quality: qualites[currentQuality]);
     if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
@@ -3704,6 +3746,7 @@ class LiveRoomController extends PlayerController
     playHeaders = playUrl.headers;
     currentLineIndex = nextLineIndex;
     currentLineInfo.value = lineDisplayName(currentLineIndex);
+    _acceptActualQuality(playUrl.actualQuality);
     return true;
   }
 
@@ -3726,6 +3769,7 @@ class LiveRoomController extends PlayerController
     final previousQualities = List<LivePlayQuality>.of(qualites);
     final previousQuality = currentQuality;
     final previousQualityInfo = currentQualityInfo.value;
+    final previousQualityPresentation = qualityPresentation.value;
     final previousPlayUrls = List<String>.of(playUrls);
     final previousPlayHeaders = playHeaders;
     final previousLineIndex = currentLineIndex;
@@ -3747,6 +3791,7 @@ class LiveRoomController extends PlayerController
       qualites.value = previousQualities;
       currentQuality = previousQuality;
       currentQualityInfo.value = previousQualityInfo;
+      qualityPresentation.value = previousQualityPresentation;
       playUrls.value = previousPlayUrls;
       playHeaders = previousPlayHeaders;
       currentLineIndex = previousLineIndex;
@@ -3786,7 +3831,7 @@ class LiveRoomController extends PlayerController
       online.value = freshDetail.online;
       qualites.value = freshQualities;
       currentQuality = nextQuality;
-      currentQualityInfo.value = freshQualities[nextQuality].quality;
+      _showRequestedQualityUntilResolved();
       snapshotReplaced = true;
 
       final reloaded = await _reloadPlayUrls(
@@ -4551,7 +4596,8 @@ class LiveRoomController extends PlayerController
       final target = await findNextConfirmedLiveRoom<FollowUser>(
         rooms: liveChannels,
         isCurrent: (item) => item.id == currentId,
-        shouldContinue: () => !_roomDisposed &&
+        shouldContinue: () =>
+            !_roomDisposed &&
             generation == _loadGeneration &&
             "${site.id}_$roomId" == currentId,
         checkStatus: (item) async {
@@ -4870,25 +4916,34 @@ class LiveRoomController extends PlayerController
             markQualitySelectionAsManual();
             qualityLocked.value = true;
             currentQuality = v ?? 0;
-            currentQualityInfo.value = qualites[currentQuality].quality;
+            _showRequestedQualityUntilResolved();
             saveQualityMemory();
             getPlayUrl(userInitiatedQualityChange: true);
           }
         },
         child: ListView.builder(
           shrinkWrap: true,
-          itemCount: qualites.length + 1,
+          itemCount:
+              qualites.length + 1 + (qualityComparisonInfo == null ? 0 : 1),
           itemBuilder: (_, i) {
-            if (i == 0) {
+            final comparison = qualityComparisonInfo;
+            if (comparison != null && i == 0) {
+              return ListTile(
+                title: const Text("当前画质"),
+                subtitle: Text(comparison),
+              );
+            }
+            final qualityItemIndex = i - (comparison == null ? 0 : 1);
+            if (qualityItemIndex == 0) {
               return const RadioListTile(
                 value: -1,
                 title: Text("自动"),
                 subtitle: Text("根据网络与设备情况自动调整"),
               );
             }
-            var item = qualites[i - 1];
+            var item = qualites[qualityItemIndex - 1];
             return RadioListTile(
-              value: i - 1,
+              value: qualityItemIndex - 1,
               title: Text(item.quality),
             );
           },
@@ -4943,8 +4998,8 @@ class LiveRoomController extends PlayerController
                   ),
                 ),
                 RadioGroup<LivePlayerLayoutMode>(
-                  groupValue: AppSettingsController
-                      .instance.dualScreenLayoutMode.value,
+                  groupValue:
+                      AppSettingsController.instance.dualScreenLayoutMode.value,
                   onChanged: (mode) {
                     if (mode != null) {
                       setDualScreenLayoutMode(mode);
@@ -5979,10 +6034,7 @@ class LiveRoomController extends PlayerController
   /// 恢复后确认音频输出真的在产数据：不活就再弹跳一次，仍不行则升级为
   /// 重开当前流（等价于用户手动刷新），避免预览结束后永久无声。
   Future<void> _verifyHoldPreviewAudioHandback() async {
-    if (!Platform.isIOS ||
-        _roomDisposed ||
-        isBackground ||
-        isPlayerClosing) {
+    if (!Platform.isIOS || _roomDisposed || isBackground || isPlayerClosing) {
       return;
     }
     var audioAlive = await waitUntilAudioOutputAlive();
@@ -6682,6 +6734,7 @@ class LiveRoomController extends PlayerController
         CurrentRoomService.instance.setRoom(currentSite, currentRoomId);
         _roomDisposed = false;
         _loadGeneration += 1;
+        _resetQualityPresentation();
         await resetLiveLatencyChase();
         _onlineRefreshFailures = 0;
         tempMutedUsers.clear();

@@ -477,7 +477,7 @@ void showPlayerSettings(LiveRoomController controller) {
               // 清晰度切换
               Obx(
                 () => SettingsItemWidget(
-                  title: "清晰度",
+                  title: controller.qualityMenuTitle,
                   foucsNode: qualityFoucsNode,
                   autofocus: qualityFoucsNode.isFoucsed.value,
                   items: controller.qualites
@@ -487,8 +487,7 @@ void showPlayerSettings(LiveRoomController controller) {
                   value: controller.currentQuality,
                   onChanged: (e) {
                     Get.back();
-                    controller.currentQuality = e;
-                    controller.getPlayUrl();
+                    controller.selectQuality(e);
                   },
                 ),
               ),

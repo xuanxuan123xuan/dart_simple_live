@@ -129,20 +129,37 @@ class AccountController extends GetxController {
       context: Get.context!,
       builder: (_) => AlertDialog(
         title: const Text("配置斗鱼 Cookie"),
-        content: TextField(
-          controller: controller,
-          maxLines: 5,
-          decoration: const InputDecoration(
-            labelText: "Cookie（可选）",
-            hintText: "粘贴 www.douyu.com 的完整 Cookie",
-            border: OutlineInputBorder(),
-          ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("复制已登录斗鱼网页的完整 Cookie；包含 LTP0 时可自动续期。"),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                labelText: "Cookie（可选）",
+                hintText: "粘贴 www.douyu.com 的完整 Cookie",
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Get.back(), child: const Text("取消")),
           TextButton(
-            onPressed: () {
-              account.setCookie(controller.text);
+            onPressed: () async {
+              bool saved;
+              try {
+                saved = await account.setCookie(controller.text);
+              } catch (_) {
+                SmartDialog.showToast("保存斗鱼 Cookie 失败，请重试");
+                return;
+              }
+              if (!saved) {
+                SmartDialog.showToast("Cookie 格式无效，请粘贴完整 Cookie");
+                return;
+              }
               Get.back();
               SmartDialog.showToast(
                 account.hasCookie.value ? "斗鱼 Cookie 已保存" : "已清除斗鱼 Cookie",
@@ -156,9 +173,8 @@ class AccountController extends GetxController {
   }
 
   String getDouyuCookieSummaryText() {
-    final account = DouyuAccountService.instance;
-    account.hasCookie.value;
-    return account.hasCookie.value ? "已配置 Cookie" : "未配置 Cookie（可选）";
+    douyinCookieCountdownTick.value;
+    return DouyuAccountService.instance.summary;
   }
 
   void xiaohongshuTap() {

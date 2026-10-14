@@ -20,6 +20,9 @@ void main() {
         'a-bogus',
         'sid_guard',
         'sid-guard',
+        'auth',
+        'enc_data',
+        'LTP0',
       ]) {
         expect(HttpLogSanitizer.isSensitiveKey(key), isTrue, reason: key);
       }
@@ -30,6 +33,16 @@ void main() {
         expect(HttpLogSanitizer.isSensitiveKey(key), isFalse, reason: key);
       }
     });
+  });
+
+  test('redacts Douyu signed form bodies without hiding the selected rate', () {
+    final redacted = HttpLogSanitizer.redactText(
+      'enc_data=ENCRYPTED_SECRET&auth=AUTH_SECRET&LTP0=REFRESH_SECRET&rate=0',
+    );
+    expect(redacted, isNot(contains('ENCRYPTED_SECRET')));
+    expect(redacted, isNot(contains('AUTH_SECRET')));
+    expect(redacted, isNot(contains('REFRESH_SECRET')));
+    expect(redacted, contains('rate=0'));
   });
 
   group('redact', () {

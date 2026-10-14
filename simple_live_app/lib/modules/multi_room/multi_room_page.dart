@@ -1343,6 +1343,17 @@ void _showTileQualitySheet(
               icon: const Icon(Remix.close_line),
             ),
           ),
+          Obx(() {
+            final currentDisplayQuality = controller.qualityInfo.value;
+            final comparison = controller.qualityComparisonInfo;
+            if (comparison == null || currentDisplayQuality.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            return ListTile(
+              title: const Text("当前画质"),
+              subtitle: Text(comparison),
+            );
+          }),
           Obx(
             () => ListTile(
               title: const Text("自动"),

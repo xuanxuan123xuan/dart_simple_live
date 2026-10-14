@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -10,6 +11,7 @@ import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/log.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_tv_app/services/mpv_options_service.dart';
+import 'package:simple_live_tv_app/services/live_play_quality_presentation.dart';
 
 class MultiRoomPlayerController extends GetxController {
   final MultiRoomItem item;
@@ -33,7 +35,10 @@ class MultiRoomPlayerController extends GetxController {
   final errorText = "".obs;
   final muted = true.obs;
   final qualityInfo = "".obs;
+  final requestedQualityInfo = "".obs;
   final lineInfo = "".obs;
+  final _qualityMismatchTracker = LivePlayQualityMismatchTracker();
+  bool _hasResolvedQuality = false;
 
   List<LivePlayQuality> _qualities = const [];
   List<String> _playUrls = const [];
@@ -41,6 +46,8 @@ class MultiRoomPlayerController extends GetxController {
   int _qualityIndex = -1;
   int _lineIndex = 0;
   int _mediaErrorRetryCount = 0;
+  int _loadGeneration = 0;
+  int _playbackGeneration = 0;
   bool _disposed = false;
   StreamSubscription<String>? _errorSubscription;
   StreamSubscription<bool>? _completedSubscription;
@@ -54,6 +61,15 @@ class MultiRoomPlayerController extends GetxController {
     return item.userName;
   }
 
+  String get qualityDisplayInfo {
+    final requested = requestedQualityInfo.value;
+    final actual = qualityInfo.value;
+    if (requested.isEmpty || actual.isEmpty || requested == actual) {
+      return actual;
+    }
+    return "请求 $requested / 实际 $actual";
+  }
+
   @override
   void onInit() {
     super.onInit();
@@ -63,7 +79,14 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   void _initPlayerStreams() {
+    _logSubscription = player.stream.log.listen((event) {
+      Log.d("多屏同播播放器日志：${item.site.id}/${item.roomId} ${event.text}");
+    });
+  }
+
+  void _bindPlaybackEvents(int loadGeneration, int playbackGeneration) {
     _errorSubscription = player.stream.error.listen((event) {
+      if (!_isCurrentPlayback(loadGeneration, playbackGeneration)) return;
       Log.d("多屏同播播放器错误：${item.site.id}/${item.roomId} $event");
       if (event.contains('no sound.')) {
         return;
@@ -71,20 +94,27 @@ class MultiRoomPlayerController extends GetxController {
 
       // Fix TV多开灰屏: 检测流错误并自动重试
       if (_isStreamError(event)) {
-        unawaited(_handleStreamError(event));
+        unawaited(
+            _handleStreamError(event, loadGeneration, playbackGeneration));
         return;
       }
 
-      unawaited(_handleMediaError(event));
+      unawaited(_handleMediaError(event, loadGeneration, playbackGeneration));
     });
     _completedSubscription = player.stream.completed.listen((event) {
-      if (event) {
-        unawaited(_handleMediaEnd());
+      if (event && _isCurrentPlayback(loadGeneration, playbackGeneration)) {
+        unawaited(_handleMediaEnd(loadGeneration, playbackGeneration));
       }
     });
-    _logSubscription = player.stream.log.listen((event) {
-      Log.d("多屏同播播放器日志：${item.site.id}/${item.roomId} ${event.text}");
-    });
+  }
+
+  Future<void> _cancelPlaybackEvents() async {
+    final errorSubscription = _errorSubscription;
+    final completedSubscription = _completedSubscription;
+    _errorSubscription = null;
+    _completedSubscription = null;
+    await errorSubscription?.cancel();
+    await completedSubscription?.cancel();
   }
 
   // Fix TV多开灰屏: 判断是否为流错误
@@ -98,8 +128,13 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   // Fix TV多开灰屏: 处理流错误，自动重试解码器
-  Future<void> _handleStreamError(String error) async {
-    if (_disposed || _playUrls.isEmpty) {
+  Future<void> _handleStreamError(
+    String error,
+    int operationGeneration,
+    int playbackGeneration,
+  ) async {
+    if (!_isCurrentPlayback(operationGeneration, playbackGeneration) ||
+        _playUrls.isEmpty) {
       return;
     }
 
@@ -111,16 +146,17 @@ class MultiRoomPlayerController extends GetxController {
     try {
       await player.pause();
       await Future.delayed(const Duration(milliseconds: 500));
-      if (!_disposed) {
+      if (_isCurrentPlayback(operationGeneration, playbackGeneration)) {
         await player.play();
       }
     } catch (e, stackTrace) {
+      if (!_isCurrentPlayback(operationGeneration, playbackGeneration)) return;
       Log.e(
         "多屏同播恢复流失败：${item.site.id}/${item.roomId} $e",
         stackTrace,
       );
       // 恢复失败，走线路切换逻辑
-      await _handleMediaError(error);
+      await _handleMediaError(error, operationGeneration, playbackGeneration);
     }
   }
 
@@ -139,14 +175,21 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> load() async {
+    final operationGeneration = ++_loadGeneration;
+    _playbackGeneration++;
+    _playUrls = const [];
+    _playHeaders = null;
     loading.value = true;
     errorText.value = "";
     liveStatus.value = false;
     try {
+      await _cancelPlaybackEvents();
+      if (!_isCurrentLoad(operationGeneration)) return;
       await player.stop();
+      if (!_isCurrentLoad(operationGeneration)) return;
       Log.i("多屏同播开始加载房间：${item.site.id}/${item.roomId}");
       final roomDetail = await _fetchRoomDetail();
-      if (_disposed) {
+      if (!_isCurrentLoad(operationGeneration)) {
         return;
       }
       Log.i(
@@ -160,28 +203,36 @@ class MultiRoomPlayerController extends GetxController {
         errorText.value = "未开播";
         return;
       }
-      await _loadQualities(roomDetail);
-      await _loadPlayUrls(roomDetail);
+      if (!await _loadQualities(roomDetail, operationGeneration)) return;
+      if (!await _loadPlayUrls(roomDetail, operationGeneration)) return;
+      if (!_isCurrentLoad(operationGeneration)) return;
       loading.value = false;
-      await _openCurrentUrl();
+      await _openCurrentUrl(operationGeneration);
     } catch (e) {
+      if (!_isCurrentLoad(operationGeneration)) return;
       Log.e(
         "多屏同播加载失败：${item.site.id}/${item.roomId} $e",
         StackTrace.current,
       );
       errorText.value = e.toString();
     } finally {
-      if (!_disposed) {
+      if (_isCurrentLoad(operationGeneration)) {
         loading.value = false;
       }
     }
   }
 
-  Future<void> _loadQualities(LiveRoomDetail roomDetail) async {
-    _qualities = await item.site.liveSite.getPlayQualites(detail: roomDetail);
-    if (_qualities.isEmpty) {
+  Future<bool> _loadQualities(
+    LiveRoomDetail roomDetail,
+    int operationGeneration,
+  ) async {
+    final qualities =
+        await item.site.liveSite.getPlayQualites(detail: roomDetail);
+    if (!_isCurrentLoad(operationGeneration)) return false;
+    if (qualities.isEmpty) {
       throw Exception("无法读取播放清晰度");
     }
+    _qualities = qualities;
     final qualityLevel = Platform.isAndroid
         ? 0
         : AppSettingsController.instance.qualityLevel.value;
@@ -192,21 +243,45 @@ class MultiRoomPlayerController extends GetxController {
     } else {
       _qualityIndex = (_qualities.length / 2).floor();
     }
-    qualityInfo.value = _qualities[_qualityIndex].quality;
+    requestedQualityInfo.value = _qualities[_qualityIndex].quality;
+    if (!_hasResolvedQuality) qualityInfo.value = requestedQualityInfo.value;
     Log.i(
       "多屏同播清晰度：${item.site.id}/${item.roomId} "
       "selected=${qualityInfo.value} index=$_qualityIndex total=${_qualities.length}",
     );
+    return true;
   }
 
-  Future<void> _loadPlayUrls(LiveRoomDetail roomDetail) async {
+  Future<bool> _loadPlayUrls(
+    LiveRoomDetail roomDetail,
+    int operationGeneration,
+  ) async {
+    if (!_isCurrentLoad(operationGeneration) ||
+        _qualityIndex < 0 ||
+        _qualityIndex >= _qualities.length) {
+      return false;
+    }
+    final requestedIndex = _qualityIndex;
+    final requestedQuality = _qualities[requestedIndex];
     final playUrl = await item.site.liveSite.getPlayUrls(
       detail: roomDetail,
-      quality: _qualities[_qualityIndex],
+      quality: requestedQuality,
     );
+    if (!_isCurrentLoad(operationGeneration) ||
+        requestedIndex != _qualityIndex) {
+      return false;
+    }
     if (playUrl.urls.isEmpty) {
       throw Exception("无法读取播放地址");
     }
+    final presentation = LivePlayQualityPresentation(
+      requestedQuality: requestedQuality,
+      actualQuality: playUrl.actualQuality,
+    );
+    qualityInfo.value = presentation.display;
+    _hasResolvedQuality = true;
+    final notice = _qualityMismatchTracker.update(presentation);
+    if (notice != null) SmartDialog.showToast(notice);
     _playUrls = playUrl.urls;
     _playHeaders = playUrl.headers;
     _lineIndex = 0;
@@ -214,42 +289,54 @@ class MultiRoomPlayerController extends GetxController {
     lineInfo.value = "线路${_lineIndex + 1}";
     Log.i(
       "多屏同播播放地址：${item.site.id}/${item.roomId} "
-      "quality=${qualityInfo.value} urls=${_playUrls.length} "
+      "requested=${requestedQualityInfo.value} actual=${qualityInfo.value} "
+      "urls=${_playUrls.length} "
       "headers=${_playHeaders?.keys.join(',') ?? ''}",
     );
+    return true;
   }
 
-  Future<void> _openCurrentUrl() async {
+  Future<void> _openCurrentUrl([int? operationGeneration]) async {
+    final generation = operationGeneration ?? _loadGeneration;
+    if (!_isCurrentLoad(generation)) return;
     if (_playUrls.isEmpty || _lineIndex < 0 || _lineIndex >= _playUrls.length) {
       throw Exception("播放线路为空");
     }
+    final url = _playUrls[_lineIndex];
+    final headers = _playHeaders;
+    final line = _lineIndex;
+    final playbackGeneration = ++_playbackGeneration;
+    await _cancelPlaybackEvents();
+    if (!_isCurrentPlayback(generation, playbackGeneration)) return;
     errorText.value = "";
     Log.i(
       "多屏同播打开播放器：${item.site.id}/${item.roomId} "
       "line=${_lineIndex + 1}/${_playUrls.length} muted=${muted.value}",
     );
-    unawaited(
-      player
-          .open(Media(_playUrls[_lineIndex], httpHeaders: _playHeaders))
-          .catchError((Object e, StackTrace stackTrace) {
-        Log.e(
-          "多屏同播打开播放链接失败：${item.site.id}/${item.roomId} $e",
-          stackTrace,
-        );
-        if (!_disposed) {
-          unawaited(_handleMediaError(e.toString()));
-        }
-      }),
-    );
+    try {
+      // Subscribe after open completes so queued events from the previous
+      // media cannot be delivered to the new source's listeners.
+      await player.open(Media(url, httpHeaders: headers));
+    } catch (error, stackTrace) {
+      if (!_isCurrentPlayback(generation, playbackGeneration)) return;
+      Log.e("多屏同播打开播放链接失败：${item.site.id}/${item.roomId} $error", stackTrace);
+      await _handleMediaError(error.toString(), generation, playbackGeneration);
+      return;
+    }
+    if (!_isCurrentPlayback(generation, playbackGeneration)) return;
+    _bindPlaybackEvents(generation, playbackGeneration);
     await player.setVolume(muted.value ? 0 : 100);
+    if (!_isCurrentPlayback(generation, playbackGeneration)) return;
     Log.d(
       "多屏同播播放链接：${item.site.id}/${item.roomId} "
-      "线路${_lineIndex + 1}/${_playUrls.length} ${_playUrls[_lineIndex]}",
+      "线路${line + 1}/${_playUrls.length} $url",
     );
   }
 
-  Future<void> _handleMediaEnd() async {
-    if (_disposed || _playUrls.isEmpty) {
+  Future<void> _handleMediaEnd(
+      int operationGeneration, int playbackGeneration) async {
+    if (!_isCurrentPlayback(operationGeneration, playbackGeneration) ||
+        _playUrls.isEmpty) {
       return;
     }
     if (_lineIndex < _playUrls.length - 1) {
@@ -260,15 +347,20 @@ class MultiRoomPlayerController extends GetxController {
       _lineIndex += 1;
       _mediaErrorRetryCount = 0;
       lineInfo.value = "线路${_lineIndex + 1}";
-      await _openCurrentUrl();
+      await _openCurrentUrl(operationGeneration);
       return;
     }
     errorText.value = "播放已结束";
     Log.w("多屏同播播放结束：${item.site.id}/${item.roomId}");
   }
 
-  Future<void> _handleMediaError(String error) async {
-    if (_disposed || _playUrls.isEmpty) {
+  Future<void> _handleMediaError(
+    String error,
+    int operationGeneration,
+    int playbackGeneration,
+  ) async {
+    if (!_isCurrentPlayback(operationGeneration, playbackGeneration) ||
+        _playUrls.isEmpty) {
       return;
     }
     if (_mediaErrorRetryCount < 2) {
@@ -278,8 +370,8 @@ class MultiRoomPlayerController extends GetxController {
         "line=${_lineIndex + 1} retry=$_mediaErrorRetryCount error=$error",
       );
       await Future<void>.delayed(const Duration(seconds: 1));
-      if (!_disposed) {
-        await _openCurrentUrl();
+      if (_isCurrentPlayback(operationGeneration, playbackGeneration)) {
+        await _openCurrentUrl(operationGeneration);
       }
       return;
     }
@@ -291,7 +383,7 @@ class MultiRoomPlayerController extends GetxController {
       _lineIndex += 1;
       _mediaErrorRetryCount = 0;
       lineInfo.value = "线路${_lineIndex + 1}";
-      await _openCurrentUrl();
+      await _openCurrentUrl(operationGeneration);
       return;
     }
     errorText.value = "播放失败：$error";
@@ -305,6 +397,13 @@ class MultiRoomPlayerController extends GetxController {
     await load();
   }
 
+  bool _isCurrentLoad(int operationGeneration) =>
+      !_disposed && operationGeneration == _loadGeneration;
+
+  bool _isCurrentPlayback(int loadGeneration, int playbackGeneration) =>
+      _isCurrentLoad(loadGeneration) &&
+      playbackGeneration == _playbackGeneration;
+
   Future<void> toggleMute() async {
     muted.value = !muted.value;
     await player.setVolume(muted.value ? 0 : 100);
@@ -313,6 +412,8 @@ class MultiRoomPlayerController extends GetxController {
   @override
   void onClose() {
     _disposed = true;
+    _loadGeneration++;
+    _playbackGeneration++;
     unawaited(_errorSubscription?.cancel());
     unawaited(_completedSubscription?.cancel());
     unawaited(_logSubscription?.cancel());

@@ -23,6 +23,7 @@ import 'package:simple_live_app/services/live_link_health_collector.dart'
 import 'package:simple_live_app/services/live_link_health_media_kit_adapter.dart';
 import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/ios_video_output_size.dart';
+import 'package:simple_live_app/services/live_play_quality_presentation.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_sampling_loop.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
@@ -238,6 +239,8 @@ class MultiRoomPlayerController extends GetxController {
   final qualityLocked = false.obs;
   final qualityInfo = "".obs;
   final lineInfo = "".obs;
+  final _qualityMismatchTracker = LivePlayQualityMismatchTracker();
+  LivePlayQualityPresentation? _qualityPresentation;
 
   /// 本格弹幕开关。多开只收不发，不提供发送入口。
   final showDanmaku = true.obs;
@@ -292,6 +295,7 @@ class MultiRoomPlayerController extends GetxController {
   List<String> _playUrls = const [];
   Map<String, String>? _playHeaders;
   int _qualityIndex = -1;
+  int _qualityOperationRevision = 0;
   int _lineIndex = 0;
   bool _disposed = false;
   bool _playerDisposed = false;
@@ -385,6 +389,49 @@ class MultiRoomPlayerController extends GetxController {
 
   /// 当前清晰度索引。
   int get qualityIndex => _qualityIndex;
+
+  String get requestedQualityInfo =>
+      _qualityIndex >= 0 && _qualityIndex < _qualities.length
+          ? _qualities[_qualityIndex].quality
+          : "";
+
+  String? get qualityComparisonInfo {
+    final actual = _qualityPresentation?.actualQuality;
+    final requested = requestedQualityInfo;
+    if (actual == null || requested.isEmpty) return null;
+    return LivePlayQualityPresentation(
+      requestedQuality: requested,
+      actualQuality: actual,
+    ).comparisonLabel;
+  }
+
+  void _showRequestedQualityUntilResolved() {
+    if (_qualityPresentation?.actualQuality == null) {
+      qualityInfo.value = requestedQualityInfo;
+    }
+  }
+
+  void _acceptActualQuality({
+    required String requestedQuality,
+    required LivePlayQuality? actualQuality,
+  }) {
+    final presentation = LivePlayQualityPresentation(
+      requestedQuality: requestedQuality,
+      actualQuality: actualQuality,
+    );
+    _qualityPresentation = presentation;
+    qualityInfo.value = presentation.displayQuality;
+    final notice = _qualityMismatchTracker.update(presentation);
+    if (notice != null) SmartDialog.showToast(notice);
+  }
+
+  bool _isCurrentQualityOperation(int operationRevision) {
+    return isCurrentMultiRoomQualityOperation(
+      operationRevision: operationRevision,
+      currentOperationRevision: _qualityOperationRevision,
+      operationCancelled: _operationCancelled || _routeTransitionClosed,
+    );
+  }
 
   int? get userQualityIndex => _userQualityIndex;
 
@@ -951,10 +998,18 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> _loadInternal() async {
+    final qualityOperationRevision = _qualityOperationRevision;
     loading.value = true;
     errorText.value = "";
     liveStatus.value = false;
     _playbackDesired = false;
+    // The player is stopped below. Old URLs must not make a queued quality
+    // selection appear already loaded when it takes over this refresh.
+    _playUrls = const [];
+    _playHeaders = null;
+    _qualityPresentation = null;
+    qualityInfo.value = requestedQualityInfo;
+    lineInfo.value = "";
     if (_qualityIndex >= 0) {
       _restoreQualityIndex = _qualityIndex;
     }
@@ -983,15 +1038,22 @@ class MultiRoomPlayerController extends GetxController {
         return;
       }
       await _loadQualities(roomDetail);
-      if (_operationCancelled) return;
-      await _loadPlayUrls(roomDetail);
-      if (_operationCancelled) return;
+      if (!_isCurrentQualityOperation(qualityOperationRevision)) return;
+      final urlsLoaded = await _loadPlayUrls(
+        roomDetail,
+        qualityOperationRevision: qualityOperationRevision,
+      );
+      if (!urlsLoaded ||
+          !_isCurrentQualityOperation(qualityOperationRevision)) {
+        return;
+      }
       await _openCurrentUrl();
       if (_operationCancelled) return;
       if (configuration.enableDanmaku) {
         unawaited(_startDanmaku(roomDetail));
       }
     } catch (e) {
+      if (!_isCurrentQualityOperation(qualityOperationRevision)) return;
       Log.e(
         "多开直播间加载失败：${item.site.id}/${item.roomId} $e",
         StackTrace.current,
@@ -1012,7 +1074,7 @@ class MultiRoomPlayerController extends GetxController {
     if (configuration.preferLowestQuality) {
       _restoreQualityIndex = null;
       _qualityIndex = _qualities.length - 1;
-      qualityInfo.value = _qualities[_qualityIndex].quality;
+      _showRequestedQualityUntilResolved();
       _userQualityIndex = _qualityIndex;
       return;
     }
@@ -1021,7 +1083,7 @@ class MultiRoomPlayerController extends GetxController {
     _restoreQualityIndex = null;
     if (restore != null && restore >= 0 && restore < _qualities.length) {
       _qualityIndex = restore;
-      qualityInfo.value = _qualities[_qualityIndex].quality;
+      _showRequestedQualityUntilResolved();
       _userQualityIndex ??= _qualityIndex;
       return;
     }
@@ -1033,41 +1095,60 @@ class MultiRoomPlayerController extends GetxController {
     } else {
       _qualityIndex = (_qualities.length / 2).floor();
     }
-    qualityInfo.value = _qualities[_qualityIndex].quality;
+    _showRequestedQualityUntilResolved();
     _userQualityIndex ??= _qualityIndex;
   }
 
-  Future<void> _loadPlayUrls(LiveRoomDetail roomDetail) async {
+  Future<bool> _loadPlayUrls(
+    LiveRoomDetail roomDetail, {
+    required int qualityOperationRevision,
+  }) async {
+    if (!_isCurrentQualityOperation(qualityOperationRevision) ||
+        _qualityIndex < 0 ||
+        _qualityIndex >= _qualities.length) {
+      return false;
+    }
+    final requestedQuality = _qualities[_qualityIndex];
     final playUrl = await item.site.liveSite.getPlayUrls(
       detail: roomDetail,
-      quality: _qualities[_qualityIndex],
+      quality: requestedQuality,
     );
+    if (!_isCurrentQualityOperation(qualityOperationRevision)) return false;
     if (playUrl.urls.isEmpty) {
       throw Exception("无法读取播放地址");
     }
-    _playUrls = sortLiveStreamUrlsByLatency(playUrl.urls);
-    _playHeaders = playUrl.headers;
+    final nextPlayUrls = sortLiveStreamUrlsByLatency(playUrl.urls);
     final restore = _restoreLineIndex;
-    _restoreLineIndex = null;
-    final bestLineIndices = lowestLatencyLineIndices(_playUrls);
+    final bestLineIndices = lowestLatencyLineIndices(nextPlayUrls);
     final autoSelect =
         AppSettingsController.instance.autoSelectFastestLine.value;
-    _lineIndex = bestLineIndices.first;
+    var nextLineIndex = bestLineIndices.first;
     if (!autoSelect &&
         restore != null &&
         restore >= 0 &&
-        restore < _playUrls.length &&
+        restore < nextPlayUrls.length &&
         bestLineIndices.contains(restore)) {
-      _lineIndex = restore;
+      nextLineIndex = restore;
     } else if (autoSelect && bestLineIndices.length > 1) {
       final candidates = [
-        for (final index in bestLineIndices) _playUrls[index],
+        for (final index in bestLineIndices) nextPlayUrls[index],
       ];
       final fastest = await NetworkDiagnoseService.findFastestLine(candidates);
+      if (!_isCurrentQualityOperation(qualityOperationRevision)) return false;
       final candidateIndex = fastest.clamp(0, candidates.length - 1).toInt();
-      _lineIndex = bestLineIndices[candidateIndex];
+      nextLineIndex = bestLineIndices[candidateIndex];
     }
+    if (!_isCurrentQualityOperation(qualityOperationRevision)) return false;
+    _playUrls = nextPlayUrls;
+    _playHeaders = playUrl.headers;
+    _lineIndex = nextLineIndex;
+    _restoreLineIndex = null;
     lineInfo.value = "线路${_lineIndex + 1}";
+    _acceptActualQuality(
+      requestedQuality: requestedQuality.quality,
+      actualQuality: playUrl.actualQuality,
+    );
+    return true;
   }
 
   Future<void> _openCurrentUrl({
@@ -1294,6 +1375,7 @@ class MultiRoomPlayerController extends GetxController {
     if (index < 0 || index >= _qualities.length) {
       return Future<void>.value();
     }
+    final selectedQuality = _qualities[index];
     if (userInitiated) {
       _userQualityIndex = index;
       qualityLocked.value = true;
@@ -1303,22 +1385,46 @@ class MultiRoomPlayerController extends GetxController {
         return Future<void>.value();
       }
     }
+    final qualityOperationRevision = ++_qualityOperationRevision;
     return _enqueue(() async {
-      if (index == _qualityIndex) {
+      if (!_isCurrentQualityOperation(qualityOperationRevision) ||
+          _qualities.isEmpty) {
         return;
       }
-      _qualityIndex = index;
-      qualityInfo.value = _qualities[index].quality;
+      // A refresh can replace the available qualities while this operation
+      // waits in the mutation queue. Keep the user's nearest valid choice.
+      final resolvedIndex = resolveMultiRoomQualityIndex(
+        requestedQuality: selectedQuality,
+        requestedIndex: index,
+        availableQualities: _qualities,
+      )!;
+      if (userInitiated) _userQualityIndex = resolvedIndex;
+      if (resolvedIndex == _qualityIndex && _playUrls.isNotEmpty) return;
+      _qualityIndex = resolvedIndex;
+      _showRequestedQualityUntilResolved();
       final roomDetail = detail.value;
-      if (roomDetail == null) return;
+      if (roomDetail == null || !liveStatus.value) return;
       try {
-        await _loadPlayUrls(roomDetail);
-        if (_disposed) return;
+        final urlsLoaded = await _loadPlayUrls(
+          roomDetail,
+          qualityOperationRevision: qualityOperationRevision,
+        );
+        if (!urlsLoaded ||
+            !_isCurrentQualityOperation(qualityOperationRevision)) {
+          return;
+        }
         await _openCurrentUrl(
           userOperation:
               userInitiated ? LiveLinkEventType.qualityChangedByUser : null,
         );
+        if (!_operationCancelled &&
+            configuration.enableDanmaku &&
+            liveStatus.value &&
+            !_danmakuActive) {
+          unawaited(_startDanmaku(roomDetail));
+        }
       } catch (e) {
+        if (!_isCurrentQualityOperation(qualityOperationRevision)) return;
         Log.e(
             "多开切换清晰度失败：${item.site.id}/${item.roomId} $e", StackTrace.current);
         errorText.value = e.toString();

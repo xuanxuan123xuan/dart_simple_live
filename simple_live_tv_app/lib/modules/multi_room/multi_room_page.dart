@@ -197,8 +197,8 @@ class _MultiRoomTile extends StatelessWidget {
                 child: Obx(
                   () => Text(
                     [
-                      if (controller.qualityInfo.value.isNotEmpty)
-                        controller.qualityInfo.value,
+                      if (controller.qualityDisplayInfo.isNotEmpty)
+                        controller.qualityDisplayInfo,
                       if (controller.lineInfo.value.isNotEmpty)
                         controller.lineInfo.value,
                       controller.muted.value ? "静音" : "有声",

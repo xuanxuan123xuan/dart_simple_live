@@ -23,6 +23,7 @@ import 'package:simple_live_tv_app/modules/live_room/player/player_controller.da
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
+import 'package:simple_live_tv_app/services/live_play_quality_presentation.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -73,6 +74,19 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   /// 当前清晰度
   var currentQuality = -1;
   var currentQualityInfo = "".obs;
+  final _qualityMismatchTracker = LivePlayQualityMismatchTracker();
+
+  String get qualityMenuTitle {
+    if (currentQuality < 0 || currentQuality >= qualites.length) {
+      return "清晰度";
+    }
+    final requestedQuality = qualites[currentQuality].quality;
+    final actualQuality = currentQualityInfo.value;
+    if (actualQuality.isEmpty || actualQuality == requestedQuality) {
+      return "清晰度";
+    }
+    return "清晰度（请求：$requestedQuality / 实际：$actualQuality）";
+  }
 
   /// 线路数据
   RxList<String> playUrls = RxList<String>();
@@ -771,6 +785,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     playbackLoadError.value = "";
     qualites.clear();
     currentQuality = -1;
+    currentQualityInfo.value = "";
+    _qualityMismatchTracker.reset();
     playUrls.clear();
     playHeaders = null;
     currentLineIndex = -1;
@@ -848,6 +864,29 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     );
   }
 
+  Future<void> selectQuality(int qualityIndex) async {
+    if (_disposed || qualityIndex < 0 || qualityIndex >= qualites.length) {
+      return;
+    }
+    if (currentQuality != qualityIndex) {
+      currentQuality = qualityIndex;
+      _qualityMismatchTracker.reset();
+    }
+    final requestDetail = detail.value;
+    if (requestDetail == null) return;
+    _resetAutomaticRecovery();
+    invalidatePlaybackGeneration();
+    playbackLoadError.value = "";
+    await _loadPlayUrl(
+      requestSite: site,
+      requestRoomId: roomId,
+      requestDetail: requestDetail,
+      qualityIndex: qualityIndex,
+      roomGeneration: _roomGeneration,
+      loadGeneration: _loadGeneration,
+    );
+  }
+
   Future<void> _loadPlayUrl({
     required Site requestSite,
     required String requestRoomId,
@@ -867,7 +906,6 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     final quality = qualites[qualityIndex];
     playUrls.clear();
     playHeaders = null;
-    currentQualityInfo.value = quality.quality;
     currentLineInfo.value = "";
     currentLineIndex = -1;
     try {
@@ -884,6 +922,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         playbackLoadError.value = "无法读取播放地址，请稍后重试";
         return;
       }
+      _applyActualQuality(
+        requestedQuality: quality,
+        actualQuality: playUrl.actualQuality,
+      );
       playUrls.value = playUrl.urls;
       playHeaders = playUrl.headers;
       currentLineIndex = 0;
@@ -918,7 +960,6 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     if (!_isCurrentLoad(roomGeneration, loadGeneration)) return false;
     final requestGeneration = ++_urlRequestGeneration;
     final quality = qualites[qualityIndex];
-    currentQualityInfo.value = quality.quality;
     final playUrl = await requestSite.liveSite
         .getPlayUrls(detail: requestDetail, quality: quality);
     if (!_isCurrentUrlRequest(
@@ -934,6 +975,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       }
       return false;
     }
+    _applyActualQuality(
+      requestedQuality: quality,
+      actualQuality: playUrl.actualQuality,
+    );
     playUrls.value = playUrl.urls;
     playHeaders = playUrl.headers;
     if (currentLineIndex < 0) {
@@ -943,6 +988,19 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     }
     currentLineInfo.value = "线路${currentLineIndex + 1}";
     return true;
+  }
+
+  void _applyActualQuality({
+    required LivePlayQuality requestedQuality,
+    required LivePlayQuality? actualQuality,
+  }) {
+    final presentation = LivePlayQualityPresentation(
+      requestedQuality: requestedQuality,
+      actualQuality: actualQuality,
+    );
+    currentQualityInfo.value = presentation.display;
+    final notice = _qualityMismatchTracker.update(presentation);
+    if (notice != null) SmartDialog.showToast(notice);
   }
 
   @protected
@@ -1448,6 +1506,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     playbackLoadError.value = "";
     online.value = 0;
     pageLoadding.value = false;
+    qualites.clear();
+    currentQuality = -1;
+    currentQualityInfo.value = "";
+    _qualityMismatchTracker.reset();
     CurrentRoomService.instance.setRoom(site, roomId);
     followed.value = DBService.instance.getFollowExist("${site.id}_$roomId");
     specialFollowed.value = DBService.instance.followBox

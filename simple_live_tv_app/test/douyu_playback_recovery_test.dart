@@ -54,9 +54,10 @@ class _TestFollowService extends FollowUserService {
 }
 
 class _ScriptedSite extends LiveSite {
-  _ScriptedSite({this.urlCount = 2});
+  _ScriptedSite({this.urlCount = 2, this.qualities});
 
   final int urlCount;
+  final List<LivePlayQuality>? qualities;
   int detailCalls = 0;
   int qualityCalls = 0;
   int urlCalls = 0;
@@ -65,7 +66,12 @@ class _ScriptedSite extends LiveSite {
   Future<LiveRoomDetail> Function(String roomId, int call)? detailResponse;
   Future<List<LivePlayQuality>> Function(LiveRoomDetail detail, int call)?
       qualityResponse;
-  Future<LivePlayUrl> Function(LiveRoomDetail detail, int call)? urlResponse;
+  Future<LivePlayUrl> Function(
+    LiveRoomDetail detail,
+    LivePlayQuality quality,
+    int call,
+  )? urlResponse;
+  final List<LivePlayQuality> requestedQualities = [];
 
   @override
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) {
@@ -80,7 +86,7 @@ class _ScriptedSite extends LiveSite {
   }) {
     final call = ++qualityCalls;
     return qualityResponse?.call(detail, call) ??
-        Future.value([LivePlayQuality(quality: 'HD', data: 1)]);
+        Future.value(qualities ?? [LivePlayQuality(quality: 'HD', data: 1)]);
   }
 
   @override
@@ -89,7 +95,8 @@ class _ScriptedSite extends LiveSite {
     required LivePlayQuality quality,
   }) {
     final call = ++urlCalls;
-    return urlResponse?.call(detail, call) ??
+    requestedQualities.add(quality);
+    return urlResponse?.call(detail, quality, call) ??
         Future.value(_urls(detail.title, call, urlCount));
   }
 
@@ -119,11 +126,18 @@ LiveRoomDetail _detail(
       url: '',
     );
 
-LivePlayUrl _urls(String title, int call, int count) => LivePlayUrl(
+LivePlayUrl _urls(
+  String title,
+  int call,
+  int count, {
+  LivePlayQuality? actualQuality,
+}) =>
+    LivePlayUrl(
       urls: [
         for (var line = 1; line <= count; line++)
           'https://test/$title/$call/$line'
       ],
+      actualQuality: actualQuality,
     );
 
 Site _site(String id, LiveSite liveSite) => Site(
@@ -304,6 +318,80 @@ void main() {
     expect(controller.liveStatus.value, isFalse);
     expect(liveSite.statusCalls, 0);
     expect(liveSite.urlCalls, 1);
+    expect(controller.currentQualityInfo.value, 'HD');
+  });
+
+  test('TV shows the actual Douyu quality and keeps request index on retry',
+      () async {
+    AppSettingsController.instance.qualityLevel.value = 2;
+    final requestedQuality = LivePlayQuality(quality: '原画', data: 0);
+    final fallbackQuality = LivePlayQuality(quality: '蓝光4M', data: 4);
+    final liveSite = _ScriptedSite(
+      qualities: [
+        requestedQuality,
+        LivePlayQuality(quality: '高清', data: 1),
+      ],
+    )..urlResponse = (detail, quality, call) => Future.value(
+          _urls(
+            detail.title,
+            call,
+            1,
+            actualQuality: quality.data == 0 ? fallbackQuality : quality,
+          ),
+        );
+    final controller = _TestRoomController(
+      pSite: _site(Constant.kDouyu, liveSite),
+      pRoomId: '1',
+    );
+
+    await controller.loadData();
+    expect(controller.currentQuality, 0);
+    expect(controller.currentQualityInfo.value, '蓝光4M');
+    expect(controller.qualityMenuTitle, contains('请求：原画 / 实际：蓝光4M'));
+
+    await controller.mediaError('refresh URLs');
+    expect(controller.currentQuality, 0);
+    expect(liveSite.requestedQualities.last.data, 0);
+    expect(controller.currentQualityInfo.value, '蓝光4M');
+
+    final pending = Completer<LivePlayUrl>();
+    liveSite.urlResponse = (detail, quality, call) => pending.future;
+    final recovering = controller.setPlayer(refreshUrls: true);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.currentQualityInfo.value, '蓝光4M');
+    pending.complete(_urls('recovered', 1, 1, actualQuality: requestedQuality));
+    await recovering;
+    expect(controller.currentQuality, 0);
+    expect(controller.currentQualityInfo.value, '原画');
+    expect(controller.qualityMenuTitle, '清晰度');
+  });
+
+  test('TV displays an unconfirmed Douyu quality and preserves the request',
+      () async {
+    AppSettingsController.instance.qualityLevel.value = 2;
+    final requestedQuality = LivePlayQuality(quality: '蓝光8M', data: 0);
+    final liveSite = _ScriptedSite(
+      qualities: [requestedQuality],
+    )..urlResponse = (detail, quality, call) => Future.value(
+          _urls(
+            detail.title,
+            call,
+            1,
+            actualQuality: LivePlayQuality(
+              quality: '清晰度未确认',
+              data: null,
+            ),
+          ),
+        );
+    final controller = _TestRoomController(
+      pSite: _site(Constant.kDouyu, liveSite),
+      pRoomId: '1',
+    );
+
+    await controller.loadData();
+    expect(controller.currentQuality, 0);
+    expect(controller.currentQualityInfo.value, '清晰度未确认');
+    expect(controller.qualityMenuTitle, contains('请求：蓝光8M / 实际：清晰度未确认'));
   });
 
   test('refresh rejects old media events and old detail/quality responses',
@@ -338,7 +426,7 @@ void main() {
       () async {
     final liveSite = _ScriptedSite(urlCount: 1);
     final staleCdn = Completer<LivePlayUrl>();
-    liveSite.urlResponse = (detail, call) => call == 2
+    liveSite.urlResponse = (detail, quality, call) => call == 2
         ? staleCdn.future
         : Future.value(_urls(detail.title, call, 1));
     final controller = _TestRoomController(
@@ -485,15 +573,23 @@ void main() {
     expect(controller.detail.value!.roomId, 'middle');
 
     final pendingUrl = Completer<LivePlayUrl>();
-    middleSite.urlResponse = (detail, call) => pendingUrl.future;
+    middleSite.urlResponse = (detail, quality, call) => pendingUrl.future;
     final pendingLoad = controller.loadData();
     await Future<void>.delayed(Duration.zero);
     final currentSite = _ScriptedSite(urlCount: 1);
     await controller.resetRoom(_site(Constant.kHuya, currentSite), 'current');
-    pendingUrl.complete(_urls('stale-url', 9, 1));
+    pendingUrl.complete(
+      _urls(
+        'stale-url',
+        9,
+        1,
+        actualQuality: LivePlayQuality(quality: 'stale quality', data: null),
+      ),
+    );
     await pendingLoad;
     expect(controller.detail.value!.roomId, 'current');
     expect(controller.playUrls.single, isNot(contains('stale-url')));
+    expect(controller.currentQualityInfo.value, 'HD');
   });
 
   test('resetRoom and onClose reject late live-status responses', () async {

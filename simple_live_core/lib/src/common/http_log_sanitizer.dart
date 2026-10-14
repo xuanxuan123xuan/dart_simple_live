@@ -6,7 +6,7 @@ class HttpLogSanitizer {
   const HttpLogSanitizer._();
 
   static final RegExp _sensitiveTextPattern = RegExp(
-    r'(password|secret|token|session|csrf|signature|a[_-]?bogus|ttwid|sid[_-]?guard)\s*[:=]\s*([^;,\s&]+)',
+    r'(password|secret|token|session|csrf|signature|auth|enc[_-]?data|ltp0|a[_-]?bogus|ttwid|sid[_-]?guard)\s*[:=]\s*([^;,\s&]+)',
     caseSensitive: false,
   );
 
@@ -25,6 +25,9 @@ class HttpLogSanitizer {
         normalized.contains('session') ||
         normalized.contains('csrf') ||
         normalized.contains('signature') ||
+        normalized == 'auth' ||
+        normalized == 'encdata' ||
+        normalized == 'ltp0' ||
         normalized == 'xs' ||
         normalized == 'xt' ||
         normalized == 'xsign' ||
