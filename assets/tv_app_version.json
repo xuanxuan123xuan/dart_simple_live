@@ -1,7 +1,7 @@
 {
-    "version": "1.7.6",
-    "version_num": 10706,
-    "version_desc": "- 完善抖音直播弹幕本地表情显示，内置 141 个抖音平台表情资源\n- TV 端关注列表改为分页加载，避免大量关注一次性渲染导致闪退\n- 关注刷新加入冷却和任务互斥，避免连续刷新叠加大量网络任务\n- 同步关注列表改为批量写入，并避免日志打印完整大 JSON\n- NetImage 和弹幕画布支持本地 asset 表情资源",
-    "prerelease": false,
-    "download_url": "https://github.com/June6699/dart_simple_live/releases/tag/tv_v1.7.6"
+  "version": "26.4.1",
+  "version_num": 26401,
+  "version_desc": "新增小红书直播播放与链接发现\n支持抖音三级分类与双屏直播布局\n快手验证码可在应用内打开\n新增后台播放常亮指南\n斗鱼新增账号凭据配置\n哔哩哔哩支持高效视频编码播放\n直播聊天消息改为响应式刷新\n自动切换直播间选择更准确\n恢复斗鱼认证播放并上报清晰度\n修复抖音分享锚点与空房间重试\n修复快手弹幕连接与匿名播放\n修复虎牙搜索重复与苹果平板导航\niOS 支持后台媒体控制\nAndroid 后台媒体控制并桥接播放器\nWindows 无边框全屏与中文安装\nLinux 安装包内置脚本引擎桥接",
+  "download_url": "https://github.com/xuanxuan123xuan/dart_simple_live/releases/tag/tv_v26.4.1-dev",
+  "prerelease": false
 }
