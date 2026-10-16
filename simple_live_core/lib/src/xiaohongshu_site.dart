@@ -36,6 +36,15 @@ abstract interface class XiaohongshuHostRequestBridge {
   });
 }
 
+/// A local WebView prerequisite failure with a safe, app-authored message.
+class XiaohongshuWebSessionUnavailableError extends CoreError {
+  XiaohongshuWebSessionUnavailableError.webView2Runtime()
+      : super(
+          '未检测到 Microsoft Edge WebView2 Runtime，请安装后重试',
+          kind: CoreErrorKind.response,
+        );
+}
+
 class XiaohongshuStreamVariant {
   XiaohongshuStreamVariant({
     required this.url,
@@ -442,10 +451,19 @@ class XiaohongshuSite implements LiveSite {
     XiaohongshuRoomSnapshot requestedRoom,
     String targetHostId,
   ) async {
-    final profile = await _requestHostProfile(
-      hostId: targetHostId,
-      roomId: requestedRoom.roomId,
-    );
+    late final dynamic profile;
+    try {
+      profile = await _requestHostProfile(
+        hostId: targetHostId,
+        roomId: requestedRoom.roomId,
+      );
+    } on XiaohongshuWebSessionUnavailableError catch (error) {
+      return _unknownSnapshot(
+        source: requestedRoom,
+        hostId: targetHostId,
+        statusMessage: error.message,
+      );
+    }
     if (profile == null) {
       return _unknownSnapshot(
         source: requestedRoom,
@@ -554,6 +572,7 @@ class XiaohongshuSite implements LiveSite {
       return _responseData(response);
     } catch (error) {
       if (error is CoreCancelledError) rethrow;
+      if (error is XiaohongshuWebSessionUnavailableError) rethrow;
       if (error is! CoreError || error.statusCode != 406) return null;
       return _requestSignedHostProfile(hostId: hostId, roomId: roomId);
     }
@@ -571,6 +590,7 @@ class XiaohongshuSite implements LiveSite {
       return _responseData(response);
     } catch (error) {
       if (error is CoreCancelledError) rethrow;
+      if (error is XiaohongshuWebSessionUnavailableError) rethrow;
       return null;
     }
   }

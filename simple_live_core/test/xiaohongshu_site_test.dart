@@ -550,8 +550,31 @@ void main() {
           .getRoomDetail(roomId: oldRoomId, hostId: oldHostId);
       expect(room.resolvedLiveStatus, LiveStatusState.unknown);
       expect((room.data as XiaohongshuRoomSnapshot).streams, isEmpty);
+      expect(room.data.statusMessage, isNot(contains('timeout')));
       expect(bridge.hostCalls, 1);
       expect(http.profileRequests, hasLength(1));
+      expect(http.roomRequests, hasLength(1));
+    } finally {
+      http.remove();
+    }
+  });
+  test('local WebView2 prerequisite message survives signed bridge failure',
+      () async {
+    final http = _XhsHttpFixture(
+      rooms: {oldRoomId: roomHtml(oldRoomId, hostId: oldHostId, live: false)},
+      profileStatusCode: 406,
+    )..install();
+    final bridge = _HostBridge(
+      null,
+      error: XiaohongshuWebSessionUnavailableError.webView2Runtime(),
+    );
+    try {
+      final room = await XiaohongshuSite(requestBridge: bridge)
+          .getRoomDetail(roomId: oldRoomId, hostId: oldHostId);
+      expect(room.resolvedLiveStatus, LiveStatusState.unknown);
+      expect(room.data.statusMessage,
+          '未检测到 Microsoft Edge WebView2 Runtime，请安装后重试');
+      expect(bridge.hostCalls, 1);
       expect(http.roomRequests, hasLength(1));
     } finally {
       http.remove();
