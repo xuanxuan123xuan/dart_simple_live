@@ -29,6 +29,13 @@ abstract interface class XiaohongshuRequestBridge {
   });
 }
 
+abstract interface class XiaohongshuHostRequestBridge {
+  Future<dynamic> requestHost({
+    required String hostId,
+    required String roomId,
+  });
+}
+
 class XiaohongshuStreamVariant {
   XiaohongshuStreamVariant({
     required this.url,
@@ -62,6 +69,8 @@ class XiaohongshuRoomSnapshot {
     required this.roomStatus,
     required this.streams,
     required this.url,
+    this.hostId,
+    this.statusMessage,
   });
 
   final String roomId;
@@ -75,6 +84,8 @@ class XiaohongshuRoomSnapshot {
   final int roomStatus;
   final List<XiaohongshuStreamVariant> streams;
   final String url;
+  final String? hostId;
+  final String? statusMessage;
 
   LiveStatusState get liveStatusState {
     if (live) return LiveStatusState.live;
@@ -89,6 +100,7 @@ class XiaohongshuSite implements LiveSite {
   XiaohongshuSite({this.requestBridge});
 
   static const String webBaseUrl = 'https://www.xiaohongshu.com';
+  static const String edithBaseUrl = 'https://edith.xiaohongshu.com';
   static const String liveRoomBaseUrl = 'https://live-room.xiaohongshu.com';
   static const String defaultUserAgent =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
@@ -100,6 +112,7 @@ class XiaohongshuSite implements LiveSite {
       '/api/sns/red/live/h5/v1/room/current_room_info';
   static const String statusPath =
       '/api/sns/red/live/h5/v1/core/current_live_status';
+  static const String hostProfilePath = '/api/sns/web/v1/user/hover_card';
 
   static const aggregatePath =
       '/api/sns/red/live/h5/v1/room/aggregate_business_info';
@@ -120,64 +133,77 @@ class XiaohongshuSite implements LiveSite {
   LiveDanmaku getDanmaku() => XiaohongshuDanmaku();
 
   @override
-  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
+  Future<LiveRoomDetail> getRoomDetail({
+    required String roomId,
+    String? hostId,
+  }) async {
     final normalized = normalizeRoomId(roomId);
     if (normalized == null) {
       throw CoreError('小红书直播间号无效', kind: CoreErrorKind.response);
     }
-    try {
-      final html = await HttpClient.instance.getText(
-        '$webBaseUrl/livestream/$normalized',
-        header: {..._headers(), 'xy-common-params': 'platform=iOS'},
-        redactResponse: true,
-      );
-      return _toDetail(parseRoomSnapshot(html, roomId: normalized));
-    } catch (error) {
-      if (requestBridge == null) rethrow;
-      final response = await _requestH5(roomInfoPath, {'roomId': normalized});
-      final data = Map<String, dynamic>.from(_responseData(response));
-      try {
-        final status =
-            _responseData(await _requestH5(statusPath, {'roomId': normalized}));
-        if (status['status'] != null) {
-          final value = int.tryParse('${status['status']}');
-          data['liveStatus'] = value == 2
-              ? 'success'
-              : (value == 0 || value == 1 || value == 3 ? 'end' : 'unknown');
-        }
-      } catch (_) {
-        // Metadata and playback remain available when status cannot be signed.
-      }
-      return _toDetail(parseRoomSnapshotFromMap(data, roomId: normalized));
+
+    final suppliedHostId = _normalizeHostId(hostId);
+    final hasHostHint = hostId?.trim().isNotEmpty ?? false;
+    if (hasHostHint && suppliedHostId == null) {
+      return _toDetail(_unknownSnapshot(
+        roomId: normalized,
+        statusMessage: '主播标识无效，无法确认当前直播状态',
+      ));
     }
+
+    late final XiaohongshuRoomSnapshot requestedRoom;
+    try {
+      requestedRoom = await _loadRoomSnapshot(normalized);
+    } catch (error) {
+      if (error is CoreCancelledError) rethrow;
+      if (suppliedHostId == null) rethrow;
+      final empty = _unknownSnapshot(
+        roomId: normalized,
+        hostId: suppliedHostId,
+        statusMessage: '原直播间信息暂不可用，无法确认主播当前状态',
+      );
+      return _toDetail(await _resolveCurrentHostRoom(empty, suppliedHostId));
+    }
+
+    if (suppliedHostId != null &&
+        requestedRoom.hostId != null &&
+        requestedRoom.hostId != suppliedHostId) {
+      return _toDetail(_unknownSnapshot(
+        source: requestedRoom,
+        hostId: suppliedHostId,
+        statusMessage: '直播链接与主播标识不匹配，无法确认当前直播场次',
+      ));
+    }
+
+    if (requestedRoom.live) {
+      if (suppliedHostId == null) return _toDetail(requestedRoom);
+      if (requestedRoom.hostId == suppliedHostId) {
+        return _toDetail(requestedRoom);
+      }
+    }
+
+    final targetHostId = suppliedHostId ?? requestedRoom.hostId;
+    if (targetHostId == null) {
+      return _toDetail(_unknownSnapshot(
+        source: requestedRoom,
+        statusMessage: '旧场次已结束，无法确认主播当前状态，请重新导入直播链接',
+      ));
+    }
+    return _toDetail(
+        await _resolveCurrentHostRoom(requestedRoom, targetHostId));
   }
 
   @override
-  Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
+  Future<LiveStatusState> getLiveStatusState({
+    required String roomId,
+    String? hostId,
+  }) async {
     try {
-      final detail = await getRoomDetail(roomId: roomId);
-      if (detail.resolvedLiveStatus != LiveStatusState.unknown) {
-        return detail.resolvedLiveStatus;
-      }
+      final detail = await getRoomDetail(roomId: roomId, hostId: hostId);
+      return detail.resolvedLiveStatus;
     } catch (_) {
-      // The signed status endpoint may still work after a failed SSR request.
-    }
-    final normalized = normalizeRoomId(roomId);
-    if (normalized == null || requestBridge == null) {
       return LiveStatusState.unknown;
     }
-    try {
-      final data =
-          _responseData(await _requestH5(statusPath, {'roomId': normalized}));
-      final status = data['status'];
-      if (status == null) return LiveStatusState.unknown;
-      final value = int.tryParse(status.toString());
-      if (value == 2) return LiveStatusState.live;
-      if (value == 0 || value == 1 || value == 3) {
-        return LiveStatusState.offline;
-      }
-    } catch (_) {}
-    return LiveStatusState.unknown;
   }
 
   @override
@@ -377,6 +403,268 @@ class XiaohongshuSite implements LiveSite {
     return RegExp(r'^\d{8,32}$').hasMatch(id) ? id : null;
   }
 
+  static String? _normalizeHostId(String? value) {
+    final id = value?.trim().toLowerCase() ?? '';
+    return RegExp(r'^[a-f0-9]{24}$').hasMatch(id) ? id : null;
+  }
+
+  Future<XiaohongshuRoomSnapshot> _loadRoomSnapshot(String roomId) async {
+    try {
+      final html = await HttpClient.instance.getText(
+        '$webBaseUrl/livestream/$roomId',
+        header: {..._headers(), 'xy-common-params': 'platform=iOS'},
+        redactResponse: true,
+      );
+      return parseRoomSnapshot(html, roomId: roomId);
+    } catch (error) {
+      if (error is CoreCancelledError) rethrow;
+      if (requestBridge == null) rethrow;
+      final response = await _requestH5(roomInfoPath, {'roomId': roomId});
+      final data = Map<String, dynamic>.from(_responseData(response));
+      try {
+        final status =
+            _responseData(await _requestH5(statusPath, {'roomId': roomId}));
+        if (status['status'] != null) {
+          final value = int.tryParse('${status['status']}');
+          data['liveStatus'] = value == 2
+              ? 'success'
+              : (value == 0 || value == 1 || value == 3 ? 'end' : 'unknown');
+        }
+      } catch (error) {
+        if (error is CoreCancelledError) rethrow;
+        // Metadata and playback remain available when status cannot be signed.
+      }
+      return parseRoomSnapshotFromMap(data, roomId: roomId);
+    }
+  }
+
+  Future<XiaohongshuRoomSnapshot> _resolveCurrentHostRoom(
+    XiaohongshuRoomSnapshot requestedRoom,
+    String targetHostId,
+  ) async {
+    final profile = await _requestHostProfile(
+      hostId: targetHostId,
+      roomId: requestedRoom.roomId,
+    );
+    if (profile == null) {
+      return _unknownSnapshot(
+        source: requestedRoom,
+        hostId: targetHostId,
+        statusMessage: '无法确认主播当前状态，请检查小红书登录会话或稍后重试',
+      );
+    }
+
+    final profileIdentity = _profileIdentity(profile);
+    if (profileIdentity != null && profileIdentity != targetHostId) {
+      return _unknownSnapshot(
+        source: requestedRoom,
+        hostId: targetHostId,
+        statusMessage: '主播信息与直播链接不匹配，无法确认当前直播场次',
+      );
+    }
+
+    final live = _profileLiveStatus(profile);
+    if (live == false) {
+      if (requestedRoom.live) {
+        return _unknownSnapshot(
+          source: requestedRoom,
+          hostId: targetHostId,
+          statusMessage: '直播间与主播当前状态不一致，无法确认直播场次',
+        );
+      }
+      return _offlineSnapshot(
+        requestedRoom,
+        hostId: targetHostId,
+        statusMessage: '主播当前未开播',
+      );
+    }
+    if (live != true) {
+      return _unknownSnapshot(
+        source: requestedRoom,
+        hostId: targetHostId,
+        statusMessage: '主播直播状态暂不可确认，请稍后重试',
+      );
+    }
+
+    final currentRoomId = normalizeRoomId(_profileRoomId(profile) ?? '');
+    if (currentRoomId == null) {
+      return _unknownSnapshot(
+        source: requestedRoom,
+        hostId: targetHostId,
+        statusMessage: '主播正在直播，但无法确认当前直播间',
+      );
+    }
+
+    late final XiaohongshuRoomSnapshot currentRoom;
+    try {
+      currentRoom = await _loadRoomSnapshot(currentRoomId);
+    } catch (error) {
+      if (error is CoreCancelledError) rethrow;
+      return _unknownSnapshot(
+        source: requestedRoom,
+        hostId: targetHostId,
+        statusMessage: '主播当前直播间信息暂不可用，请稍后重试',
+      );
+    }
+    if (currentRoom.hostId != targetHostId) {
+      return _unknownSnapshot(
+        source: requestedRoom,
+        hostId: targetHostId,
+        statusMessage: '当前直播间的主播标识不匹配，无法安全切换场次',
+      );
+    }
+    if (!currentRoom.live) {
+      return _unknownSnapshot(
+        source: requestedRoom,
+        hostId: targetHostId,
+        statusMessage: '主播直播状态暂不可确认，请稍后重试',
+      );
+    }
+    return currentRoom;
+  }
+
+  Future<dynamic> _requestHostProfile({
+    required String hostId,
+    required String roomId,
+  }) async {
+    const query = <String, dynamic>{
+      'image_formats': 'jpg,webp',
+      'xsec_source': 'pc_hovercard',
+      'xsec_token': '',
+    };
+    final parameters = <String, dynamic>{
+      'target_user_id': hostId,
+      ...query,
+    };
+    try {
+      final response = await HttpClient.instance.getJson(
+        '$edithBaseUrl$hostProfilePath',
+        queryParameters: parameters,
+        header: _headers(),
+        redactResponse: true,
+      );
+      if (response is Map && response['success'] == false) {
+        // HTTP 200 with code -101 means the anonymous request lacks a session.
+        // A configured signed session may still be able to read the profile.
+        if ('${response['code']}' == '-101') {
+          return _requestSignedHostProfile(hostId: hostId, roomId: roomId);
+        }
+        return null;
+      }
+      return _responseData(response);
+    } catch (error) {
+      if (error is CoreCancelledError) rethrow;
+      if (error is! CoreError || error.statusCode != 406) return null;
+      return _requestSignedHostProfile(hostId: hostId, roomId: roomId);
+    }
+  }
+
+  Future<dynamic> _requestSignedHostProfile({
+    required String hostId,
+    required String roomId,
+  }) async {
+    final bridge = requestBridge;
+    if (bridge is! XiaohongshuHostRequestBridge) return null;
+    try {
+      final response = await (bridge as XiaohongshuHostRequestBridge)
+          .requestHost(hostId: hostId, roomId: roomId);
+      return _responseData(response);
+    } catch (error) {
+      if (error is CoreCancelledError) rethrow;
+      return null;
+    }
+  }
+
+  static String? _profileIdentity(dynamic profile) {
+    final data = _asMap(profile) ?? const <dynamic, dynamic>{};
+    final basicInfo = _asMap(data['basic_info']) ??
+        _asMap(data['basicInfo']) ??
+        const <dynamic, dynamic>{};
+    for (final candidate in [
+      basicInfo['user_id'],
+      basicInfo['userId'],
+      basicInfo['target_user_id'],
+      basicInfo['targetUserId'],
+      data['user_id'],
+      data['userId'],
+      data['target_user_id'],
+      data['targetUserId'],
+    ]) {
+      final raw = _text(candidate);
+      if (raw.isNotEmpty) return _normalizeHostId(raw) ?? '';
+    }
+    return null;
+  }
+
+  static bool? _profileLiveStatus(dynamic profile) {
+    final live = _profileLive(profile);
+    final raw = live?['live_status'] ?? live?['liveStatus'];
+    if (raw == null) return null;
+    final value = int.tryParse(_text(raw));
+    if (value == 2) return true;
+    if (value == 0 || value == 1 || value == 3) return false;
+    return null;
+  }
+
+  static String? _profileRoomId(dynamic profile) {
+    final live = _profileLive(profile);
+    if (live == null) return null;
+    for (final candidate in [live['room_id'], live['roomId']]) {
+      final roomId = _text(candidate);
+      if (roomId.isNotEmpty) return roomId;
+    }
+    return null;
+  }
+
+  static Map<dynamic, dynamic>? _profileLive(dynamic profile) {
+    final data = _asMap(profile);
+    final basicInfo = _asMap(data?['basic_info']) ?? _asMap(data?['basicInfo']);
+    return _asMap(basicInfo?['live']);
+  }
+
+  static XiaohongshuRoomSnapshot _offlineSnapshot(
+    XiaohongshuRoomSnapshot source, {
+    required String hostId,
+    required String statusMessage,
+  }) =>
+      XiaohongshuRoomSnapshot(
+        roomId: source.roomId,
+        title: source.title,
+        cover: source.cover,
+        userName: source.userName,
+        userAvatar: source.userAvatar,
+        online: source.online,
+        live: false,
+        liveStatus: 'end',
+        roomStatus: 0,
+        streams: const [],
+        url: _roomUrl(source.roomId, hostId),
+        hostId: hostId,
+        statusMessage: statusMessage,
+      );
+
+  static XiaohongshuRoomSnapshot _unknownSnapshot({
+    XiaohongshuRoomSnapshot? source,
+    String? roomId,
+    String? hostId,
+    required String statusMessage,
+  }) =>
+      XiaohongshuRoomSnapshot(
+        roomId: source?.roomId ?? roomId ?? '',
+        title: source?.title ?? '',
+        cover: source?.cover ?? '',
+        userName: source?.userName ?? '',
+        userAvatar: source?.userAvatar ?? '',
+        online: source?.online ?? 0,
+        live: false,
+        liveStatus: 'unknown',
+        roomStatus: -1,
+        streams: const [],
+        url: _roomUrl(source?.roomId ?? roomId ?? '', hostId ?? source?.hostId),
+        hostId: hostId ?? source?.hostId,
+        statusMessage: statusMessage,
+      );
+
   static XiaohongshuRoomSnapshot parseRoomSnapshot(
     String html, {
     required String roomId,
@@ -393,47 +681,74 @@ class XiaohongshuSite implements LiveSite {
     required String roomId,
   }) {
     final root = source is Map ? source : const <dynamic, dynamic>{};
-    final liveStream = _findMap(root, 'liveStream') ?? root;
-    final roomData = _asMap(liveStream['roomData']) ?? liveStream;
+    final liveStream = _asMap(root['liveStream']) ?? root;
+    final roomData = _asMap(liveStream['roomData']) ??
+        _asMap(root['roomData']) ??
+        liveStream;
     final roomInfo = _asMap(roomData['roomInfo']) ??
-        _asMap(_findMap(root, 'roomInfo')) ??
+        _asMap(liveStream['roomInfo']) ??
+        _asMap(root['roomInfo']) ??
         const <dynamic, dynamic>{};
     if (roomInfo.isEmpty) {
       throw CoreError('小红书房间响应不完整', kind: CoreErrorKind.response);
     }
     final host = _asMap(roomData['hostInfo']) ??
         _asMap(roomInfo['hostInfo']) ??
-        _asMap(_findMap(root, 'hostInfo')) ??
+        _asMap(liveStream['hostInfo']) ??
+        _asMap(root['hostInfo']) ??
         const <dynamic, dynamic>{};
     final statusText = (roomData['liveStatus'] ??
                 roomInfo['liveStatus'] ??
-                _findValue(root, 'liveStatus'))
+                liveStream['liveStatus'])
             ?.toString()
             .toLowerCase() ??
         '';
     final rawStatus = roomInfo['status'] ?? roomData['status'];
     final roomStatus = rawStatus == null ? -1 : _int(rawStatus);
-    final streams = _parseStreams(roomData['pullConfig'] ??
-        roomInfo['pullConfig'] ??
-        _findValue(root, 'pullConfig'));
+    final streams =
+        _parseStreams(roomData['pullConfig'] ?? roomInfo['pullConfig']);
+    final deeplink = Uri.tryParse(_text(roomInfo['deeplink']));
+    final deeplinkHostId = deeplink?.queryParameters['host_id'] ??
+        deeplink?.queryParameters['hostId'];
+    final hostId = _firstHostId([
+      host['user_id'],
+      host['userId'],
+      host['host_id'],
+      host['hostId'],
+      host['id'],
+      roomInfo['host_id'],
+      roomInfo['hostId'],
+      roomInfo['user_id'],
+      roomInfo['userId'],
+      deeplinkHostId,
+    ]);
     return XiaohongshuRoomSnapshot(
       roomId: roomId,
-      title: _text(roomInfo['roomTitle'] ??
-          roomInfo['title'] ??
-          roomData['title'] ??
-          _findValue(root, 'title')),
+      title: _text(
+          roomInfo['roomTitle'] ?? roomInfo['title'] ?? roomData['title']),
       cover: _text(roomInfo['cover'] ?? roomInfo['roomCover'] ?? host['cover']),
       userName: _text(host['nickname'] ?? host['nickName'] ?? host['name']),
       userAvatar: _text(host['avatar'] ?? host['avatarUrl'] ?? host['image']),
-      online: _int(roomInfo['displayViewerCount'] ??
-          roomData['displayViewerCount'] ??
-          _findValue(root, 'displayViewerCount')),
+      online: _int(
+          roomInfo['displayViewerCount'] ?? roomData['displayViewerCount']),
       live: statusText == 'success' && roomStatus == 2,
       liveStatus: statusText,
       roomStatus: roomStatus,
       streams: streams,
-      url: '$webBaseUrl/livestream/$roomId',
+      url: _roomUrl(roomId, hostId),
+      hostId: hostId,
     );
+  }
+
+  static String _roomUrl(String roomId, String? hostId) =>
+      '$webBaseUrl/livestream/$roomId${hostId == null ? '' : '?host_id=$hostId'}';
+
+  static String? _firstHostId(Iterable<dynamic> candidates) {
+    for (final candidate in candidates) {
+      final hostId = _normalizeHostId(_text(candidate));
+      if (hostId != null) return hostId;
+    }
+    return null;
   }
 
   static List<XiaohongshuStreamVariant> _parseStreams(dynamic value) {
@@ -604,39 +919,6 @@ class XiaohongshuSite implements LiveSite {
 
   static Map<dynamic, dynamic>? _asMap(dynamic value) =>
       value is Map ? value : null;
-
-  static Map<dynamic, dynamic>? _findMap(dynamic value, String key) {
-    if (value is Map) {
-      final direct = value[key];
-      if (direct is Map) return direct;
-      for (final child in value.values) {
-        final found = _findMap(child, key);
-        if (found != null) return found;
-      }
-    } else if (value is Iterable) {
-      for (final child in value) {
-        final found = _findMap(child, key);
-        if (found != null) return found;
-      }
-    }
-    return null;
-  }
-
-  static dynamic _findValue(dynamic value, String key) {
-    if (value is Map) {
-      if (value.containsKey(key)) return value[key];
-      for (final child in value.values) {
-        final found = _findValue(child, key);
-        if (found != null) return found;
-      }
-    } else if (value is Iterable) {
-      for (final child in value) {
-        final found = _findValue(child, key);
-        if (found != null) return found;
-      }
-    }
-    return null;
-  }
 
   static String _text(dynamic value) => value?.toString().trim() ?? '';
 
