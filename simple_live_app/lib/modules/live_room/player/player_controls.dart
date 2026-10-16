@@ -607,7 +607,7 @@ Widget _buildNormalBottomBar(
       bottom: controller.showControlsState.value ? 0 : -48,
       duration: const Duration(milliseconds: 200),
       child: ColoredBox(
-        color: Colors.black,
+        color: Colors.transparent,
         child: Row(
           children: [
             IconButton(
