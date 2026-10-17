@@ -4,11 +4,25 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
+class DouyuCookieSaveException implements Exception {
+  const DouyuCookieSaveException(this.cause, {this.rollbackRevision});
+
+  final Object cause;
+
+  /// The user revision restored by this write, only when it owned the rollback.
+  final int? rollbackRevision;
+
+  @override
+  String toString() => 'DouyuCookieSaveException: Cookie persistence failed';
+}
+
 class DouyuAccountService extends GetxService {
   static DouyuAccountService get instance => Get.find<DouyuAccountService>();
 
   String _cookie = '';
   String get cookie => _cookie;
+  int get userCookieRevision => _userCookieGeneration;
+  int _userCookieGeneration = 0;
   final hasCookie = false.obs;
   final cookieRevision = 0.obs;
   Future<void> _pendingWrite = Future<void>.value();
@@ -36,17 +50,24 @@ class DouyuAccountService extends GetxService {
     // Apply the user's intent before the disk write, invalidating any
     // playback/refresh request that still owns the previous credentials.
     final previous = _cookie;
+    _userCookieGeneration++;
     _acceptCookie(normalized);
     _site.cookie = normalized;
     final revision = cookieRevision.value;
     try {
       await _persistCookie(normalized);
-    } catch (_) {
+    } catch (error, stackTrace) {
+      int? rollbackRevision;
       if (!_closed && cookieRevision.value == revision) {
+        _userCookieGeneration++;
         _acceptCookie(previous);
         _site.cookie = previous;
+        rollbackRevision = userCookieRevision;
       }
-      rethrow;
+      Error.throwWithStackTrace(
+        DouyuCookieSaveException(error, rollbackRevision: rollbackRevision),
+        stackTrace,
+      );
     }
     return true;
   }

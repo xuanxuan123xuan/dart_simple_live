@@ -47,6 +47,8 @@ import 'package:simple_live_app/modules/mine/account/bilibili/web_login_controll
 import 'package:simple_live_app/modules/mine/account/bilibili/web_login_page.dart';
 import 'package:simple_live_app/modules/mine/account/douyin/web_login_controller.dart';
 import 'package:simple_live_app/modules/mine/account/douyin/web_login_page.dart';
+import 'package:simple_live_app/modules/mine/account/douyu/web_login_controller.dart';
+import 'package:simple_live_app/modules/mine/account/douyu/web_login_page.dart';
 import 'package:simple_live_app/modules/mine/account/kuaishou/web_login_controller.dart';
 import 'package:simple_live_app/modules/mine/account/kuaishou/web_login_page.dart';
 import 'package:simple_live_app/modules/mine/account/kuaishou/account_page.dart';
@@ -315,6 +317,14 @@ class AppPages {
       page: () => const DouyinWebLoginPage(),
       bindings: [
         BindingsBuilder.put(() => DouyinWebLoginController()),
+      ],
+    ),
+    //斗鱼Web登录
+    GetPage(
+      name: RoutePath.kDouyuWebLogin,
+      page: () => const DouyuWebLoginPage(),
+      bindings: [
+        BindingsBuilder.put(() => DouyuWebLoginController()),
       ],
     ),
     //快手Web登录

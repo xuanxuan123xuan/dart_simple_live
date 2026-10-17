@@ -9,6 +9,90 @@ String _jwt(Object expiry) =>
             }))).replaceAll('=', '')}.signature';
 
 void main() {
+  test('combines Cookie headers copied from multiple Douyu domains', () {
+    final cookie = DouyuCookieHelper.normalizeInput(
+      'Host: www.douyu.com\r\n'
+      'Cookie: acf_auth=www-auth; acf_uid=42; dy_did=device\r\n'
+      'Host: passport.douyu.com\r\n'
+      'Cookie: LTP0=refresh; acf_auth=passport-auth',
+    );
+
+    expect(DouyuCookieHelper.parse(cookie), {
+      'acf_auth': 'passport-auth',
+      'acf_uid': '42',
+      'dy_did': 'device',
+      'LTP0': 'refresh',
+    });
+    expect(DouyuCookieHelper.hasRefreshCredentials(cookie), isTrue);
+  });
+
+  test('browser merge keeps login fields and both device ID names', () {
+    final merged = DouyuCookieHelper.mergeBrowserCookies(
+      rootCookie: 'dy_did=root-device; acf_did=root-acf-device',
+      passportCookie: 'LTP0=passport-refresh; acf_auth=passport-auth',
+      wwwCookie:
+          'LTP0=www-refresh; acf_auth=www-auth; acf_uid=42; dy_did=www-device',
+    );
+
+    expect(DouyuCookieHelper.parse(merged), {
+      'dy_did': 'www-device',
+      'acf_did': 'root-acf-device',
+      'LTP0': 'passport-refresh',
+      'acf_auth': 'www-auth',
+      'acf_uid': '42',
+    });
+    expect(DouyuCookieHelper.hasRefreshCredentials(merged), isTrue);
+  });
+
+  test('login evidence excludes anonymous and expired token cookies', () {
+    final now = DateTime.utc(2026, 10, 14);
+    final nowSeconds = now.millisecondsSinceEpoch ~/ 1000;
+    expect(
+      DouyuCookieHelper.hasAuthenticatedSession(
+        'dy_did=device; LTP0=refresh',
+        now: now,
+      ),
+      isFalse,
+    );
+    expect(
+      DouyuCookieHelper.hasAuthenticatedSession(
+        'acf_jwt_token=${_jwt(nowSeconds - 1)}',
+        now: now,
+      ),
+      isFalse,
+    );
+    expect(
+      DouyuCookieHelper.hasAuthenticatedSession(
+        'acf_jwt_token=${_jwt(nowSeconds + 60)}',
+        now: now,
+      ),
+      isTrue,
+    );
+    expect(
+      DouyuCookieHelper.hasAuthenticatedSession(
+        'acf_auth=auth; acf_uid=42',
+        now: now,
+      ),
+      isTrue,
+    );
+    expect(
+      DouyuCookieHelper.hasAuthenticatedSession(
+        'acf_auth=auth; acf_uid=0',
+        now: now,
+      ),
+      isFalse,
+    );
+  });
+
+  test('refresh requires LTP0 and either device ID', () {
+    expect(DouyuCookieHelper.hasRefreshCredentials('LTP0=refresh'), isFalse);
+    expect(DouyuCookieHelper.hasRefreshCredentials('dy_did=device'), isFalse);
+    expect(
+      DouyuCookieHelper.hasRefreshCredentials('LTP0=refresh; acf_did=device'),
+      isTrue,
+    );
+  });
+
   final now = DateTime.utc(2026, 10, 14);
 
   test('normalizes pasted headers and preserves equals and case in values', () {

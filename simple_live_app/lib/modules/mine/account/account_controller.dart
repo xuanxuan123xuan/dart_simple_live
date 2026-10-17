@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -21,6 +22,8 @@ import 'package:url_launcher/url_launcher_string.dart';
 
 class AccountController extends GetxController {
   static const _douyinHomeUrl = "https://www.douyin.com/";
+  static const _douyuLoginUrl =
+      "https://passport.douyu.com/member/login?client_id=1&lang=cn";
   static const _kuaishouHomeUrl = "https://live.kuaishou.com/";
 
   final douyinCookieCountdownTick = 0.obs;
@@ -123,27 +126,129 @@ class AccountController extends GetxController {
   }
 
   void douyuTap() {
+    douyuLogin();
+  }
+
+  void douyuLogin() {
     final account = DouyuAccountService.instance;
-    final controller = TextEditingController(text: account.cookie);
+    final hasCookie = account.hasCookie.value;
+    final supportsInAppLogin = douyuInAppLoginAvailable(
+      defaultTargetPlatform,
+      isOhos: Utils.isOhos,
+    );
+    Utils.showBottomSheet(
+      title: "斗鱼账号",
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (supportsInAppLogin)
+            ListTile(
+              leading: const Icon(Icons.login),
+              title: const Text("网页登录"),
+              subtitle: const Text("在应用内登录斗鱼并自动保存 Cookie"),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Get.back();
+                Get.toNamed(RoutePath.kDouyuWebLogin);
+              },
+            ),
+          if (!supportsInAppLogin)
+            ListTile(
+              leading: const Icon(Icons.open_in_browser),
+              title: const Text("浏览器登录后粘贴 Cookie"),
+              subtitle: const Text("系统浏览器登录斗鱼，再粘贴同一会话的完整 Cookie"),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Get.back();
+                openDouyuInBrowserThenConfigCookie();
+              },
+            ),
+          ListTile(
+            leading: const Icon(Icons.edit_outlined),
+            title: const Text("手动粘贴 Cookie"),
+            subtitle: const Text("在同一输入框粘贴 www 与 passport 域的 Cookie"),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Get.back();
+              doDouyuCookieConfig();
+            },
+          ),
+          if (hasCookie)
+            ListTile(
+              leading: const Icon(Icons.visibility_outlined),
+              title: const Text("查看当前 Cookie"),
+              subtitle: const Text("查看已保存的完整 Cookie"),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Get.back();
+                showCurrentDouyuCookie();
+              },
+            ),
+          if (hasCookie)
+            ListTile(
+              leading: const Icon(Icons.copy_all_outlined),
+              title: const Text("复制当前 Cookie"),
+              subtitle: const Text("复制到剪贴板"),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Get.back();
+                exportDouyuCookieToClipboard();
+              },
+            ),
+          if (supportsInAppLogin)
+            ListTile(
+              leading: const Icon(Icons.file_open_outlined),
+              title: const Text("从文件导入 Cookie"),
+              subtitle: const Text("选择电脑传到手机上的 Cookie 文件"),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Get.back();
+                importDouyuCookieFromFile();
+              },
+            ),
+          if (hasCookie)
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text("清除 Cookie"),
+              subtitle: const Text("清除已保存的斗鱼 Cookie"),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Get.back();
+                clearDouyuCookie();
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  void doDouyuCookieConfig() {
+    final account = DouyuAccountService.instance;
+    final cookieController = TextEditingController(text: account.cookie);
     Utils.showDialogSafe<dynamic>(
       context: Get.context!,
       builder: (_) => AlertDialog(
         title: const Text("配置斗鱼 Cookie"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("复制已登录斗鱼网页的完整 Cookie；包含 LTP0 时可自动续期。"),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              maxLines: 5,
-              decoration: const InputDecoration(
-                labelText: "Cookie（可选）",
-                hintText: "粘贴 www.douyu.com 的完整 Cookie",
-                border: OutlineInputBorder(),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "斗鱼登录凭据可能分布在 www.douyu.com 和 passport.douyu.com。请从同一个浏览器会话复制这两个域名的 Cookie，合并粘贴到下面同一输入框；包含 LTP0 和设备 ID 时才支持自动续期。不要单独填写账号密码。",
               ),
-            ),
-          ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: cookieController,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  labelText: "完整 Cookie",
+                  hintText: "粘贴 www 与 passport 域的 Cookie 文本",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Get.back(), child: const Text("取消")),
@@ -151,7 +256,7 @@ class AccountController extends GetxController {
             onPressed: () async {
               bool saved;
               try {
-                saved = await account.setCookie(controller.text);
+                saved = await account.setCookie(cookieController.text);
               } catch (_) {
                 SmartDialog.showToast("保存斗鱼 Cookie 失败，请重试");
                 return;
@@ -169,7 +274,103 @@ class AccountController extends GetxController {
           ),
         ],
       ),
-    ).whenComplete(controller.dispose);
+    ).whenComplete(cookieController.dispose);
+  }
+
+  void showCurrentDouyuCookie() {
+    final cookie = DouyuAccountService.instance.cookie;
+    if (cookie.isEmpty) {
+      SmartDialog.showToast("当前没有斗鱼 Cookie");
+      return;
+    }
+    Utils.showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
+        title: const Text("当前斗鱼 Cookie"),
+        content: SingleChildScrollView(child: SelectableText(cookie)),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text("关闭")),
+          TextButton(
+            onPressed: () {
+              Utils.copyToClipboard(cookie);
+              Get.back();
+            },
+            child: const Text("复制"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void exportDouyuCookieToClipboard() {
+    final cookie = DouyuAccountService.instance.cookie;
+    if (cookie.isEmpty) {
+      SmartDialog.showToast("当前没有斗鱼 Cookie");
+      return;
+    }
+    Utils.copyToClipboard(cookie);
+    SmartDialog.showToast("已复制斗鱼 Cookie");
+  }
+
+  Future<void> clearDouyuCookie() async {
+    if (!DouyuAccountService.instance.hasCookie.value) return;
+    final confirmed = await Utils.showAlertDialog(
+      "确定要清除斗鱼 Cookie 吗？",
+      title: "清除配置",
+    );
+    if (!confirmed) return;
+    try {
+      await DouyuAccountService.instance.clearCookie();
+      SmartDialog.showToast("已清除斗鱼 Cookie");
+    } catch (_) {
+      SmartDialog.showToast("清除斗鱼 Cookie 失败，请重试");
+    }
+  }
+
+  Future<void> openDouyuInBrowserThenConfigCookie() async {
+    try {
+      final opened = await launchUrlString(
+        _douyuLoginUrl,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened) {
+        SmartDialog.showToast("无法打开系统浏览器，请打开 passport.douyu.com 登录后粘贴 Cookie");
+      }
+    } catch (_) {
+      SmartDialog.showToast("无法打开系统浏览器，请打开 passport.douyu.com 登录后粘贴 Cookie");
+    }
+    doDouyuCookieConfig();
+  }
+
+  Future<void> importDouyuCookieFromFile() async {
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        type: FileType.any,
+        withData: true,
+      );
+      if (picked == null || picked.files.isEmpty) return;
+      final file = picked.files.single;
+      final content = file.bytes != null
+          ? utf8.decode(file.bytes!, allowMalformed: true)
+          : file.path != null && file.path!.isNotEmpty
+              ? await File(file.path!).readAsString()
+              : null;
+      if (content == null) {
+        SmartDialog.showToast("无法读取所选文件");
+        return;
+      }
+      if (content.trim().isEmpty) {
+        SmartDialog.showToast("Cookie 文件内容为空");
+        return;
+      }
+      final saved = await DouyuAccountService.instance.setCookie(content);
+      SmartDialog.showToast(
+        saved ? "已从文件导入斗鱼 Cookie" : "Cookie 文件中没有有效 Cookie",
+      );
+    } catch (_) {
+      SmartDialog.showToast("导入斗鱼 Cookie 失败，请检查文件后重试");
+    }
   }
 
   String getDouyuCookieSummaryText() {
@@ -1005,3 +1206,11 @@ class AccountController extends GetxController {
         "${twoDigits(dateTime.hour)}:${twoDigits(dateTime.minute)}";
   }
 }
+
+bool douyuInAppLoginAvailable(
+  TargetPlatform platform, {
+  required bool isOhos,
+}) =>
+    isOhos ||
+    platform == TargetPlatform.android ||
+    platform == TargetPlatform.iOS;
