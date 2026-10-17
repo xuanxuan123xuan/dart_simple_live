@@ -10,6 +10,7 @@ class GlassSurface extends StatelessWidget {
     required this.child,
     this.role = GlassSurfaceRole.control,
     this.radius = 16,
+    this.circular = false,
     this.padding,
     this.onTap,
     this.clipBehavior = Clip.antiAlias,
@@ -23,6 +24,11 @@ class GlassSurface extends StatelessWidget {
   final Widget child;
   final GlassSurfaceRole role;
   final double radius;
+
+  /// Uses a circular outline instead of superellipse corners. Keep the
+  /// surface square so its live backdrop, shadow and hit feedback agree.
+  /// [radius] is ignored in this mode.
+  final bool circular;
   final EdgeInsetsGeometry? padding;
   final VoidCallback? onTap;
   final Clip clipBehavior;
@@ -76,7 +82,8 @@ class GlassSurface extends StatelessWidget {
         : Material(
             color: Colors.transparent,
             child: InkWell(
-              borderRadius: BorderRadius.circular(radius),
+              customBorder: circular ? const CircleBorder() : null,
+              borderRadius: circular ? null : BorderRadius.circular(radius),
               onTap: onTap,
               child: child,
             ),
@@ -92,13 +99,17 @@ class GlassSurface extends StatelessWidget {
       final showBorder = isVideoChrome || fallbackBorder;
       final borderColor =
           isVideoChrome ? Colors.white.withAlpha(46) : colors.outlineVariant;
+      final side =
+          showBorder ? BorderSide(color: borderColor) : BorderSide.none;
       return Material(
         color: fallbackColor,
         clipBehavior: clipBehavior,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(radius),
-          side: showBorder ? BorderSide(color: borderColor) : BorderSide.none,
-        ),
+        shape: circular
+            ? CircleBorder(side: side)
+            : RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(radius),
+                side: side,
+              ),
         child: Padding(
           padding: padding ?? EdgeInsets.zero,
           child: content,
@@ -122,7 +133,9 @@ class GlassSurface extends StatelessWidget {
       useOwnLayer: true,
       quality: quality,
       settings: glassSettings,
-      shape: LiquidRoundedSuperellipse(borderRadius: radius),
+      shape: circular
+          ? const LiquidOval()
+          : LiquidRoundedSuperellipse(borderRadius: radius),
       padding: padding,
       clipBehavior: clipBehavior,
       platformViewBackdrop: liveBackdrop ||

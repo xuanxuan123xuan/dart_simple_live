@@ -6,6 +6,7 @@ import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/home/home_page.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 
 class _TestSettingsController extends AppSettingsController {
   @override
@@ -33,8 +34,13 @@ void main() {
 
   tearDown(Get.reset);
 
-  Future<void> pumpTopBar(WidgetTester tester, double width) async {
+  Future<void> pumpTopBar(
+    WidgetTester tester,
+    double width, {
+    VoidCallback? onSearch,
+  }) async {
     await tester.binding.setSurfaceSize(Size(width, 200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(
         home: DefaultTabController(
@@ -45,7 +51,7 @@ void main() {
                 appBar: HomeTopBar(
                   controller: DefaultTabController.of(context),
                   iconOnly: true,
-                  onSearch: () {},
+                  onSearch: onSearch ?? () {},
                 ),
               );
             },
@@ -99,5 +105,23 @@ void main() {
       },
       {56.0},
     );
+  });
+
+  testWidgets('search action keeps a circular surface and opens search once',
+      (tester) async {
+    var searches = 0;
+    await pumpTopBar(tester, 390, onSearch: () => searches++);
+    final action = find.byKey(const ValueKey<String>('home-top-search-action'));
+    final surface = tester.widget<GlassSurface>(
+      find.descendant(of: action, matching: find.byType(GlassSurface)),
+    );
+
+    expect(surface.circular, isTrue);
+    expect(surface.liveBackdrop, isTrue);
+    expect(surface.showEdgeHighlight, isFalse);
+    expect(tester.getSize(action), const Size.square(56));
+    await tester
+        .tap(find.descendant(of: action, matching: find.byType(IconButton)));
+    expect(searches, 1);
   });
 }

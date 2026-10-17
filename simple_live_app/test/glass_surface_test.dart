@@ -86,4 +86,62 @@ void main() {
     final shape = material.shape! as RoundedRectangleBorder;
     expect(shape.side.style, BorderStyle.solid);
   });
+
+  testWidgets('circular glass keeps its round shape and soft shadow',
+      (tester) async {
+    for (final mode
+        in AppGlassMode.values.where((m) => m != AppGlassMode.off)) {
+      settings.glassMode.value = mode;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppStyle.lightTheme,
+          home: const Center(
+            child: GlassSurface(
+              circular: true,
+              liveBackdrop: true,
+              showEdgeHighlight: false,
+              child: SizedBox.square(dimension: 56),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final glass = tester.widget<GlassContainer>(find.byType(GlassContainer));
+      expect(glass.shape, isA<LiquidOval>(), reason: mode.name);
+      expect(glass.settings!.effectiveShadow, isNotEmpty, reason: mode.name);
+      expect(glass.settings!.effectiveLightIntensity, 0, reason: mode.name);
+      expect(glass.platformViewBackdrop, isTrue, reason: mode.name);
+    }
+  });
+
+  testWidgets('circular fallback and tap feedback share the round boundary',
+      (tester) async {
+    settings.glassMode.value = AppGlassMode.off;
+    var taps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppStyle.lightTheme,
+        home: Center(
+          child: GlassSurface(
+            circular: true,
+            fallbackBorder: true,
+            onTap: () => taps++,
+            child: const SizedBox.square(dimension: 56),
+          ),
+        ),
+      ),
+    );
+
+    final surface = find.byType(GlassSurface);
+    final material = tester.widget<Material>(
+      find.descendant(of: surface, matching: find.byType(Material)).first,
+    );
+    expect(material.shape, isA<CircleBorder>());
+    expect((material.shape! as CircleBorder).side.style, BorderStyle.solid);
+    expect(tester.widget<InkWell>(find.byType(InkWell)).customBorder,
+        isA<CircleBorder>());
+    await tester.tap(surface);
+    expect(taps, 1);
+  });
 }

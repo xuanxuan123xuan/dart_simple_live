@@ -76,7 +76,7 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
             dimension: _homeTopBarSearchExtent,
             child: GlassSurface(
               role: GlassSurfaceRole.navigation,
-              radius: _homeTopBarSearchExtent / 2,
+              circular: true,
               liveBackdrop: true,
               fallbackBorder: true,
               showEdgeHighlight: false,
