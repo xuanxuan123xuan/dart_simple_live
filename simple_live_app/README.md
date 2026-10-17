@@ -20,6 +20,8 @@ flutter test
 dart run tool/app_version.dart check
 ```
 
+测试分类与定向运行示例见 [测试说明](test/README.md)。
+
 ## 版本号
 
 只修改 `pubspec.yaml` 中的 `version`，然后执行：
