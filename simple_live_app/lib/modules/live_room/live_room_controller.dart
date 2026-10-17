@@ -82,6 +82,19 @@ import 'ohos_reconnect_confirmation.dart';
 import 'kuaishou_playback_recovery_tracker.dart';
 
 @visibleForTesting
+Future<LiveRoomDetail> waitForRoomStatusDetail({
+  required Future<LiveRoomDetail> request,
+  required String siteId,
+}) {
+  // Xiaohongshu recovery can load SSR, initialize a PC signing context (up to
+  // 30 seconds), and verify the new room. Keep the whole poll bounded without
+  // cutting every cold browser context off at the ordinary eight-second limit.
+  return request.timeout(siteId == Constant.kXiaohongshu
+      ? const Duration(seconds: 90)
+      : const Duration(seconds: 8));
+}
+
+@visibleForTesting
 bool shouldResumeLiveRoomAfterInlineMultiRoom({
   required bool playing,
   required bool buffering,
@@ -2191,7 +2204,7 @@ class LiveRoomController extends PlayerController
       );
       final xiaohongshuRequestToken = _xiaohongshuDetailRequestToken;
       final roomDetail = _sanitizeRoomDetail(
-        await request.timeout(const Duration(seconds: 8)),
+        await waitForRoomStatusDetail(request: request, siteId: site.id),
       );
       if (!_isCurrentLoad(refreshGeneration)) {
         return;

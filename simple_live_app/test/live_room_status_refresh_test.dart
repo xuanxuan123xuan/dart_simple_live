@@ -1,10 +1,79 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 void main() {
+  testWidgets(
+      'Xiaohongshu polling accepts a cold signer response after 18 seconds',
+      (tester) async {
+    final request = Completer<LiveRoomDetail>();
+    LiveRoomDetail? received;
+    Object? failure;
+    waitForRoomStatusDetail(
+      request: request.future,
+      siteId: Constant.kXiaohongshu,
+    ).then<void>((value) {
+      received = value;
+    }, onError: (Object error) {
+      failure = error;
+    });
+
+    await tester.pump(const Duration(seconds: 18));
+    expect(failure, isNull);
+    final response = _roomDetail(roomId: 'recovered-room');
+    request.complete(response);
+    await tester.pump();
+
+    expect(received, same(response));
+    expect(failure, isNull);
+  });
+
+  testWidgets('Xiaohongshu polling remains bounded and discards a late result',
+      (tester) async {
+    final request = Completer<LiveRoomDetail>();
+    LiveRoomDetail? received;
+    Object? failure;
+    waitForRoomStatusDetail(
+      request: request.future,
+      siteId: Constant.kXiaohongshu,
+    ).then<void>((value) {
+      received = value;
+    }, onError: (Object error) {
+      failure = error;
+    });
+
+    await tester.pump(const Duration(seconds: 89));
+    expect(failure, isNull);
+    await tester.pump(const Duration(seconds: 2));
+    expect(failure, isA<TimeoutException>());
+    request.complete(_roomDetail(roomId: 'late-room'));
+    await tester.pump();
+    expect(received, isNull);
+  });
+
+  testWidgets('other platforms retain the eight-second polling budget',
+      (tester) async {
+    final request = Completer<LiveRoomDetail>();
+    Object? failure;
+    waitForRoomStatusDetail(
+      request: request.future,
+      siteId: Constant.kKuaishou,
+    ).then<void>((_) {}, onError: (Object error) {
+      failure = error;
+    });
+
+    await tester.pump(const Duration(seconds: 9));
+    expect(failure, isA<TimeoutException>());
+    request.complete(_roomDetail());
+    await tester.pump();
+  });
+
   group('auto switch candidate confirmation', () {
-    test('skips offline and failed candidates before selecting a live room', () async {
+    test('skips offline and failed candidates before selecting a live room',
+        () async {
       final checked = <String>[];
       final result = await findNextConfirmedLiveRoom<String>(
         rooms: const ['current', 'offline', 'failed', 'live'],
