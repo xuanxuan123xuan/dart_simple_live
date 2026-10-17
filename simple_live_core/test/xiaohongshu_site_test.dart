@@ -580,6 +580,30 @@ void main() {
       http.remove();
     }
   });
+  test('local Linux runtime prerequisite survives signed bridge failure',
+      () async {
+    final http = _XhsHttpFixture(
+      rooms: {oldRoomId: roomHtml(oldRoomId, hostId: oldHostId, live: false)},
+      profileStatusCode: 406,
+    )..install();
+    final bridge = _HostBridge(
+      null,
+      error: XiaohongshuWebSessionUnavailableError.linuxRuntime(),
+    );
+    try {
+      final room = await XiaohongshuSite(requestBridge: bridge)
+          .getRoomDetail(roomId: oldRoomId, hostId: oldHostId);
+      expect(room.resolvedLiveStatus, LiveStatusState.unknown);
+      expect(room.data.statusMessage,
+          '未检测到可用的 Linux WebKitGTK 运行库，请安装后重试');
+      expect((room.data as XiaohongshuRoomSnapshot).streams, isEmpty);
+      expect(bridge.hostCalls, 1);
+      expect(http.profileRequests, hasLength(1));
+      expect(http.roomRequests, hasLength(1));
+    } finally {
+      http.remove();
+    }
+  });
   test('current live room remains anonymously playable without profile lookup',
       () async {
     final http = _XhsHttpFixture(

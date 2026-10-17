@@ -1,0 +1,377 @@
+#include "desktop_webview_window_backend.h"
+
+#include <flutter_linux/flutter_linux.h>
+#include <gtk/gtk.h>
+#include <webkit2/webkit2.h>
+
+#include <cstring>
+#include <map>
+#include <memory>
+#include <vector>
+
+#include "message_channel_plugin.h"
+#include "webview_window.h"
+
+namespace {
+
+int64_t next_window_id_ = 0;
+
+}
+
+#define WEBVIEW_WINDOW_PLUGIN(obj)                                     \
+  (G_TYPE_CHECK_INSTANCE_CAST((obj), webview_window_plugin_get_type(), \
+                              WebviewWindowPlugin))
+
+typedef struct _WebviewWindowPlugin WebviewWindowPlugin;
+typedef struct {
+  GObjectClass parent_class;
+} WebviewWindowPluginClass;
+
+struct _WebviewWindowPlugin {
+  GObject parent_instance;
+  FlMethodChannel *method_channel;
+  std::map<int64_t, std::unique_ptr<WebviewWindow>> *windows;
+  // The app's view, used to find the window webview windows belong to.
+  FlView *view;
+};
+
+G_DEFINE_TYPE(WebviewWindowPlugin, webview_window_plugin, g_object_get_type())
+
+// Called when a method call is received from Flutter.
+static void webview_window_plugin_handle_method_call(
+    WebviewWindowPlugin *self, FlMethodCall *method_call) {
+  const gchar *method = fl_method_call_get_name(method_call);
+
+  if (strcmp(method, "create") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "create args is not map",
+                                   nullptr, nullptr);
+      return;
+    }
+    auto width = fl_value_get_int(fl_value_lookup_string(args, "windowWidth"));
+    auto height =
+        fl_value_get_int(fl_value_lookup_string(args, "windowHeight"));
+    auto title = fl_value_get_string(fl_value_lookup_string(args, "title"));
+    auto title_bar_height =
+        fl_value_get_int(fl_value_lookup_string(args, "titleBarHeight"));
+    auto open_hidden =
+        fl_value_get_bool(fl_value_lookup_string(args, "openHidden"));
+    const auto *user_data_folder =
+        fl_value_get_string(fl_value_lookup_string(args, "userDataFolderLinux"));
+
+    GtkWindow *parent = nullptr;
+    if (self->view != nullptr) {
+      auto *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(self->view));
+      if (GTK_IS_WINDOW(toplevel)) {
+        parent = GTK_WINDOW(toplevel);
+      }
+    }
+
+    auto window_id = next_window_id_;
+    g_object_ref(self);
+    auto webview = std::make_unique<WebviewWindow>(
+        self->method_channel, window_id,
+        [self, window_id]() {
+          self->windows->erase(window_id);
+          g_object_unref(self);
+        },
+        title, width, height, title_bar_height, parent, open_hidden,
+        user_data_folder == nullptr ? "" : user_data_folder);
+    self->windows->insert({window_id, std::move(webview)});
+    next_window_id_++;
+    fl_method_call_respond_success(method_call, fl_value_new_int(window_id),
+                                   nullptr);
+  } else if (strcmp(method, "launch") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "create args is not map",
+                                   nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    auto url = fl_value_get_string(fl_value_lookup_string(args, "url"));
+
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+
+    self->windows->at(window_id)->Navigate(url);
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "addScriptToExecuteOnDocumentCreated") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "args is not map", nullptr,
+                                   nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    auto java_script =
+        fl_value_get_string(fl_value_lookup_string(args, "javaScript"));
+
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+    self->windows->at(window_id)->RunJavaScriptWhenContentReady(java_script);
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "clearAll") == 0) {
+    // Close can synchronously erase its entry through the destroy callback.
+    std::vector<int64_t> window_ids;
+    window_ids.reserve(self->windows->size());
+    for (const auto &item : *self->windows) window_ids.push_back(item.first);
+    for (const auto window_id : window_ids) {
+      const auto found = self->windows->find(window_id);
+      if (found != self->windows->end()) found->second->Close();
+    }
+    // If application didn't create a webview, but we called
+    // webkit_website_data_manager_clear, there will be a segment fault. To
+    // avoid crash, we create a fake webview first and then clear all data.
+    auto *web_view = webkit_web_view_new();
+    auto *context = webkit_web_view_get_context(WEBKIT_WEB_VIEW(web_view));
+    auto *website_data_manager =
+        webkit_web_context_get_website_data_manager(context);
+    webkit_website_data_manager_clear(website_data_manager,
+                                      WEBKIT_WEBSITE_DATA_ALL, 0, nullptr,
+                                      nullptr, nullptr);
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "setApplicationNameForUserAgent") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(
+          method_call, "0", "setApplicationNameForUserAgent args is not map",
+          nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    auto application_name =
+        fl_value_get_string(fl_value_lookup_string(args, "applicationName"));
+
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+    self->windows->at(window_id)->SetApplicationNameForUserAgent(
+        application_name);
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "setWebviewWindowVisibility") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "setWebviewWindowVisibility args is not map",
+                                   nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    auto visible = fl_value_get_bool(fl_value_lookup_string(args, "visible"));
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+    self->windows->at(window_id)->SetVisibility(visible);
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "back") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "back args is not map",
+                                   nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+    self->windows->at(window_id)->GoBack();
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "forward") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "forward args is not map",
+                                   nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+    self->windows->at(window_id)->GoForward();
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "reload") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "reload args is not map",
+                                   nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+    self->windows->at(window_id)->Reload();
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "stop") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "stop args is not map",
+                                   nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+    self->windows->at(window_id)->StopLoading();
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "getAllCookies") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(
+          method_call, "0", "getAllCookies args is not map", nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+
+    FlValue *data = nullptr;
+
+    data = self->windows->at(window_id)->GetAllCookies();
+
+    if (data == nullptr) {
+      fl_method_call_respond_error(method_call, "0", "get all cookies failed",
+                                   nullptr, nullptr);
+      return;
+    }
+
+
+    fl_method_call_respond_success(method_call, data, nullptr);
+    fl_value_unref(data);
+  } else if (strcmp(method, "close") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "close args is not map",
+                                   nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+    self->windows->at(window_id)->Close();
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "evaluateJavaScript") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "evaluateJavaScript args is not map",
+                                   nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0",
+                                   "can not found webview for viewId", nullptr,
+                                   nullptr);
+      return;
+    }
+    auto *js =
+        fl_value_get_string(fl_value_lookup_string(args, "javaScriptString"));
+    self->windows->at(window_id)->EvaluateJavaScript(js, method_call);
+  } else if (strcmp(method, "registerJavaScriptInterface") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "args is not map", nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    const gchar *channel_name = fl_value_get_string(fl_value_lookup_string(args, "name"));
+
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0", "cannot find webview for viewId",
+                                   nullptr, nullptr);
+      return;
+    }
+    self->windows->at(window_id)->RegisterJavaScriptChannel(channel_name);
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else if (strcmp(method, "unregisterJavaScriptInterface") == 0) {
+    auto *args = fl_method_call_get_args(method_call);
+    if (fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      fl_method_call_respond_error(method_call, "0", "args is not map", nullptr, nullptr);
+      return;
+    }
+    auto window_id = fl_value_get_int(fl_value_lookup_string(args, "viewId"));
+    const gchar *channel_name = fl_value_get_string(fl_value_lookup_string(args, "name"));
+
+    if (!self->windows->count(window_id)) {
+      fl_method_call_respond_error(method_call, "0", "cannot find webview for viewId",
+                                   nullptr, nullptr);
+      return;
+    }
+    self->windows->at(window_id)->UnregisterJavaScriptChannel(channel_name);
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+  } else {
+    fl_method_call_respond_not_implemented(method_call, nullptr);
+  }
+}
+
+static void webview_window_plugin_dispose(GObject *object) {
+  auto *self = WEBVIEW_WINDOW_PLUGIN(object);
+  delete self->windows;
+  self->windows = nullptr;
+  g_clear_object(&self->method_channel);
+  G_OBJECT_CLASS(webview_window_plugin_parent_class)->dispose(object);
+}
+
+static void webview_window_plugin_class_init(WebviewWindowPluginClass *klass) {
+  G_OBJECT_CLASS(klass)->dispose = webview_window_plugin_dispose;
+}
+
+static void webview_window_plugin_init(WebviewWindowPlugin *self) {
+  self->windows = new std::map<int64_t, std::unique_ptr<WebviewWindow>>();
+}
+
+void desktop_webview_window_backend_handle_method(GObject *backend,
+                                                  FlMethodCall *method_call) {
+  webview_window_plugin_handle_method_call(WEBVIEW_WINDOW_PLUGIN(backend),
+                                           method_call);
+}
+
+GObject *desktop_webview_window_backend_create(FlPluginRegistrar *registrar,
+                                              FlMethodChannel *channel) {
+  client_message_channel_plugin_register_with_registrar(registrar);
+
+  WebviewWindowPlugin *plugin = WEBVIEW_WINDOW_PLUGIN(
+      g_object_new(webview_window_plugin_get_type(), nullptr));
+
+  plugin->method_channel = FL_METHOD_CHANNEL(g_object_ref(channel));
+  plugin->view = fl_plugin_registrar_get_view(registrar);
+  return G_OBJECT(plugin);
+}

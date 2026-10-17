@@ -38,6 +38,12 @@ abstract interface class XiaohongshuHostRequestBridge {
 
 /// A local WebView prerequisite failure with a safe, app-authored message.
 class XiaohongshuWebSessionUnavailableError extends CoreError {
+  XiaohongshuWebSessionUnavailableError.linuxRuntime()
+      : super(
+          '未检测到可用的 Linux WebKitGTK 运行库，请安装后重试',
+          kind: CoreErrorKind.response,
+        );
+
   XiaohongshuWebSessionUnavailableError.webView2Runtime()
       : super(
           '未检测到 Microsoft Edge WebView2 Runtime，请安装后重试',
