@@ -24,6 +24,7 @@ import 'package:simple_live_app/services/live_notification_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_host_id.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 int? followStatusForLiveState(LiveStatusState state) {
@@ -172,6 +173,59 @@ class FollowService extends GetxService {
   final StreamController _updatedListController = StreamController.broadcast();
   Stream get updatedListStream => _updatedListController.stream;
   final Set<String> _previewRefreshingKeys = <String>{};
+  int _xiaohongshuIdentityRequestSequence = 0;
+  final Map<String, int> _latestXiaohongshuIdentityRequest = {};
+  final Map<String, int> _committedXiaohongshuIdentityRequest = {};
+  Future<void> _xiaohongshuIdentityQueue = Future<void>.value();
+
+  Future<T> _serializeXiaohongshuIdentity<T>(Future<T> Function() work) {
+    final result = _xiaohongshuIdentityQueue.then((_) => work());
+    _xiaohongshuIdentityQueue = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return result;
+  }
+
+  int beginXiaohongshuIdentityRequest({
+    required String roomId,
+    String? hostId,
+  }) {
+    final requestId = ++_xiaohongshuIdentityRequestSequence;
+    _latestXiaohongshuIdentityRequest[_xiaohongshuRoomKey(roomId)] = requestId;
+    final normalizedHostId = normalizeXiaohongshuHostId(hostId);
+    if (normalizedHostId != null) {
+      _latestXiaohongshuIdentityRequest[_xiaohongshuHostKey(normalizedHostId)] =
+          requestId;
+    }
+    return requestId;
+  }
+
+  String _xiaohongshuRoomKey(String roomId) => 'room:${roomId.trim()}';
+
+  String _xiaohongshuHostKey(String hostId) =>
+      'host:${hostId.trim().toLowerCase()}';
+
+  bool _isCurrentXiaohongshuIdentityRequest({
+    required int? requestId,
+    required String roomId,
+    required String? hostId,
+  }) {
+    if (requestId == null) return true;
+    final normalizedHostId = normalizeXiaohongshuHostId(hostId);
+    final keys = <String>[_xiaohongshuRoomKey(roomId)];
+    if (normalizedHostId != null) {
+      keys.add(_xiaohongshuHostKey(normalizedHostId));
+      if ((_committedXiaohongshuIdentityRequest[
+                  _xiaohongshuHostKey(normalizedHostId)] ??
+              0) >
+          requestId) {
+        return false;
+      }
+    }
+    return keys.every((key) =>
+        (_latestXiaohongshuIdentityRequest[key] ?? requestId) == requestId);
+  }
 
   /// 关注用户列表
   RxList<FollowUser> followList = RxList<FollowUser>();
@@ -290,7 +344,51 @@ class FollowService extends GetxService {
 
   // 添加关注
   Future<void> addFollow(FollowUser follow) async {
+    if (follow.siteId == Constant.kXiaohongshu) {
+      await _serializeXiaohongshuIdentity(() {
+        final requestId = beginXiaohongshuIdentityRequest(
+          roomId: follow.roomId,
+          hostId: follow.xiaohongshuHostId,
+        );
+        return _reconcileXiaohongshuFollowIdentityNow(
+          follow,
+          requestId: requestId,
+        );
+      });
+      return;
+    }
     await DBService.instance.addFollow(follow);
+  }
+
+  Future<String?> removeXiaohongshuFollow({
+    required String roomId,
+    String? hostId,
+  }) {
+    beginXiaohongshuIdentityRequest(roomId: roomId, hostId: hostId);
+    return _serializeXiaohongshuIdentity(() async {
+      final item = DBService.instance.findXiaohongshuFollow(
+        roomId: roomId,
+        hostId: hostId,
+      );
+      if (item == null) return null;
+      final normalizedHostId = normalizeXiaohongshuHostId(
+        hostId ?? item.xiaohongshuHostId,
+      );
+      final ids = <String>{
+        item.id,
+        if (normalizedHostId != null)
+          for (final candidate in DBService.instance.followBox.values)
+            if (candidate.siteId == Constant.kXiaohongshu &&
+                normalizeXiaohongshuHostId(candidate.xiaohongshuHostId) ==
+                    normalizedHostId)
+              candidate.id,
+      };
+      await DBService.instance.followBox.deleteAll(ids);
+      _liveNotifyReadyIds.removeAll(ids);
+      _liveNotifySentIds.removeAll(ids);
+      followList.removeWhere((candidate) => ids.contains(candidate.id));
+      return item.id;
+    });
   }
 
   Future<void> updateSpecialFollow(FollowUser follow, bool value) async {
@@ -579,6 +677,63 @@ class FollowService extends GetxService {
         attemptedKuaishouSession =
             (site.liveSite as KuaishouSite).activeAccountSessionKey;
       }
+      if (item.siteId == Constant.kXiaohongshu) {
+        final requestedRoomId = item.roomId;
+        final requestId = beginXiaohongshuIdentityRequest(
+          roomId: requestedRoomId,
+          hostId: item.xiaohongshuHostId,
+        );
+        final detail = await (site.liveSite as XiaohongshuSite).getRoomDetail(
+          roomId: requestedRoomId,
+          hostId: item.xiaohongshuHostId,
+        );
+        if (generation != null && generation != _updateGeneration) {
+          return const _FollowRefreshItemResult(
+            _FollowRefreshItemOutcome.deferred,
+          );
+        }
+        final accepted = await _reconcileXiaohongshuFollowIdentity(
+          item,
+          detail: detail,
+          generation: generation,
+          requestId: requestId,
+          requestedRoomId: requestedRoomId,
+          syncStatus: true,
+        );
+        if (!accepted ||
+            !_isCurrentXiaohongshuIdentityRequest(
+              requestId: requestId,
+              roomId: requestedRoomId,
+              hostId: item.xiaohongshuHostId,
+            ) ||
+            (generation != null && generation != _updateGeneration)) {
+          return const _FollowRefreshItemResult(
+            _FollowRefreshItemOutcome.deferred,
+          );
+        }
+        final nextStatus = followStatusForLiveState(detail.resolvedLiveStatus);
+        if (nextStatus == null) {
+          return const _FollowRefreshItemResult(
+            _FollowRefreshItemOutcome.deferred,
+          );
+        }
+        final isLiving = nextStatus == 2;
+        if (!isLiving) {
+          _liveNotifySentIds.remove(item.id);
+        }
+        if (item.isSpecialFollow &&
+            notifyReady &&
+            previousStatus != 2 &&
+            isLiving &&
+            !_liveNotifySentIds.contains(item.id)) {
+          _liveNotifySentIds.add(item.id);
+          unawaited(LiveNotificationService.showLiveStart(item));
+        }
+        _liveNotifyReadyIds.add(item.id);
+        return const _FollowRefreshItemResult(
+          _FollowRefreshItemOutcome.success,
+        );
+      }
       // Status is the latency-sensitive path. Metadata is refreshed in a
       // separate bounded stage after every visible status has been updated.
       final liveState = item.siteId == Constant.kKuaishou
@@ -723,7 +878,7 @@ class FollowService extends GetxService {
       item.id = newId;
       item.roomId = resolvedRoomId;
       await DBService.instance.addFollow(item);
-      await _migrateFollowTagReferences(oldId, newId);
+      await _migrateFollowTagReferences({oldId}, newId);
     }
     applyFollowPreviewDetail(item, resolvedDetail);
     item.liveStatus.value = resolvedDetail.status ? 2 : 1;
@@ -735,10 +890,293 @@ class FollowService extends GetxService {
     await DBService.instance.addFollow(item);
   }
 
+  Future<bool> _reconcileXiaohongshuFollowIdentity(
+    FollowUser item, {
+    LiveRoomDetail? detail,
+    int? generation,
+    int? requestId,
+    String? requestedRoomId,
+    bool Function()? isStillCurrent,
+    bool syncStatus = false,
+  }) =>
+      _serializeXiaohongshuIdentity(
+          () => _reconcileXiaohongshuFollowIdentityNow(
+                item,
+                detail: detail,
+                generation: generation,
+                requestId: requestId,
+                requestedRoomId: requestedRoomId,
+                isStillCurrent: isStillCurrent,
+                syncStatus: syncStatus,
+              ));
+
+  FollowUser _copyXiaohongshuFollow(
+    FollowUser source, {
+    required String id,
+    required String roomId,
+    String? hostId,
+  }) {
+    final copy = FollowUser(
+      id: id,
+      roomId: roomId,
+      siteId: Constant.kXiaohongshu,
+      userName: source.userName,
+      face: source.face,
+      addTime: source.addTime,
+      tag: source.tag,
+      isSpecialFollow: source.isSpecialFollow,
+      roomTitle: source.roomTitle,
+      roomCover: source.roomCover,
+      previewUpdatedAt: source.previewUpdatedAt,
+      xiaohongshuHostId: hostId,
+    );
+    copy.liveStatus.value = source.liveStatus.value;
+    copy.liveCheckState.value = source.liveCheckState.value;
+    copy.liveStartTime = source.liveStartTime;
+    return copy;
+  }
+
+  void _copyXiaohongshuFollowState(FollowUser from, FollowUser to) {
+    to
+      ..id = from.id
+      ..roomId = from.roomId
+      ..siteId = from.siteId
+      ..userName = from.userName
+      ..face = from.face
+      ..addTime = from.addTime
+      ..tag = from.tag
+      ..isSpecialFollow = from.isSpecialFollow
+      ..roomTitle = from.roomTitle
+      ..roomCover = from.roomCover
+      ..previewUpdatedAt = from.previewUpdatedAt
+      ..xiaohongshuHostId = from.xiaohongshuHostId
+      ..liveStartTime = from.liveStartTime;
+    to.liveStatus.value = from.liveStatus.value;
+    to.liveCheckState.value = from.liveCheckState.value;
+  }
+
+  void _applyXiaohongshuFollowStatus(FollowUser item, LiveRoomDetail detail) {
+    final status = followStatusForLiveState(detail.resolvedLiveStatus);
+    if (status == null) {
+      item.liveCheckState.value = FollowLiveCheckState.unknown;
+      return;
+    }
+    item.liveStatus.value = status;
+    item.liveCheckState.value = FollowLiveCheckState.fresh;
+    item.liveStartTime = status == 2 ? detail.showTime : null;
+  }
+
+  Future<bool> _reconcileXiaohongshuFollowIdentityNow(
+    FollowUser item, {
+    LiveRoomDetail? detail,
+    int? generation,
+    int? requestId,
+    String? requestedRoomId,
+    bool Function()? isStillCurrent,
+    bool syncStatus = false,
+  }) async {
+    bool isCurrent(String roomId, String? hostId) =>
+        (generation == null || generation == _updateGeneration) &&
+        (isStillCurrent == null || isStillCurrent()) &&
+        _isCurrentXiaohongshuIdentityRequest(
+          requestId: requestId,
+          roomId: roomId,
+          hostId: hostId,
+        );
+
+    final snapshot = detail?.data;
+    final resolvedHostId = snapshot is XiaohongshuRoomSnapshot
+        ? normalizeXiaohongshuHostId(snapshot.hostId)
+        : null;
+    final storedHostId = normalizeXiaohongshuHostId(item.xiaohongshuHostId);
+    if (resolvedHostId != null &&
+        storedHostId != null &&
+        resolvedHostId != storedHostId) {
+      return false;
+    }
+    final hostId = resolvedHostId ?? storedHostId;
+    final sourceRoomId = requestedRoomId?.trim().isNotEmpty == true
+        ? requestedRoomId!.trim()
+        : item.roomId;
+    if (!isCurrent(sourceRoomId, hostId)) return false;
+    if (detail != null && !DBService.instance.followBox.containsKey(item.id)) {
+      final current = DBService.instance.findXiaohongshuFollow(
+        roomId: sourceRoomId,
+        hostId: hostId,
+      );
+      if (current == null) return false;
+      _copyXiaohongshuFollowState(current, item);
+    }
+    final detailRoomId = detail?.roomId.trim() ?? '';
+    final canMigrateRoomId = detail == null ||
+        (detail.resolvedLiveStatus != LiveStatusState.unknown &&
+            resolvedHostId != null);
+    if (detail != null && !canMigrateRoomId) {
+      final updated = _copyXiaohongshuFollow(
+        item,
+        id: item.id,
+        roomId: item.roomId,
+        hostId: hostId,
+      );
+      if (syncStatus) _applyXiaohongshuFollowStatus(updated, detail);
+      if (!isCurrent(sourceRoomId, hostId)) return false;
+      await DBService.instance.followBox.put(updated.id, updated);
+      _copyXiaohongshuFollowState(updated, item);
+      if (hostId != null && requestId != null) {
+        final key = _xiaohongshuHostKey(hostId);
+        _committedXiaohongshuIdentityRequest[key] = requestId;
+      }
+      return true;
+    }
+    final resolvedRoomId = detailRoomId.isNotEmpty && canMigrateRoomId
+        ? detailRoomId
+        : item.roomId;
+    final resolvedId = '${Constant.kXiaohongshu}_$resolvedRoomId';
+    final destination = DBService.instance.followBox.get(resolvedId);
+    final destinationHostId =
+        normalizeXiaohongshuHostId(destination?.xiaohongshuHostId);
+    if (hostId != null &&
+        destinationHostId != null &&
+        destinationHostId != hostId) {
+      return false;
+    }
+    final existing = DBService.instance.followBox.values.where((candidate) {
+      if (candidate.siteId != Constant.kXiaohongshu) return false;
+      if (candidate.id == item.id || candidate.id == resolvedId) return true;
+      return hostId != null &&
+          normalizeXiaohongshuHostId(candidate.xiaohongshuHostId) == hostId;
+    }).toList(growable: false);
+    final merged = <FollowUser>{item, ...existing};
+    final oldIds = merged.map((candidate) => candidate.id).toSet();
+
+    final earliestAddTime = merged
+        .map((candidate) => candidate.addTime)
+        .reduce((a, b) => a.isBefore(b) ? a : b);
+    final isSpecialFollow =
+        merged.any((candidate) => candidate.isSpecialFollow);
+    final customTag =
+        merged.map((candidate) => candidate.tag.trim()).firstWhere(
+              (tag) => tag.isNotEmpty && tag != '全部',
+              orElse: () => '全部',
+            );
+    final previousStatuses = merged
+        .map((candidate) => candidate.liveStatus.value)
+        .where((status) => status != 0)
+        .toList(growable: false);
+
+    final updated = _copyXiaohongshuFollow(
+      item,
+      id: resolvedId,
+      roomId: resolvedRoomId,
+      hostId: hostId,
+    );
+
+    final previews = merged.toList()
+      ..sort((a, b) => (a.previewUpdatedAt ??
+              DateTime.fromMillisecondsSinceEpoch(0))
+          .compareTo(
+              b.previewUpdatedAt ?? DateTime.fromMillisecondsSinceEpoch(0)));
+    for (final preview in previews) {
+      if (preview.userName.trim().isNotEmpty) {
+        updated.userName = preview.userName;
+      }
+      if (preview.face.trim().isNotEmpty) updated.face = preview.face;
+      if (preview.roomTitle.trim().isNotEmpty) {
+        updated.roomTitle = preview.roomTitle;
+      }
+      if (preview.roomCover.trim().isNotEmpty) {
+        updated.roomCover = preview.roomCover;
+      }
+      if (preview.previewUpdatedAt != null) {
+        updated.previewUpdatedAt = preview.previewUpdatedAt;
+      }
+    }
+    if (updated.liveStatus.value == 0 && previousStatuses.isNotEmpty) {
+      updated.liveStatus.value = previousStatuses.last;
+    }
+    updated
+      ..addTime = earliestAddTime
+      ..isSpecialFollow = isSpecialFollow
+      ..tag = updated.tag.trim().isNotEmpty && updated.tag != '全部'
+          ? updated.tag
+          : customTag;
+    if (detail != null) {
+      applyFollowPreviewDetail(updated, detail);
+      if (syncStatus) _applyXiaohongshuFollowStatus(updated, detail);
+    }
+
+    if (!isCurrent(sourceRoomId, hostId)) return false;
+    await DBService.instance.followBox.put(updated.id, updated);
+    await _migrateFollowTagReferences(oldIds, updated.id);
+    final obsoleteIds = oldIds.where((id) => id != updated.id).toSet();
+    if (obsoleteIds.isNotEmpty) {
+      await DBService.instance.followBox.deleteAll(obsoleteIds);
+    }
+    for (final oldId in oldIds) {
+      if (oldId == updated.id) continue;
+      if (_liveNotifyReadyIds.remove(oldId)) {
+        _liveNotifyReadyIds.add(updated.id);
+      }
+      if (_liveNotifySentIds.remove(oldId)) {
+        _liveNotifySentIds.add(updated.id);
+      }
+    }
+    final wasVisible =
+        followList.any((candidate) => oldIds.contains(candidate.id));
+    followList.removeWhere((candidate) => oldIds.contains(candidate.id));
+    if (wasVisible) followList.add(updated);
+    _copyXiaohongshuFollowState(updated, item);
+    if (hostId != null && requestId != null) {
+      _committedXiaohongshuIdentityRequest[_xiaohongshuHostKey(hostId)] =
+          requestId;
+    }
+    return true;
+  }
+
   Future<void> syncFollowStatusFromRoomDetail(
     LiveRoomDetail detail, {
     required String siteId,
+    String? requestedRoomId,
+    int? xiaohongshuRequestId,
+    bool Function()? isStillCurrent,
   }) async {
+    if (siteId == Constant.kXiaohongshu) {
+      if (isStillCurrent != null && !isStillCurrent()) return;
+      final snapshot = detail.data;
+      final hostId = snapshot is XiaohongshuRoomSnapshot
+          ? normalizeXiaohongshuHostId(snapshot.hostId)
+          : null;
+      final item = DBService.instance.findXiaohongshuFollow(
+            roomId: requestedRoomId ?? detail.roomId,
+            hostId: hostId,
+          ) ??
+          DBService.instance.findXiaohongshuFollow(
+            roomId: detail.roomId,
+            hostId: hostId,
+          );
+      if (item == null) return;
+      final accepted = await _reconcileXiaohongshuFollowIdentity(
+        item,
+        detail: detail,
+        requestId: xiaohongshuRequestId,
+        requestedRoomId: requestedRoomId,
+        isStillCurrent: isStillCurrent,
+        syncStatus: true,
+      );
+      if (!accepted) return;
+      if (isStillCurrent != null && !isStillCurrent()) return;
+      if (!_isCurrentXiaohongshuIdentityRequest(
+        requestId: xiaohongshuRequestId,
+        roomId: requestedRoomId ?? detail.roomId,
+        hostId: item.xiaohongshuHostId,
+      )) {
+        return;
+      }
+      if (item.liveStatus.value != 2) {
+        _liveNotifySentIds.remove(item.id);
+      }
+      return;
+    }
     final followId = '${siteId}_${detail.roomId}';
     if (!DBService.instance.getFollowExist(followId)) {
       return;
@@ -759,19 +1197,25 @@ class FollowService extends GetxService {
     await DBService.instance.addFollow(item);
   }
 
-  Future<void> _migrateFollowTagReferences(String oldId, String newId) async {
-    if (oldId == newId) {
+  Future<void> _migrateFollowTagReferences(
+    Set<String> oldIds,
+    String newId,
+  ) async {
+    if (oldIds.isEmpty || oldIds.every((id) => id == newId)) {
       return;
     }
-    for (final tag in followTagList) {
-      final index = tag.userId.indexOf(oldId);
-      if (index < 0) {
-        continue;
-      }
-      tag.userId[index] = newId;
-      final deduplicated = <String>{};
-      tag.userId.removeWhere((id) => !deduplicated.add(id));
+    for (final tag in DBService.instance.getFollowTagList()) {
+      if (!tag.userId.any(oldIds.contains)) continue;
+      final members = <String>{
+        for (final id in tag.userId) oldIds.contains(id) ? newId : id,
+      };
+      tag.userId
+        ..clear()
+        ..addAll(members);
       await DBService.instance.updateFollowTag(tag);
+      final inMemoryIndex =
+          followTagList.indexWhere((entry) => entry.id == tag.id);
+      if (inMemoryIndex >= 0) followTagList[inMemoryIndex] = tag;
     }
   }
 
@@ -958,7 +1402,10 @@ class FollowService extends GetxService {
   List<FollowUser> _buildManualDetailTargets(List<FollowUser> items) {
     final candidates = _distinctFollowUsers(
       items.where(
-        (item) => item.siteId == Constant.kDouyin || item.liveStatus.value == 2,
+        (item) =>
+            item.siteId == Constant.kDouyin ||
+            (item.siteId != Constant.kXiaohongshu &&
+                item.liveStatus.value == 2),
       ),
     );
     return _orderRefreshBucketBySite(candidates);
@@ -1096,6 +1543,13 @@ class FollowService extends GetxService {
           // traffic: mark the source (same scope as _updateLiveStatus) so
           // the site can skip play-URL work and use the status cache.
           // Other sites keep the original behavior.
+          final requestedRoomId = item.roomId;
+          final xiaohongshuRequestId = item.siteId == Constant.kXiaohongshu
+              ? beginXiaohongshuIdentityRequest(
+                  roomId: requestedRoomId,
+                  hostId: item.xiaohongshuHostId,
+                )
+              : null;
           final detail = item.siteId == Constant.kKuaishou
               ? await KuaishouRequestTrace.run(
                   KuaishouRequestSource.followStatus,
@@ -1103,7 +1557,12 @@ class FollowService extends GetxService {
                   scopeId: 'kuaishou:follow-refresh',
                   forceNetwork: true,
                 )
-              : await site.liveSite.getRoomDetail(roomId: item.roomId);
+              : item.siteId == Constant.kXiaohongshu
+                  ? await (site.liveSite as XiaohongshuSite).getRoomDetail(
+                      roomId: requestedRoomId,
+                      hostId: item.xiaohongshuHostId,
+                    )
+                  : await site.liveSite.getRoomDetail(roomId: requestedRoomId);
           if (generation != _updateGeneration) {
             return;
           }
@@ -1115,6 +1574,17 @@ class FollowService extends GetxService {
               generation: generation,
               detail: detail,
             );
+          } else if (item.siteId == Constant.kXiaohongshu) {
+            final accepted = await _reconcileXiaohongshuFollowIdentity(
+              item,
+              detail: detail,
+              generation: generation,
+              requestId: xiaohongshuRequestId,
+              requestedRoomId: requestedRoomId,
+            );
+            if (!accepted) {
+              continue;
+            }
           } else {
             changed = applyFollowPreviewDetail(item, detail) || changed;
             if (detail.status && item.liveStartTime != detail.showTime) {

@@ -113,6 +113,49 @@ void main() {
     expect(site.calls, [('room', null)]);
   });
 
+  test('Xiaohongshu host follows the resolved room and clears on room switch',
+      () async {
+    final site = _RecordingXiaohongshuSite()..resolvedRoomId = 'B';
+    final loader = LiveRoomDetailLoader(
+      site: site,
+      roomId: 'A',
+      xiaohongshuHostId: '5eafa4cc0000000001005613',
+    );
+
+    await loader.load(site: site, roomId: 'A');
+    await loader.load(site: site, roomId: 'B');
+    await loader.load(site: site, roomId: 'other');
+
+    expect(site.calls, [
+      ('A', '5eafa4cc0000000001005613'),
+      ('B', '5eafa4cc0000000001005613'),
+      ('other', null),
+    ]);
+  });
+
+  test('Xiaohongshu delayed detail cannot restore cleared host context',
+      () async {
+    final pending = Completer<LiveRoomDetail>();
+    final site = _RecordingXiaohongshuSite()..pendingDetail = pending;
+    final loader = LiveRoomDetailLoader(
+      site: site,
+      roomId: 'A',
+      xiaohongshuHostId: '5eafa4cc0000000001005613',
+    );
+
+    final oldLoad = loader.load(site: site, roomId: 'A');
+    loader.clearXiaohongshuShareContext();
+    site.pendingDetail = null;
+    pending.complete(site.detailFor('A'));
+    await oldLoad;
+    await loader.load(site: site, roomId: 'A');
+
+    expect(site.calls, [
+      ('A', '5eafa4cc0000000001005613'),
+      ('A', null),
+    ]);
+  });
+
   testWidgets('share anchor reaches the HTTP request through navigation',
       (tester) async {
     const roomId = '7696440023213673256';
@@ -255,6 +298,47 @@ class _OtherSite extends Fake implements LiveSite {
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
     calls.add(roomId);
     return _detail(roomId);
+  }
+}
+
+class _RecordingXiaohongshuSite extends XiaohongshuSite {
+  final calls = <(String, String?)>[];
+  String? resolvedRoomId;
+  Completer<LiveRoomDetail>? pendingDetail;
+
+  LiveRoomDetail detailFor(String roomId) => LiveRoomDetail(
+        roomId: resolvedRoomId ?? roomId,
+        title: 'title',
+        cover: '',
+        userName: 'anchor',
+        userAvatar: '',
+        online: 0,
+        status: true,
+        liveStatusState: LiveStatusState.live,
+        url: 'https://www.xiaohongshu.com/livestream/$roomId',
+        data: XiaohongshuRoomSnapshot(
+          roomId: resolvedRoomId ?? roomId,
+          title: 'title',
+          cover: '',
+          userName: 'anchor',
+          userAvatar: '',
+          online: 0,
+          live: true,
+          liveStatus: 'success',
+          roomStatus: 1,
+          streams: const [],
+          url: 'https://www.xiaohongshu.com/livestream/$roomId',
+          hostId: '5eafa4cc0000000001005613',
+        ),
+      );
+
+  @override
+  Future<LiveRoomDetail> getRoomDetail({
+    required String roomId,
+    String? hostId,
+  }) {
+    calls.add((roomId, hostId));
+    return pendingDetail?.future ?? Future.value(detailFor(roomId));
   }
 }
 

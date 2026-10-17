@@ -1,5 +1,6 @@
 import 'package:get/get.dart';
 import 'package:hive/hive.dart';
+import 'package:simple_live_app/services/xiaohongshu_host_id.dart';
 
 part 'follow_user.g.dart';
 
@@ -18,7 +19,8 @@ class FollowUser {
       this.isSpecialFollow = false,
       this.roomTitle = "",
       this.roomCover = "",
-      this.previewUpdatedAt});
+      this.previewUpdatedAt,
+      this.xiaohongshuHostId});
 
   ///id=siteId_roomId
   @HiveField(0)
@@ -54,6 +56,10 @@ class FollowUser {
   @HiveField(10)
   DateTime? previewUpdatedAt;
 
+  /// Stable Xiaohongshu anchor ID. Older records leave this unset.
+  @HiveField(11)
+  String? xiaohongshuHostId;
+
   /// 直播状态
   /// 0=未知(加载中) 1=未开播 2=直播中
   Rx<int> liveStatus = 0.obs;
@@ -86,6 +92,9 @@ class FollowUser {
       roomCover: json["roomCover"]?.toString() ?? "",
       previewUpdatedAt:
           DateTime.tryParse(json["previewUpdatedAt"]?.toString() ?? ""),
+      xiaohongshuHostId: normalizeXiaohongshuHostId(
+        json["xiaohongshuHostId"],
+      ),
     );
   }
 
@@ -101,5 +110,7 @@ class FollowUser {
         'roomTitle': roomTitle,
         'roomCover': roomCover,
         'previewUpdatedAt': previewUpdatedAt?.toIso8601String() ?? "",
+        if (normalizeXiaohongshuHostId(xiaohongshuHostId) case final hostId?)
+          'xiaohongshuHostId': hostId,
       };
 }

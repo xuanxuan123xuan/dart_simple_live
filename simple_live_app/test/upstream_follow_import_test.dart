@@ -163,7 +163,11 @@ void main() {
 
   test('带独立标签列表的数据仍按标签表导入', () async {
     final content = jsonEncode([
-      {"id": "t1", "tag": "常看", "userId": ["bilibili_1", "douyu_2"]},
+      {
+        "id": "t1",
+        "tag": "常看",
+        "userId": ["bilibili_1", "douyu_2"]
+      },
     ]);
 
     final inspection = ProfileBackupService().inspectProfileJson(content);
@@ -180,5 +184,78 @@ void main() {
     expect(db.tagBox.length, 1);
     expect(db.tagBox.values.single.userId, ['bilibili_1', 'douyu_2']);
     expect(db.followBox.length, 0);
+  });
+
+  test('旧备份合并时保留已知的小红书主播 ID', () async {
+    const hostId = '5eafa4cc0000000001005613';
+    await db.followBox.put(
+      'xiaohongshu_123',
+      FollowUser(
+        id: 'xiaohongshu_123',
+        roomId: '123',
+        siteId: 'xiaohongshu',
+        userName: '主播',
+        face: '',
+        addTime: DateTime(2026),
+        xiaohongshuHostId: hostId,
+      ),
+    );
+    await BulkDataImportService.importFollowUsers([
+      {
+        'id': 'xiaohongshu_123',
+        'roomId': '123',
+        'siteId': 'xiaohongshu',
+        'userName': '旧备份',
+      },
+    ]);
+    expect(db.followBox.get('xiaohongshu_123')?.xiaohongshuHostId, hostId);
+
+    await db.historyBox.put(
+      'xiaohongshu_123',
+      History(
+        id: 'xiaohongshu_123',
+        roomId: '123',
+        siteId: 'xiaohongshu',
+        userName: '主播',
+        face: '',
+        updateTime: DateTime(2026, 10, 16),
+        xiaohongshuHostId: hostId,
+      ),
+    );
+    await BulkDataImportService.importHistories([
+      {
+        'id': 'xiaohongshu_123',
+        'roomId': '123',
+        'siteId': 'xiaohongshu',
+        'userName': '旧备份',
+        'updateTime': '2026-10-15T00:00:00.000',
+      },
+    ]);
+    expect(db.historyBox.get('xiaohongshu_123')?.xiaohongshuHostId, hostId);
+  });
+
+  test('新备份的小红书主播 ID 在关注和历史导入后保留', () async {
+    const hostId = '5eafa4cc0000000001005613';
+    await BulkDataImportService.importFollowUsers([
+      {
+        'id': 'xiaohongshu_123',
+        'roomId': '123',
+        'siteId': 'xiaohongshu',
+        'userName': '主播',
+        'xiaohongshuHostId': hostId,
+      },
+    ]);
+    await BulkDataImportService.importHistories([
+      {
+        'id': 'xiaohongshu_123',
+        'roomId': '123',
+        'siteId': 'xiaohongshu',
+        'userName': '主播',
+        'updateTime': '2026-10-16T00:00:00.000',
+        'xiaohongshuHostId': hostId,
+      },
+    ]);
+    expect(db.followBox.get('xiaohongshu_123')?.xiaohongshuHostId, hostId);
+    expect(db.historyBox.get('xiaohongshu_123')?.xiaohongshuHostId, hostId);
   });
 }

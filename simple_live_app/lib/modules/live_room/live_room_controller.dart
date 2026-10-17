@@ -55,6 +55,7 @@ import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_network_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_host_id.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/desktop_refresh_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
@@ -624,6 +625,7 @@ class LiveRoomController extends PlayerController
     required this.pSite,
     required this.pRoomId,
     String? douyinSecUserId,
+    String? xiaohongshuHostId,
     this.initialDesktopSidePanelCollapsed = false,
   }) {
     rxSite = pSite.obs;
@@ -634,8 +636,13 @@ class LiveRoomController extends PlayerController
       site: pSite.liveSite,
       roomId: pRoomId,
       douyinSecUserId: douyinSecUserId,
+      xiaohongshuHostId: xiaohongshuHostId,
     );
+    _xiaohongshuHostId = normalizeXiaohongshuHostId(xiaohongshuHostId);
   }
+
+  String? _xiaohongshuHostId;
+  int? _xiaohongshuDetailRequestToken;
 
   late Rx<Site> rxSite;
   Site get site => rxSite.value;
@@ -2086,9 +2093,27 @@ class LiveRoomController extends PlayerController
   Future<LiveRoomDetail> _fetchRoomDetailWithSource({
     KuaishouRequestSource? source,
   }) {
+    final resolvedHostId = site.id == Constant.kXiaohongshu
+        ? _roomDetailLoader.xiaohongshuHostIdFor(
+              site: site.liveSite,
+              roomId: roomId,
+            ) ??
+            _xiaohongshuHostId ??
+            DBService.instance.getXiaohongshuHostIdForRoom(roomId)
+        : null;
+    if (site.id == Constant.kXiaohongshu) {
+      _xiaohongshuHostId = resolvedHostId;
+      _xiaohongshuDetailRequestToken = Get.isRegistered<FollowService>()
+          ? FollowService.instance.beginXiaohongshuIdentityRequest(
+              roomId: roomId,
+              hostId: resolvedHostId,
+            )
+          : null;
+    }
     return _roomDetailLoader.load(
       site: site.liveSite,
       roomId: roomId,
+      xiaohongshuHostId: resolvedHostId,
       source: source,
     );
   }
@@ -2158,12 +2183,15 @@ class LiveRoomController extends PlayerController
     _onlineRefreshInFlight = true;
     final refreshGeneration = _loadGeneration;
     try {
+      final requestedRoomId = roomId;
+      final request = _fetchRoomDetailWithSource(
+        source: site.id == Constant.kKuaishou
+            ? KuaishouRequestSource.roomStatusPolling
+            : null,
+      );
+      final xiaohongshuRequestToken = _xiaohongshuDetailRequestToken;
       final roomDetail = _sanitizeRoomDetail(
-        await _fetchRoomDetailWithSource(
-          source: site.id == Constant.kKuaishou
-              ? KuaishouRequestSource.roomStatusPolling
-              : null,
-        ).timeout(const Duration(seconds: 8)),
+        await request.timeout(const Duration(seconds: 8)),
       );
       if (!_isCurrentLoad(refreshGeneration)) {
         return;
@@ -2185,6 +2213,17 @@ class LiveRoomController extends PlayerController
               )
             : roomDetail;
         detail.value = committedDetail;
+        _applyXiaohongshuRoomIdentity(committedDetail);
+        if (site.id == Constant.kXiaohongshu) {
+          if (roomId != requestedRoomId) addHistory();
+          unawaited(FollowService.instance.syncFollowStatusFromRoomDetail(
+            committedDetail,
+            siteId: site.id,
+            requestedRoomId: requestedRoomId,
+            xiaohongshuRequestId: xiaohongshuRequestToken,
+            isStillCurrent: () => _isCurrentLoad(refreshGeneration),
+          ));
+        }
         online.value = committedDetail.online;
         _syncBackgroundPlaybackMetadata(committedDetail);
       }
@@ -3422,11 +3461,13 @@ class LiveRoomController extends PlayerController
       rebuildDanmakuView();
       addSysMsg("正在读取直播间信息");
       final detailStopwatch = Stopwatch()..start();
+      final requestedRoomId = roomId;
       final detailRequest = _fetchRoomDetailWithSource(
         source: site.id == Constant.kKuaishou
             ? KuaishouRequestSource.userEnter
             : null,
       );
+      final xiaohongshuRequestToken = _xiaohongshuDetailRequestToken;
       final roomDetail = _sanitizeRoomDetail(
         site.id == Constant.kKuaishou
             ? await detailRequest.timeout(const Duration(seconds: 12))
@@ -3480,6 +3521,7 @@ class LiveRoomController extends PlayerController
           }
         }
       }
+      _applyXiaohongshuRoomIdentity(roomDetail);
       unawaited(
         AppSettingsController.instance.saveLastLiveRoom(
           siteId: site.id,
@@ -3500,10 +3542,19 @@ class LiveRoomController extends PlayerController
         FollowService.instance.syncFollowStatusFromRoomDetail(
           detail.value!,
           siteId: site.id,
+          requestedRoomId: requestedRoomId,
+          xiaohongshuRequestId: xiaohongshuRequestToken,
+          isStillCurrent: () => _isCurrentLoad(loadGeneration),
         ),
       );
       // 刷新关注状态
-      followed.value = DBService.instance.getFollowExist("${site.id}_$roomId");
+      followed.value = site.id == Constant.kXiaohongshu
+          ? DBService.instance.findXiaohongshuFollow(
+                roomId: roomId,
+                hostId: _xiaohongshuHostId,
+              ) !=
+              null
+          : DBService.instance.getFollowExist("${site.id}_$roomId");
       final initialLiveState = detail.value!.resolvedLiveStatus;
       if (initialLiveState != LiveStatusState.unknown) {
         online.value = detail.value!.online;
@@ -3582,6 +3633,37 @@ class LiveRoomController extends PlayerController
       Log.i(
         "直播间加载流程结束：${site.id}/$roomId ${loadStopwatch.elapsedMilliseconds}ms",
       );
+    }
+  }
+
+  void _applyXiaohongshuRoomIdentity(LiveRoomDetail roomDetail) {
+    if (site.id != Constant.kXiaohongshu) return;
+    final snapshot = roomDetail.data;
+    if (snapshot is! XiaohongshuRoomSnapshot) return;
+    final resolvedHostId = normalizeXiaohongshuHostId(snapshot.hostId);
+    final currentHostId = normalizeXiaohongshuHostId(_xiaohongshuHostId);
+    if (resolvedHostId != null &&
+        currentHostId != null &&
+        resolvedHostId != currentHostId) {
+      return;
+    }
+    if (resolvedHostId != null) _xiaohongshuHostId = resolvedHostId;
+    final resolvedRoomId = roomDetail.roomId.trim();
+    if (resolvedHostId != null &&
+        roomDetail.resolvedLiveStatus != LiveStatusState.unknown &&
+        resolvedRoomId.isNotEmpty &&
+        resolvedRoomId != roomId) {
+      rxRoomId.value = resolvedRoomId;
+      CurrentRoomService.instance.setRoom(site, resolvedRoomId);
+      unawaited(AppSettingsController.instance.saveLastLiveRoom(
+        siteId: site.id,
+        roomId: resolvedRoomId,
+      ));
+    }
+    final statusMessage = snapshot.statusMessage?.trim() ?? '';
+    if (roomDetail.resolvedLiveStatus == LiveStatusState.unknown &&
+        statusMessage.isNotEmpty) {
+      addSysMsg(statusMessage);
     }
   }
 
@@ -4614,7 +4696,12 @@ class LiveRoomController extends PlayerController
                   scopeId: 'kuaishou:auto-switch',
                   forceNetwork: true,
                 )
-              : liveSite.getLiveStatusState(roomId: item.roomId);
+              : item.siteId == Constant.kXiaohongshu
+                  ? (liveSite as XiaohongshuSite).getLiveStatusState(
+                      roomId: item.roomId,
+                      hostId: item.xiaohongshuHostId,
+                    )
+                  : liveSite.getLiveStatusState(roomId: item.roomId);
           return statusRequest.timeout(const Duration(seconds: 12));
         },
       );
@@ -4679,40 +4766,67 @@ class LiveRoomController extends PlayerController
     if (detail.value == null) {
       return;
     }
-    var id = "${site.id}_$roomId";
-    var history = DBService.instance.getHistory(id);
-    if (history != null) {
-      history.updateTime = DateTime.now();
-    }
-    history ??= History(
+    final id = "${site.id}_$roomId";
+    final previous = DBService.instance.getHistory(id);
+    final roomDetail = detail.value!;
+    final isXiaohongshu = site.id == Constant.kXiaohongshu;
+    final history = History(
       id: id,
       roomId: roomId,
       siteId: site.id,
-      userName: detail.value?.userName ?? "",
-      face: detail.value?.userAvatar ?? "",
+      userName: isXiaohongshu && roomDetail.userName.trim().isNotEmpty
+          ? roomDetail.userName
+          : previous?.userName ?? roomDetail.userName,
+      face: isXiaohongshu && roomDetail.userAvatar.trim().isNotEmpty
+          ? roomDetail.userAvatar
+          : previous?.face ?? roomDetail.userAvatar,
       updateTime: DateTime.now(),
+      xiaohongshuHostId: isXiaohongshu
+          ? _xiaohongshuHostId ?? previous?.xiaohongshuHostId
+          : null,
     );
 
-    DBService.instance.addOrUpdateHistory(history);
+    final roomSnapshot = detail.value?.data;
+    unawaited(DBService.instance.addOrUpdateHistory(
+      history,
+      xiaohongshuRoomVerified: site.id != Constant.kXiaohongshu ||
+          (detail.value?.resolvedLiveStatus != LiveStatusState.unknown &&
+              roomSnapshot is XiaohongshuRoomSnapshot &&
+              normalizeXiaohongshuHostId(roomSnapshot.hostId) != null),
+    ));
   }
 
   /// 关注用户
-  void followUser() {
+  void followUser() async {
     if (detail.value == null) {
       return;
     }
-    var id = "${site.id}_$roomId";
-    DBService.instance.addFollow(
+    final selectedSiteId = site.id;
+    final selectedRoomId = roomId;
+    final selectedHostId = _xiaohongshuHostId;
+    final selectedDetail = detail.value!;
+    final id = "${selectedSiteId}_$selectedRoomId";
+    await FollowService.instance.addFollow(
       FollowUser(
         id: id,
-        roomId: roomId,
-        siteId: site.id,
-        userName: detail.value?.userName ?? "",
-        face: detail.value?.userAvatar ?? "",
+        roomId: selectedRoomId,
+        siteId: selectedSiteId,
+        userName: selectedDetail.userName,
+        face: selectedDetail.userAvatar,
         addTime: DateTime.now(),
+        xiaohongshuHostId:
+            selectedSiteId == Constant.kXiaohongshu ? selectedHostId : null,
       ),
     );
-    followed.value = true;
+    if (site.id == selectedSiteId && roomId == selectedRoomId) {
+      followed.value = selectedSiteId == Constant.kXiaohongshu
+          ? DBService.instance.findXiaohongshuFollow(
+                roomId: selectedRoomId,
+                hostId: selectedHostId,
+              ) !=
+              null
+          : true;
+    }
     EventBus.instance.emit(Constant.kUpdateFollow, id);
   }
 
@@ -4721,6 +4835,9 @@ class LiveRoomController extends PlayerController
     if (detail.value == null) {
       return;
     }
+    final selectedSiteId = site.id;
+    final selectedRoomId = roomId;
+    final selectedHostId = _xiaohongshuHostId;
     if (!await Utils.showAlertDialog(
       "确定要取消关注这位主播吗？",
       title: "取消关注",
@@ -4728,9 +4845,19 @@ class LiveRoomController extends PlayerController
       return;
     }
 
-    var id = "${site.id}_$roomId";
-    DBService.instance.deleteFollow(id);
-    followed.value = false;
+    var id = "${selectedSiteId}_$selectedRoomId";
+    if (selectedSiteId == Constant.kXiaohongshu) {
+      id = await FollowService.instance.removeXiaohongshuFollow(
+            roomId: selectedRoomId,
+            hostId: selectedHostId,
+          ) ??
+          id;
+    } else {
+      await DBService.instance.deleteFollow(id);
+    }
+    if (site.id == selectedSiteId && roomId == selectedRoomId) {
+      followed.value = false;
+    }
     EventBus.instance.emit(Constant.kUpdateFollow, id);
   }
 
@@ -6717,6 +6844,7 @@ class LiveRoomController extends PlayerController
     }
 
     _roomDetailLoader.clearDouyinShareContext();
+    _roomDetailLoader.clearXiaohongshuShareContext();
 
     if (_roomSwitching) {
       _pendingRoomSite = site;
@@ -6729,8 +6857,13 @@ class LiveRoomController extends PlayerController
       while (true) {
         final currentSite = site;
         final currentRoomId = roomId;
+        _roomDetailLoader.clearXiaohongshuShareContext();
         rxSite.value = currentSite;
         rxRoomId.value = currentRoomId;
+        _xiaohongshuHostId = currentSite.id == Constant.kXiaohongshu
+            ? DBService.instance.getXiaohongshuHostIdForRoom(currentRoomId)
+            : null;
+        _xiaohongshuDetailRequestToken = null;
         CurrentRoomService.instance.setRoom(currentSite, currentRoomId);
         _roomDisposed = false;
         _loadGeneration += 1;

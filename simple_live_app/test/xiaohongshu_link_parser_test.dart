@@ -16,12 +16,43 @@ void main() {
     }
   });
 
+  test('keeps a safe host_id from a trusted live link', () async {
+    final parser = LiveRoomLinkParser();
+    final target = await parser.parse(
+      'https://www.xiaohongshu.com/livestream/570493541297105186'
+      '?host_id=5eafa4cc0000000001005613',
+    );
+    expect(target?.xiaohongshuHostId, '5eafa4cc0000000001005613');
+
+    final duplicate = await parser.parse(
+      'https://www.xiaohongshu.com/livestream/570493541297105186'
+      '?host_id=5eafa4cc0000000001005613'
+      '&host_id=5eafa4cc0000000001005614',
+    );
+    expect(duplicate?.xiaohongshuHostId, isNull);
+
+    final conflictingCase = await parser.parse(
+      'https://www.xiaohongshu.com/livestream/570493541297105186'
+      '?host_id=5eafa4cc0000000001005613'
+      '&HOST_ID=5eafa4cc0000000001005614',
+    );
+    expect(conflictingCase?.xiaohongshuHostId, isNull);
+
+    final malformed = await parser.parse(
+      'https://www.xiaohongshu.com/livestream/570493541297105186'
+      '?host_id=../../attacker',
+    );
+    expect(malformed?.xiaohongshuHostId, isNull);
+  });
+
   test('resolves a trusted short link to its numeric room', () async {
     final parser = LiveRoomLinkParser(
         locationResolver: (_) async =>
-            'https://www.xiaohongshu.com/livestream/alias/570493541297105186');
-    expect((await parser.parse('https://xhslink.com/a/abc'))?.roomId,
-        '570493541297105186');
+            'https://www.xiaohongshu.com/livestream/alias/570493541297105186'
+            '?host_id=5eafa4cc0000000001005613');
+    final target = await parser.parse('https://xhslink.com/a/abc');
+    expect(target?.roomId, '570493541297105186');
+    expect(target?.xiaohongshuHostId, '5eafa4cc0000000001005613');
   });
 
   test('rejects invalid ids, credentials, ports and short redirect loops',

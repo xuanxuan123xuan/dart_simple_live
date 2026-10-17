@@ -578,6 +578,7 @@ class FollowUserController extends BasePageController<FollowUser> {
     AppNavigator.toLiveRoomDetail(
       site: site,
       roomId: resolved.roomId,
+      xiaohongshuHostId: resolved.xiaohongshuHostId,
     );
   }
 

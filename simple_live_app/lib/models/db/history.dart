@@ -1,4 +1,5 @@
 import 'package:hive/hive.dart';
+import 'package:simple_live_app/services/xiaohongshu_host_id.dart';
 
 part 'history.g.dart';
 
@@ -11,6 +12,7 @@ class History {
     required this.userName,
     required this.face,
     required this.updateTime,
+    this.xiaohongshuHostId,
   });
 
   ///id=siteId_roomId
@@ -32,6 +34,10 @@ class History {
   @HiveField(5)
   DateTime updateTime;
 
+  /// Stable Xiaohongshu anchor ID. Older records leave this unset.
+  @HiveField(6)
+  String? xiaohongshuHostId;
+
   factory History.fromJson(Map<String, dynamic> json) {
     final roomId = json["roomId"]?.toString().trim() ?? "";
     final siteId = json["siteId"]?.toString().trim() ?? "";
@@ -46,6 +52,9 @@ class History {
       face: json["face"]?.toString() ?? "",
       updateTime: DateTime.tryParse(json["updateTime"]?.toString() ?? "") ??
           DateTime.now(),
+      xiaohongshuHostId: normalizeXiaohongshuHostId(
+        json["xiaohongshuHostId"],
+      ),
     );
   }
 
@@ -56,5 +65,7 @@ class History {
         "userName": userName,
         "face": face,
         "updateTime": updateTime.toString(),
+        if (normalizeXiaohongshuHostId(xiaohongshuHostId) case final hostId?)
+          "xiaohongshuHostId": hostId,
       };
 }

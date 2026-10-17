@@ -215,6 +215,9 @@ class AppPages {
           douyinSecUserId: args is Map<String, dynamic>
               ? args["douyinSecUserId"] as String?
               : null,
+          xiaohongshuHostId: args is Map<String, dynamic>
+              ? args["xiaohongshuHostId"] as String?
+              : null,
           initialDesktopSidePanelCollapsed: initialCollapsed,
         );
       }),

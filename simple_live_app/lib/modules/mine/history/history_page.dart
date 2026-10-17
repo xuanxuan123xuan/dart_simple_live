@@ -102,7 +102,11 @@ class HistoryPage extends GetView<HistoryController> {
                   });
                   return;
                 }
-                AppNavigator.toLiveRoomDetail(site: site, roomId: item.roomId);
+                AppNavigator.toLiveRoomDetail(
+                  site: site,
+                  roomId: item.roomId,
+                  xiaohongshuHostId: item.xiaohongshuHostId,
+                );
               },
               onLongPress: () async {
                 var result =

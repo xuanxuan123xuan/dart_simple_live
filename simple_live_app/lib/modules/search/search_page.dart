@@ -72,6 +72,7 @@ class _SearchPageState extends State<SearchPage> {
           site: target.site,
           roomId: target.roomId,
           douyinSecUserId: target.douyinSecUserId,
+          xiaohongshuHostId: target.xiaohongshuHostId,
         );
         return;
       }

@@ -87,6 +87,7 @@ class AppNavigator {
     required Site site,
     required String roomId,
     String? douyinSecUserId,
+    String? xiaohongshuHostId,
     bool initialDesktopSidePanelCollapsed = false,
     bool replace = false,
   }) async {
@@ -132,6 +133,9 @@ class AppNavigator {
       if (site.id == Constant.kDouyin &&
           (douyinSecUserId?.trim().isNotEmpty ?? false))
         "douyinSecUserId": douyinSecUserId!.trim(),
+      if (site.id == Constant.kXiaohongshu &&
+          (xiaohongshuHostId?.trim().isNotEmpty ?? false))
+        "xiaohongshuHostId": xiaohongshuHostId!.trim(),
     };
     final parameters = {"roomId": roomId};
     return (replace

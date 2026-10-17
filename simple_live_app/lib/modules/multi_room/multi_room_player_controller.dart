@@ -23,6 +23,7 @@ import 'package:simple_live_app/services/live_link_health_collector.dart'
 import 'package:simple_live_app/services/live_link_health_media_kit_adapter.dart';
 import 'package:simple_live_app/services/live_link_health_models.dart';
 import 'package:simple_live_app/services/ios_video_output_size.dart';
+import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/live_play_quality_presentation.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_sampling_loop.dart';
@@ -988,6 +989,12 @@ class MultiRoomPlayerController extends GetxController {
   /// 快手请求通过 [KuaishouRequestTrace] 标记为多开来源，保留高优先级但
   /// 仍遵守协调器最小间隔，避免多个格子形成突发请求；其他平台不标记来源。
   Future<LiveRoomDetail> _fetchRoomDetail() {
+    if (item.site.id == Constant.kXiaohongshu) {
+      return (item.site.liveSite as XiaohongshuSite).getRoomDetail(
+        roomId: item.roomId,
+        hostId: DBService.instance.getXiaohongshuHostIdForRoom(item.roomId),
+      );
+    }
     if (item.site.id != Constant.kKuaishou) {
       return item.site.liveSite.getRoomDetail(roomId: item.roomId);
     }

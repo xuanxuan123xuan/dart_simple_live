@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
+import 'package:simple_live_app/services/xiaohongshu_host_id.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class LiveRoomLinkTarget {
@@ -9,11 +10,13 @@ class LiveRoomLinkTarget {
     required this.site,
     required this.roomId,
     this.douyinSecUserId,
+    this.xiaohongshuHostId,
   });
 
   final Site site;
   final String roomId;
   final String? douyinSecUserId;
+  final String? xiaohongshuHostId;
 }
 
 /// Parses supported live-room links without depending on widgets or navigation.
@@ -119,7 +122,11 @@ class LiveRoomLinkParser {
     }
     if (_xiaohongshuHosts.contains(host)) {
       if (!isTrustedXiaohongshuRedirectTarget(extractedUrl)) return null;
-      return _target(Constant.kXiaohongshu, _xiaohongshuRoomId(uri));
+      return _target(
+        Constant.kXiaohongshu,
+        _xiaohongshuRoomId(uri),
+        xiaohongshuHostId: _xiaohongshuHostId(uri),
+      );
     }
     if (_xiaohongshuShortHosts.contains(host)) {
       final location = _locationResolver != null
@@ -130,8 +137,15 @@ class LiveRoomLinkParser {
             );
       if (!isTrustedXiaohongshuRedirectTarget(location)) return null;
       final destination = Uri.tryParse(location);
-      if (destination == null || !_xiaohongshuHosts.contains(destination.host.toLowerCase())) return null;
-      return _target(Constant.kXiaohongshu, _xiaohongshuRoomId(destination));
+      if (destination == null ||
+          !_xiaohongshuHosts.contains(destination.host.toLowerCase())) {
+        return null;
+      }
+      return _target(
+        Constant.kXiaohongshu,
+        _xiaohongshuRoomId(destination),
+        xiaohongshuHostId: _xiaohongshuHostId(destination),
+      );
     }
     return null;
   }
@@ -147,16 +161,35 @@ class LiveRoomLinkParser {
     if (segments.length == 3 && segments[0] == 'livestream') {
       return segments[2];
     }
-    if (segments.length == 4 && segments[0] == 'hina' &&
-        segments[1] == 'livestream' && RegExp(r'^\d+$').hasMatch(segments[3])) {
+    if (segments.length == 4 &&
+        segments[0] == 'hina' &&
+        segments[1] == 'livestream' &&
+        RegExp(r'^\d+$').hasMatch(segments[3])) {
       return segments[2];
     }
     return '';
   }
 
+  static String? _xiaohongshuHostId(Uri uri) {
+    final matches = uri.queryParametersAll.entries
+        .where((entry) => entry.key.toLowerCase() == 'host_id')
+        .toList(growable: false);
+    if (matches.length != 1 ||
+        matches.single.key != 'host_id' ||
+        matches.single.value.length != 1) {
+      return null;
+    }
+    return normalizeXiaohongshuHostId(matches.single.value.single);
+  }
+
   static bool isTrustedXiaohongshuRedirectTarget(String url) {
     final uri = Uri.tryParse(url);
-    if (uri == null || !_isHttpUri(uri) || uri.userInfo.isNotEmpty || (uri.port != 443 && uri.port != 80)) return false;
+    if (uri == null ||
+        !_isHttpUri(uri) ||
+        uri.userInfo.isNotEmpty ||
+        (uri.port != 443 && uri.port != 80)) {
+      return false;
+    }
     final host = uri.host.toLowerCase();
     return _xiaohongshuHosts.contains(host) ||
         _xiaohongshuShortHosts.contains(host);
@@ -174,6 +207,7 @@ class LiveRoomLinkParser {
     String siteId,
     String roomId, {
     String? douyinSecUserId,
+    String? xiaohongshuHostId,
   }) {
     final normalizedRoomId = roomId.trim();
     if (!_isValidRoomId(siteId, normalizedRoomId)) {
@@ -182,6 +216,9 @@ class LiveRoomLinkParser {
     final site = Sites.allSites[siteId];
     final normalizedDouyinSecUserId =
         siteId == Constant.kDouyin ? douyinSecUserId?.trim() : null;
+    final normalizedXiaohongshuHostId = siteId == Constant.kXiaohongshu
+        ? normalizeXiaohongshuHostId(xiaohongshuHostId)
+        : null;
     return site == null
         ? null
         : LiveRoomLinkTarget(
@@ -191,6 +228,7 @@ class LiveRoomLinkParser {
                     normalizedDouyinSecUserId.isEmpty
                 ? null
                 : normalizedDouyinSecUserId,
+            xiaohongshuHostId: normalizedXiaohongshuHostId,
           );
   }
 

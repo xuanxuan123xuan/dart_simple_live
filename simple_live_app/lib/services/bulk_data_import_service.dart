@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_host_id.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 enum BulkDataScale {
@@ -343,8 +345,22 @@ class BulkDataImportService {
         if (!overwrite &&
             old != null &&
             old.updateTime.isAfter(history.updateTime)) {
+          if (old.siteId == Constant.kXiaohongshu &&
+              old.xiaohongshuHostId == null) {
+            final importedHostId =
+                normalizeXiaohongshuHostId(history.xiaohongshuHostId);
+            if (importedHostId != null) {
+              old.xiaohongshuHostId = importedHostId;
+              pending[old.id] = old;
+            }
+          }
           await yieldIfNeeded(policy, processed);
           continue;
+        }
+        if (history.siteId == Constant.kXiaohongshu &&
+            history.xiaohongshuHostId == null) {
+          history.xiaohongshuHostId =
+              normalizeXiaohongshuHostId(old?.xiaohongshuHostId);
         }
         existing[history.id] = history;
         pending[history.id] = history;
@@ -436,6 +452,13 @@ class BulkDataImportService {
     final total = users.length;
     var written = 0;
     for (final user in users) {
+      if (user.siteId == Constant.kXiaohongshu &&
+          user.xiaohongshuHostId == null) {
+        user.xiaohongshuHostId = normalizeXiaohongshuHostId(
+          (buffer[user.id] ?? DBService.instance.followBox.get(user.id))
+              ?.xiaohongshuHostId,
+        );
+      }
       buffer[user.id] = user;
       if (buffer.length >= policy.dbBatchSize) {
         await DBService.instance.followBox.putAll(buffer);
