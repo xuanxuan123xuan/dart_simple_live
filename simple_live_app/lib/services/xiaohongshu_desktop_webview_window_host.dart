@@ -151,6 +151,9 @@ class XiaohongshuDesktopWebviewWindowFactory
         const message = JSON.stringify({type: 'xhs_document_ready', url: location.href});
         if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
           window.chrome.webview.postMessage(message);
+        } else if (window.webkit && window.webkit.messageHandlers &&
+                   window.webkit.messageHandlers.XiaohongshuBridge) {
+          window.webkit.messageHandlers.XiaohongshuBridge.postMessage(message);
         } else if (window.XiaohongshuBridge) {
           window.XiaohongshuBridge.postMessage(message);
         }
