@@ -9,7 +9,7 @@
 - `pullConfig` 支持当前 JSON 字符串格式及 `h264/h265` 数组、`master_url`、质量名称和宽高；优先 H.264，保留 HLS、FLV 与备用 CDN。播放请求带页面 Referer、User-Agent 和可选 Cookie。
 - 评论使用 H5 互动接口的 `endTimestamp` 游标和服务端间隔；只映射 chat/online，有限重试，停止与重启隔离旧响应，停止时释放签名会话。
 - WebView 只承担签名和 JSON 请求，使用网页自己的 `window.sign` / `window.f`。桥接仅允许已确认的五个 H5 GET 读取路径，禁止写方法和任意路径；406 只重建一次会话。
-- Android/iOS/macOS 使用 InAppWebView；OHOS 使用 webview_flutter。Windows/Linux 当前依赖中没有签名 WebView 实现，仍支持 SSR 与播放，签名功能明确降级。
+- Android/iOS/macOS 使用 InAppWebView；OHOS 使用 webview_flutter。Windows/Linux 已增加隐藏桌面签名会话，缺少 WebView2 或 WebKitGTK 运行库时提示具体原因，仍支持有效直播页的 SSR 与播放。跨场次身份恢复和更新后的平台验证见[主播身份与跨场次解析](xiaohongshu_anchor_resolution.md)。
 - 多个房间共享同源签名页面，请求串行执行。关闭房间取消它的排队/在途请求；最后一个房间关闭时卸载页面。视频在原生播放器播放，签名页面禁用媒体播放。
 - 没有取得可验证的直播目录协议。`XiaohongshuDiscoveryClient` 返回明确的不可用结果，搜索 metadata 是 fallback/unknown。推荐、分类和搜索界面显示“当前只能通过直播链接进入”，不从普通笔记伪造直播卡片。
 - 账号页支持粘贴、配置状态与清除 Cookie；Cookie 放入独立的备份 accounts 字段，并从 settings 导出排除。日志对 Cookie、签名和小红书原始响应脱敏。
@@ -51,7 +51,7 @@ dart run tool/probe_xiaohongshu.dart <当前房间号>
 ## 仍待验收或受限的项目
 
 - Android/iOS/macOS/OHOS 的真实 WebView 签名、Cookie 注入、实时评论与人数刷新。
-- 原生播放器实际解码起播、清晰度切换、设备竖屏表现与直播结束流程。HTTP 媒体探测不能代替这些验收。
+- 2026-10-17 已取得 Windows 原生播放器实际视频画面，详见跨场次解析记录；其他设备、清晰度切换、竖屏表现与直播结束流程仍待验收。HTTP 媒体探测不能代替这些验收。
 - 当前分享短链的真实跳转；自动化已验证受限跳转、非法目标和循环拒绝。
 - 推荐、分类、搜索真实目录响应。取得稳定的接口路径、分页参数和 fixture 后才开放目录。
 - Cookie 外发同步：自动审批拒绝了本地 HTTP、SignalR/WebDAV 发送端修改，理由是具体接收目标及中继信任范围未明确。现有改动只有本地存储、离线备份/恢复及 `/sync/account/xiaohongshu` 接收路由，没有新增专用发送端。已有本地全量同步与 WebDAV 打包也显式排除小红书 Cookie，避免通过通用备份路径间接外发；本地备份文件仍保留恢复能力。补发送端前需要明确允许的目标地址/设备和中继范围。
