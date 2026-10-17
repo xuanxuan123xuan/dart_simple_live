@@ -2213,7 +2213,7 @@ class LiveRoomController extends PlayerController
               )
             : roomDetail;
         detail.value = committedDetail;
-        _applyXiaohongshuRoomIdentity(committedDetail);
+        applyXiaohongshuRoomIdentity(committedDetail);
         if (site.id == Constant.kXiaohongshu) {
           if (roomId != requestedRoomId) addHistory();
           unawaited(FollowService.instance.syncFollowStatusFromRoomDetail(
@@ -3521,7 +3521,7 @@ class LiveRoomController extends PlayerController
           }
         }
       }
-      _applyXiaohongshuRoomIdentity(roomDetail);
+      applyXiaohongshuRoomIdentity(roomDetail);
       unawaited(
         AppSettingsController.instance.saveLastLiveRoom(
           siteId: site.id,
@@ -3636,7 +3636,8 @@ class LiveRoomController extends PlayerController
     }
   }
 
-  void _applyXiaohongshuRoomIdentity(LiveRoomDetail roomDetail) {
+  @visibleForTesting
+  void applyXiaohongshuRoomIdentity(LiveRoomDetail roomDetail) {
     if (site.id != Constant.kXiaohongshu) return;
     final snapshot = roomDetail.data;
     if (snapshot is! XiaohongshuRoomSnapshot) return;
@@ -3660,6 +3661,11 @@ class LiveRoomController extends PlayerController
         roomId: resolvedRoomId,
       ));
     }
+    followed.value = DBService.instance.findXiaohongshuFollow(
+          roomId: roomId,
+          hostId: _xiaohongshuHostId,
+        ) !=
+        null;
     final statusMessage = snapshot.statusMessage?.trim() ?? '';
     if (roomDetail.resolvedLiveStatus == LiveStatusState.unknown &&
         statusMessage.isNotEmpty) {

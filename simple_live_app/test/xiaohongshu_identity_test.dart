@@ -5,9 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:hive/hive.dart';
 import 'package:simple_live_app/app/constant.dart';
+import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/models/db/history.dart';
+import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -81,6 +85,64 @@ void main() {
     db.historyBox = await Hive.openBox<History>(historyBoxName);
     expect(db.followBox.get(follow.id)?.xiaohongshuHostId, _hostId);
     expect(db.historyBox.get(history.id)?.xiaohongshuHostId, _hostId);
+  });
+
+  test(
+      'first confirmed polling identity finds an anchor followed on another room',
+      () async {
+    final followedAnchor = _follow('C', hostId: _hostId);
+    await db.followBox.put(followedAnchor.id, followedAnchor);
+    final currentRoom = Get.put(CurrentRoomService());
+    final settings = Get.put<AppSettingsController>(_IdentitySettings());
+    final controller = LiveRoomController(
+      pSite: Sites.allSites[Constant.kXiaohongshu]!,
+      pRoomId: 'A',
+    );
+    expect(controller.followed.value, isFalse);
+
+    controller.applyXiaohongshuRoomIdentity(_detail('B', hostId: _hostId));
+
+    expect(controller.roomId, 'B');
+    expect(currentRoom.roomId.value, 'B');
+    expect((settings as _IdentitySettings).savedRoomId, 'B');
+    expect(controller.followed.value, isTrue);
+    // The button must be correct even before asynchronous follow-key migration.
+    expect(db.followBox.keys, ['xiaohongshu_C']);
+  });
+
+  test(
+      'polling identity clears stale followed state and rejects another anchor',
+      () async {
+    await db.followBox.put('xiaohongshu_B', _follow('B', hostId: _otherHostId));
+    Get.put(CurrentRoomService());
+    Get.put<AppSettingsController>(_IdentitySettings());
+    final controller = LiveRoomController(
+      pSite: Sites.allSites[Constant.kXiaohongshu]!,
+      pRoomId: 'A',
+    )..followed.value = true;
+
+    controller.applyXiaohongshuRoomIdentity(_detail('B', hostId: _hostId));
+
+    expect(controller.roomId, 'B');
+    expect(controller.followed.value, isFalse);
+    controller.applyXiaohongshuRoomIdentity(_detail('C', hostId: _otherHostId));
+    expect(controller.roomId, 'B');
+    expect(controller.followed.value, isFalse);
+  });
+
+  test('learning an anchor refreshes followed state without changing the room',
+      () async {
+    final followedAnchor = _follow('C', hostId: _hostId);
+    await db.followBox.put(followedAnchor.id, followedAnchor);
+    final controller = LiveRoomController(
+      pSite: Sites.allSites[Constant.kXiaohongshu]!,
+      pRoomId: 'B',
+    );
+
+    controller.applyXiaohongshuRoomIdentity(_detail('B', hostId: _hostId));
+
+    expect(controller.roomId, 'B');
+    expect(controller.followed.value, isTrue);
   });
 
   test('known host migrates old room and unions follow tags', () async {
@@ -347,6 +409,24 @@ LiveRoomDetail _detail(
         hostId: hostId,
       ),
     );
+
+class _IdentitySettings extends AppSettingsController {
+  String? savedRoomId;
+
+  @override
+  // Storage is not needed when testing how a resolved identity updates the UI.
+  // ignore: must_call_super
+  void onInit() {}
+
+  @override
+  Future<void> saveLastLiveRoom({
+    required String siteId,
+    required String roomId,
+    bool resumePending = false,
+  }) async {
+    savedRoomId = roomId;
+  }
+}
 
 class _DelayedFollowBox extends Fake implements Box<FollowUser> {
   _DelayedFollowBox(this.inner);
