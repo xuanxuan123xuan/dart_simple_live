@@ -45,7 +45,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev liblzma-dev \
             libasound2-dev libmpv-dev mpv libepoxy-dev patchelf \
             plocate libfuse2t64
           wget -q -O "$RUNNER_TEMP/appimagetool" \

@@ -21,11 +21,20 @@ class XiaohongshuWebSessionHost extends StatelessWidget {
         !Get.isRegistered<XiaohongshuWebSessionService>()) {
       return const SizedBox.shrink();
     }
+    // Windows/Linux own an isolated native window per web context. Rendering
+    // the embedded H5 signer here would share state and can take app focus.
+    if (XiaohongshuWebSessionService.usesNativeDesktopHost) {
+      return const SizedBox.shrink();
+    }
     final service = XiaohongshuWebSessionService.instance;
     return Obx(() {
-      final url = service.pageUrl.value;
-      final revision = service.revision.value;
-      if (url == null) return const SizedBox.shrink();
+      final roomUrl = service.pageUrl.value;
+      final roomRevision = service.revision.value;
+      final profileUrl = service.profilePageUrl.value;
+      final profileRevision = service.profileRevision.value;
+      if (roomUrl == null && profileUrl == null) {
+        return const SizedBox.shrink();
+      }
       return ExcludeSemantics(
           child: IgnorePointer(
               child: Opacity(
@@ -33,12 +42,24 @@ class XiaohongshuWebSessionHost extends StatelessWidget {
         child: SizedBox(
             width: 1,
             height: 1,
-            child: _SessionView(
-              key: ValueKey('$url:$revision'),
-              url: url,
-              revision: revision,
-              service: service,
-            )),
+            child: Stack(children: [
+              if (roomUrl != null)
+                _SessionView(
+                  key: ValueKey('room:$roomUrl:$roomRevision'),
+                  url: roomUrl,
+                  revision: roomRevision,
+                  service: service,
+                  profile: false,
+                ),
+              if (profileUrl != null)
+                _SessionView(
+                  key: ValueKey('profile:$profileUrl:$profileRevision'),
+                  url: profileUrl,
+                  revision: profileRevision,
+                  service: service,
+                  profile: true,
+                ),
+            ])),
       )));
     });
   }
@@ -49,10 +70,12 @@ class _SessionView extends StatefulWidget {
       {super.key,
       required this.url,
       required this.revision,
-      required this.service});
+      required this.service,
+      required this.profile});
   final String url;
   final int revision;
   final XiaohongshuWebSessionService service;
+  final bool profile;
   @override
   State<_SessionView> createState() => _SessionViewState();
 }
@@ -104,14 +127,14 @@ class _SessionViewState extends State<_SessionView> {
                   : ohos.NavigationDecision.prevent,
           onPageFinished: (_) async {
             await controller.runJavaScript(_blockMedia);
-            if (mounted) {
+            if (mounted && !widget.profile) {
               widget.service
                   .loaded(url: widget.url, sessionRevision: widget.revision);
             }
           },
         ));
         if (!mounted) return;
-        widget.service.evaluate = controller.runJavaScript;
+        if (!widget.profile) widget.service.evaluate = controller.runJavaScript;
         setState(() => _ohosController = controller);
         await controller.loadRequest(Uri.parse(widget.url));
       } else {
@@ -151,7 +174,8 @@ class _SessionViewState extends State<_SessionView> {
           return InAppWebView(
             initialUrlRequest: URLRequest(url: WebUri(widget.url)),
             initialSettings: InAppWebViewSettings(
-              userAgent: XiaohongshuSite.defaultUserAgent,
+              userAgent: XiaohongshuWebSessionService.userAgentFor(
+                  profile: widget.profile),
               useShouldOverrideUrlLoading: true,
               mediaPlaybackRequiresUserGesture: true,
               needInitialFocus: false,
@@ -164,12 +188,24 @@ class _SessionViewState extends State<_SessionView> {
               controller.addJavaScriptHandler(
                   handlerName: 'XiaohongshuBridge',
                   callback: (args) {
-                    if (args.isNotEmpty) widget.service.receive(args.first);
+                    if (args.isNotEmpty) {
+                      if (widget.profile) {
+                        widget.service.receiveProfile(args.first);
+                      } else {
+                        widget.service.receive(args.first);
+                      }
+                    }
                     return null;
                   });
-              widget.service.evaluate = (script) async {
+              Future<void> evaluate(String script) async {
                 await controller.evaluateJavascript(source: script);
-              };
+              }
+
+              if (widget.profile) {
+                widget.service.evaluateProfile = evaluate;
+              } else {
+                widget.service.evaluate = evaluate;
+              }
             },
             shouldOverrideUrlLoading: (controller, action) async =>
                 XiaohongshuWebSessionService.isAllowedNavigation(
@@ -178,9 +214,15 @@ class _SessionViewState extends State<_SessionView> {
                     : NavigationActionPolicy.CANCEL,
             onLoadStop: (controller, url) async {
               await controller.evaluateJavascript(source: _blockMedia);
-              if (mounted) {
-                widget.service
-                    .loaded(url: widget.url, sessionRevision: widget.revision);
+              if (mounted &&
+                  XiaohongshuWebSessionService.isAllowedNavigation('$url')) {
+                if (widget.profile) {
+                  widget.service.loadedProfile(
+                      url: widget.url, sessionRevision: widget.revision);
+                } else {
+                  widget.service.loaded(
+                      url: widget.url, sessionRevision: widget.revision);
+                }
               }
             },
           );

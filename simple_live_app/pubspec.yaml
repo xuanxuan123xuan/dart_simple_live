@@ -75,6 +75,8 @@ dependencies:
   screen_retriever: ^0.2.0 #屏幕范围
   floating: ^6.0.0 #PIP画中画
   flutter_inappwebview: 6.0.0 # Dart 3.4 compatible
+  desktop_webview_window:
+    path: third_party/desktop_webview_window # XHS Windows/Linux private sessions
   webview_flutter:
     git:
       url: https://github.com/xuanxuan123xuan/flutter_packages.git
