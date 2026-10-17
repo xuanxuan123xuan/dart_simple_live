@@ -2213,9 +2213,8 @@ class LiveRoomController extends PlayerController
               )
             : roomDetail;
         detail.value = committedDetail;
-        applyXiaohongshuRoomIdentity(committedDetail);
+        applyXiaohongshuRoomIdentity(committedDetail, persistHistory: true);
         if (site.id == Constant.kXiaohongshu) {
-          if (roomId != requestedRoomId) addHistory();
           unawaited(FollowService.instance.syncFollowStatusFromRoomDetail(
             committedDetail,
             siteId: site.id,
@@ -2226,6 +2225,12 @@ class LiveRoomController extends PlayerController
         }
         online.value = committedDetail.online;
         _syncBackgroundPlaybackMetadata(committedDetail);
+      } else if (site.id == Constant.kXiaohongshu &&
+          incomingState == LiveStatusState.unknown &&
+          _xiaohongshuHostId == null) {
+        // An unknown live state can still identify the original anchor.
+        // Keep that recovery identity without changing the known room/status.
+        applyXiaohongshuRoomIdentity(roomDetail, persistHistory: true);
       }
       if (incomingState == LiveStatusState.live) {
         if ((site.id == Constant.kDouyin || site.id == Constant.kXiaohongshu) &&
@@ -3637,12 +3642,16 @@ class LiveRoomController extends PlayerController
   }
 
   @visibleForTesting
-  void applyXiaohongshuRoomIdentity(LiveRoomDetail roomDetail) {
+  void applyXiaohongshuRoomIdentity(
+    LiveRoomDetail roomDetail, {
+    bool persistHistory = false,
+  }) {
     if (site.id != Constant.kXiaohongshu) return;
     final snapshot = roomDetail.data;
     if (snapshot is! XiaohongshuRoomSnapshot) return;
     final resolvedHostId = normalizeXiaohongshuHostId(snapshot.hostId);
     final currentHostId = normalizeXiaohongshuHostId(_xiaohongshuHostId);
+    final previousRoomId = roomId;
     if (resolvedHostId != null &&
         currentHostId != null &&
         resolvedHostId != currentHostId) {
@@ -3666,6 +3675,15 @@ class LiveRoomController extends PlayerController
           hostId: _xiaohongshuHostId,
         ) !=
         null;
+    if (persistHistory &&
+        (_xiaohongshuHostId != currentHostId || roomId != previousRoomId)) {
+      final isUnknown =
+          roomDetail.resolvedLiveStatus == LiveStatusState.unknown;
+      addHistory(
+        sourceDetail: isUnknown ? detail.value ?? roomDetail : roomDetail,
+        xiaohongshuRoomVerified: !isUnknown && resolvedHostId != null,
+      );
+    }
     final statusMessage = snapshot.statusMessage?.trim() ?? '';
     if (roomDetail.resolvedLiveStatus == LiveStatusState.unknown &&
         statusMessage.isNotEmpty) {
@@ -4768,13 +4786,16 @@ class LiveRoomController extends PlayerController
   }
 
   /// 娣诲姞鍘嗗彶璁板綍
-  void addHistory() {
-    if (detail.value == null) {
+  void addHistory({
+    LiveRoomDetail? sourceDetail,
+    bool? xiaohongshuRoomVerified,
+  }) {
+    final roomDetail = sourceDetail ?? detail.value;
+    if (roomDetail == null) {
       return;
     }
     final id = "${site.id}_$roomId";
     final previous = DBService.instance.getHistory(id);
-    final roomDetail = detail.value!;
     final isXiaohongshu = site.id == Constant.kXiaohongshu;
     final history = History(
       id: id,
@@ -4792,13 +4813,14 @@ class LiveRoomController extends PlayerController
           : null,
     );
 
-    final roomSnapshot = detail.value?.data;
+    final roomSnapshot = roomDetail.data;
     unawaited(DBService.instance.addOrUpdateHistory(
       history,
       xiaohongshuRoomVerified: site.id != Constant.kXiaohongshu ||
-          (detail.value?.resolvedLiveStatus != LiveStatusState.unknown &&
-              roomSnapshot is XiaohongshuRoomSnapshot &&
-              normalizeXiaohongshuHostId(roomSnapshot.hostId) != null),
+          (xiaohongshuRoomVerified ??
+              (roomDetail.resolvedLiveStatus != LiveStatusState.unknown &&
+                  roomSnapshot is XiaohongshuRoomSnapshot &&
+                  normalizeXiaohongshuHostId(roomSnapshot.hostId) != null)),
     ));
   }
 

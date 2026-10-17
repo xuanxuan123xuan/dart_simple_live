@@ -145,6 +145,86 @@ void main() {
     expect(controller.followed.value, isTrue);
   });
 
+  test(
+      'polling persists a newly learned host without rewriting unchanged history',
+      () async {
+    await db.historyBox.put('xiaohongshu_A', _history('A', DateTime(2026)));
+    final controller = LiveRoomController(
+      pSite: Sites.allSites[Constant.kXiaohongshu]!,
+      pRoomId: 'A',
+    );
+    final writes = <BoxEvent>[];
+    final subscription = db.historyBox.watch().listen(writes.add);
+    final persisted = db.historyBox
+        .watch(key: 'xiaohongshu_A')
+        .first
+        .timeout(const Duration(seconds: 5));
+
+    controller.applyXiaohongshuRoomIdentity(
+      _detail('A', hostId: _hostId),
+      persistHistory: true,
+    );
+    await persisted;
+    expect(db.historyBox.get('xiaohongshu_A')?.xiaohongshuHostId, _hostId);
+
+    controller.applyXiaohongshuRoomIdentity(
+      _detail('A', hostId: _hostId),
+      persistHistory: true,
+    );
+    await pumpEventQueue();
+    expect(writes, hasLength(1));
+    await subscription.cancel();
+  });
+
+  test('unknown polling keeps its recovery host without rolling history B back',
+      () async {
+    final current = _history('B', DateTime(2026), hostId: _hostId);
+    await db.historyBox.put(current.id, current);
+    final controller = LiveRoomController(
+      pSite: Sites.allSites[Constant.kXiaohongshu]!,
+      pRoomId: 'A',
+    );
+    final persisted = db.historyBox
+        .watch(key: current.id)
+        .first
+        .timeout(const Duration(seconds: 5));
+
+    controller.applyXiaohongshuRoomIdentity(
+      _detail('A', hostId: _hostId, state: LiveStatusState.unknown),
+      persistHistory: true,
+    );
+    await persisted;
+
+    expect(controller.roomId, 'A');
+    expect(db.historyBox.keys, [current.id]);
+    expect(db.historyBox.get(current.id)?.roomId, 'B');
+    expect(db.historyBox.get(current.id)?.xiaohongshuHostId, _hostId);
+  });
+
+  test('unknown polling persists its newly discovered recovery identity',
+      () async {
+    final controller = LiveRoomController(
+      pSite: Sites.allSites[Constant.kXiaohongshu]!,
+      pRoomId: 'A',
+    );
+    controller.detail.value = _detail('A', state: LiveStatusState.unknown);
+    final persisted = db.historyBox
+        .watch(key: 'xiaohongshu_A')
+        .first
+        .timeout(const Duration(seconds: 5));
+
+    controller.applyXiaohongshuRoomIdentity(
+      _detail('A', hostId: _hostId, state: LiveStatusState.unknown),
+      persistHistory: true,
+    );
+    await persisted;
+
+    expect(db.historyBox.get('xiaohongshu_A')?.xiaohongshuHostId, _hostId);
+    expect(db.historyBox.get('xiaohongshu_A')?.roomId, 'A');
+    expect(
+        controller.detail.value?.resolvedLiveStatus, LiveStatusState.unknown);
+  });
+
   test('known host migrates old room and unions follow tags', () async {
     final old = _follow('A', hostId: _hostId, addTime: DateTime(2025));
     final duplicate = _follow(
