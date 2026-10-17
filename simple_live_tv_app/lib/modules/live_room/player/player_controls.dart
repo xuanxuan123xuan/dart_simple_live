@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
@@ -11,6 +12,7 @@ import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/player/tv_player_control_bar.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
 import 'package:simple_live_tv_app/widgets/card/anchor_card.dart';
@@ -29,7 +31,7 @@ Widget buildControls(VideoState videoState, LiveRoomController controller) {
       _buildLiveEventFlowOverlay(controller),
       // 点击播放器打开设置
       Positioned.fill(
-        child: GestureDetector(onTap: () => showPlayerSettings(controller)),
+        child: GestureDetector(onTap: controller.showControls),
       ),
       Center(
         child: // 中间
@@ -169,44 +171,23 @@ Widget buildControls(VideoState videoState, LiveRoomController controller) {
                   ],
                 ),
                 AppStyle.vGap12,
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.arrow_circle_up_rounded,
-                      color: Colors.white,
-                      size: 40.w,
-                    ),
-                    AppStyle.hGap16,
-                    Text("上一频道", style: AppStyle.textStyleWhite),
-                    AppStyle.hGap32,
-                    Icon(
-                      Icons.arrow_circle_down_rounded,
-                      color: Colors.white,
-                      size: 40.w,
-                    ),
-                    AppStyle.hGap16,
-                    Text("下一频道", style: AppStyle.textStyleWhite),
-                    AppStyle.hGap32,
-                    Icon(
-                      Icons.arrow_circle_left_outlined,
-                      color: Colors.white,
-                      size: 40.w,
-                    ),
-                    AppStyle.hGap16,
-                    Text("关注列表", style: AppStyle.textStyleWhite),
-                    AppStyle.hGap32,
-                    Icon(
-                      Icons.arrow_circle_right_outlined,
-                      color: Colors.white,
-                      size: 40.w,
-                    ),
-                    AppStyle.hGap16,
-                    Icon(Icons.menu, color: Colors.white, size: 44.w),
-                    AppStyle.hGap16,
-                    Text("设置", style: AppStyle.textStyleWhite),
-                  ],
-                ),
+                if (controller.showControlsState.value)
+                  TvPlayerControlBar(
+                    paused: controller.userPaused.value,
+                    muted: controller.muted.value,
+                    volume: controller.playerVolume.value,
+                    onTogglePause: () => unawaited(controller.togglePause()),
+                    onToggleMute: () => unawaited(controller.toggleMute()),
+                    onVolumeDown: () => unawaited(controller
+                        .changeVolume(controller.playerVolume.value - 5)),
+                    onVolumeUp: () => unawaited(controller
+                        .changeVolume(controller.playerVolume.value + 5)),
+                    onPrevious: controller.prevChannel,
+                    onNext: controller.nextChannel,
+                    onRefresh: () => unawaited(controller.refreshRoom()),
+                    onSettings: () => showPlayerSettings(controller),
+                    onActivity: controller.resetHideControlsTimer,
+                  ),
               ],
             ),
           ),
@@ -384,6 +365,8 @@ Widget buildDanmuView(VideoState videoState, LiveRoomController controller) {
 // }
 
 void showPlayerSettings(LiveRoomController controller) {
+  controller.showSettingState.value = true;
+  controller.hideControlsTimer?.cancel();
   // 移除焦点
   controller.focusNode.unfocus();
 
@@ -666,12 +649,29 @@ void showPlayerSettings(LiveRoomController controller) {
       ],
     ),
   ).then((value) {
-    // 还原焦点
+    controller.showSettingState.value = false;
+    for (final node in [
+      followFocusNode,
+      specialFollowFocusNode,
+      qualityFoucsNode,
+      lineFoucsNode,
+      scaleFoucsNode,
+      danmakuFoucsNode,
+      danmakuSizeFoucsNode,
+      danmakuSpeedFoucsNode,
+      danmakuAreaFoucsNode,
+      danmakuOpacityFoucsNode
+    ]) {
+      node.dispose();
+    }
+    if (controller.playbackIntent.isClosed) return;
+    controller.resetHideControlsTimer();
     controller.focusNode.requestFocus();
   });
 }
 
 void showFollowUser(LiveRoomController controller) {
+  controller.hideControlsTimer?.cancel();
   var currentIndex = 0;
   if (controller.followed.value) {
     currentIndex = FollowUserService.instance.livingList.indexWhere(
@@ -775,6 +775,8 @@ void showFollowUser(LiveRoomController controller) {
     followScrollController.dispose();
     currentFocusNode.dispose();
     // 还原焦点
+    if (controller.playbackIntent.isClosed) return;
+    controller.resetHideControlsTimer();
     controller.focusNode.requestFocus();
   });
 }

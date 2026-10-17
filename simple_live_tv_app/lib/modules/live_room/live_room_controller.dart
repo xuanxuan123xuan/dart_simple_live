@@ -20,6 +20,7 @@ import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/models/db/follow_user.dart';
 import 'package:simple_live_tv_app/models/db/history.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/player_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/player/tv_playback_intent.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
@@ -53,6 +54,12 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   Rx<LiveStatusState> roomLiveState = LiveStatusState.unknown.obs;
   var playbackLoadError = "".obs;
   var muted = false.obs;
+  final userPaused = false.obs;
+  final playerVolume = 100.0.obs;
+  final playbackIntent = TvPlaybackIntent();
+  double _lastAudibleVolume = 100;
+  Future<void>? _closePlaybackFuture;
+  Timer? _clockTimer;
   bool _autoSwitchingRoom = false;
   Completer<void>? _playerReopenCompleter;
   bool _mediaRecoveryInFlight = false;
@@ -119,7 +126,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   var datetime = "00:00".obs;
 
   void initTimer() {
-    Timer.periodic(const Duration(seconds: 1), (timer) {
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       var now = DateTime.now();
       datetime.value =
           "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
@@ -142,6 +149,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   @override
   void onInit() {
+    WidgetsBinding.instance.addObserver(this);
     CurrentRoomService.instance.setRoom(site, roomId);
     initTimer();
     _startLiveEventFlowTimer();
@@ -277,9 +285,56 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   Future<void> toggleMute() async {
-    muted.value = !muted.value;
-    await player.setVolume(muted.value ? 0 : 100);
+    if (muted.value) {
+      await changeVolume(_lastAudibleVolume);
+    } else {
+      _lastAudibleVolume = playerVolume.value > 0 ? playerVolume.value : 100;
+      await changeVolume(0);
+    }
     SmartDialog.showToast(muted.value ? "已静音" : "已恢复声音");
+  }
+
+  Future<void> changeVolume(double value) async {
+    final volume = value.clamp(0, 100).toDouble();
+    playerVolume.value = volume;
+    muted.value = volume == 0;
+    if (volume > 0) _lastAudibleVolume = volume;
+    if (!_disposed) await setPlayerVolume(volume);
+  }
+
+  @protected
+  Future<void> pausePlayerMedia() => player.pause();
+
+  @protected
+  Future<void> resumePlayerMedia() => player.play();
+
+  Future<void> togglePause() => setUserPaused(!userPaused.value);
+
+  Future<void> setUserPaused(bool paused) async {
+    if (_disposed) return;
+    userPaused.value = paused;
+    playbackIntent.userPaused = paused;
+    if (paused) {
+      _playRequestGeneration++;
+      _urlRequestGeneration++;
+      _resetAutomaticRecovery();
+      resetPlaybackRecoveryTracking();
+      await pausePlayerMedia();
+    } else if (playbackIntent.shouldPlay) {
+      if (_playbackSessionReady) {
+        await resumePlayerMedia();
+      } else if (playUrls.isNotEmpty) {
+        await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+      } else {
+        await loadData();
+      }
+    }
+  }
+
+  @override
+  void hideControls() {
+    super.hideControls();
+    if (!_disposed && focusNode.context != null) focusNode.requestFocus();
   }
 
   bool handleDesktopShortcut(
@@ -1104,7 +1159,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         return;
       }
       playbackLoadError.value = "";
-      await setPlayerVolume(muted.value ? 0 : 100);
+      if (!playbackIntent.shouldPlay) await pausePlayerMedia();
+      await setPlayerVolume(playerVolume.value);
 
       Log.d("播放链接\r\n：$playUrl");
     } catch (e, stackTrace) {
@@ -1155,7 +1211,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     if (_mediaRecoveryInFlight ||
         _recoveryExhausted ||
         !_playbackSessionReady ||
-        _disposed) {
+        _disposed ||
+        !playbackIntent.shouldPlay) {
       return;
     }
     final recoveryGeneration = ++_recoveryOperationGeneration;
@@ -1226,7 +1283,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   @override
   bool get playbackRecoveryBlocked =>
-      !_playbackSessionReady || _recoveryExhausted || _disposed;
+      !_playbackSessionReady ||
+      _recoveryExhausted ||
+      _disposed ||
+      !playbackIntent.shouldPlay;
 
   @override
   bool get playbackRecoveryPending =>
@@ -1324,7 +1384,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     int recoveryGeneration,
   ) =>
       _isCurrentLoad(roomGeneration, loadGeneration) &&
-      recoveryGeneration == _recoveryOperationGeneration;
+      recoveryGeneration == _recoveryOperationGeneration &&
+      playbackIntent.shouldPlay;
 
   bool _isCurrentUrlRequest(
     int roomGeneration,
@@ -1340,7 +1401,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     int requestGeneration,
   ) =>
       _isCurrentLoad(roomGeneration, loadGeneration) &&
-      requestGeneration == _playRequestGeneration;
+      requestGeneration == _playRequestGeneration &&
+      playbackIntent.shouldPlay;
 
   void _resetAutomaticRecovery() {
     _recoveryOperationGeneration++;
@@ -1585,23 +1647,50 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
-    if (state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
       Log.d("进入后台");
       //进入后台，关闭弹幕
       danmakuController?.clear();
       isBackground = true;
+      playbackIntent.suspend(TvPlaybackSuspension.background);
+      _playRequestGeneration++;
+      _urlRequestGeneration++;
+      _resetAutomaticRecovery();
+      resetPlaybackRecoveryTracking();
+      unawaited(pausePlayerMedia());
     } else
     //返回前台
     if (state == AppLifecycleState.resumed) {
       Log.d("返回前台");
       _refreshAutoExitCountdown();
       isBackground = false;
+      playbackIntent.resume(TvPlaybackSuspension.background);
+      if (playbackIntent.shouldPlay && !_disposed) {
+        if (_playbackSessionReady) {
+          unawaited(resumePlayerMedia());
+        } else if (playUrls.isNotEmpty) {
+          unawaited(setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry));
+        } else {
+          unawaited(loadData());
+        }
+      }
     }
   }
 
   @override
   void onClose() {
+    unawaited(closePlaybackSession());
+    super.onClose();
+  }
+
+  /// Await this before replacing the single-room route with a multi-room route.
+  Future<void> closePlaybackSession() => _closePlaybackFuture ??= _closeRoom();
+
+  Future<void> _closeRoom() async {
     _disposed = true;
+    playbackIntent.close();
+    WidgetsBinding.instance.removeObserver(this);
     _roomGeneration += 1;
     _loadGeneration += 1;
     _urlRequestGeneration++;
@@ -1610,11 +1699,16 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     invalidatePlaybackGeneration();
     _playbackSessionReady = false;
     autoExitTimer?.cancel();
-    liveDanmaku.stop();
+    _clockTimer?.cancel();
+    doubleClickTimer?.cancel();
+    hideControlsTimer?.cancel();
+    hideSeekTipTimer?.cancel();
+    await liveDanmaku.stop();
     _liveEventFlowTimer?.cancel();
     clearLiveEventFlow();
 
     danmakuController = null;
-    super.onClose();
+    focusNode.dispose();
+    await closePlayerSession();
   }
 }

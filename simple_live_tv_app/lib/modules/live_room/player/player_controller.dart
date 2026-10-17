@@ -525,13 +525,23 @@ class PlayerController extends BaseController
   @protected
   Future<void> disposePlayer() => player.dispose();
 
-  @override
-  void onClose() async {
-    Log.w("播放器关闭");
+  Future<void>? _closePlayerFuture;
+
+  Future<void> closePlayerSession() => _closePlayerFuture ??= _closePlayer();
+
+  Future<void> _closePlayer() async {
     disposeStream();
+    hideControlsTimer?.cancel();
+    hideSeekTipTimer?.cancel();
     disposeDanmakuController();
     await resetSystem();
     await disposePlayer();
+  }
+
+  @override
+  void onClose() {
+    Log.w("播放器关闭");
+    unawaited(closePlayerSession());
     super.onClose();
   }
 }

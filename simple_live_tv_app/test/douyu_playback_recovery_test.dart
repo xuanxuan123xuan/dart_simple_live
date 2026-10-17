@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:get/get.dart';
 import 'package:hive/hive.dart';
 import 'package:media_kit/media_kit.dart';
@@ -155,6 +156,8 @@ class _TestRoomController extends LiveRoomController {
   int openFailuresRemaining = 0;
   int retryWaits = 0;
   int confirmationWaits = 0;
+  int pauseCalls = 0;
+  int resumeCalls = 0;
   bool interceptRoomSwitch = false;
   String? switchedTo;
 
@@ -181,6 +184,16 @@ class _TestRoomController extends LiveRoomController {
 
   @override
   Future<void> setPlayerVolume(double volume) async {}
+
+  @override
+  Future<void> pausePlayerMedia() async {
+    pauseCalls++;
+  }
+
+  @override
+  Future<void> resumePlayerMedia() async {
+    resumeCalls++;
+  }
 
   @override
   Future<void> stopCurrentPlayer() async {}
@@ -229,6 +242,28 @@ void main() {
   });
 
   tearDown(Get.reset);
+
+  test('user pause survives playback errors and background restoration',
+      () async {
+    final controller = _TestRoomController(
+      pSite: _site(Constant.kDouyu, _ScriptedSite()),
+      pRoomId: '1',
+    );
+    await controller.loadData();
+    await controller.changeVolume(35);
+    await controller.setUserPaused(true);
+    await controller.mediaError('late error');
+    controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+    controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    expect(controller.opened, hasLength(1));
+    expect(controller.resumeCalls, 0);
+    expect(controller.playerVolume.value, 35);
+    await controller.setUserPaused(false);
+    expect(controller.resumeCalls, 1);
+    await controller.closePlaybackSession();
+    await controller.mediaEnd();
+    expect(controller.opened, hasLength(1));
+  });
 
   test(
       'each line gets two fresh URL retries; exhaustion ignores duplicate events',
