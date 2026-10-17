@@ -86,6 +86,7 @@ class _DouyuRoomInterceptor extends Interceptor {
   dynamic Function(RequestOptions)? playbackResponder;
   Future<void> Function(RequestOptions)? beforePlaybackResponse;
   Map<String, List<String>> safeAuthHeaders = const {};
+  bool failSafeAuthRequest = false;
   Completer<void>? safeAuthGate;
   Completer<void>? safeAuthStarted;
   final requests = <RequestOptions>[];
@@ -100,6 +101,10 @@ class _DouyuRoomInterceptor extends Interceptor {
   List<RequestOptions> get playbackRequests => requests
       .where(
           (request) => request.uri.path.startsWith('/lapi/live/getH5PlayV1/'))
+      .toList();
+
+  List<RequestOptions> get safeAuthRequests => requests
+      .where((request) => request.uri.path.endsWith('/safeAuth'))
       .toList();
 
   @override
@@ -172,6 +177,13 @@ class _DouyuRoomInterceptor extends Interceptor {
       safeAuthStarted!.complete();
     }
     await safeAuthGate?.future;
+    if (failSafeAuthRequest) {
+      handler.reject(DioException(
+        requestOptions: options,
+        type: DioExceptionType.connectionError,
+      ));
+      return;
+    }
     handler.resolve(_ok(options, {'error': 0}, headers: safeAuthHeaders));
   }
 
@@ -404,6 +416,325 @@ void main() {
           interceptor.requests
               .where((request) => request.uri.path.endsWith('/safeAuth')),
           hasLength(1));
+    });
+
+    test('returns unchanged for an empty cookie or a JWT outside the window',
+        () async {
+      expect(
+        await site.refreshCookieIfNeeded(),
+        DouyuCookieRefreshResult.unchanged,
+      );
+      site.cookie =
+          'dy_did=device; LTP0=refresh-key; acf_jwt_token=${_jwt(now.add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000)}';
+
+      expect(
+        await site.refreshCookieIfNeeded(),
+        DouyuCookieRefreshResult.unchanged,
+      );
+      expect(interceptor.safeAuthRequests, isEmpty);
+    });
+
+    test('refreshes inside the requested early window', () async {
+      final oldJwt = _jwt(
+          now.add(const Duration(minutes: 5)).millisecondsSinceEpoch ~/ 1000);
+      final newJwt = _jwt(
+          now.add(const Duration(hours: 2)).millisecondsSinceEpoch ~/ 1000);
+      site.cookie = 'dy_did=device; LTP0=refresh-key; acf_jwt_token=$oldJwt';
+      interceptor.safeAuthHeaders = {
+        'set-cookie': ['acf_jwt_token=$newJwt; Path=/'],
+      };
+
+      expect(
+        await site.refreshCookieIfNeeded(
+          refreshAhead: const Duration(minutes: 10),
+          proactive: true,
+        ),
+        DouyuCookieRefreshResult.refreshed,
+      );
+      expect(site.cookie, contains('acf_jwt_token=$newJwt'));
+      expect(interceptor.safeAuthRequests, hasLength(1));
+    });
+
+    test('reports missing refresh credentials without making a request',
+        () async {
+      final expiredJwt = _jwt(
+          now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
+              1000);
+      site.cookie = 'acf_jwt_token=$expiredJwt';
+
+      expect(
+        await site.refreshCookieIfNeeded(),
+        DouyuCookieRefreshResult.missingCredentials,
+      );
+      expect(interceptor.safeAuthRequests, isEmpty);
+    });
+
+    test('deduplicates concurrent refreshes and notifies once', () async {
+      final expiredJwt = _jwt(
+          now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
+              1000);
+      final newJwt = _jwt(
+          now.add(const Duration(hours: 2)).millisecondsSinceEpoch ~/ 1000);
+      site.cookie =
+          'dy_did=device; LTP0=refresh-key; acf_jwt_token=$expiredJwt';
+      interceptor.safeAuthHeaders = {
+        'set-cookie': ['acf_jwt_token=$newJwt; Path=/'],
+      };
+      final started = Completer<void>();
+      final gate = Completer<void>();
+      interceptor.safeAuthStarted = started;
+      interceptor.safeAuthGate = gate;
+      final saved = <String>[];
+      site.onCookieRefreshed = (cookie) async => saved.add(cookie);
+
+      final first = site.refreshCookieIfNeeded();
+      await started.future;
+      final second = site.refreshCookieIfNeeded();
+      gate.complete();
+
+      expect(await Future.wait([first, second]), [
+        DouyuCookieRefreshResult.refreshed,
+        DouyuCookieRefreshResult.refreshed,
+      ]);
+      expect(interceptor.safeAuthRequests, hasLength(1));
+      expect(saved, hasLength(1));
+    });
+
+    test('returns failed during cooldown and retries after sixty seconds',
+        () async {
+      final expiredJwt = _jwt(
+          now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
+              1000);
+      final newJwt = _jwt(
+          now.add(const Duration(hours: 2)).millisecondsSinceEpoch ~/ 1000);
+      site.cookie =
+          'dy_did=device; LTP0=refresh-key; acf_jwt_token=$expiredJwt';
+      interceptor.failSafeAuthRequest = true;
+
+      expect(
+        await site.refreshCookieIfNeeded(),
+        DouyuCookieRefreshResult.failed,
+      );
+      expect(
+        await site.refreshCookieIfNeeded(),
+        DouyuCookieRefreshResult.failed,
+      );
+      expect(interceptor.safeAuthRequests, hasLength(1));
+
+      now = now.add(const Duration(seconds: 61));
+      interceptor.failSafeAuthRequest = false;
+      interceptor.safeAuthHeaders = {
+        'set-cookie': ['acf_jwt_token=$newJwt; Path=/'],
+      };
+      expect(
+        await site.refreshCookieIfNeeded(),
+        DouyuCookieRefreshResult.refreshed,
+      );
+      expect(interceptor.safeAuthRequests, hasLength(2));
+    });
+
+    test('rejects missing and expired JWT Set-Cookie values', () async {
+      final expiredJwt = _jwt(
+          now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
+              1000);
+      site.cookie =
+          'dy_did=device; LTP0=refresh-key; acf_jwt_token=$expiredJwt';
+
+      expect(
+        await site.refreshCookieIfNeeded(),
+        DouyuCookieRefreshResult.failed,
+      );
+      expect(site.cookie, contains('acf_jwt_token=$expiredJwt'));
+
+      now = now.add(const Duration(seconds: 61));
+      interceptor.safeAuthHeaders = {
+        'set-cookie': ['acf_jwt_token=$expiredJwt; Path=/'],
+      };
+      expect(
+        await site.refreshCookieIfNeeded(),
+        DouyuCookieRefreshResult.failed,
+      );
+      expect(site.cookie, contains('acf_jwt_token=$expiredJwt'));
+      expect(interceptor.safeAuthRequests, hasLength(2));
+    });
+
+    test('clearing the cookie cancels a pending explicit refresh', () async {
+      final expiredJwt = _jwt(
+          now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
+              1000);
+      final newJwt = _jwt(
+          now.add(const Duration(hours: 2)).millisecondsSinceEpoch ~/ 1000);
+      site.cookie =
+          'dy_did=device; LTP0=refresh-key; acf_jwt_token=$expiredJwt';
+      interceptor.safeAuthHeaders = {
+        'set-cookie': ['acf_jwt_token=$newJwt; Path=/'],
+      };
+      final started = Completer<void>();
+      final gate = Completer<void>();
+      interceptor.safeAuthStarted = started;
+      interceptor.safeAuthGate = gate;
+
+      final pending = site.refreshCookieIfNeeded();
+      await started.future;
+      site.cookie = '';
+      gate.complete();
+
+      await expectLater(pending, throwsA(isA<CoreCancelledError>()));
+      expect(site.cookie, isEmpty);
+    });
+
+    test('proactive refresh defers while a playback request is active',
+        () async {
+      final expiringJwt = _jwt(
+          now.add(const Duration(minutes: 1)).millisecondsSinceEpoch ~/ 1000);
+      site.cookie =
+          'dy_did=device; LTP0=refresh-key; acf_jwt_token=$expiringJwt';
+      final started = Completer<void>();
+      final gate = Completer<void>();
+      interceptor.beforeEncryptionResponse = (_) async {
+        if (!started.isCompleted) started.complete();
+        await gate.future;
+      };
+
+      final playback = site.getPlayQualites(detail: _detail());
+      await started.future;
+      expect(
+        await site.refreshCookieIfNeeded(
+          refreshAhead: const Duration(minutes: 2),
+          proactive: true,
+        ),
+        DouyuCookieRefreshResult.deferred,
+      );
+      expect(interceptor.safeAuthRequests, isEmpty);
+
+      gate.complete();
+      await playback;
+    });
+
+    test('new playback waits for proactive refresh before taking a snapshot',
+        () async {
+      final expiringJwt = _jwt(
+          now.add(const Duration(minutes: 1)).millisecondsSinceEpoch ~/ 1000);
+      final newJwt = _jwt(
+          now.add(const Duration(hours: 2)).millisecondsSinceEpoch ~/ 1000);
+      site.cookie =
+          'dy_did=device; LTP0=refresh-key; acf_jwt_token=$expiringJwt';
+      interceptor.safeAuthHeaders = {
+        'set-cookie': ['acf_jwt_token=$newJwt; Path=/'],
+      };
+      final started = Completer<void>();
+      final gate = Completer<void>();
+      interceptor.safeAuthStarted = started;
+      interceptor.safeAuthGate = gate;
+
+      final refresh = site.refreshCookieIfNeeded(
+        refreshAhead: const Duration(minutes: 2),
+        proactive: true,
+      );
+      await started.future;
+      final playback = site.getPlayQualites(detail: _detail());
+      expect(interceptor.encryptionRequests, isEmpty);
+
+      gate.complete();
+      expect(await refresh, DouyuCookieRefreshResult.refreshed);
+      await playback;
+
+      expect(interceptor.encryptionRequests, hasLength(1));
+      expect(interceptor.encryptionRequests.single.headers['cookie'],
+          contains('acf_jwt_token=$newJwt'));
+    });
+
+    test('proactive check joins a refresh already started by playback',
+        () async {
+      final expiredJwt = _jwt(
+          now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
+              1000);
+      final newJwt = _jwt(
+          now.add(const Duration(hours: 2)).millisecondsSinceEpoch ~/ 1000);
+      site.cookie =
+          'dy_did=device; LTP0=refresh-key; acf_jwt_token=$expiredJwt';
+      interceptor.safeAuthHeaders = {
+        'set-cookie': ['acf_jwt_token=$newJwt; Path=/'],
+      };
+      final started = Completer<void>();
+      final gate = Completer<void>();
+      interceptor.safeAuthStarted = started;
+      interceptor.safeAuthGate = gate;
+
+      final playback = site.getPlayQualites(detail: _detail());
+      await started.future;
+      final proactive = site.refreshCookieIfNeeded(proactive: true);
+      gate.complete();
+
+      expect(await proactive, DouyuCookieRefreshResult.refreshed);
+      await playback;
+      expect(interceptor.safeAuthRequests, hasLength(1));
+      expect(interceptor.encryptionRequests.single.headers['cookie'],
+          contains('acf_jwt_token=$newJwt'));
+    });
+
+    test('playback waits until refreshed cookie callback completes', () async {
+      final expiredJwt = _jwt(
+          now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
+              1000);
+      final newJwt = _jwt(
+          now.add(const Duration(hours: 2)).millisecondsSinceEpoch ~/ 1000);
+      site.cookie =
+          'dy_did=device; LTP0=refresh-key; acf_jwt_token=$expiredJwt';
+      interceptor.safeAuthHeaders = {
+        'set-cookie': ['acf_jwt_token=$newJwt; Path=/'],
+      };
+      final callbackStarted = Completer<void>();
+      final callbackGate = Completer<void>();
+      site.onCookieRefreshed = (_) async {
+        callbackStarted.complete();
+        await callbackGate.future;
+      };
+
+      final refresh = site.refreshCookieIfNeeded();
+      await callbackStarted.future;
+      final playback = site.getPlayQualites(detail: _detail());
+      await Future<void>.delayed(Duration.zero);
+      expect(interceptor.encryptionRequests, isEmpty);
+
+      callbackGate.complete();
+      expect(await refresh, DouyuCookieRefreshResult.refreshed);
+      await playback;
+      expect(interceptor.encryptionRequests.single.headers['cookie'],
+          contains('acf_jwt_token=$newJwt'));
+    });
+
+    test('manual replacement during refresh callback cancels waiting playback',
+        () async {
+      final expiredJwt = _jwt(
+          now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
+              1000);
+      final newJwt = _jwt(
+          now.add(const Duration(hours: 2)).millisecondsSinceEpoch ~/ 1000);
+      site.cookie = 'dy_did=old; LTP0=old; acf_jwt_token=$expiredJwt';
+      interceptor.safeAuthHeaders = {
+        'set-cookie': ['acf_jwt_token=$newJwt; Path=/'],
+      };
+      final callbackStarted = Completer<void>();
+      final callbackGate = Completer<void>();
+      site.onCookieRefreshed = (_) async {
+        callbackStarted.complete();
+        await callbackGate.future;
+      };
+
+      final refresh = site.refreshCookieIfNeeded();
+      await callbackStarted.future;
+      final playback = site.getPlayQualites(detail: _detail());
+      final refreshCancelled =
+          expectLater(refresh, throwsA(isA<CoreCancelledError>()));
+      final playbackCancelled =
+          expectLater(playback, throwsA(isA<CoreCancelledError>()));
+
+      site.cookie = 'dy_did=new; acf_jwt_token=$newJwt';
+      callbackGate.complete();
+      await Future.wait([refreshCancelled, playbackCancelled]);
+      expect(site.cookie, 'dy_did=new; acf_jwt_token=$newJwt');
+      expect(interceptor.encryptionRequests, isEmpty);
     });
 
     test('manual account replacement cancels pending safeAuth refresh',

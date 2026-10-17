@@ -41,6 +41,22 @@ class _DouyuPlayUrlAttempt {
   final StackTrace? stackTrace;
 }
 
+/// The result of checking whether the current Douyu cookie needs renewal.
+enum DouyuCookieRefreshResult {
+  unchanged,
+  refreshed,
+  missingCredentials,
+  failed,
+  deferred,
+}
+
+class _DouyuCookieRefreshOutcome {
+  const _DouyuCookieRefreshOutcome(this.generation, this.result);
+
+  final int generation;
+  final DouyuCookieRefreshResult result;
+}
+
 class _DouyuEncryptionKey {
   const _DouyuEncryptionKey({
     required this.key,
@@ -102,10 +118,10 @@ class DouyuSite implements LiveSite {
   int? _cachedEncryptionGeneration;
   Future<_DouyuEncryptionKey>? _encryptionKeyRequest;
   int? _encryptionRequestGeneration;
-  Future<int>? _authRefreshRequest;
-  int? _authRefreshGeneration;
+  Future<_DouyuCookieRefreshOutcome>? _authRefreshRequest;
   int? _authRefreshFailedGeneration;
   DateTime? _authRefreshFailedUntil;
+  int _activePlaybackOperations = 0;
 
   /// Optional authenticated web cookie. Empty preserves anonymous behavior.
   String get cookie => _cookie;
@@ -117,14 +133,15 @@ class DouyuSite implements LiveSite {
     _advanceSession();
   }
 
-  void _advanceSession() {
+  void _advanceSession({bool preserveAuthRefresh = false}) {
     _sessionGeneration++;
     _cachedEncryptionKey = null;
     _cachedEncryptionGeneration = null;
     _encryptionKeyRequest = null;
     _encryptionRequestGeneration = null;
-    _authRefreshRequest = null;
-    _authRefreshGeneration = null;
+    if (!preserveAuthRefresh) {
+      _authRefreshRequest = null;
+    }
     _authRefreshFailedGeneration = null;
     _authRefreshFailedUntil = null;
   }
@@ -258,138 +275,212 @@ class DouyuSite implements LiveSite {
   @override
   Future<List<LivePlayQuality>> getPlayQualites({
     required LiveRoomDetail detail,
-  }) async {
-    final generation = await _preparePlaybackSession();
-    _assertSession(generation);
-    final cookieSnapshot = _cookie;
-    final did = _didForCookie(cookieSnapshot);
-    final encryption = await _getEncryptionKey(
-      detail.roomId,
-      did: did,
-      cookieSnapshot: cookieSnapshot,
-      generation: generation,
-    );
-    final result = await _requestH5Play(
-      roomId: detail.roomId,
-      rate: -1,
-      cdn: '',
-      did: did,
-      cookieSnapshot: cookieSnapshot,
-      generation: generation,
-      encryption: encryption,
-    );
-    _assertSession(generation);
+  }) =>
+      _trackPlaybackOperation(() async {
+        final generation = await _preparePlaybackSession();
+        _assertSession(generation);
+        final cookieSnapshot = _cookie;
+        final did = _didForCookie(cookieSnapshot);
+        final encryption = await _getEncryptionKey(
+          detail.roomId,
+          did: did,
+          cookieSnapshot: cookieSnapshot,
+          generation: generation,
+        );
+        final result = await _requestH5Play(
+          roomId: detail.roomId,
+          rate: -1,
+          cdn: '',
+          did: did,
+          cookieSnapshot: cookieSnapshot,
+          generation: generation,
+          encryption: encryption,
+        );
+        _assertSession(generation);
 
-    final cdns = _readCdnList(result['cdnsWithName']);
-    final rateGroups = _readRateGroups(result['multirates']);
-    return rateGroups
-        .map(
-          (group) => LivePlayQuality(
-            quality: group.name,
-            data: DouyuPlayData(
-              group.rate,
-              cdns,
-              rateOrder: rateGroups.map((item) => item.rate).toList(),
-              rateNames: {for (final item in rateGroups) item.rate: item.name},
-            ),
-          ),
-        )
-        .toList(growable: false);
-  }
+        final cdns = _readCdnList(result['cdnsWithName']);
+        final rateGroups = _readRateGroups(result['multirates']);
+        return rateGroups
+            .map(
+              (group) => LivePlayQuality(
+                quality: group.name,
+                data: DouyuPlayData(
+                  group.rate,
+                  cdns,
+                  rateOrder: rateGroups.map((item) => item.rate).toList(),
+                  rateNames: {
+                    for (final item in rateGroups) item.rate: item.name
+                  },
+                ),
+              ),
+            )
+            .toList(growable: false);
+      });
 
   @override
   Future<LivePlayUrl> getPlayUrls({
     required LiveRoomDetail detail,
     required LivePlayQuality quality,
-  }) async {
-    final generation = await _preparePlaybackSession();
-    _assertSession(generation);
-    final cookieSnapshot = _cookie;
-    final did = _didForCookie(cookieSnapshot);
-    final data = quality.data as DouyuPlayData;
-    final encryption = await _getEncryptionKey(
-      detail.roomId,
-      did: did,
-      cookieSnapshot: cookieSnapshot,
-      generation: generation,
-    );
-
-    // CDN 请求并发执行；Future.wait 保留线路原有顺序。
-    final attempts = await Future.wait(
-      data.cdns.map(
-        (cdn) => _getPlayUrlForCdn(
-          roomId: detail.roomId,
-          cdn: cdn,
-          requestedQuality: quality,
-          requestedRate: data.rate,
+  }) =>
+      _trackPlaybackOperation(() async {
+        final generation = await _preparePlaybackSession();
+        _assertSession(generation);
+        final cookieSnapshot = _cookie;
+        final did = _didForCookie(cookieSnapshot);
+        final data = quality.data as DouyuPlayData;
+        final encryption = await _getEncryptionKey(
+          detail.roomId,
           did: did,
           cookieSnapshot: cookieSnapshot,
           generation: generation,
-          encryption: encryption,
-        ),
-      ),
-    );
-    _assertSession(generation);
-    final playable =
-        attempts.where((attempt) => attempt.url.isNotEmpty).toList();
-    if (playable.isEmpty) {
-      for (final attempt in attempts) {
-        final error = attempt.error;
-        final stackTrace = attempt.stackTrace;
-        if (error != null && stackTrace != null) {
-          Error.throwWithStackTrace(error, stackTrace);
+        );
+
+        // CDN 请求并发执行；Future.wait 保留线路原有顺序。
+        final attempts = await Future.wait(
+          data.cdns.map(
+            (cdn) => _getPlayUrlForCdn(
+              roomId: detail.roomId,
+              cdn: cdn,
+              requestedQuality: quality,
+              requestedRate: data.rate,
+              did: did,
+              cookieSnapshot: cookieSnapshot,
+              generation: generation,
+              encryption: encryption,
+            ),
+          ),
+        );
+        _assertSession(generation);
+        final playable =
+            attempts.where((attempt) => attempt.url.isNotEmpty).toList();
+        if (playable.isEmpty) {
+          for (final attempt in attempts) {
+            final error = attempt.error;
+            final stackTrace = attempt.stackTrace;
+            if (error != null && stackTrace != null) {
+              Error.throwWithStackTrace(error, stackTrace);
+            }
+          }
         }
-      }
-    }
-    final selected = _selectActualQuality(playable, data);
-    final urls = playable
-        .where((attempt) => _sameQuality(attempt.actualQuality, selected))
-        .map((attempt) => attempt.url)
-        .toList();
-    final actualQuality = selected;
-    return LivePlayUrl(urls: urls, actualQuality: actualQuality);
-  }
+        final selected = _selectActualQuality(playable, data);
+        final urls = playable
+            .where((attempt) => _sameQuality(attempt.actualQuality, selected))
+            .map((attempt) => attempt.url)
+            .toList();
+        final actualQuality = selected;
+        return LivePlayUrl(urls: urls, actualQuality: actualQuality);
+      });
 
   Future<String> getPlayUrl(
     String roomId,
     String args,
     int rate,
     String cdn,
-  ) async {
-    // Kept as a public compatibility method; current signing uses the cached
-    // encryption key and does not consume expired room-detail script data.
-    final generation = await _preparePlaybackSession();
-    _assertSession(generation);
-    final cookieSnapshot = _cookie;
-    final did = _didForCookie(cookieSnapshot);
-    final encryption = await _getEncryptionKey(
-      roomId,
-      did: did,
-      cookieSnapshot: cookieSnapshot,
-      generation: generation,
-    );
-    final result = await _requestH5Play(
-      roomId: roomId,
-      rate: rate,
-      cdn: cdn,
-      did: did,
-      cookieSnapshot: cookieSnapshot,
-      generation: generation,
-      encryption: encryption,
-    );
-    _assertSession(generation);
-    final url = _readStreamUrl(result);
-    if (url == null) {
-      throw CoreError('斗鱼取流响应缺少可播放地址', kind: CoreErrorKind.response);
+  ) =>
+      _trackPlaybackOperation(() async {
+        // Kept as a public compatibility method; current signing uses the cached
+        // encryption key and does not consume expired room-detail script data.
+        final generation = await _preparePlaybackSession();
+        _assertSession(generation);
+        final cookieSnapshot = _cookie;
+        final did = _didForCookie(cookieSnapshot);
+        final encryption = await _getEncryptionKey(
+          roomId,
+          did: did,
+          cookieSnapshot: cookieSnapshot,
+          generation: generation,
+        );
+        final result = await _requestH5Play(
+          roomId: roomId,
+          rate: rate,
+          cdn: cdn,
+          did: did,
+          cookieSnapshot: cookieSnapshot,
+          generation: generation,
+          encryption: encryption,
+        );
+        _assertSession(generation);
+        final url = _readStreamUrl(result);
+        if (url == null) {
+          throw CoreError('斗鱼取流响应缺少可播放地址', kind: CoreErrorKind.response);
+        }
+        return url;
+      });
+
+  Future<T> _trackPlaybackOperation<T>(Future<T> Function() operation) async {
+    _activePlaybackOperations++;
+    try {
+      return await operation();
+    } finally {
+      _activePlaybackOperations--;
     }
-    return url;
   }
 
   Future<int> _preparePlaybackSession() async {
     final generation = _sessionGeneration;
-    final cookieSnapshot = _cookie;
-    if (!DouyuCookieHelper.needsRefresh(cookieSnapshot, _clock())) {
+    final pending = _authRefreshRequest;
+    if (pending != null) {
+      final outcome = await pending;
+      _assertSession(outcome.generation);
+      return outcome.generation;
+    }
+
+    if (!DouyuCookieHelper.needsRefresh(_cookie, _clock())) {
+      _assertSession(generation);
       return generation;
+    }
+    final outcome = await _refreshCookieIfNeeded();
+    _assertSession(outcome.generation);
+    return outcome.generation;
+  }
+
+  /// Renews an expired cookie, or one expiring within [refreshAhead].
+  ///
+  /// A proactive check waits for an existing renewal, but defers starting a
+  /// new one while a playback request is using the current session.
+  Future<DouyuCookieRefreshResult> refreshCookieIfNeeded({
+    Duration refreshAhead = Duration.zero,
+    bool proactive = false,
+  }) async =>
+      (await _refreshCookieIfNeeded(
+        refreshAhead: refreshAhead,
+        proactive: proactive,
+      ))
+          .result;
+
+  Future<_DouyuCookieRefreshOutcome> _refreshCookieIfNeeded({
+    Duration refreshAhead = Duration.zero,
+    bool proactive = false,
+  }) async {
+    final generation = _sessionGeneration;
+    final cookieSnapshot = _cookie;
+    if (cookieSnapshot.trim().isEmpty) {
+      return _DouyuCookieRefreshOutcome(
+        generation,
+        DouyuCookieRefreshResult.unchanged,
+      );
+    }
+
+    final pending = _authRefreshRequest;
+    if (pending != null) {
+      return pending;
+    }
+
+    final expiry = DouyuCookieHelper.jwtExpiresAt(cookieSnapshot);
+    if (expiry != null && expiry.isAfter(_clock().add(refreshAhead))) {
+      return _DouyuCookieRefreshOutcome(
+        generation,
+        DouyuCookieRefreshResult.unchanged,
+      );
+    }
+
+    if (_authRefreshFailedGeneration == generation &&
+        _authRefreshFailedUntil != null &&
+        _clock().isBefore(_authRefreshFailedUntil!)) {
+      return _DouyuCookieRefreshOutcome(
+        generation,
+        DouyuCookieRefreshResult.failed,
+      );
     }
 
     final cookieFields = DouyuCookieHelper.parse(cookieSnapshot);
@@ -402,17 +493,18 @@ class DouyuSite implements LiveSite {
 
     final did = field('dy_did').isNotEmpty ? field('dy_did') : field('acf_did');
     final ltp0 = field('ltp0');
-    if (did.isEmpty || ltp0.isEmpty) return generation;
-
-    if (_authRefreshFailedGeneration == generation &&
-        _authRefreshFailedUntil != null &&
-        _clock().isBefore(_authRefreshFailedUntil!)) {
-      return generation;
+    if (did.isEmpty || ltp0.isEmpty) {
+      return _DouyuCookieRefreshOutcome(
+        generation,
+        DouyuCookieRefreshResult.missingCredentials,
+      );
     }
 
-    final pending = _authRefreshRequest;
-    if (pending != null && _authRefreshGeneration == generation) {
-      return pending;
+    if (proactive && _activePlaybackOperations > 0) {
+      return _DouyuCookieRefreshOutcome(
+        generation,
+        DouyuCookieRefreshResult.deferred,
+      );
     }
 
     final future = _refreshCookie(
@@ -422,18 +514,16 @@ class DouyuSite implements LiveSite {
       ltp0: ltp0,
     );
     _authRefreshRequest = future;
-    _authRefreshGeneration = generation;
     try {
       return await future;
     } finally {
       if (identical(_authRefreshRequest, future)) {
         _authRefreshRequest = null;
-        _authRefreshGeneration = null;
       }
     }
   }
 
-  Future<int> _refreshCookie({
+  Future<_DouyuCookieRefreshOutcome> _refreshCookie({
     required int generation,
     required String cookieSnapshot,
     required String did,
@@ -474,7 +564,7 @@ class DouyuSite implements LiveSite {
       }
 
       _cookie = DouyuCookieHelper.normalizeInput(refreshedCookie);
-      _advanceSession();
+      _advanceSession(preserveAuthRefresh: true);
       final refreshedGeneration = _sessionGeneration;
       try {
         await onCookieRefreshed?.call(_cookie);
@@ -483,14 +573,20 @@ class DouyuSite implements LiveSite {
         // account callback still receives the refreshed in-memory value.
       }
       _assertSession(refreshedGeneration);
-      return refreshedGeneration;
+      return _DouyuCookieRefreshOutcome(
+        refreshedGeneration,
+        DouyuCookieRefreshResult.refreshed,
+      );
     } catch (error) {
       if (generation != _sessionGeneration) {
         throw CoreCancelledError(cause: error);
       }
       _authRefreshFailedGeneration = generation;
       _authRefreshFailedUntil = _clock().add(_authRefreshCooldown);
-      return generation;
+      return _DouyuCookieRefreshOutcome(
+        generation,
+        DouyuCookieRefreshResult.failed,
+      );
     }
   }
 
