@@ -1,5 +1,6 @@
 import 'dart:ui' show PointerDeviceKind;
 
+import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,11 +12,16 @@ Key _key(String value) => ValueKey<String>(value);
 Finder _topOverlay() => find.byKey(_key('multi-room-top-overlay'));
 Finder _bottomOverlay() => find.byKey(_key('multi-room-bottom-overlay'));
 Finder _pauseButton() => find.byKey(_key('multi-room-pause'));
+Finder _danmakuButton() => find.byKey(_key('multi-room-danmaku'));
 Finder _video(MultiRoomUiFixture fixture, int index) => find.byKey(
       _key('multi-room-video-${fixture.rooms.rooms[index].key}'),
     );
 Finder _tile(MultiRoomUiFixture fixture, int index) => find.byKey(
       _key('multi-room-tile-${fixture.rooms.rooms[index].key}'),
+    );
+Finder _danmakuLayer(MultiRoomUiFixture fixture, int index) => find.descendant(
+      of: _tile(fixture, index),
+      matching: find.byType(DanmakuScreen, skipOffstage: false),
     );
 
 void _expectOverlayState(WidgetTester tester, {required bool visible}) {
@@ -108,6 +114,141 @@ void main() {
     }
   });
 
+  testWidgets(
+      'danmaku canvas fills each room and stays live when controls hide',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 2);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+
+    final layer = _danmakuLayer(fixture, 1);
+    expect(layer, findsOneWidget);
+    expect(tester.getRect(layer), tester.getRect(_video(fixture, 1)));
+    final layerElement = tester.element(layer);
+    final danmakuController = fixture.session(1).danmakuController;
+    expect(danmakuController, isNotNull);
+    danmakuController!.addDanmaku(DanmakuContentItem('多屏弹幕测试消息'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await _pumpUntilHidden(tester);
+    _expectOverlayState(tester, visible: false);
+    expect(fixture.session(1).showDanmakuState.value, isTrue);
+    expect(
+        tester
+            .widget<Offstage>(
+              find.ancestor(of: layer, matching: find.byType(Offstage)).first,
+            )
+            .offstage,
+        isFalse);
+    expect(identical(tester.element(layer), layerElement), isTrue);
+    expect(identical(fixture.session(1).danmakuController, danmakuController),
+        isTrue);
+    danmakuController.clear();
+    await tester.pump(const Duration(milliseconds: 200));
+  });
+
+  testWidgets(
+      'danmaku toggle belongs to the selected room and follows focus order',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 4);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+    fixture.rooms.focusNodeFor(fixture.rooms.rooms.first).requestFocus();
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<Focus>(
+              find
+                  .descendant(of: _pauseButton(), matching: find.byType(Focus))
+                  .first,
+            )
+            .focusNode!
+            .hasPrimaryFocus,
+        isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(_danmakuButton(), findsOneWidget);
+    expect(find.text('关弹幕'), findsOneWidget);
+    final danmakuFocus = tester.widget<Focus>(
+      find.descendant(of: _danmakuButton(), matching: find.byType(Focus)).first,
+    );
+    expect(danmakuFocus.focusNode!.hasPrimaryFocus, isTrue);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(fixture.session(0).danmakuChanges, [false]);
+    expect(fixture.session(0).showDanmakuState.value, isFalse);
+    for (var index = 1; index < fixture.rooms.rooms.length; index++) {
+      expect(fixture.session(index).danmakuChanges, isEmpty);
+      expect(fixture.session(index).showDanmakuState.value, isTrue);
+    }
+    expect(find.text('开弹幕'), findsOneWidget);
+  });
+
+  testWidgets('main room, focus, audio and expansion preserve room preferences',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 4);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+    final rooms = fixture.rooms.rooms;
+
+    fixture.rooms.setMainRoom(rooms[2]);
+    fixture.rooms.focusedRoomKey.value = rooms[1].key;
+    await fixture.rooms.toggleAudio(rooms[2]);
+    await tester.pumpAndSettle();
+    for (var index = 0; index < rooms.length; index++) {
+      expect(fixture.session(index).showDanmakuState.value, isTrue);
+      expect(fixture.session(index).danmakuChanges, isEmpty);
+    }
+
+    await fixture.rooms.toggleRoomDanmaku(rooms[1]);
+    expect(fixture.rooms.isRoomDanmakuEnabled(rooms[1].key), isFalse);
+    await fixture.rooms.toggleExpanded(rooms[2]);
+    expect(fixture.session(0).showDanmakuState.value, isFalse);
+    expect(fixture.session(1).showDanmakuState.value, isFalse);
+    expect(fixture.session(2).showDanmakuState.value, isTrue);
+    expect(fixture.session(3).showDanmakuState.value, isFalse);
+
+    await fixture.rooms.handleBack();
+    for (var index = 0; index < rooms.length; index++) {
+      expect(
+        fixture.session(index).showDanmakuState.value,
+        index != 1,
+        reason: 'Returning from expanded view restores room $index preference.',
+      );
+    }
+    expect(fixture.rooms.isRoomDanmakuEnabled(rooms[1].key), isFalse);
+  });
+
+  testWidgets('a room can enable danmaku while the global default is off',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 2, globalDanmakuEnabled: false);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+
+    expect(fixture.session(0).showDanmakuState.value, isFalse);
+    expect(fixture.session(1).showDanmakuState.value, isFalse);
+    expect(find.text('开弹幕'), findsOneWidget);
+    await tester.tap(_danmakuButton());
+    await tester.pumpAndSettle();
+
+    expect(fixture.settings.danmuEnable.value, isFalse);
+    expect(fixture.session(0).showDanmakuState.value, isTrue);
+    expect(fixture.session(1).showDanmakuState.value, isFalse);
+    expect(fixture.rooms.isRoomDanmakuEnabled(fixture.rooms.rooms.first.key),
+        isTrue);
+    expect(find.text('关弹幕'), findsOneWidget);
+  });
+
   testWidgets('first OK wakes the pause control, and a long press acts once',
       (tester) async {
     final fixture = MultiRoomUiFixture(count: 2);
@@ -121,7 +262,7 @@ void main() {
     expect(fixture.session(0).pauseActions, 0);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pump();
+    await tester.pumpAndSettle();
     _expectOverlayState(tester, visible: true);
     expect(fixture.session(0).pauseActions, 0);
     final pauseFocus = tester.widget<Focus>(

@@ -83,14 +83,26 @@ class _Player implements Player {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _Danmaku extends LiveDanmaku {
+  int starts = 0;
+  int stops = 0;
+
+  @override
+  Future<void> start(dynamic args) async => starts++;
+
+  @override
+  Future<void> stop() async => stops++;
+}
+
 class _Site extends LiveSite {
   int calls = 0;
   bool failDanmaku = false;
+  final danmaku = _Danmaku();
 
   @override
   LiveDanmaku getDanmaku() {
     if (failDanmaku) throw StateError('signing failed');
-    return LiveDanmaku();
+    return danmaku;
   }
 
   Completer<LivePlayUrl>? gate;
@@ -250,6 +262,32 @@ void main() {
     expect(player.playCalls, 1);
     expect(controller.liveStatus.value, isTrue);
     expect(controller.errorText.value, isEmpty);
+  });
+
+  test(
+      'unchanged danmaku preference keeps its connection and reload reconnects',
+      () async {
+    await controller.setDanmakuActive(true);
+    await controller.load();
+    await Future<void>.delayed(Duration.zero);
+    expect(site.danmaku.starts, 1);
+    final stopsAfterLoad = site.danmaku.stops;
+    await controller.setDanmakuActive(true);
+    await controller.setDanmakuActive(true);
+    expect(site.danmaku.starts, 1);
+    expect(site.danmaku.stops, stopsAfterLoad);
+
+    await controller.load();
+    await Future<void>.delayed(Duration.zero);
+    expect(site.danmaku.starts, 2);
+    await controller.setDanmakuActive(false);
+    expect(controller.showDanmakuState.value, isFalse);
+    final stopsAfterDisable = site.danmaku.stops;
+    await controller.setDanmakuActive(false);
+    expect(site.danmaku.stops, stopsAfterDisable);
+    await controller.setDanmakuActive(true);
+    expect(site.danmaku.starts, 3);
+    expect(controller.showDanmakuState.value, isTrue);
   });
 
   test('resume after pause during open binds recovery to resumed media',

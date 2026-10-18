@@ -44,6 +44,8 @@ class _MultiRoomPageState extends State<MultiRoomPage> {
       FocusNode(debugLabel: 'selected room pause');
   final FocusNode _soundFocusNode =
       FocusNode(debugLabel: 'selected room sound');
+  final FocusNode _danmakuFocusNode =
+      FocusNode(debugLabel: 'selected room danmaku');
   final FocusNode _qualityFocusNode =
       FocusNode(debugLabel: 'selected room quality');
   final FocusNode _lineFocusNode = FocusNode(debugLabel: 'selected room line');
@@ -68,6 +70,7 @@ class _MultiRoomPageState extends State<MultiRoomPage> {
     _globalMoreFocusNode.dispose();
     _pauseFocusNode.dispose();
     _soundFocusNode.dispose();
+    _danmakuFocusNode.dispose();
     _qualityFocusNode.dispose();
     _lineFocusNode.dispose();
     _roomMoreFocusNode.dispose();
@@ -488,12 +491,17 @@ class _MultiRoomPageState extends State<MultiRoomPage> {
     final nodes = [
       _pauseFocusNode,
       _soundFocusNode,
+      _danmakuFocusNode,
       _qualityFocusNode,
       _lineFocusNode,
       _roomMoreFocusNode,
     ];
     final player =
         selectedRoom == null ? null : controller.playerFor(selectedRoom);
+    final danmakuAvailable =
+        selectedRoom != null && controller.isRoomDanmakuAvailable(selectedRoom);
+    final danmakuEnabled = selectedRoom != null &&
+        controller.isRoomDanmakuEnabled(selectedRoom.key);
     // Capabilities are populated during load; observe its completion so the
     // controls update even when the overlay and selected room stay unchanged.
     final loading = player?.loading.value ?? true;
@@ -571,6 +579,31 @@ class _MultiRoomPageState extends State<MultiRoomPage> {
                         onDirection: (key) => _bottomDirection(
                           key,
                           _soundFocusNode,
+                          nodes,
+                        ),
+                      ),
+                      SizedBox(width: 8.w),
+                      _OverlayActionButton(
+                        key: const ValueKey('multi-room-danmaku'),
+                        focusNode: _danmakuFocusNode,
+                        label: !danmakuAvailable
+                            ? '弹幕不可用'
+                            : danmakuEnabled
+                                ? '关弹幕'
+                                : '开弹幕',
+                        icon: !danmakuAvailable
+                            ? Icons.block
+                            : danmakuEnabled
+                                ? Icons.chat_bubble
+                                : Icons.chat_bubble_outline,
+                        checked: danmakuAvailable ? danmakuEnabled : null,
+                        onPressed: !danmakuAvailable
+                            ? null
+                            : () => controller.toggleRoomDanmaku(selectedRoom),
+                        onFocusActivity: _overlay.activity,
+                        onDirection: (key) => _bottomDirection(
+                          key,
+                          _danmakuFocusNode,
                           nodes,
                         ),
                       ),
@@ -727,7 +760,12 @@ class _MultiRoomPageState extends State<MultiRoomPage> {
   }
 
   void _focusBottomPause() {
+    final wasVisible = _overlay.visible;
     _overlay.activity();
+    if (wasVisible) {
+      _pauseFocusNode.requestFocus();
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _overlay.visible) _pauseFocusNode.requestFocus();
     });
@@ -1370,11 +1408,7 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
                       }),
                     ),
                   ),
-                  Positioned(
-                    left: 16.w,
-                    right: 16.w,
-                    bottom: 30.w,
-                    height: 180.w,
+                  Positioned.fill(
                     child: IgnorePointer(
                       child: Obx(
                         () => Offstage(

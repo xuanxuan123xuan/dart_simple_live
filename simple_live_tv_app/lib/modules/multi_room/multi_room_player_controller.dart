@@ -614,7 +614,11 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> setDanmakuActive(bool active) async {
-    _danmakuActive = active && !_isWindowsXiaohongshu;
+    final nextActive = active && !_isWindowsXiaohongshu;
+    if (_danmakuActive == nextActive && showDanmakuState.value == nextActive) {
+      return;
+    }
+    _danmakuActive = nextActive;
     showDanmakuState.value = _danmakuActive;
     final generation = ++_danmakuGeneration;
     final currentDetail = detail.value;

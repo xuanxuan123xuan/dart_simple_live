@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui' show ImageByteFormat;
 
+import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -69,6 +70,61 @@ void main() {
   final exportScreenshots =
       Platform.environment['UPDATE_MULTI_ROOM_SCREENSHOTS'] == '1';
   const sizes = [Size(1280, 720), Size(1920, 1080)];
+
+  testWidgets('both room canvases retain messages when controls hide',
+      (tester) async {
+    await _loadScreenshotFont(tester);
+    final fixture = MultiRoomUiFixture(count: 2);
+    addTearDown(() async {
+      for (var index = 0; index < 2; index++) {
+        fixture.session(index).danmakuController?.clear();
+      }
+      await tester.pump(const Duration(milliseconds: 200));
+      await fixture.dispose(tester);
+    });
+    await fixture.pump(tester);
+    final canvases = find.byType(DanmakuScreen);
+    expect(canvases, findsNWidgets(2));
+    final elements = tester.elementList(canvases).toList();
+    final rects = [
+      for (final element in elements)
+        tester.getRect(find.byWidget(element.widget))
+    ];
+    for (var index = 0; index < 2; index++) {
+      expect(
+          rects[index],
+          tester.getRect(find.byKey(ValueKey(
+            'multi-room-video-${fixture.rooms.rooms[index].key}',
+          ))));
+      fixture.session(index).danmakuController!.addDanmaku(DanmakuContentItem(
+            '第 ${index + 1} 路的弹幕独立显示',
+            type: DanmakuItemType.top,
+          ));
+    }
+    await tester.pump(const Duration(milliseconds: 100));
+    if (exportScreenshots) {
+      await _writeScreenshot(
+          tester, fixture, '2room-danmaku-visible-offline-fixture.png');
+    }
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(find.byType(DanmakuScreen), findsNWidgets(2));
+    final retained = tester.elementList(canvases).toList();
+    for (var index = 0; index < 2; index++) {
+      expect(identical(retained[index], elements[index]), isTrue);
+      expect(fixture.session(index).showDanmakuState.value, isTrue);
+      expect(
+          tester.getRect(find.byWidget(retained[index].widget)), rects[index]);
+    }
+    if (exportScreenshots) {
+      await _writeScreenshot(
+          tester, fixture, '2room-danmaku-hidden-offline-fixture.png');
+    }
+    for (var index = 0; index < 2; index++) {
+      fixture.session(index).danmakuController!.clear();
+    }
+    await tester.pump(const Duration(milliseconds: 200));
+  });
 
   for (final count in [2, 3, 4]) {
     for (final layout in ['grid', 'mainSub']) {

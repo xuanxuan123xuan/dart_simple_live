@@ -1,3 +1,4 @@
+import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -47,6 +48,8 @@ class MultiRoomUiSession extends MultiRoomPlayerController {
   int selectedLine = 0;
   bool closed = false;
   bool capabilitiesAvailable = true;
+  final List<bool> danmakuChanges = <bool>[];
+  DanmakuController? danmakuController;
 
   @override
   List<LivePlayQuality> get qualities => capabilitiesAvailable
@@ -103,8 +106,16 @@ class MultiRoomUiSession extends MultiRoomPlayerController {
   Future<void> load() async => loads++;
 
   @override
-  Future<void> setDanmakuActive(bool active) async =>
-      showDanmakuState.value = active;
+  Future<void> setDanmakuActive(bool active) async {
+    danmakuChanges.add(active);
+    showDanmakuState.value = active;
+  }
+
+  @override
+  void initDanmakuController(DanmakuController controller) {
+    danmakuController = controller;
+    super.initDanmakuController(controller);
+  }
 
   @override
   void suspend(TvPlaybackSuspension reason) => playbackIntent.suspend(reason);
@@ -123,6 +134,8 @@ class MultiRoomUiRooms extends MultiRoomController {
     focusedRoomKey.value = items.first.key;
     for (final item in items) {
       sessions[item.key] = MultiRoomUiSession(item);
+      sessions[item.key]!.showDanmakuState.value =
+          AppSettingsController.instance.danmuEnable.value;
     }
     sessions[items.first.key]!.muted.value = false;
     audioRoomKeys.add(items.first.key);
@@ -147,10 +160,11 @@ class MultiRoomUiRooms extends MultiRoomController {
 }
 
 class MultiRoomUiFixture {
-  MultiRoomUiFixture({int count = 4}) {
+  MultiRoomUiFixture({int count = 4, bool globalDanmakuEnabled = true}) {
     Get.testMode = true;
     settings = Get.put<AppSettingsController>(MultiRoomUiSettings())
         as MultiRoomUiSettings;
+    settings.danmuEnable.value = globalDanmakuEnabled;
     final site = Site(
         id: 'douyu', name: '斗鱼', logo: '', index: 0, liveSite: DouyuSite());
     rooms = Get.put<MultiRoomController>(MultiRoomUiRooms([

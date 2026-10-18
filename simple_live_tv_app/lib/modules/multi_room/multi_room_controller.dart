@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:flutter/widgets.dart';
 import 'package:get/get.dart';
+import 'package:simple_live_tv_app/app/constant.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/log.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
@@ -29,6 +30,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
   final mainRoomKey = ''.obs;
   final focusedRoomKey = ''.obs;
   final expandedRoomKey = RxnString();
+  final RxMap<String, bool> _danmakuOverrides = <String, bool>{}.obs;
   final audioRoomKeys = <String>{}.obs;
   final allPaused = false.obs;
   final allMuted = true.obs;
@@ -39,6 +41,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
   final _queuedLoads = <MultiRoomPlayerController, Future<void>>{};
   Future<void>? _closeFuture;
   Timer? _qualityTimer;
+  Worker? _danmakuSettingsWorker;
   DateTime? _lastBufferFaultAt;
   DateTime? _lastQualityRestoreAt;
   DateTime? _firstMemoryWarningAt;
@@ -81,6 +84,10 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
       _createSession(item);
     }
     _reconcileAudio(initial: true);
+    _danmakuSettingsWorker = ever<bool>(
+      AppSettingsController.instance.danmuEnable,
+      (_) => unawaited(_syncDanmakuSelection()),
+    );
     unawaited(_syncDanmakuSelection());
     _qualityTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _restoreQualityWhenStable();
@@ -167,6 +174,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     for (final item in accepted) {
       _createSession(item);
     }
+    unawaited(_syncDanmakuSelection());
     if (accepted.length < candidates.length) {
       SmartDialog.showToast('最多同时播放 $roomLimit 路，已添加 ${accepted.length} 路');
     }
@@ -181,6 +189,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     audioRoomKeys.remove(item.key);
     focusNodes.remove(item.key)?.dispose();
     _memoryReleasedRoomKeys.remove(item.key);
+    _danmakuOverrides.remove(item.key);
     final session = sessions.remove(item.key);
     await session?.closePlaybackSession();
 
@@ -205,7 +214,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
   void setMainRoom(MultiRoomItem item) {
     if (!rooms.any((room) => room.key == item.key)) return;
     mainRoomKey.value = item.key;
-    _syncDanmakuSelection();
+    unawaited(_syncDanmakuSelection());
   }
 
   Future<void> toggleExpanded(MultiRoomItem item) async {
@@ -213,13 +222,29 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
       expandedRoomKey.value = null;
       _setFocusSuspension(null);
       mainRoomKey.value = item.key;
-      _syncDanmakuSelection();
+      await _syncDanmakuSelection();
       return;
     }
     expandedRoomKey.value = item.key;
     mainRoomKey.value = item.key;
     _setFocusSuspension(item.key);
-    _syncDanmakuSelection();
+    await _syncDanmakuSelection();
+  }
+
+  bool isRoomDanmakuEnabled(String roomKey) =>
+      _danmakuOverrides[roomKey] ??
+      AppSettingsController.instance.danmuEnable.value;
+
+  bool isRoomDanmakuAvailable(MultiRoomItem item) =>
+      !(Platform.isWindows && item.site.id == Constant.kXiaohongshu);
+
+  Future<void> toggleRoomDanmaku(MultiRoomItem item) async {
+    if (!rooms.any((room) => room.key == item.key) ||
+        !isRoomDanmakuAvailable(item)) {
+      return;
+    }
+    _danmakuOverrides[item.key] = !isRoomDanmakuEnabled(item.key);
+    await _syncDanmakuSelection();
   }
 
   void _setFocusSuspension(String? activeKey) {
@@ -474,13 +499,14 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
 
   Future<void> _syncDanmakuSelection() async {
     final generation = ++_danmakuSelectionGeneration;
-    final activeKey = expandedRoomKey.value ?? mainRoomKey.value;
+    final expandedKey = expandedRoomKey.value;
     for (final entry in sessions.entries.toList()) {
       if (_closed || generation != _danmakuSelectionGeneration) return;
-      await entry.value.setDanmakuActive(
-        entry.key == activeKey &&
-            AppSettingsController.instance.danmuEnable.value,
-      );
+      final active = isRoomDanmakuEnabled(entry.key) &&
+          isRoomDanmakuAvailable(entry.value.item) &&
+          (expandedKey == null || entry.key == expandedKey);
+      if (entry.value.showDanmakuState.value == active) continue;
+      await entry.value.setDanmakuActive(active);
     }
   }
 
@@ -536,6 +562,8 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
 
   Future<void> _closeSessions() async {
     _closed = true;
+    _danmakuSettingsWorker?.dispose();
+    _danmakuSettingsWorker = null;
     WidgetsBinding.instance.removeObserver(this);
     _qualityTimer?.cancel();
     for (final node in focusNodes.values) {
@@ -545,6 +573,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     await Future.wait(
         sessions.values.map((session) => session.closePlaybackSession()));
     sessions.clear();
+    _danmakuOverrides.clear();
     _memoryReleasedRoomKeys.clear();
     _queuedLoads.clear();
     await WakelockPlus.disable();
