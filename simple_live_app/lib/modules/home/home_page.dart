@@ -19,12 +19,14 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
     required this.controller,
     required this.onSearch,
     this.iconOnly,
+    this.sites,
     super.key,
   });
 
   final TabController controller;
   final VoidCallback onSearch;
   final bool? iconOnly;
+  final List<Site>? sites;
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
@@ -61,6 +63,7 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
                   child: SiteGlassTabBar(
                     controller: controller,
                     iconOnly: iconOnly,
+                    sites: sites,
                   ),
                 ),
               ),
@@ -97,23 +100,28 @@ class HomePage extends GetView<HomeController> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      extendBodyBehindAppBar: true,
-      appBar: HomeTopBar(
-        controller: controller.tabController,
-        onSearch: controller.toSearch,
-      ),
-      body: TabBarView(
-        controller: controller.tabController,
-        children: Sites.supportSites
-            .map(
-              (e) => HomeListView(
-                e.id,
-              ),
-            )
-            .toList(),
-      ),
-    );
+    return Obx(() {
+      final tabs = controller.tabs;
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        extendBodyBehindAppBar: true,
+        appBar: HomeTopBar(
+          controller: tabs.controller,
+          onSearch: controller.toSearch,
+          sites: tabs.sites,
+        ),
+        body: TabBarView(
+          controller: tabs.controller,
+          children: tabs.sites
+              .map(
+                (e) => HomeListView(
+                  e.id,
+                  key: ValueKey(e.id),
+                ),
+              )
+              .toList(),
+        ),
+      );
+    });
   }
 }

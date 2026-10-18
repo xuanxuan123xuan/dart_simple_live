@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:get/get.dart';
+import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/search/search_aggregate_models.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -13,9 +14,11 @@ class SearchAggregateController extends GetxController {
   SearchAggregateController({
     List<Site>? sites,
     this.timeout = const Duration(seconds: 20),
-  }) : _sites = List<Site>.unmodifiable(sites ?? Sites.supportSites);
+  })  : _usesConfiguredSites = sites == null,
+        _sites = List<Site>.unmodifiable(sites ?? Sites.visibleSites);
 
-  final List<Site> _sites;
+  final bool _usesConfiguredSites;
+  List<Site> _sites;
   final Duration timeout;
 
   /// The complete immutable state for the latest requested search.
@@ -23,6 +26,72 @@ class SearchAggregateController extends GetxController {
 
   int _searchVersion = 0;
   CoreCancellationToken? _activeCancellation;
+  Worker? _settingsWorker;
+  bool _settingsRefreshScheduled = false;
+  bool _isDisposing = false;
+
+  @override
+  void onInit() {
+    super.onInit();
+    if (!_usesConfiguredSites) {
+      return;
+    }
+
+    final settings = AppSettingsController.instance;
+    _settingsWorker = everAll(
+      <RxInterface<dynamic>>[
+        settings.siteSort,
+        settings.hiddenSiteIds,
+      ],
+      (_) => _scheduleSitesRefresh(),
+    );
+    _refreshSitesFromSettings();
+  }
+
+  void _scheduleSitesRefresh() {
+    if (_settingsRefreshScheduled || isClosed || _isDisposing) {
+      return;
+    }
+    _settingsRefreshScheduled = true;
+    scheduleMicrotask(() {
+      _settingsRefreshScheduled = false;
+      _refreshSitesFromSettings();
+    });
+  }
+
+  void _refreshSitesFromSettings() {
+    if (isClosed || _isDisposing || !_usesConfiguredSites) {
+      return;
+    }
+
+    final updatedSites = List<Site>.unmodifiable(Sites.visibleSites);
+    if (_hasSameSiteOrder(_sites, updatedSites)) {
+      return;
+    }
+
+    _sites = updatedSites;
+    final query = result.value.query;
+    if (query == null || query.keyword.trim().isEmpty) {
+      _cancelActive('search platforms changed');
+      _searchVersion++;
+      result.value = SearchAggregateResult.empty();
+      return;
+    }
+
+    unawaited(_search(query.keyword, query.searchMode, force: true));
+  }
+
+  bool _hasSameSiteOrder(List<Site> first, List<Site> second) {
+    if (first.length != second.length) {
+      return false;
+    }
+    for (var index = 0; index < first.length; index++) {
+      if (first[index].id != second[index].id) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   /// Runs room (0) or anchor (1) search concurrently for every configured site.
   ///
@@ -31,7 +100,15 @@ class SearchAggregateController extends GetxController {
   /// expires. A new query, timeout, or controller disposal cancels the previous
   /// network operation and the version guard rejects any late completion.
   Future<void> search(String keyword, int searchMode) async {
-    if (isClosed) {
+    await _search(keyword, searchMode);
+  }
+
+  Future<void> _search(
+    String keyword,
+    int searchMode, {
+    bool force = false,
+  }) async {
+    if (isClosed || _isDisposing) {
       return;
     }
     if (searchMode != 0 && searchMode != 1) {
@@ -44,7 +121,8 @@ class SearchAggregateController extends GetxController {
 
     final normalizedKeyword = keyword.trim();
     final currentQuery = result.value.query;
-    if (currentQuery?.keyword == normalizedKeyword &&
+    if (!force &&
+        currentQuery?.keyword == normalizedKeyword &&
         currentQuery?.searchMode == searchMode &&
         result.value.sites.any((site) => site.isLoading)) {
       return;
@@ -57,21 +135,22 @@ class SearchAggregateController extends GetxController {
       return;
     }
 
+    final sitesSnapshot = List<Site>.unmodifiable(_sites);
     final query = SearchAggregateQuery(
       keyword: normalizedKeyword,
       searchMode: searchMode,
     );
     result.value = SearchAggregateResult(
       query: query,
-      sites: _sites.map(SearchAggregateSiteState.loading),
+      sites: sitesSnapshot.map(SearchAggregateSiteState.loading),
     );
 
     final cancellation = CoreCancellationToken();
     _activeCancellation = cancellation;
     final searches = <Future<void>>[
-      for (var index = 0; index < _sites.length; index++)
+      for (var index = 0; index < sitesSnapshot.length; index++)
         _searchSite(
-          site: _sites[index],
+          site: sitesSnapshot[index],
           index: index,
           keyword: normalizedKeyword,
           searchMode: searchMode,
@@ -181,7 +260,8 @@ class SearchAggregateController extends GetxController {
     result.value = current.copyWith(sites: updatedSites);
   }
 
-  bool _isCurrent(int version) => !isClosed && version == _searchVersion;
+  bool _isCurrent(int version) =>
+      !isClosed && !_isDisposing && version == _searchVersion;
 
   void _cancelActive([Object? reason]) {
     _activeCancellation?.cancel(reason);
@@ -190,6 +270,9 @@ class SearchAggregateController extends GetxController {
 
   @override
   void onClose() {
+    _isDisposing = true;
+    _settingsWorker?.dispose();
+    _settingsWorker = null;
     _cancelActive("aggregate search closed");
     _searchVersion++;
     super.onClose();

@@ -15,11 +15,15 @@ class SiteGlassTabBar extends StatelessWidget {
   const SiteGlassTabBar({
     required this.controller,
     this.iconOnly,
+    this.sites,
     super.key,
   });
 
   final TabController controller;
   final bool? iconOnly;
+  final List<Site>? sites;
+
+  List<Site> get _sites => sites ?? Sites.supportSites;
 
   bool _iconOnlyFor(BuildContext context) =>
       iconOnly ??
@@ -90,7 +94,7 @@ class SiteGlassTabBar extends StatelessWidget {
             child: GlassTabBar.inline(
               key: const ValueKey<String>('site-glass-tab-bar'),
               tabs: [
-                for (final site in Sites.supportSites)
+                for (final site in _sites)
                   GlassTab(
                     icon: Image.asset(site.logo, width: 21, height: 21),
                     label: iconOnly ? null : site.name,
@@ -167,8 +171,7 @@ class SiteGlassTabBar extends StatelessWidget {
     final neutralBorder =
         (theme.brightness == Brightness.dark ? Colors.white : Colors.black)
             .withAlpha(theme.brightness == Brightness.dark ? 42 : 28);
-    final activeIndex =
-        position.round().clamp(0, Sites.supportSites.length - 1);
+    final activeIndex = position.round().clamp(0, _sites.length - 1);
     return LayoutBuilder(
       builder: (context, constraints) {
         final metrics = _metricsFor(constraints, iconOnly: iconOnly);
@@ -216,14 +219,14 @@ class SiteGlassTabBar extends StatelessWidget {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          for (var i = 0; i < Sites.supportSites.length; i++)
+                          for (var i = 0; i < _sites.length; i++)
                             SizedBox(
                               width: tabWidth,
                               height: double.infinity,
                               child: Semantics(
                                 button: true,
                                 selected: activeIndex == i,
-                                label: Sites.supportSites[i].name,
+                                label: _sites[i].name,
                                 child: InkWell(
                                   onTap: () => controller.animateTo(i),
                                   borderRadius: BorderRadius.circular(
@@ -249,7 +252,7 @@ class SiteGlassTabBar extends StatelessWidget {
                                           MainAxisAlignment.center,
                                       children: [
                                         Image.asset(
-                                          Sites.supportSites[i].logo,
+                                          _sites[i].logo,
                                           width: 21,
                                           height: 21,
                                         ),
@@ -257,7 +260,7 @@ class SiteGlassTabBar extends StatelessWidget {
                                           const SizedBox(width: 6),
                                           Flexible(
                                             child: Text(
-                                              Sites.supportSites[i].name,
+                                              _sites[i].name,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: TextStyle(
@@ -298,13 +301,12 @@ class SiteGlassTabBar extends StatelessWidget {
     final maxTabWidth = iconOnly ? 56.0 : 112.0;
     final availableWidth = constraints.maxWidth.isFinite
         ? constraints.maxWidth
-        : Sites.supportSites.length * maxTabWidth;
-    final tabWidth = (availableWidth / Sites.supportSites.length)
-        .clamp(0.0, maxTabWidth)
-        .toDouble();
+        : _sites.length * maxTabWidth;
+    final tabWidth =
+        (availableWidth / _sites.length).clamp(0.0, maxTabWidth).toDouble();
     return _SiteTabBarMetrics(
       tabWidth: tabWidth,
-      barWidth: tabWidth * Sites.supportSites.length,
+      barWidth: tabWidth * _sites.length,
     );
   }
 }

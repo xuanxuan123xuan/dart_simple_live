@@ -48,9 +48,16 @@ class IndexedSettingsPage extends GetView<IndexedSettingsController> {
           ),
           Padding(
             padding: AppStyle.edgeInsetsA12.copyWith(top: 24),
-            child: Text(
-              "平台排序 (长按拖动排序，重启后生效)",
-              style: Get.textTheme.titleSmall,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("平台显示与排序", style: Get.textTheme.titleSmall),
+                const SizedBox(height: 4),
+                Text(
+                  "显示和排序立即生效；长按平台行或拖动手柄排序",
+                  style: Get.textTheme.bodySmall,
+                ),
+              ],
             ),
           ),
           SettingsCard(
@@ -58,20 +65,52 @@ class IndexedSettingsPage extends GetView<IndexedSettingsController> {
               () => ReorderableListView(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
+                buildDefaultDragHandles: false,
                 onReorder: controller.updateSiteSort,
-                children: controller.siteSort.map(
-                  (key) {
+                children: controller.siteSort.asMap().entries.map(
+                  (entry) {
+                    final index = entry.key;
+                    final key = entry.value;
                     var e = Sites.allSites[key]!;
-                    return ListTile(
+                    final visible = controller.isSiteVisible(e.id);
+                    final isLastVisible =
+                        visible && controller.visibleSiteCount <= 1;
+                    return ReorderableDelayedDragStartListener(
                       key: ValueKey(e.id),
-                      visualDensity: VisualDensity.compact,
-                      title: Text(e.name),
-                      leading: Image.asset(
-                        e.logo,
-                        width: 24,
-                        height: 24,
+                      index: index,
+                      child: ListTile(
+                        visualDensity: VisualDensity.compact,
+                        title: Text(e.name),
+                        subtitle:
+                            isLastVisible ? const Text("至少保留一个平台显示") : null,
+                        leading: Image.asset(
+                          e.logo,
+                          width: 24,
+                          height: 24,
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Switch(
+                              key: ValueKey("platform-visibility-${e.id}"),
+                              value: visible,
+                              onChanged: isLastVisible
+                                  ? null
+                                  : (value) => controller.setSiteVisible(
+                                        e.id,
+                                        value,
+                                      ),
+                            ),
+                            ReorderableDragStartListener(
+                              index: index,
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 8),
+                                child: Icon(Icons.drag_handle),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      trailing: const Icon(Icons.drag_handle),
                     );
                   },
                 ).toList(),

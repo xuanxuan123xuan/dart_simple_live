@@ -5,6 +5,8 @@ import 'package:get/get.dart';
 import 'package:hive/hive.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/constant.dart';
+import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
@@ -124,6 +126,39 @@ void main() {
         ),
       );
     }
+
+    test('平台显示和完整排序通过配置包导出导入，旧包恢复默认显示', () async {
+      final settings = AppSettingsController.instance;
+      final order = Sites.allSites.keys.toList().reversed.toList();
+      settings.setSiteSort(order);
+      settings.setSiteVisible(Constant.kDouyu, false);
+      await LocalStorageService.instance.settingsBox.flush();
+      final payload = service.exportProfileMap(
+        options: const ProfileExportOptions(
+          settings: true,
+          accounts: false,
+          shields: false,
+          shieldPresets: false,
+          follows: false,
+          histories: false,
+        ),
+      );
+      final exported = Map<String, dynamic>.from(payload['settings'] as Map);
+      expect(exported[LocalStorageService.kHiddenSiteIds], Constant.kDouyu);
+      expect(exported[LocalStorageService.kSiteSort], order.join(','));
+
+      await importSettings({}, platform: null, overwrite: true);
+      expect(settings.hiddenSiteIds, isEmpty);
+      expect(Sites.visibleSites, hasLength(Sites.allSites.length));
+
+      await importSettings(exported, platform: null, overwrite: true);
+      expect(settings.siteSort, order);
+      expect(settings.hiddenSiteIds, {Constant.kDouyu});
+      expect(
+        Sites.visibleSites.map((site) => site.id),
+        order.where((id) => id != Constant.kDouyu),
+      );
+    });
 
     test('跨平台包不会写入会导致无声的 ao', () async {
       final summary = await importSettings(

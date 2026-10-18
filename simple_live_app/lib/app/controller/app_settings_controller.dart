@@ -437,6 +437,7 @@ class AppSettingsController extends GetxController {
     );
 
     initSiteSort();
+    initHiddenSiteIds();
     initHomeSort();
     initLiveRoomTabSort();
     initLiveRoomQuickAccessSettings();
@@ -462,15 +463,17 @@ class AppSettingsController extends GetxController {
   }
 
   void initSiteSort() {
-    var sort = LocalStorageService.instance
+    final sort = LocalStorageService.instance
         .getValue(
           LocalStorageService.kSiteSort,
           Sites.allSites.keys.join(","),
         )
         .split(",");
-    // Remove retired site ids from older settings, then append newly added
-    // sites so an update never makes supportSites index a missing map entry.
-    sort = sort
+    siteSort.value = _normalizeSiteSort(sort);
+  }
+
+  List<String> _normalizeSiteSort(Iterable<String> ids) {
+    final sort = ids
         .map((item) => item.trim())
         .where((item) => Sites.allSites.containsKey(item))
         .toSet()
@@ -480,8 +483,72 @@ class AppSettingsController extends GetxController {
         sort.add(key);
       }
     }
+    return sort;
+  }
 
-    siteSort.value = sort;
+  void initHiddenSiteIds() {
+    final storedIds = LocalStorageService.instance.getValue(
+      LocalStorageService.kHiddenSiteIds,
+      "",
+    );
+    _replaceHiddenSiteIds(_normalizeHiddenSiteIds(storedIds.split(",")));
+  }
+
+  Set<String> _normalizeHiddenSiteIds(Iterable<String> ids) {
+    final hidden = ids
+        .map((item) => item.trim())
+        .where((item) => Sites.allSites.containsKey(item))
+        .toSet();
+    final order = siteSort.isEmpty ? Sites.allSites.keys.toList() : siteSort;
+    if (order.isNotEmpty && order.every(hidden.contains)) {
+      hidden.remove(order.first);
+    }
+    return hidden;
+  }
+
+  bool isSiteVisible(String id) => !hiddenSiteIds.contains(id);
+
+  int get visibleSiteCount =>
+      siteSort.where((id) => !hiddenSiteIds.contains(id)).length;
+
+  bool setSiteVisible(String id, bool visible) {
+    final siteId = id.trim();
+    if (!Sites.allSites.containsKey(siteId)) {
+      return false;
+    }
+
+    final hidden = hiddenSiteIds.toSet();
+    if (visible) {
+      hidden.remove(siteId);
+    } else {
+      if (hidden.contains(siteId)) {
+        return true;
+      }
+      final visibleCount =
+          siteSort.where((item) => !hidden.contains(item)).length;
+      if (visibleCount <= 1) {
+        return false;
+      }
+      hidden.add(siteId);
+    }
+
+    _replaceHiddenSiteIds(_normalizeHiddenSiteIds(hidden));
+    _saveHiddenSiteIds();
+    return true;
+  }
+
+  void _replaceHiddenSiteIds(Set<String> ids) {
+    // Publish one complete snapshot: RxSet.assignAll briefly emits an empty set.
+    // ignore: invalid_use_of_protected_member
+    hiddenSiteIds.value = ids;
+  }
+
+  void _saveHiddenSiteIds() {
+    final hidden = siteSort.where(hiddenSiteIds.contains).join(",");
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kHiddenSiteIds,
+      hidden,
+    );
   }
 
   void initHomeSort() {
@@ -2023,12 +2090,19 @@ class AppSettingsController extends GetxController {
   }
 
   RxList<String> siteSort = RxList<String>();
+  RxSet<String> hiddenSiteIds = <String>{}.obs;
   void setSiteSort(List<String> e) {
-    siteSort.value = e;
+    siteSort.value = _normalizeSiteSort(e);
     LocalStorageService.instance.setValue(
       LocalStorageService.kSiteSort,
       siteSort.join(","),
     );
+    final normalizedHidden = _normalizeHiddenSiteIds(hiddenSiteIds);
+    if (normalizedHidden.length != hiddenSiteIds.length ||
+        !normalizedHidden.containsAll(hiddenSiteIds)) {
+      _replaceHiddenSiteIds(normalizedHidden);
+      _saveHiddenSiteIds();
+    }
   }
 
   RxList<String> homeSort = RxList<String>();

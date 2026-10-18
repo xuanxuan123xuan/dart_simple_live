@@ -1,22 +1,14 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
-
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
+import 'package:simple_live_app/app/controller/site_tabs_controller.dart';
 import 'package:simple_live_app/app/event_bus.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/home/home_list_controller.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 
-class HomeController extends GetxController
-    with GetSingleTickerProviderStateMixin {
-  late TabController tabController;
-  HomeController() {
-    tabController =
-        TabController(length: Sites.supportSites.length, vsync: this);
-  }
-
+class HomeController extends SiteTabsController {
   StreamSubscription<dynamic>? streamSubscription;
 
   @override
@@ -29,18 +21,20 @@ class HomeController extends GetxController
         }
       },
     );
-    for (var site in Sites.supportSites) {
+    super.onInit();
+  }
+
+  @override
+  void ensureSiteController(Site site) {
+    if (!Get.isRegistered<HomeListController>(tag: site.id)) {
       Get.put(HomeListController(site), tag: site.id);
     }
-
-    super.onInit();
   }
 
   void refreshOrScrollTop() {
     var tabIndex = tabController.index;
     BasePageController controller;
-    controller =
-        Get.find<HomeListController>(tag: Sites.supportSites[tabIndex].id);
+    controller = Get.find<HomeListController>(tag: tabs.sites[tabIndex].id);
     controller.scrollToTopOrRefresh();
   }
 
@@ -48,7 +42,7 @@ class HomeController extends GetxController
     Get.toNamed(
       RoutePath.kSearch,
       arguments: {
-        "siteId": Sites.supportSites[tabController.index].id,
+        "siteId": tabs.sites[tabController.index].id,
       },
     );
   }

@@ -50,6 +50,20 @@ class Sites {
         .map((key) => allSites[key]!)
         .toList();
   }
+
+  static List<Site> get visibleSites {
+    final settings = AppSettingsController.instance;
+    final visibleIds = settings.siteSort
+        .where((key) => !settings.hiddenSiteIds.contains(key))
+        .toList();
+    // A sort update and visibility normalization publish separate Rx changes.
+    // Keep selectors non-empty during that brief transition as well as when
+    // recovering a legacy/corrupt all-hidden preference.
+    if (visibleIds.isEmpty && settings.siteSort.isNotEmpty) {
+      visibleIds.add(settings.siteSort.first);
+    }
+    return visibleIds.map((key) => allSites[key]!).toList();
+  }
 }
 
 class _KuaishouCategorySnapshotStore implements KuaishouCategorySnapshotStore {

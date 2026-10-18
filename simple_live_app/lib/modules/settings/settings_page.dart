@@ -29,7 +29,7 @@ class SettingsPage extends StatelessWidget {
                 _entry(
                   icon: Remix.home_2_line,
                   title: "主页设置",
-                  subtitle: "首页栏目、平台和标签顺序",
+                  subtitle: "首页栏目、平台显示与顺序",
                   route: RoutePath.kSettingsIndexed,
                 ),
                 AppStyle.divider,

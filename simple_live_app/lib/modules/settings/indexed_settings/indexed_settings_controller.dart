@@ -25,14 +25,22 @@ class IndexedSettingsController extends GetxController {
   }
 
   void updateSiteSort(int oldIndex, int newIndex) {
+    final reordered = siteSort.toList();
     if (oldIndex < newIndex) {
       newIndex -= 1;
     }
-    final String item = siteSort.removeAt(oldIndex);
-    siteSort.insert(newIndex, item);
-    // ignore: invalid_use_of_protected_member
-    AppSettingsController.instance.setSiteSort(siteSort.value);
+    final String item = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, item);
+    AppSettingsController.instance.setSiteSort(reordered);
   }
+
+  bool isSiteVisible(String id) =>
+      AppSettingsController.instance.isSiteVisible(id);
+
+  int get visibleSiteCount => AppSettingsController.instance.visibleSiteCount;
+
+  bool setSiteVisible(String id, bool visible) =>
+      AppSettingsController.instance.setSiteVisible(id, visible);
 
   void updateHomeSort(int oldIndex, int newIndex) {
     if (oldIndex < newIndex) {

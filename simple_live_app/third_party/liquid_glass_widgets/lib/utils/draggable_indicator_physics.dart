@@ -160,6 +160,7 @@ class DraggableIndicatorPhysics {
   /// computeAlignment(2, 3) // Returns  1.0 (right)
   /// ```
   static double computeAlignment(int index, int itemCount) {
+    if (itemCount <= 1) return 0;
     final relativeIndex = (index / (itemCount - 1)).clamp(0.0, 1.0);
     return (relativeIndex * 2) - 1;
   }
