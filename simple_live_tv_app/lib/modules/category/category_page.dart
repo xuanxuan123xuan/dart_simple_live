@@ -6,6 +6,8 @@ import 'package:simple_live_tv_app/widgets/net_image.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
 import 'package:simple_live_tv_app/app/app_style.dart';
+import 'package:simple_live_tv_app/app/constant.dart';
+import 'package:simple_live_tv_app/widgets/tv_xiaohongshu_link_notice.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/modules/category/category_controller.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
@@ -95,48 +97,50 @@ class CategoryPage extends GetView<CategoryController> {
           AppStyle.vGap24,
           Expanded(
             child: Obx(
-              () => ListView.builder(
-                padding: AppStyle.edgeInsetsH48,
-                itemCount: controller.list.length,
-                controller: controller.scrollController,
-                itemBuilder: (_, i) {
-                  var item = controller.list[i];
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Padding(
-                        padding: AppStyle.edgeInsetsV32,
-                        child: Text(
-                          item.name,
-                          style: AppStyle.titleStyleWhite,
-                        ),
-                      ),
-                      Obx(
-                        () => GridView.count(
-                          shrinkWrap: true,
-                          padding: AppStyle.edgeInsetsV8,
-                          physics: const NeverScrollableScrollPhysics(),
-                          crossAxisCount: 8,
-                          crossAxisSpacing: 36.w,
-                          mainAxisSpacing: 36.w,
-                          children: item.showAll.value
-                              ? (item.childrenExt
-                                  .map(
-                                    (e) => buildSubCategory(e),
-                                  )
-                                  .toList())
-                              : (item.take15
-                                  .map(
-                                    (e) => buildSubCategory(e),
-                                  )
-                                  .toList()
-                                ..add(buildShowMore(item))),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
+              () => controller.siteId.value == Constant.kXiaohongshu
+                  ? const TvXiaohongshuLinkNotice()
+                  : ListView.builder(
+                      padding: AppStyle.edgeInsetsH48,
+                      itemCount: controller.list.length,
+                      controller: controller.scrollController,
+                      itemBuilder: (_, i) {
+                        var item = controller.list[i];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Padding(
+                              padding: AppStyle.edgeInsetsV32,
+                              child: Text(
+                                item.name,
+                                style: AppStyle.titleStyleWhite,
+                              ),
+                            ),
+                            Obx(
+                              () => GridView.count(
+                                shrinkWrap: true,
+                                padding: AppStyle.edgeInsetsV8,
+                                physics: const NeverScrollableScrollPhysics(),
+                                crossAxisCount: 8,
+                                crossAxisSpacing: 36.w,
+                                mainAxisSpacing: 36.w,
+                                children: item.showAll.value
+                                    ? (item.childrenExt
+                                        .map(
+                                          (e) => buildSubCategory(e),
+                                        )
+                                        .toList())
+                                    : (item.take15
+                                        .map(
+                                          (e) => buildSubCategory(e),
+                                        )
+                                        .toList()
+                                      ..add(buildShowMore(item))),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
             ),
           ),
         ],

@@ -7,7 +7,9 @@ import 'package:simple_live_tv_app/services/live_room_link_parser.dart';
 
 /// Lets a TV user open a room by pasting a supported link or entering its ID.
 class TvOpenLiveLinkDialog extends StatefulWidget {
-  const TvOpenLiveLinkDialog({super.key});
+  const TvOpenLiveLinkDialog({super.key, this.initialSiteId = Constant.kDouyu});
+
+  final String initialSiteId;
 
   @override
   State<TvOpenLiveLinkDialog> createState() => _TvOpenLiveLinkDialogState();
@@ -17,9 +19,17 @@ class _TvOpenLiveLinkDialogState extends State<TvOpenLiveLinkDialog> {
   final _inputController = TextEditingController();
   final _inputFocusNode = FocusNode();
   final _parser = LiveRoomLinkParser();
-  String _roomSiteId = Constant.kDouyu;
+  late String _roomSiteId;
   String? _error;
   bool _resolving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _roomSiteId = Sites.allSites.containsKey(widget.initialSiteId)
+        ? widget.initialSiteId
+        : Constant.kDouyu;
+  }
 
   @override
   void dispose() {

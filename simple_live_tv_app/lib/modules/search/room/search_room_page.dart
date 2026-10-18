@@ -4,6 +4,8 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
 import 'package:simple_live_tv_app/app/app_style.dart';
+import 'package:simple_live_tv_app/app/constant.dart';
+import 'package:simple_live_tv_app/widgets/tv_xiaohongshu_link_notice.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/modules/search/room/search_room_controller.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
@@ -97,64 +99,66 @@ class SearchRoomPage extends GetView<SearchRoomController> {
           AppStyle.vGap24,
           Expanded(
             child: Obx(
-              () => Stack(
-                children: [
-                  MasonryGridView.count(
-                    padding: AppStyle.edgeInsetsA48,
-                    itemCount: controller.list.length,
-                    crossAxisCount: 5,
-                    crossAxisSpacing: 48.w,
-                    mainAxisSpacing: 40.w,
-                    controller: controller.scrollController,
-                    itemBuilder: (_, i) {
-                      var item = controller.list[i];
+              () => controller.siteId.value == Constant.kXiaohongshu
+                  ? const TvXiaohongshuLinkNotice()
+                  : Stack(
+                      children: [
+                        MasonryGridView.count(
+                          padding: AppStyle.edgeInsetsA48,
+                          itemCount: controller.list.length,
+                          crossAxisCount: 5,
+                          crossAxisSpacing: 48.w,
+                          mainAxisSpacing: 40.w,
+                          controller: controller.scrollController,
+                          itemBuilder: (_, i) {
+                            var item = controller.list[i];
 
-                      if (i == 0) {
-                        Future.delayed(Duration.zero, () {
-                          if (controller.currentPage == 2) {
-                            item.focusNode.requestFocus();
-                          }
-                        });
-                      }
-                      return LiveRoomCard(
-                        cover: item.cover,
-                        anchor: item.userName,
-                        title: item.title,
-                        focusNode: item.focusNode,
-                        roomId: item.roomId,
-                        online: item.online,
-                        onTap: () {
-                          AppNavigator.toLiveRoomDetail(
-                            site: controller.site,
-                            roomId: item.roomId,
-                          );
-                        },
-                      );
-                    },
-                  ),
-                  Obx(
-                    () => Visibility(
-                      visible: controller.list.isEmpty &&
-                          !controller.loadding.value &&
-                          !controller.pageError.value,
-                      child: AppEmptyWidget(
-                        onRefresh: () {
-                          controller.refreshData();
-                        },
-                      ),
+                            if (i == 0) {
+                              Future.delayed(Duration.zero, () {
+                                if (controller.currentPage == 2) {
+                                  item.focusNode.requestFocus();
+                                }
+                              });
+                            }
+                            return LiveRoomCard(
+                              cover: item.cover,
+                              anchor: item.userName,
+                              title: item.title,
+                              focusNode: item.focusNode,
+                              roomId: item.roomId,
+                              online: item.online,
+                              onTap: () {
+                                AppNavigator.toLiveRoomDetail(
+                                  site: controller.site,
+                                  roomId: item.roomId,
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        Obx(
+                          () => Visibility(
+                            visible: controller.list.isEmpty &&
+                                !controller.loadding.value &&
+                                !controller.pageError.value,
+                            child: AppEmptyWidget(
+                              onRefresh: () {
+                                controller.refreshData();
+                              },
+                            ),
+                          ),
+                        ),
+                        Obx(
+                          () => Visibility(
+                            visible: controller.pageError.value &&
+                                !controller.loadding.value,
+                            child: AppErrorWidget(
+                              errorMsg: controller.errorMsg.value,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  Obx(
-                    () => Visibility(
-                      visible: controller.pageError.value &&
-                          !controller.loadding.value,
-                      child: AppErrorWidget(
-                        errorMsg: controller.errorMsg.value,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ),
           ),
         ],
