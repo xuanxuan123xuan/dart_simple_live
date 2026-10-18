@@ -273,11 +273,28 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
       _enqueueAudio(() async {
         final session = sessions[item.key];
         if (session == null) return;
-        final value = (session.volume.value + delta).clamp(0, 100).toDouble();
-        // Select the source before applying its new audible volume.
-        await _setAudioEnabled(item.key, value > 0);
-        await session.setVolume(value);
+        await _setRoomVolume(item.key, session.volume.value + delta);
       });
+
+  Future<void> setRoomVolume(MultiRoomItem item, double value) {
+    final requestedSession = sessions[item.key];
+    return _enqueueAudio(() async {
+      if (requestedSession == null ||
+          !identical(sessions[item.key], requestedSession)) {
+        return;
+      }
+      await _setRoomVolume(item.key, value);
+    });
+  }
+
+  Future<void> _setRoomVolume(String key, double value) async {
+    final session = sessions[key];
+    if (session == null) return;
+    final normalized = value.clamp(0, 100).toDouble();
+    // Select the source before applying its new audible volume.
+    await _setAudioEnabled(key, normalized > 0);
+    if (identical(sessions[key], session)) await session.setVolume(normalized);
+  }
 
   Future<void> toggleAudio(MultiRoomItem item) => _enqueueAudio(() async {
         final session = sessions[item.key];

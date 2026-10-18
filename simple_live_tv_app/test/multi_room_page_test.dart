@@ -1,113 +1,461 @@
+import 'dart:ui' show PointerDeviceKind;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:get/get.dart';
-import 'package:simple_live_core/simple_live_core.dart';
-import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
-import 'package:simple_live_tv_app/app/sites.dart';
-import 'package:simple_live_tv_app/modules/multi_room/multi_room_controller.dart';
-import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
-import 'package:simple_live_tv_app/modules/multi_room/multi_room_page.dart';
-import 'package:simple_live_tv_app/modules/multi_room/multi_room_player_controller.dart';
 
-class _Settings extends AppSettingsController {
-  @override
-  // The UI fixture uses default values without local storage.
-  // ignore: must_call_super
-  void onInit() {}
-}
+import 'support/multi_room_ui_fixture.dart';
 
-class _Session extends MultiRoomPlayerController {
-  _Session(super.item) {
-    loading.value = false;
-    liveState.value = LiveStatusState.live;
-  }
+Key _key(String value) => ValueKey<String>(value);
 
-  int pauseActions = 0;
+Finder _topOverlay() => find.byKey(_key('multi-room-top-overlay'));
+Finder _bottomOverlay() => find.byKey(_key('multi-room-bottom-overlay'));
+Finder _pauseButton() => find.byKey(_key('multi-room-pause'));
+Finder _video(MultiRoomUiFixture fixture, int index) => find.byKey(
+      _key('multi-room-video-${fixture.rooms.rooms[index].key}'),
+    );
+Finder _tile(MultiRoomUiFixture fixture, int index) => find.byKey(
+      _key('multi-room-tile-${fixture.rooms.rooms[index].key}'),
+    );
 
-  @override
-  Future<void> togglePause() async {
-    pauseActions++;
-    userPaused.value = !userPaused.value;
+void _expectOverlayState(WidgetTester tester, {required bool visible}) {
+  for (final overlay in [_topOverlay(), _bottomOverlay()]) {
+    expect(overlay, findsOneWidget);
+    final opacity = tester.widget<AnimatedOpacity>(overlay);
+    final pointerBoundary = opacity.child as IgnorePointer;
+    final focusBoundary = pointerBoundary.child as ExcludeFocus;
+    final semanticsBoundary = focusBoundary.child as ExcludeSemantics;
+    expect(pointerBoundary.ignoring, !visible);
+    expect(focusBoundary.excluding, !visible);
+    expect(semanticsBoundary.excluding, !visible);
+    expect(opacity.opacity, visible ? 1 : 0);
   }
 }
 
-class _Rooms extends MultiRoomController {
-  _Rooms(List<MultiRoomItem> items) : super(items) {
-    rooms.assignAll(items);
-    mainRoomKey.value = items.first.key;
-    for (final item in items) {
-      sessions[item.key] = _Session(item);
-    }
-  }
+void _expectRoomSelected(
+  WidgetTester tester,
+  MultiRoomUiFixture fixture,
+  int index,
+) {
+  final semantics = tester
+      .widgetList<Semantics>(
+        find.descendant(
+            of: _tile(fixture, index), matching: find.byType(Semantics)),
+      )
+      .singleWhere((widget) => widget.properties.selected != null);
+  expect(semantics.properties.selected, isTrue);
+}
 
-  @override
-  // No native players, timers, or lifecycle observers are needed to render.
-  // ignore: must_call_super
-  void onInit() {}
+void _expectOptionState(
+  WidgetTester tester,
+  String option,
+  bool selected,
+) {
+  final semantics = tester.widget<Semantics>(
+    find.byWidgetPredicate((widget) =>
+        widget is Semantics &&
+        widget.properties.label == option &&
+        widget.properties.checked != null),
+  );
+  expect(semantics.properties.selected, selected);
+  expect(semantics.properties.checked, selected);
+  expect(semantics.properties.inMutuallyExclusiveGroup, isTrue);
+}
 
-  @override
-  Future<void> closePlaybackSession() async {
-    for (final node in focusNodes.values) {
-      node.dispose();
-    }
-    focusNodes.clear();
-  }
+Future<void> _pumpUntilHidden(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 5));
+  await tester.pump(const Duration(milliseconds: 220));
+}
+
+Future<void> _tapRoom(
+    WidgetTester tester, MultiRoomUiFixture fixture, int index) async {
+  await tester.tap(_tile(fixture, index));
+  await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('four-room layouts fit TV and OK activates the focused control',
+  testWidgets('idle controls become unreachable while video elements stay put',
       (tester) async {
-    tester.view.physicalSize = const Size(1280, 720);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    Get.testMode = true;
-    final settings = Get.put<AppSettingsController>(_Settings());
-    final site = Site(
-      id: 'douyu',
-      name: '斗鱼',
-      logo: '',
-      index: 0,
-      liveSite: DouyuSite(),
-    );
-    final controller = Get.put<MultiRoomController>(_Rooms([
-      for (var index = 0; index < 4; index++)
-        MultiRoomItem(
-            site: site, roomId: '$index', userName: '主播$index', face: ''),
-    ]));
-    await tester.pumpWidget(ScreenUtilInit(
-      designSize: const Size(1920, 1080),
-      builder: (_, child) => GetMaterialApp(home: child),
-      child: const MultiRoomPage(),
-    ));
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    controller.focusNodeFor(controller.rooms.first).requestFocus();
-    await tester.pumpAndSettle();
+    final fixture = MultiRoomUiFixture(count: 4);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+    fixture.rooms.focusNodeFor(fixture.rooms.rooms.first).requestFocus();
+    await tester.pump();
+
+    _expectOverlayState(tester, visible: true);
+    final pauseRect = tester.getRect(_pauseButton());
+    final videoRects = <Rect>[
+      for (var index = 0; index < fixture.rooms.rooms.length; index++)
+        tester.getRect(_video(fixture, index)),
+    ];
+    final videoElements = <Element>[
+      for (var index = 0; index < fixture.rooms.rooms.length; index++)
+        tester.element(_video(fixture, index)),
+    ];
+
+    await _pumpUntilHidden(tester);
+    _expectOverlayState(tester, visible: false);
+    await tester.tapAt(pauseRect.center);
+    expect(fixture.session(0).pauseActions, 0);
+
+    for (var index = 0; index < fixture.rooms.rooms.length; index++) {
+      expect(tester.getRect(_video(fixture, index)), videoRects[index]);
+      expect(
+        identical(tester.element(_video(fixture, index)), videoElements[index]),
+        isTrue,
+        reason: 'Idle overlay changes must not replace video element $index.',
+      );
+    }
+  });
+
+  testWidgets('first OK wakes the pause control, and a long press acts once',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 2);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+    fixture.rooms.focusNodeFor(fixture.rooms.rooms.first).requestFocus();
+    await tester.pump();
+
+    await _pumpUntilHidden(tester);
+    _expectOverlayState(tester, visible: false);
+    expect(fixture.session(0).pauseActions, 0);
+
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pumpAndSettle();
-    expect(find.byTooltip('暂停'), findsOneWidget);
+    await tester.pump();
+    _expectOverlayState(tester, visible: true);
+    expect(fixture.session(0).pauseActions, 0);
+    final pauseFocus = tester.widget<Focus>(
+      find.descendant(of: _pauseButton(), matching: find.byType(Focus)).first,
+    );
+    expect(pauseFocus.focusNode!.hasPrimaryFocus, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(fixture.session(0).pauseActions, 1);
+    expect(fixture.session(0).userPaused.value, isTrue);
+
     await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
     await tester.sendKeyRepeatEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.enter);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(fixture.session(0).pauseActions, 2);
+    expect(fixture.session(0).userPaused.value, isFalse);
+  });
+
+  for (final count in [2, 4]) {
+    testWidgets(
+        '$count-room arrows select rooms without changing main or audio',
+        (tester) async {
+      final fixture = MultiRoomUiFixture(count: count);
+      addTearDown(() => fixture.dispose(tester));
+      await fixture.pump(tester);
+      final rooms = fixture.rooms.rooms;
+      final initialMainKey = fixture.rooms.mainRoomKey.value;
+      final initialAudioRoomKeys = fixture.rooms.audioRoomKeys.toSet();
+      fixture.rooms.focusNodeFor(rooms.first).requestFocus();
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(fixture.rooms.focusedRoomKey.value, rooms[1].key);
+      expect(fixture.rooms.mainRoomKey.value, initialMainKey);
+      expect(fixture.rooms.audioRoomKeys, initialAudioRoomKeys);
+
+      if (count == 4) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pump();
+        expect(fixture.rooms.focusedRoomKey.value, rooms[3].key);
+        expect(fixture.rooms.mainRoomKey.value, initialMainKey);
+        expect(fixture.rooms.audioRoomKeys, initialAudioRoomKeys);
+      }
+    });
+  }
+
+  testWidgets('Back hides the overlay before arrows resume room navigation',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 4);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+    fixture.rooms.focusNodeFor(fixture.rooms.rooms.first).requestFocus();
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump(const Duration(milliseconds: 220));
+    _expectOverlayState(tester, visible: false);
+    expect(_tile(fixture, 1), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(fixture.rooms.focusedRoomKey.value, fixture.rooms.rooms[1].key);
+    expect(_tile(fixture, 1), findsOneWidget);
+  });
+
+  testWidgets(
+      'actual mouse movement wakes controls and stationary hover times out',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 4);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    await tester.pump();
+    await mouse.moveTo(tester.getRect(_video(fixture, 0)).center);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 4999));
+    _expectOverlayState(tester, visible: true);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 220));
+    _expectOverlayState(tester, visible: false);
+
+    await mouse.moveTo(tester.getRect(_video(fixture, 2)).center);
+    await tester.pump();
+    _expectOverlayState(tester, visible: true);
+
+    // No further pointer movement occurs during this full idle interval.
+    await tester.pump(const Duration(milliseconds: 4999));
+    _expectOverlayState(tester, visible: true);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 220));
+    _expectOverlayState(tester, visible: false);
+    await mouse.removePointer();
+  });
+
+  testWidgets('touch selection focuses a room and exposes shared controls',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 4);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+
+    await _tapRoom(tester, fixture, 2);
+
+    expect(fixture.rooms.focusedRoomKey.value, fixture.rooms.rooms[2].key);
+    _expectRoomSelected(tester, fixture, 2);
+    _expectOverlayState(tester, visible: true);
+    final pauseFocus = tester.widget<Focus>(
+      find.descendant(of: _pauseButton(), matching: find.byType(Focus)).first,
+    );
+    expect(pauseFocus.focusNode!.hasPrimaryFocus, isTrue);
+  });
+
+  testWidgets('quality and line controls become available after initial load',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 2);
+    addTearDown(() => fixture.dispose(tester));
+    final target = fixture.session(0);
+    target.capabilitiesAvailable = false;
+    target.loading.value = true;
+    await fixture.pump(tester, settle: false);
+    await tester.tap(find.byKey(_key('multi-room-quality')));
+    await tester.pump();
+    expect(find.text('流畅'), findsNothing);
+
+    target.capabilitiesAvailable = true;
+    target.loading.value = false;
+    await tester.pump();
+    await tester.tap(find.byKey(_key('multi-room-quality')));
     await tester.pumpAndSettle();
-    expect((controller.sessions.values.first as _Session).pauseActions, 1);
-    expect(find.byTooltip('继续'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('流畅'));
+    await tester.pumpAndSettle();
+    expect(target.qualityChanges, 1);
+    await tester.tap(find.byKey(_key('multi-room-line')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('线路 2'));
+    await tester.pumpAndSettle();
+    expect(target.lineChanges, 1);
+  });
+
+  for (final targetIndex in [1, 2, 3]) {
+    testWidgets(
+        'quality and line dialogs hold the overlay and target room ${targetIndex + 1}',
+        (tester) async {
+      final fixture = MultiRoomUiFixture(count: 4);
+      addTearDown(() => fixture.dispose(tester));
+      await fixture.pump(tester);
+      await _tapRoom(tester, fixture, targetIndex);
+      final target = fixture.session(targetIndex);
+
+      await tester.tap(find.byKey(_key('multi-room-quality')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 8));
+      _expectOverlayState(tester, visible: true);
+      expect(find.text('流畅'), findsOneWidget);
+      _expectOptionState(tester, '原画', true);
+      _expectOptionState(tester, '流畅', false);
+      await tester.tap(find.text('流畅'));
+      await tester.pumpAndSettle();
+
+      expect(target.qualityChanges, 1);
+      expect(target.selectedQuality, 1);
+      for (var index = 0; index < fixture.rooms.rooms.length; index++) {
+        if (index == targetIndex) continue;
+        expect(fixture.session(index).qualityChanges, 0);
+        expect(fixture.session(index).selectedQuality, 0);
+      }
+
+      await tester.tap(find.byKey(_key('multi-room-line')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 8));
+      _expectOverlayState(tester, visible: true);
+      expect(find.text('线路 2'), findsOneWidget);
+      _expectOptionState(tester, '线路 1', true);
+      _expectOptionState(tester, '线路 2', false);
+      await tester.tap(find.text('线路 2'));
+      await tester.pumpAndSettle();
+
+      expect(target.lineChanges, 1);
+      expect(target.selectedLine, 1);
+      for (var index = 0; index < fixture.rooms.rooms.length; index++) {
+        if (index == targetIndex) continue;
+        expect(fixture.session(index).lineChanges, 0);
+        expect(fixture.session(index).selectedLine, 0);
+      }
+
+      // Dialog transitions already consume a few frames of the new interval.
+      await tester.pump(const Duration(seconds: 4));
+      _expectOverlayState(tester, visible: true);
+      await tester.pump(const Duration(milliseconds: 1220));
+      _expectOverlayState(tester, visible: false);
+    });
+  }
+
+  testWidgets('slider sends absolute volume and releases holds after dismissal',
+      (tester) async {
+    final fixture = MultiRoomUiFixture();
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+    await _tapRoom(tester, fixture, 3);
+    await tester.tap(find.byKey(_key('multi-room-sound')));
+    await tester.pumpAndSettle();
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    slider.onChangeStart!(72);
+    slider.onChanged!(15);
+    slider.onChanged!(85);
+    slider.onChanged!(37);
+    await tester.pumpAndSettle();
+    expect(fixture.session(3).volume.value, 37);
+    expect(fixture.session(0).muted.value, isTrue);
+    await tester.pump(const Duration(seconds: 8));
+    _expectOverlayState(tester, visible: true);
+    // Dismiss midway through a drag: dispose must release its extra hold.
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
-    expect(find.byTooltip('继续'), findsNothing);
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    expect(find.byType(Slider), findsNothing);
+    await _pumpUntilHidden(tester);
+    _expectOverlayState(tester, visible: false);
+  });
+
+  testWidgets('menu key works on controls and nested settings keep focus',
+      (tester) async {
+    final fixture = MultiRoomUiFixture();
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+    fixture.rooms.focusNodeFor(fixture.rooms.rooms.first).requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
     expect(
-        controller.focusNodeFor(controller.rooms[1]).hasPrimaryFocus, isTrue);
-    settings.multiRoomLayout.value = 'mainSub';
+        fixture.rooms.focusNodeFor(fixture.rooms.rooms.first).hasPrimaryFocus,
+        isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    expect(find.text('多屏同播（4/4）'), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
-    Get.reset();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+    await tester.pumpAndSettle();
+    expect(find.text('多屏操作'), findsOneWidget);
+    await tester.tap(find.text('多屏设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('多屏设置'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 8));
+    _expectOverlayState(tester, visible: true);
+    expect(FocusManager.instance.primaryFocus?.context, isNotNull);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.text('多屏设置'), findsNothing);
+    await _pumpUntilHidden(tester);
+    _expectOverlayState(tester, visible: false);
+  });
+
+  for (final count in [2, 3, 4]) {
+    testWidgets('$count-room sound controls use exclusive parent audio routing',
+        (tester) async {
+      final fixture = MultiRoomUiFixture(count: count);
+      addTearDown(() => fixture.dispose(tester));
+      await fixture.pump(tester);
+      final selectedIndex = count - 1;
+      await _tapRoom(tester, fixture, selectedIndex);
+      final selected = fixture.session(selectedIndex);
+      final firstRoom = fixture.session(0);
+      selected.volume.value = 50;
+      _expectRoomSelected(tester, fixture, selectedIndex);
+
+      await tester.tap(find.byKey(_key('multi-room-sound')));
+      await tester.pumpAndSettle();
+      expect(find.text('声音 · 直播间 $count'), findsOneWidget);
+      expect(find.text('恢复声音'), findsOneWidget);
+      expect(find.text('音量加'), findsOneWidget);
+      await tester.tap(find.text('恢复声音'));
+      await tester.pumpAndSettle();
+
+      expect(selected.muted.value, isFalse);
+      expect(firstRoom.muted.value, isTrue);
+      expect(fixture.rooms.audioRoomKeys,
+          {fixture.rooms.rooms[selectedIndex].key});
+
+      await tester.tap(find.text('音量加'));
+      await tester.pumpAndSettle();
+      expect(selected.volume.value, 58);
+      for (var index = 0; index < count; index++) {
+        if (index == selectedIndex) continue;
+        expect(fixture.session(index).muted.value, isTrue);
+      }
+      await tester.tap(find.text('完成'));
+      await tester.pumpAndSettle();
+    });
+  }
+
+  testWidgets('mix audio preserves another room when restoring sound',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 4);
+    addTearDown(() => fixture.dispose(tester));
+    fixture.settings.setMultiRoomMixAudio(true);
+    await fixture.pump(tester);
+
+    await _tapRoom(tester, fixture, 1);
+    await tester.tap(find.byKey(_key('multi-room-sound')));
+    await tester.pumpAndSettle();
+    expect(find.text('声音 · 直播间 2'), findsOneWidget);
+    await tester.tap(find.text('恢复声音'));
+    await tester.pumpAndSettle();
+    expect(fixture.session(0).muted.value, isFalse);
+    expect(fixture.session(1).muted.value, isFalse);
+    expect(
+        fixture.rooms.audioRoomKeys,
+        containsAll([
+          fixture.rooms.rooms[0].key,
+          fixture.rooms.rooms[1].key,
+        ]));
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+
+    await _tapRoom(tester, fixture, 2);
+    await tester.tap(find.byKey(_key('multi-room-sound')));
+    await tester.pumpAndSettle();
+    expect(find.text('声音 · 直播间 3'), findsOneWidget);
+    await tester.tap(find.text('恢复声音'));
+    await tester.pumpAndSettle();
+    expect(fixture.session(1).muted.value, isFalse);
+    expect(fixture.session(2).muted.value, isFalse);
+    expect(
+        fixture.rooms.audioRoomKeys,
+        containsAll([
+          fixture.rooms.rooms[0].key,
+          fixture.rooms.rooms[1].key,
+          fixture.rooms.rooms[2].key,
+        ]));
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
   });
 }
