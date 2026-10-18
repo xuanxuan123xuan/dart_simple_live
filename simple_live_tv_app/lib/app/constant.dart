@@ -9,6 +9,7 @@ class Constant {
   static const String kHuya = "huya";
   static const String kDouyin = "douyin";
   static const String kKuaishou = "kuaishou";
+  static const String kXiaohongshu = "xiaohongshu";
 }
 
 class HomePageItem {

@@ -145,6 +145,8 @@ class LocalStorageService extends GetxService {
 
   /// 抖音cookie
   static const String kDouyinCookie = "DouyinCookie";
+  static const String kDouyuCookie = "DouyuCookie";
+  static const String kXiaohongshuCookie = "XiaohongshuCookie";
 
   /// 快手双账号池
   static const String kKuaishouCookie = "KuaishouCookie";
@@ -207,7 +209,9 @@ class LocalStorageService extends GetxService {
   T getValue<T>(dynamic key, T defaultValue) {
     try {
       var value = settingsBox.get(key, defaultValue: defaultValue) as T;
-      Log.d("Get LocalStorage：$key\r\n$value");
+      Log.d(
+        "Get LocalStorage：$key\r\n${_isSensitiveKey(key) ? '<redacted>' : value}",
+      );
       return value;
     } catch (e) {
       Log.logPrint(e);
@@ -216,7 +220,9 @@ class LocalStorageService extends GetxService {
   }
 
   Future setValue<T>(dynamic key, T value) async {
-    Log.d("Set LocalStorage：$key\r\n$value");
+    Log.d(
+      "Set LocalStorage：$key\r\n${_isSensitiveKey(key) ? '<redacted>' : value}",
+    );
     return await settingsBox.put(key, value);
   }
 
@@ -224,4 +230,9 @@ class LocalStorageService extends GetxService {
     Log.d("Remove LocalStorage：$key");
     return await settingsBox.delete(key);
   }
+
+  bool _isSensitiveKey(dynamic key) => const {
+        kDouyuCookie,
+        kXiaohongshuCookie,
+      }.contains(key);
 }

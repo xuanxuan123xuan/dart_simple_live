@@ -29,6 +29,7 @@ import 'package:simple_live_tv_app/routes/route_path.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
 import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
@@ -36,6 +37,9 @@ import 'package:simple_live_tv_app/services/local_storage_service.dart';
 import 'package:simple_live_tv_app/services/profile_backup_service.dart';
 import 'package:simple_live_tv_app/services/sync_service.dart';
 import 'package:simple_live_tv_app/services/tv_app_update_service.dart';
+import 'package:simple_live_tv_app/services/xiaohongshu_account_service.dart';
+import 'package:simple_live_tv_app/services/xiaohongshu_web_session_service.dart';
+import 'package:simple_live_tv_app/widgets/xiaohongshu_web_session_host.dart';
 import 'package:window_manager/window_manager.dart';
 
 void main(List<String> args) async {
@@ -249,7 +253,12 @@ Future initServices() async {
 
   Get.put(BiliBiliAccountService());
   Get.put(DouyinAccountService());
+  Get.put(DouyuAccountService());
   Get.put(KuaishouAccountService());
+  Get.put(XiaohongshuAccountService());
+  if (Platform.isAndroid) {
+    Get.put(XiaohongshuWebSessionService());
+  }
   Get.put(ProfileBackupService());
 
   if (DesktopStartupArgs.isSecondaryDesktopInstance) {
@@ -308,7 +317,17 @@ class MyApp extends StatelessWidget {
               data: MediaQuery.of(
                 context,
               ).copyWith(textScaler: const TextScaler.linear(1.0)),
-              child: child!,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  child!,
+                  const Positioned(
+                    left: 0,
+                    top: 0,
+                    child: XiaohongshuWebSessionHost(),
+                  ),
+                ],
+              ),
             ),
           ),
           onReady: () {

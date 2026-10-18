@@ -1,7 +1,7 @@
 name: simple_live_tv_app
 description: A new Flutter project.
 publish_to: "none"
-version: 1.7.8+10708
+version: 1.8.0+10800
 
 environment:
   sdk: ">=3.1.2 <4.0.0"
@@ -42,6 +42,7 @@ dependencies:
   #系统交互
   package_info_plus: ^9.0.0 #包信息
   url_launcher: ^6.3.2 #打开链接
+  flutter_inappwebview: 6.0.0 # Android TV hidden Xiaohongshu signer
   open_filex: ^4.7.0 #打开下载的安装包
   path: any
   path_provider: ^2.1.5 #常用路径
@@ -62,6 +63,9 @@ dependencies:
 
 dependency_overrides:
   fading_edge_scrollview: ^4.1.1
+  # Match the Android local fork used by the main app.
+  flutter_inappwebview_android:
+    path: ../simple_live_app/third_party/flutter_inappwebview_android
   canvas_danmaku:
     path: ../third_party/canvas_danmaku
 

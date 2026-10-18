@@ -1,0 +1,357 @@
+import 'package:dio/dio.dart';
+import 'package:simple_live_tv_app/app/constant.dart';
+import 'package:simple_live_tv_app/app/log.dart';
+import 'package:simple_live_tv_app/app/sites.dart';
+import 'package:simple_live_core/simple_live_core.dart';
+
+class LiveRoomLinkTarget {
+  const LiveRoomLinkTarget({
+    required this.site,
+    required this.roomId,
+    this.douyinSecUserId,
+    this.xiaohongshuHostId,
+  });
+
+  final Site site;
+  final String roomId;
+  final String? douyinSecUserId;
+  final String? xiaohongshuHostId;
+}
+
+/// Parses supported live-room links without depending on widgets or navigation.
+class LiveRoomLinkParser {
+  LiveRoomLinkParser({
+    Dio? redirectClient,
+    Future<String> Function(String url)? locationResolver,
+  })  : _redirectClient = redirectClient ?? Dio(),
+        _locationResolver = locationResolver;
+
+  static const int _maxRedirects = 5;
+  static const Set<String> _douyuHosts = {
+    'douyu.com',
+    'www.douyu.com',
+    'm.douyu.com',
+  };
+  static const Set<String> _huyaHosts = {
+    'huya.com',
+    'www.huya.com',
+    'm.huya.com',
+  };
+  static const Set<String> _xiaohongshuHosts = {
+    'xiaohongshu.com',
+    'www.xiaohongshu.com',
+    'live-room.xiaohongshu.com',
+  };
+  static const Set<String> _xiaohongshuShortHosts = {
+    'xhslink.com',
+    'www.xhslink.com',
+  };
+  final Dio _redirectClient;
+  final Future<String> Function(String url)? _locationResolver;
+
+  Future<LiveRoomLinkTarget?> parse(
+    String input, {
+    String roomSiteId = Constant.kDouyu,
+  }) async {
+    final locationResolver = _locationResolver;
+    final extractedUrl = extractHttpUrl(input);
+    if (extractedUrl.isEmpty) {
+      final roomId = input.trim();
+      if (!RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(roomId)) return null;
+      return _target(roomSiteId, roomId);
+    }
+
+    final uri = Uri.tryParse(extractedUrl);
+    if (uri == null || !_isHttpUri(uri)) {
+      return null;
+    }
+
+    final kuaishouRoomId = KuaishouLiveLink.parseHttpUrl(extractedUrl);
+    if (kuaishouRoomId != null) {
+      return _target(Constant.kKuaishou, kuaishouRoomId);
+    }
+    if (KuaishouLiveLink.isShortLink(extractedUrl)) {
+      final location = locationResolver != null
+          ? await locationResolver(extractedUrl)
+          : await _resolveLocation(
+              extractedUrl,
+              isAllowed: KuaishouLiveLink.isTrustedRedirectTarget,
+            );
+      if (!KuaishouLiveLink.isTrustedRedirectTarget(location)) {
+        return null;
+      }
+      final roomId = KuaishouLiveLink.parseHttpUrl(location);
+      return roomId == null ? null : _target(Constant.kKuaishou, roomId);
+    }
+
+    final host = uri.host.toLowerCase();
+    if (host == 'live.bilibili.com') {
+      return _target(Constant.kBiliBili, _firstPathSegment(uri));
+    }
+    if (host == 'b23.tv' || host == 'www.b23.tv') {
+      final location = await _resolveLocation(extractedUrl);
+      return location.isEmpty ? null : parse(location);
+    }
+
+    if (_douyuHosts.contains(host)) {
+      final roomId = uri.queryParameters['rid']?.trim();
+      if (uri.pathSegments.contains('topic') && roomId != null) {
+        return _target(Constant.kDouyu, roomId);
+      }
+      return _target(Constant.kDouyu, _firstPathSegment(uri));
+    }
+    if (_huyaHosts.contains(host)) {
+      return _target(Constant.kHuya, _firstPathSegment(uri));
+    }
+    if (host == 'live.douyin.com') {
+      return _douyinTarget(uri, _firstPathSegment(uri));
+    }
+    // 抖音网页端直播间：www.douyin.com/live/<roomId> 与
+    // www.douyin.com/follow/live/<roomId>。其余 www 页面（搜索、用户、
+    // 视频）一律不当作直播间。
+    if (host == 'www.douyin.com' || host == 'douyin.com') {
+      final roomId = _douyinWebRoomId(uri);
+      return roomId == null ? null : _douyinTarget(uri, roomId);
+    }
+    if (host == 'webcast.amemv.com') {
+      final reflowIndex = uri.pathSegments.indexOf('reflow');
+      final roomId =
+          reflowIndex >= 0 && reflowIndex + 1 < uri.pathSegments.length
+              ? uri.pathSegments[reflowIndex + 1]
+              : '';
+      return _douyinTarget(uri, roomId);
+    }
+    if (host == 'v.douyin.com') {
+      final location = await _resolveLocation(extractedUrl);
+      return location.isEmpty ? null : parse(location);
+    }
+    if (_xiaohongshuHosts.contains(host)) {
+      if (!isTrustedXiaohongshuRedirectTarget(extractedUrl)) return null;
+      return _target(
+        Constant.kXiaohongshu,
+        _xiaohongshuRoomId(uri),
+        xiaohongshuHostId: _xiaohongshuHostId(uri),
+      );
+    }
+    if (_xiaohongshuShortHosts.contains(host)) {
+      final location = locationResolver != null
+          ? await locationResolver(extractedUrl)
+          : await _resolveLocation(
+              extractedUrl,
+              isAllowed: isTrustedXiaohongshuRedirectTarget,
+            );
+      if (!isTrustedXiaohongshuRedirectTarget(location)) return null;
+      final destination = Uri.tryParse(location);
+      if (destination == null ||
+          !_xiaohongshuHosts.contains(destination.host.toLowerCase())) {
+        return null;
+      }
+      return _target(
+        Constant.kXiaohongshu,
+        _xiaohongshuRoomId(destination),
+        xiaohongshuHostId: _xiaohongshuHostId(destination),
+      );
+    }
+    return null;
+  }
+
+  static String _xiaohongshuRoomId(Uri uri) {
+    final segments = uri.pathSegments
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    if (segments.length == 2 && segments[0] == 'livestream') {
+      return segments[1];
+    }
+    if (segments.length == 3 && segments[0] == 'livestream') {
+      return segments[2];
+    }
+    if (segments.length == 4 &&
+        segments[0] == 'hina' &&
+        segments[1] == 'livestream' &&
+        RegExp(r'^\d+$').hasMatch(segments[3])) {
+      return segments[2];
+    }
+    return '';
+  }
+
+  static String? _xiaohongshuHostId(Uri uri) {
+    final matches = uri.queryParametersAll.entries
+        .where((entry) => entry.key.toLowerCase() == 'host_id')
+        .toList(growable: false);
+    if (matches.length != 1 ||
+        matches.single.key != 'host_id' ||
+        matches.single.value.length != 1) {
+      return null;
+    }
+    return _normalizeXiaohongshuHostId(matches.single.value.single);
+  }
+
+  static String? _normalizeXiaohongshuHostId(Object? value) {
+    final hostId = value?.toString().trim().toLowerCase() ?? '';
+    return RegExp(r'^[0-9a-f]{24}$').hasMatch(hostId) ? hostId : null;
+  }
+
+  static bool isTrustedXiaohongshuRedirectTarget(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !_isHttpUri(uri) ||
+        uri.userInfo.isNotEmpty ||
+        (uri.port != 443 && uri.port != 80)) {
+      return false;
+    }
+    final host = uri.host.toLowerCase();
+    return _xiaohongshuHosts.contains(host) ||
+        _xiaohongshuShortHosts.contains(host);
+  }
+
+  LiveRoomLinkTarget? _douyinTarget(Uri uri, String roomId) {
+    return _target(
+      Constant.kDouyin,
+      roomId,
+      douyinSecUserId: uri.queryParameters['sec_user_id'],
+    );
+  }
+
+  LiveRoomLinkTarget? _target(
+    String siteId,
+    String roomId, {
+    String? douyinSecUserId,
+    String? xiaohongshuHostId,
+  }) {
+    final normalizedRoomId = roomId.trim();
+    if (!_isValidRoomId(siteId, normalizedRoomId)) {
+      return null;
+    }
+    final site = Sites.allSites[siteId];
+    final normalizedDouyinSecUserId =
+        siteId == Constant.kDouyin ? douyinSecUserId?.trim() : null;
+    final normalizedXiaohongshuHostId = siteId == Constant.kXiaohongshu
+        ? _normalizeXiaohongshuHostId(xiaohongshuHostId)
+        : null;
+    return site == null
+        ? null
+        : LiveRoomLinkTarget(
+            site: site,
+            roomId: normalizedRoomId,
+            douyinSecUserId: normalizedDouyinSecUserId == null ||
+                    normalizedDouyinSecUserId.isEmpty
+                ? null
+                : normalizedDouyinSecUserId,
+            xiaohongshuHostId: normalizedXiaohongshuHostId,
+          );
+  }
+
+  bool _isValidRoomId(String siteId, String roomId) {
+    if (roomId.isEmpty || roomId == '.' || roomId == '..') {
+      return false;
+    }
+    if (siteId == Constant.kXiaohongshu) {
+      return RegExp(r'^\d{8,32}$').hasMatch(roomId);
+    }
+    final pattern = siteId == Constant.kDouyin
+        ? RegExp(r'^[A-Za-z0-9_.-]+$')
+        : RegExp(r'^[A-Za-z0-9_-]+$');
+    return pattern.hasMatch(roomId) && RegExp(r'[A-Za-z0-9]').hasMatch(roomId);
+  }
+
+  /// 从 www.douyin.com 的路径里取直播间 id。
+  ///
+  /// 仅接受 /live/<id> 与 /follow/live/<id>；其余路径返回 null，避免把
+  /// 搜索页、用户页、普通视频页误识别成直播间。
+  static String? _douyinWebRoomId(Uri uri) {
+    final segments = uri.pathSegments
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    if (segments.length == 2 && segments[0] == 'live') {
+      return segments[1];
+    }
+    if (segments.length == 3 &&
+        segments[0] == 'follow' &&
+        segments[1] == 'live') {
+      return segments[2];
+    }
+    return null;
+  }
+
+  static String _firstPathSegment(Uri uri) {
+    return uri.pathSegments
+        .map((segment) => segment.trim())
+        .firstWhere((segment) => segment.isNotEmpty, orElse: () => '');
+  }
+
+  static bool _isHttpUri(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    return (scheme == 'http' || scheme == 'https') && uri.host.isNotEmpty;
+  }
+
+  Future<String> _resolveLocation(
+    String url, {
+    bool Function(String url)? isAllowed,
+  }) async {
+    final parsed = Uri.tryParse(url);
+    if (parsed == null || !_isHttpUri(parsed)) {
+      return '';
+    }
+    var current = parsed;
+    if (isAllowed != null && !isAllowed(current.toString())) {
+      return '';
+    }
+    try {
+      for (var redirectCount = 0;
+          redirectCount < _maxRedirects;
+          redirectCount++) {
+        final response = await _redirectClient.getUri<dynamic>(
+          current,
+          options: Options(
+            followRedirects: false,
+            validateStatus: (status) =>
+                status != null && status >= 200 && status < 400,
+            headers: const <String, dynamic>{},
+          ),
+        );
+        final statusCode = response.statusCode ?? 0;
+        if (statusCode < 300 || statusCode >= 400) {
+          return current.toString();
+        }
+        final location = response.headers.value('location');
+        if (location == null || location.trim().isEmpty) {
+          return '';
+        }
+        final next = current.resolve(location.trim());
+        if (!_isHttpUri(next) ||
+            (isAllowed != null && !isAllowed(next.toString()))) {
+          return '';
+        }
+        current = next;
+      }
+    } catch (error) {
+      Log.logPrint(error);
+    }
+    return '';
+  }
+
+  static String extractHttpUrl(String text) {
+    final match = RegExp(
+      r'https?://[^\s<>\u3000，。！？、；：]+',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (match == null) {
+      return '';
+    }
+
+    final url = match.group(0)!;
+    final uri = Uri.tryParse(url);
+    final douyinRoomId = uri?.host.toLowerCase() == 'live.douyin.com'
+        ? uri!.pathSegments.firstWhere(
+            (segment) => segment.isNotEmpty,
+            orElse: () => '',
+          )
+        : '';
+    final punctuation = douyinRoomId.endsWith('.')
+        ? RegExp(r'[，。！？、；：,;:!?]+$')
+        : RegExp(r'[，。！？、；：,.;:!?]+$');
+    return url.replaceFirst(punctuation, '');
+  }
+}
