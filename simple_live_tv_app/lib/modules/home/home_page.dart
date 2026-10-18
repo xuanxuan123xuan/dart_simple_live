@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
+
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 import 'package:lottie/lottie.dart';
@@ -8,7 +10,9 @@ import 'package:simple_live_tv_app/app/app_style.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/modules/home/home_controller.dart';
+import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/modules/follow_user/tv_follow_grid_layout.dart';
+import 'package:simple_live_tv_app/services/live_room_link_parser.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
@@ -17,6 +21,8 @@ import 'package:simple_live_tv_app/widgets/card/anchor_card.dart';
 import 'package:simple_live_tv_app/widgets/button/home_big_button.dart';
 import 'package:simple_live_tv_app/widgets/net_image.dart';
 import 'package:simple_live_tv_app/widgets/status/app_empty_widget.dart';
+import 'package:simple_live_tv_app/widgets/tv_open_live_link_dialog.dart';
+import 'package:simple_live_tv_app/widgets/tv_room_picker.dart';
 
 class HomePage extends GetView<HomeController> {
   const HomePage({super.key});
@@ -44,6 +50,20 @@ class HomePage extends GetView<HomeController> {
                 ),
               ),
               AppStyle.hGap32,
+              HighlightButton(
+                focusNode: AppFocusNode(),
+                iconData: Icons.grid_view,
+                text: "多屏同播",
+                onTap: _openMultiRoom,
+              ),
+              AppStyle.hGap16,
+              HighlightButton(
+                focusNode: AppFocusNode(),
+                iconData: Icons.link,
+                text: "打开直播链接",
+                onTap: _openLiveLink,
+              ),
+              AppStyle.hGap16,
               HighlightButton(
                 focusNode: AppFocusNode(),
                 iconData: Icons.settings,
@@ -233,6 +253,28 @@ class HomePage extends GetView<HomeController> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _openMultiRoom() async {
+    final settings = AppSettingsController.instance;
+    final maxRooms = Platform.isAndroid ? settings.multiRoomMaxRooms.value : 4;
+    final selected = await showTvRoomPicker(maxRooms: maxRooms);
+    if (selected == null || selected.isEmpty) return;
+    await AppNavigator.toMultiRoom(initialRooms: selected);
+  }
+
+  Future<void> _openLiveLink() async {
+    final target = await Get.dialog<LiveRoomLinkTarget>(
+      const TvOpenLiveLinkDialog(),
+      barrierDismissible: false,
+    );
+    if (target == null) return;
+    await AppNavigator.toLiveRoomDetail(
+      site: target.site,
+      roomId: target.roomId,
+      douyinSecUserId: target.douyinSecUserId,
+      xiaohongshuHostId: target.xiaohongshuHostId,
     );
   }
 

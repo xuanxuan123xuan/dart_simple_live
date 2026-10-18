@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,12 +12,15 @@ import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/models/db/follow_user.dart';
 import 'package:simple_live_tv_app/modules/follow_user/tv_follow_grid_layout.dart';
+import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
+import 'package:simple_live_tv_app/services/live_room_link_parser.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
 import 'package:simple_live_tv_app/widgets/card/anchor_card.dart';
+import 'package:simple_live_tv_app/widgets/tv_open_live_link_dialog.dart';
 
 class FollowUserPage extends StatefulWidget {
   const FollowUserPage({super.key});
@@ -32,10 +36,14 @@ class _FollowUserPageState extends State<FollowUserPage> {
   final AppFocusNode _backFocusNode = AppFocusNode();
   final AppFocusNode _searchFocusNode = AppFocusNode();
   final AppFocusNode _displayFocusNode = AppFocusNode();
+  final AppFocusNode _multiRoomFocusNode = AppFocusNode();
+  final AppFocusNode _openLinkFocusNode = AppFocusNode();
   final AppFocusNode _refreshAllFocusNode = AppFocusNode();
   final AppFocusNode _previousPageFocusNode = AppFocusNode();
   final AppFocusNode _nextPageFocusNode = AppFocusNode();
   final AppFocusNode _refreshPageFocusNode = AppFocusNode();
+  final Set<String> _selectedFollowKeys = <String>{};
+  bool _multiSelectionMode = false;
   _TvFollowLayoutSpec? _currentLayout;
 
   @override
@@ -54,6 +62,8 @@ class _FollowUserPageState extends State<FollowUserPage> {
     _backFocusNode.dispose();
     _searchFocusNode.dispose();
     _displayFocusNode.dispose();
+    _multiRoomFocusNode.dispose();
+    _openLinkFocusNode.dispose();
     _refreshAllFocusNode.dispose();
     _previousPageFocusNode.dispose();
     _nextPageFocusNode.dispose();
@@ -95,9 +105,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
       final resolved = TvFollowGridLayout.resolve(
         availableWidth: availableWidth - 96.w,
         availableHeight: availableHeight -
-            (FollowUserService.instance.paginationEnabled.value
-                ? 120.w
-                : 24.w),
+            (FollowUserService.instance.paginationEnabled.value ? 120.w : 24.w),
         density: AppSettingsController.instance.followCardDensity.value,
         showLiveCover: showLiveCover,
         crossAxisSpacing: spacing,
@@ -168,10 +176,14 @@ class _FollowUserPageState extends State<FollowUserPage> {
       final ratio = columns <= 1 ? 0.0 : column / (columns - 1);
       if (ratio < 0.2) {
         _backFocusNode.requestFocus();
-      } else if (ratio < 0.45) {
+      } else if (ratio < 0.35) {
         _searchFocusNode.requestFocus();
-      } else if (ratio < 0.75) {
+      } else if (ratio < 0.5) {
         _displayFocusNode.requestFocus();
+      } else if (ratio < 0.67) {
+        _multiRoomFocusNode.requestFocus();
+      } else if (ratio < 0.82) {
+        _openLinkFocusNode.requestFocus();
       } else {
         _refreshAllFocusNode.requestFocus();
       }
@@ -183,8 +195,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
     }
     final target = index + rowDelta * columns + columnDelta;
     if (target < 0 || target >= items.length) {
-      if (rowDelta > 0 &&
-          FollowUserService.instance.paginationEnabled.value) {
+      if (rowDelta > 0 && FollowUserService.instance.paginationEnabled.value) {
         _nextPageFocusNode.requestFocus();
         return KeyEventResult.handled;
       }
@@ -226,6 +237,53 @@ class _FollowUserPageState extends State<FollowUserPage> {
     final lastRow = (items.length - 1) ~/ columns;
     _focusItemAt(lastRow * columns);
     return KeyEventResult.handled;
+  }
+
+  Future<void> _toggleMultiSelectionOrStart() async {
+    if (!_multiSelectionMode) {
+      setState(() {
+        _multiSelectionMode = true;
+        _selectedFollowKeys.clear();
+      });
+      return;
+    }
+    if (_selectedFollowKeys.isEmpty) {
+      setState(() => _multiSelectionMode = false);
+      return;
+    }
+    final settings = AppSettingsController.instance;
+    final limit = Platform.isAndroid ? settings.multiRoomMaxRooms.value : 4;
+    final selected = FollowUserService.instance.allList
+        .where((item) => _selectedFollowKeys.contains(item.id))
+        .map(MultiRoomItem.fromFollow)
+        .toList(growable: false);
+    setState(() {
+      _multiSelectionMode = false;
+      _selectedFollowKeys.clear();
+    });
+    await AppNavigator.toMultiRoom(initialRooms: selected.take(limit).toList());
+  }
+
+  void _toggleFollowSelection(FollowUser item) {
+    setState(() {
+      if (!_selectedFollowKeys.add(item.id)) {
+        _selectedFollowKeys.remove(item.id);
+      }
+    });
+  }
+
+  Future<void> _openLiveLink() async {
+    final target = await Get.dialog<LiveRoomLinkTarget>(
+      const TvOpenLiveLinkDialog(),
+      barrierDismissible: false,
+    );
+    if (target == null) return;
+    await AppNavigator.toLiveRoomDetail(
+      site: target.site,
+      roomId: target.roomId,
+      douyinSecUserId: target.douyinSecUserId,
+      xiaohongshuHostId: target.xiaohongshuHostId,
+    );
   }
 
   void _pruneFocusNodes(Iterable<FollowUser> items) {
@@ -309,6 +367,31 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   onTap: _showDisplayDialog,
                   onUpKey: () => _keepTopBarFocus(),
                   onLeftKey: () => _moveTopBarFocus(_searchFocusNode),
+                  onRightKey: () => _moveTopBarFocus(_multiRoomFocusNode),
+                  onDownKey: () => _moveTopBarToGrid(),
+                ),
+                AppStyle.hGap16,
+                HighlightButton(
+                  focusNode: _multiRoomFocusNode,
+                  iconData:
+                      _multiSelectionMode ? Icons.play_circle : Icons.grid_view,
+                  text: _multiSelectionMode
+                      ? "开始多屏 (${_selectedFollowKeys.length})"
+                      : "多屏选择",
+                  onTap: _toggleMultiSelectionOrStart,
+                  onUpKey: () => _keepTopBarFocus(),
+                  onLeftKey: () => _moveTopBarFocus(_displayFocusNode),
+                  onRightKey: () => _moveTopBarFocus(_openLinkFocusNode),
+                  onDownKey: () => _moveTopBarToGrid(),
+                ),
+                AppStyle.hGap16,
+                HighlightButton(
+                  focusNode: _openLinkFocusNode,
+                  iconData: Icons.link,
+                  text: "打开直播链接",
+                  onTap: _openLiveLink,
+                  onUpKey: () => _keepTopBarFocus(),
+                  onLeftKey: () => _moveTopBarFocus(_multiRoomFocusNode),
                   onRightKey: () => _moveTopBarFocus(_refreshAllFocusNode),
                   onDownKey: () => _moveTopBarToGrid(),
                 ),
@@ -319,7 +402,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
                   text: "刷新全部",
                   onTap: FollowUserService.instance.refreshAllStatus,
                   onUpKey: () => _keepTopBarFocus(),
-                  onLeftKey: () => _moveTopBarFocus(_displayFocusNode),
+                  onLeftKey: () => _moveTopBarFocus(_openLinkFocusNode),
                   onRightKey: () => _keepTopBarFocus(),
                   onDownKey: () => _moveTopBarToGrid(),
                 ),
@@ -404,30 +487,65 @@ class _FollowUserPageState extends State<FollowUserPage> {
   ) {
     final isCurrent = "${item.siteId}_${item.roomId}" ==
         CurrentRoomService.instance.currentKey;
-    return AnchorCard(
-      face: item.face,
-      name: item.userName,
-      roomTitle: item.roomTitle,
-      roomCover: item.roomCover,
-      siteId: item.siteId,
-      liveStatus: item.liveStatus.value,
-      roomId: item.roomId,
-      playing: isCurrent,
-      showLiveCover: AppSettingsController.instance.followShowLiveCover.value,
-      displayStyle: layout.displayStyle,
-      focusNode: _focusNodeFor(item.id),
-      onLeftKey: () => _moveGridFocus(index, 0, -1),
-      onRightKey: () => _moveGridFocus(index, 0, 1),
-      onUpKey: () => _moveGridFocus(index, -1, 0),
-      onDownKey: () => _moveGridFocus(index, 1, 0),
-      onLongPress: () => unawaited(_showCardActions(item, index)),
-      onTap: () async {
-        final resolved =
-            await FollowUserService.instance.resolveFollowBeforeEnter(item);
-        final site = Sites.allSites[resolved.siteId];
-        if (site == null) return;
-        AppNavigator.toLiveRoomDetail(site: site, roomId: resolved.roomId);
-      },
+    final selected = _selectedFollowKeys.contains(item.id);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        AnchorCard(
+          face: item.face,
+          name: item.userName,
+          roomTitle: item.roomTitle,
+          roomCover: item.roomCover,
+          siteId: item.siteId,
+          liveStatus: item.liveStatus.value,
+          roomId: item.roomId,
+          playing: isCurrent,
+          showLiveCover:
+              AppSettingsController.instance.followShowLiveCover.value,
+          displayStyle: layout.displayStyle,
+          focusNode: _focusNodeFor(item.id),
+          onLeftKey: () => _moveGridFocus(index, 0, -1),
+          onRightKey: () => _moveGridFocus(index, 0, 1),
+          onUpKey: () => _moveGridFocus(index, -1, 0),
+          onDownKey: () => _moveGridFocus(index, 1, 0),
+          onLongPress: _multiSelectionMode
+              ? null
+              : () => unawaited(_showCardActions(item, index)),
+          onTap: () async {
+            if (_multiSelectionMode) {
+              _toggleFollowSelection(item);
+              return;
+            }
+            final resolved =
+                await FollowUserService.instance.resolveFollowBeforeEnter(item);
+            final site = Sites.allSites[resolved.siteId];
+            if (site == null) return;
+            await AppNavigator.toLiveRoomDetail(
+                site: site, roomId: resolved.roomId);
+          },
+        ),
+        if (_multiSelectionMode)
+          Positioned(
+            top: 8.w,
+            right: 8.w,
+            child: IgnorePointer(
+              child: Container(
+                width: 46.w,
+                height: 46.w,
+                decoration: BoxDecoration(
+                  color: selected ? Colors.lightBlueAccent : Colors.black54,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2.w),
+                ),
+                child: Icon(
+                  selected ? Icons.check : Icons.add,
+                  color: Colors.white,
+                  size: 30.w,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -448,8 +566,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
               HighlightButton(
                 focusNode: specialFocusNode,
                 autofocus: true,
-                iconData:
-                    item.isSpecialFollow ? Icons.star : Icons.star_border,
+                iconData: item.isSpecialFollow ? Icons.star : Icons.star_border,
                 text: item.isSpecialFollow ? "取消特别关注" : "设为特别关注",
                 onTap: () async {
                   await FollowUserService.instance.toggleSpecialFollow(item);
@@ -764,8 +881,7 @@ class _FollowUserPageState extends State<FollowUserPage> {
                     : null,
                 onUpKey: () => _movePaginationBarToGrid(),
                 onLeftKey: () => _keepTopBarFocus(),
-                onRightKey: () =>
-                    _movePaginationBarFocus(_nextPageFocusNode),
+                onRightKey: () => _movePaginationBarFocus(_nextPageFocusNode),
                 onDownKey: () => _keepTopBarFocus(),
               ),
               AppStyle.hGap16,

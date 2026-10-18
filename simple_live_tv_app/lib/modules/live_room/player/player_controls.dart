@@ -13,11 +13,14 @@ import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_player_control_bar.dart';
+import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
+import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
 import 'package:simple_live_tv_app/widgets/card/anchor_card.dart';
 import 'package:simple_live_tv_app/widgets/settings_item_widget.dart';
 import 'package:simple_live_tv_app/widgets/status/app_empty_widget.dart';
+import 'package:simple_live_tv_app/widgets/tv_room_picker.dart';
 
 Widget playerControls(VideoState videoState, LiveRoomController controller) {
   return buildControls(videoState, controller);
@@ -156,7 +159,9 @@ Widget buildControls(VideoState videoState, LiveRoomController controller) {
                     AppStyle.hGap32,
                     Obx(
                       () => Text(
-                        "弹幕: ${controller.showDanmakuState.value ? "开" : "关"}",
+                        controller.danmakuStatus.value.isNotEmpty
+                            ? controller.danmakuStatus.value
+                            : "弹幕: ${controller.showDanmakuState.value ? "开" : "关"}",
                         style: AppStyle.textStyleWhite,
                       ),
                     ),
@@ -186,6 +191,8 @@ Widget buildControls(VideoState videoState, LiveRoomController controller) {
                     onNext: controller.nextChannel,
                     onRefresh: () => unawaited(controller.refreshRoom()),
                     onSettings: () => showPlayerSettings(controller),
+                    onMultiRoom: () =>
+                        unawaited(showMultiRoomPicker(controller)),
                     onActivity: controller.resetHideControlsTimer,
                   ),
               ],
@@ -194,6 +201,48 @@ Widget buildControls(VideoState videoState, LiveRoomController controller) {
         ),
       ),
     ],
+  );
+}
+
+Future<void> showMultiRoomPicker(LiveRoomController controller) async {
+  final previousFocus = FocusManager.instance.primaryFocus;
+  controller.showSettingState.value = true;
+  controller.hideControlsTimer?.cancel();
+  previousFocus?.unfocus();
+  List<MultiRoomItem>? selected;
+  try {
+    final detail = controller.detail.value;
+    selected = await showTvRoomPicker(
+      maxRooms: Platform.isAndroid
+          ? AppSettingsController.instance.multiRoomMaxRooms.value
+          : 4,
+      selectedRooms: [
+        MultiRoomItem(
+          site: controller.site,
+          roomId: controller.roomId,
+          userName: detail?.userName ?? controller.roomId,
+          face: detail?.userAvatar ?? '',
+          xiaohongshuHostId: controller.xiaohongshuHostId,
+          douyinSecUserId: controller.douyinSecUserId,
+        ),
+      ],
+    );
+  } finally {
+    controller.showSettingState.value = false;
+    if (!controller.playbackIntent.isClosed) {
+      controller.resetHideControlsTimer();
+      (previousFocus?.context != null ? previousFocus! : controller.focusNode)
+          .requestFocus();
+    }
+  }
+  if (controller.playbackIntent.isClosed ||
+      selected == null ||
+      selected.isEmpty) {
+    return;
+  }
+  await AppNavigator.toMultiRoom(
+    initialRooms: selected,
+    closeCurrentSingleRoom: true,
   );
 }
 
@@ -365,6 +414,7 @@ Widget buildDanmuView(VideoState videoState, LiveRoomController controller) {
 // }
 
 void showPlayerSettings(LiveRoomController controller) {
+  final previousFocus = FocusManager.instance.primaryFocus;
   controller.showSettingState.value = true;
   controller.hideControlsTimer?.cancel();
   // 移除焦点
@@ -666,7 +716,8 @@ void showPlayerSettings(LiveRoomController controller) {
     }
     if (controller.playbackIntent.isClosed) return;
     controller.resetHideControlsTimer();
-    controller.focusNode.requestFocus();
+    (previousFocus?.context != null ? previousFocus! : controller.focusNode)
+        .requestFocus();
   });
 }
 

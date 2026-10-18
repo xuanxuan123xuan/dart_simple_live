@@ -17,6 +17,9 @@ import 'package:simple_live_tv_app/modules/hot_live/hot_live_controller.dart';
 import 'package:simple_live_tv_app/modules/hot_live/hot_live_page.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_page.dart';
+import 'package:simple_live_tv_app/modules/multi_room/multi_room_controller.dart';
+import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
+import 'package:simple_live_tv_app/modules/multi_room/multi_room_page.dart';
 import 'package:simple_live_tv_app/modules/search/anchor/search_anchor_controller.dart';
 import 'package:simple_live_tv_app/modules/search/anchor/search_anchor_page.dart';
 import 'package:simple_live_tv_app/modules/search/room/search_room_controller.dart';
@@ -80,6 +83,18 @@ class AppPages {
         () => LiveRoomController(
           pSite: Get.arguments,
           pRoomId: Get.parameters["roomId"] ?? "",
+          pDouyinSecUserId: Get.parameters["douyinSecUserId"],
+          pXiaohongshuHostId: Get.parameters["xiaohongshuHostId"],
+        ),
+      ),
+    ),
+    // 单窗口多屏同播
+    GetPage(
+      name: RoutePath.kMultiRoom,
+      page: () => const MultiRoomPage(),
+      binding: BindingsBuilder.put(
+        () => MultiRoomController(
+          (Get.arguments as List<MultiRoomItem>?) ?? const <MultiRoomItem>[],
         ),
       ),
     ),
