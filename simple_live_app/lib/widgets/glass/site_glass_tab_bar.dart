@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show precisionErrorTolerance;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
@@ -102,10 +103,13 @@ class SiteGlassTabBar extends StatelessWidget {
                   ),
               ],
               selectedIndex: controller.index,
-              // TabBarView swipes should drive the indicator directly so it
-              // cannot lag behind the page. Keep the internal spring for a
-              // platform-selector tap while TabController.animateTo runs.
-              indicatorPosition: controller.indexIsChanging ? null : position,
+              // Only a page swipe owns the continuous position. At rest and
+              // after animateTo completes, let the selection spring finish
+              // naturally instead of snapping it to the page's final frame.
+              indicatorPosition: !controller.indexIsChanging &&
+                      controller.offset.abs() > precisionErrorTolerance
+                  ? position
+                  : null,
               onTabSelected: controller.animateTo,
               backgroundKey: LiquidGlassScope.of(context),
               quality: quality,
@@ -118,12 +122,11 @@ class SiteGlassTabBar extends StatelessWidget {
               tabPadding: iconOnly
                   ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
                   : const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              indicatorExpansion: iconOnly
-                  ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
-                  : const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+              indicatorExpansion:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
               indicatorBorderRadius: iconOnly ? 26 : 20,
               indicatorPinchStrength: 0.55,
-              magnification: iconOnly ? 1.02 : 1.04,
+              magnification: 1.04,
               pressScale: 1.025,
               settings: LiquidGlassSettings(
                 glassColor:

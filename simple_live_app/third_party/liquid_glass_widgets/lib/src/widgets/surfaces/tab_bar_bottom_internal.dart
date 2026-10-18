@@ -544,6 +544,14 @@ class TabIndicatorState extends State<TabIndicator>
   @override
   void didUpdateWidget(covariant TabIndicator oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // A completed/cancelled page swipe can release external ownership without
+    // changing tabIndex in this frame. Seed the local target even then, so
+    // the spring never resumes from the tab it last owned before the swipe.
+    if (!tabIsDragging &&
+        oldWidget.indicatorPosition != null &&
+        widget.indicatorPosition == null) {
+      setLocalTabXAlign(computeTabAlignment(widget.tabIndex));
+    }
     // When the host supplies a continuous position, it is the sole source of
     // truth for the pill location. Do not briefly retarget to selectedIndex,
     // which would feed a second destination into the indicator spring.

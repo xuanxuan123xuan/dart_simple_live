@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/home/home_controller.dart';
@@ -100,28 +101,36 @@ class HomePage extends GetView<HomeController> {
 
   @override
   Widget build(BuildContext context) {
-    return Obx(() {
-      final tabs = controller.tabs;
-      return Scaffold(
-        backgroundColor: Colors.transparent,
-        extendBodyBehindAppBar: true,
-        appBar: HomeTopBar(
-          controller: tabs.controller,
-          onSearch: controller.toSearch,
-          sites: tabs.sites,
-        ),
-        body: TabBarView(
-          controller: tabs.controller,
-          children: tabs.sites
-              .map(
-                (e) => HomeListView(
-                  e.id,
-                  key: ValueKey(e.id),
-                ),
-              )
-              .toList(),
-        ),
-      );
-    });
+    return LiquidGlassScope(
+      child: Obx(() {
+        final tabs = controller.tabs;
+        final scaffoldBackground = Theme.of(context).scaffoldBackgroundColor;
+        return Scaffold(
+          backgroundColor: Colors.transparent,
+          extendBodyBehindAppBar: true,
+          appBar: HomeTopBar(
+            controller: tabs.controller,
+            onSearch: controller.toSearch,
+            sites: tabs.sites,
+          ),
+          body: GlassBackgroundSource(
+            child: ColoredBox(
+              color: scaffoldBackground,
+              child: TabBarView(
+                controller: tabs.controller,
+                children: tabs.sites
+                    .map(
+                      (e) => HomeListView(
+                        e.id,
+                        key: ValueKey(e.id),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
   }
 }

@@ -148,7 +148,7 @@ void main() {
 
       expect(controller.index, i);
       final indicator = tester.widget<TabIndicator>(find.byType(TabIndicator));
-      expect(indicator.indicatorPosition, closeTo(i.toDouble(), 0.001));
+      expect(indicator.indicatorPosition, isNull);
     }
   });
 
@@ -286,7 +286,7 @@ void main() {
     expect(controller!.index, 1);
     expect(
       tester.widget<TabIndicator>(find.byType(TabIndicator)).indicatorPosition,
-      closeTo(1, 0.001),
+      isNull,
     );
   });
 }
