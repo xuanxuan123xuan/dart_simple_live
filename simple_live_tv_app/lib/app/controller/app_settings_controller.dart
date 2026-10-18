@@ -50,11 +50,51 @@ class AppSettingsController extends GetxController {
 
   /// 缩放模式
   var scaleMode = 0.obs;
+  final autoQualityDegrade = true.obs;
+  final multiRoomMaxRooms = 2.obs;
+  final multiRoomLayout = 'grid'.obs;
+  final multiRoomMixAudio = false.obs;
+
+  void setMultiRoomMaxRooms(int value) {
+    multiRoomMaxRooms.value = value == 4 ? 4 : 2;
+    LocalStorageService.instance
+        .setValue('TvMultiRoomMaxRooms', multiRoomMaxRooms.value);
+  }
+
+  void setMultiRoomLayout(String value) {
+    multiRoomLayout.value = value == 'mainSub' ? 'mainSub' : 'grid';
+    LocalStorageService.instance
+        .setValue('TvMultiRoomLayout', multiRoomLayout.value);
+  }
+
+  void setMultiRoomMixAudio(bool value) {
+    multiRoomMixAudio.value = value;
+    LocalStorageService.instance.setValue('TvMultiRoomMixAudio', value);
+  }
+
+  void setAutoQualityDegrade(bool value) {
+    autoQualityDegrade.value = value;
+    LocalStorageService.instance.setValue('TvAutoQualityDegrade', value);
+  }
 
   var firstRun = false;
 
   @override
   void onInit() {
+    multiRoomMaxRooms.value =
+        LocalStorageService.instance.getValue<int>('TvMultiRoomMaxRooms', 2) ==
+                4
+            ? 4
+            : 2;
+    multiRoomLayout.value = LocalStorageService.instance
+                .getValue<String>('TvMultiRoomLayout', 'grid') ==
+            'mainSub'
+        ? 'mainSub'
+        : 'grid';
+    multiRoomMixAudio.value =
+        LocalStorageService.instance.getValue('TvMultiRoomMixAudio', false);
+    autoQualityDegrade.value =
+        LocalStorageService.instance.getValue('TvAutoQualityDegrade', true);
     firstRun = LocalStorageService.instance
         .getValue(LocalStorageService.kFirstRun, true);
     danmuSize.value = LocalStorageService.instance

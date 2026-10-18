@@ -23,6 +23,8 @@ import 'package:simple_live_tv_app/modules/live_room/player/player_controller.da
 import 'package:simple_live_tv_app/modules/live_room/player/tv_playback_intent.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
+import 'package:simple_live_tv_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/services/live_play_quality_presentation.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -35,12 +37,23 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   LiveRoomController({
     required this.pSite,
     required this.pRoomId,
+    String? pXiaohongshuHostId,
+    String? pDouyinSecUserId,
   }) {
+    _xiaohongshuHostId = pXiaohongshuHostId;
+    _douyinSecUserId = pDouyinSecUserId;
     rxSite = pSite.obs;
     rxRoomId = pRoomId.obs;
     liveDanmaku = site.liveSite.getDanmaku();
   }
   final FocusNode focusNode = FocusNode();
+  String? _xiaohongshuHostId;
+  String? _douyinSecUserId;
+  String? get xiaohongshuHostId => _xiaohongshuHostId;
+  String? get douyinSecUserId => _douyinSecUserId;
+  final danmakuStatus = ''.obs;
+  final List<Worker> _accountWorkers = [];
+  Future<void> _danmakuStopFuture = Future<void>.value();
   late Rx<Site> rxSite;
   Site get site => rxSite.value;
   late Rx<String> rxRoomId;
@@ -60,8 +73,14 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   double _lastAudibleVolume = 100;
   Future<void>? _closePlaybackFuture;
   Timer? _clockTimer;
+  StreamSubscription<bool>? _bufferingSubscription;
+  final _autoQualityBufferTracker = LiveRoomAutoQualityBufferTracker();
+  DateTime? _lastAutoQualityDownAt;
   bool _autoSwitchingRoom = false;
   Completer<void>? _playerReopenCompleter;
+  Future<void>? _nativeOpenFuture;
+  final Set<Future<void>> _nativeResumeFutures = {};
+  final Set<Future<void>> _nativePauseFutures = {};
   bool _mediaRecoveryInFlight = false;
   bool _playbackSessionReady = false;
   int _roomGeneration = 0;
@@ -150,10 +169,14 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   @override
   void onInit() {
     WidgetsBinding.instance.addObserver(this);
+    _bufferingSubscription = player.stream.buffering.listen((buffering) {
+      unawaited(observeNetworkBuffering(buffering));
+    });
     CurrentRoomService.instance.setRoom(site, roomId);
     initTimer();
     _startLiveEventFlowTimer();
     initAutoExit();
+    startWatchingAccountChanges();
     showDanmakuState.value = DesktopStartupArgs.isSecondaryDesktopInstance
         ? false
         : AppSettingsController.instance.danmuEnable.value;
@@ -167,6 +190,57 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     unawaited(syncDesktopFullscreenState());
 
     super.onInit();
+  }
+
+  @visibleForTesting
+  void startWatchingAccountChanges() {
+    if (_disposed || _accountWorkers.isNotEmpty) return;
+    if (Get.isRegistered<DouyuAccountService>()) {
+      final account = Get.find<DouyuAccountService>();
+      var userRevision = account.userCookieRevision;
+      _accountWorkers.add(ever(account.cookieRevision, (_) {
+        final nextRevision = account.userCookieRevision;
+        if (nextRevision == userRevision) return;
+        userRevision = nextRevision;
+        if (site.id == Constant.kDouyu) _reloadForAccountChange();
+      }));
+    }
+    if (Get.isRegistered<XiaohongshuAccountService>()) {
+      final account = Get.find<XiaohongshuAccountService>();
+      _accountWorkers.add(ever(account.cookieRevision, (_) {
+        if (site.id == Constant.kXiaohongshu) _reloadForAccountChange();
+      }));
+    }
+  }
+
+  void _reloadForAccountChange() {
+    if (_disposed) return;
+    _roomGeneration++;
+    _loadGeneration++;
+    _urlRequestGeneration++;
+    _playRequestGeneration++;
+    _resetAutomaticRecovery();
+    invalidatePlaybackGeneration();
+    _playbackSessionReady = false;
+    final generation = _roomGeneration;
+    // Account services may publish the revision before assigning site.cookie.
+    scheduleMicrotask(() {
+      if (!_disposed && generation == _roomGeneration) {
+        unawaited(refreshRoom());
+      }
+    });
+  }
+
+  Future<void> _stopDanmaku() {
+    final current = liveDanmaku;
+    _danmakuStopFuture = _danmakuStopFuture.then((_) async {
+      try {
+        await current.stop();
+      } catch (error, stackTrace) {
+        Log.e('停止弹幕失败: $error', stackTrace);
+      }
+    });
+    return _danmakuStopFuture;
   }
 
   void initAutoExit() {
@@ -243,11 +317,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   Future<void> refreshRoom() async {
-    //messages.clear();
-
-    liveDanmaku.stop();
     _clearDanmuDedupeState();
-
     await loadData();
   }
 
@@ -311,7 +381,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   Future<void> togglePause() => setUserPaused(!userPaused.value);
 
   Future<void> setUserPaused(bool paused) async {
-    if (_disposed) return;
+    if (_disposed || userPaused.value == paused) return;
     userPaused.value = paused;
     playbackIntent.userPaused = paused;
     if (paused) {
@@ -319,16 +389,64 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       _urlRequestGeneration++;
       _resetAutomaticRecovery();
       resetPlaybackRecoveryTracking();
-      await pausePlayerMedia();
+      await _pausePlayback();
     } else if (playbackIntent.shouldPlay) {
-      if (_playbackSessionReady) {
-        await resumePlayerMedia();
+      if (_playbackSessionReady && _nativeOpenFuture == null) {
+        await _resumeAllowedPlayback();
       } else if (playUrls.isNotEmpty) {
         await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
       } else {
         await loadData();
       }
     }
+  }
+
+  Future<void> _resumeAllowedPlayback() async {
+    if (_disposed || !playbackIntent.shouldPlay) return;
+    _autoQualityBufferTracker.beginWarmup(playbackNow());
+    final resuming = resumePlayerMedia();
+    _nativeResumeFutures.add(resuming);
+    try {
+      await resuming;
+      // A pause can arrive while the native play command is completing.
+      if (!_disposed && !playbackIntent.shouldPlay) await _pausePlayback();
+    } finally {
+      _nativeResumeFutures.remove(resuming);
+    }
+  }
+
+  Future<void> _pausePlayback() async {
+    if (_disposed) return;
+    final pausing = pausePlayerMedia();
+    _nativePauseFutures.add(pausing);
+    try {
+      await pausing;
+    } finally {
+      _nativePauseFutures.remove(pausing);
+    }
+  }
+
+  @protected
+  DateTime playbackNow() => DateTime.now();
+
+  Future<void> observeNetworkBuffering(bool buffering) async {
+    if (playbackRecoveryBlocked ||
+        _mediaRecoveryInFlight ||
+        !AppSettingsController.instance.autoQualityDegrade.value) {
+      return;
+    }
+    final now = playbackNow();
+    if (!_autoQualityBufferTracker.update(buffering: buffering, now: now)) {
+      return;
+    }
+    if (_lastAutoQualityDownAt != null &&
+        now.difference(_lastAutoQualityDownAt!) < const Duration(seconds: 30)) {
+      return;
+    }
+    if (currentQuality < 0 || currentQuality >= qualites.length - 1) return;
+    _lastAutoQualityDownAt = now;
+    Log.i('网络波动，自动降低一档清晰度：${site.id}/$roomId');
+    await selectQuality(currentQuality + 1);
   }
 
   @override
@@ -466,9 +584,21 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   /// 初始化弹幕接收事件
   void initDanmau() {
-    liveDanmaku.onMessage = onWSMessage;
-    liveDanmaku.onClose = onWSClose;
-    liveDanmaku.onReady = onWSReady;
+    final current = liveDanmaku;
+    final roomGeneration = _roomGeneration;
+    final loadGeneration = _loadGeneration;
+    bool isCurrent() =>
+        identical(current, liveDanmaku) &&
+        _isCurrentLoad(roomGeneration, loadGeneration);
+    current.onMessage = (message) {
+      if (isCurrent()) onWSMessage(message);
+    };
+    current.onClose = (message) {
+      if (isCurrent()) onWSClose(message);
+    };
+    current.onReady = () {
+      if (isCurrent()) onWSReady();
+    };
   }
 
   /// 接收到WebSocket信息
@@ -714,6 +844,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   void onWSClose(String msg) {
     Log.d("弹幕服务器连接状态：$msg");
     final shouldNotify = msg.contains("失败") || msg.contains("超过最大次数");
+    if (shouldNotify) {
+      danmakuStatus.value = '弹幕暂不可用，仍可正常观看直播';
+    }
     if (shouldNotify && AppSettingsController.instance.danmuEnable.value) {
       SmartDialog.showToast("弹幕连接异常：$msg");
     }
@@ -721,6 +854,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   /// WebSocket 已连接完成
   void onWSReady() {
+    danmakuStatus.value = '';
     Log.d("弹幕服务器连接成功");
   }
 
@@ -731,6 +865,15 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     required Site requestSite,
     required String requestRoomId,
   }) {
+    final provider = requestSite.liveSite;
+    if (provider is XiaohongshuSite) {
+      return provider.getRoomDetail(
+          roomId: requestRoomId, hostId: _xiaohongshuHostId);
+    }
+    if (provider is DouyinSite) {
+      return provider.getRoomDetail(
+          roomId: requestRoomId, secUserId: _douyinSecUserId);
+    }
     if (requestSite.id != Constant.kKuaishou) {
       return requestSite.liveSite.getRoomDetail(roomId: requestRoomId);
     }
@@ -743,6 +886,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   /// 加载直播间信息
   Future<void> loadData() async {
     if (_disposed) return;
+    _autoQualityBufferTracker.beginWarmup(playbackNow());
+    _lastAutoQualityDownAt = null;
     final requestSite = site;
     final requestRoomId = roomId;
     final roomGeneration = _roomGeneration;
@@ -767,6 +912,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     _playbackSessionReady = false;
     try {
       pageLoadding.value = true;
+      await _stopDanmaku();
+      if (!_isCurrentLoad(roomGeneration, loadGeneration)) return;
+      liveDanmaku = requestSite.liveSite.getDanmaku();
+      danmakuStatus.value = '';
       final loadedDetail = await _fetchRoomDetailWithSource(
         requestSite: requestSite,
         requestRoomId: requestRoomId,
@@ -796,8 +945,18 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         SmartDialog.showToast("当前主播未开播，正在轮播录像");
       }
 
-      initDanmau();
-      liveDanmaku.start(loadedDetail.danmakuData);
+      if (Platform.isWindows && requestSite.id == Constant.kXiaohongshu) {
+        danmakuStatus.value = '小红书弹幕暂不可用，仍可正常观看直播';
+      } else {
+        initDanmau();
+        try {
+          await liveDanmaku.start(loadedDetail.danmakuData);
+        } catch (error, stackTrace) {
+          if (!_isCurrentLoad(roomGeneration, loadGeneration)) return;
+          danmakuStatus.value = '弹幕暂不可用，仍可正常观看直播';
+          Log.e('启动弹幕失败: $error', stackTrace);
+        }
+      }
     } catch (e) {
       if (!_isCurrentLoad(roomGeneration, loadGeneration)) return;
       roomLiveState.value = LiveStatusState.unknown;
@@ -1062,7 +1221,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   Future<void> stopCurrentPlayer() => player.stop();
 
   @protected
-  Future<void> openPlayerMedia(Media media) => player.open(media);
+  Future<void> openPlayerMedia(Media media) => player.open(media, play: false);
 
   @protected
   Future<void> setPlayerVolume(double volume) => player.setVolume(volume);
@@ -1083,6 +1242,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   Future<void> setPlayer({bool refreshUrls = false}) async {
+    if (_disposed || !playbackIntent.shouldPlay) return;
     final expectedRoomGeneration = _roomGeneration;
     final expectedLoadGeneration = _loadGeneration;
     final requestGeneration = ++_playRequestGeneration;
@@ -1144,13 +1304,23 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       }
       // 此时新媒体即将打开，起播期间发生的真实错误也需要进入恢复流程。
       _playbackSessionReady = true;
+      _autoQualityBufferTracker.beginWarmup(playbackNow());
       beginPlaybackGeneration();
-      await openPlayerMedia(
+      final opening = openPlayerMedia(
         Media(
           playUrl,
           httpHeaders: requestHeaders,
         ),
       );
+      _nativeOpenFuture = opening;
+      try {
+        await opening;
+      } finally {
+        if (identical(_nativeOpenFuture, opening)) _nativeOpenFuture = null;
+      }
+      // Pause invalidates the request, but must still win over a late native
+      // open. This request holds the reopen lock, so no newer open can race it.
+      if (!_disposed && !playbackIntent.shouldPlay) await _pausePlayback();
       if (!_isCurrentPlaybackRequest(
         expectedRoomGeneration,
         expectedLoadGeneration,
@@ -1159,7 +1329,11 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         return;
       }
       playbackLoadError.value = "";
-      if (!playbackIntent.shouldPlay) await pausePlayerMedia();
+      await _resumeAllowedPlayback();
+      if (!_isCurrentPlaybackRequest(
+          expectedRoomGeneration, expectedLoadGeneration, requestGeneration)) {
+        return;
+      }
       await setPlayerVolume(playerVolume.value);
 
       Log.d("播放链接\r\n：$playUrl");
@@ -1248,23 +1422,13 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       }
       if (playUrls.length - 1 == currentLineIndex) {
         _recoveryExhausted = true;
-        if (requestSite.id == Constant.kDouyu) {
-          await _handleDouyuExhaustedPlayback(
-            requestSite: requestSite,
-            requestRoomId: requestRoomId,
-            roomGeneration: expectedRoomGeneration,
-            loadGeneration: expectedLoadGeneration,
-            recoveryGeneration: recoveryGeneration,
-          );
-        } else if (ended) {
-          roomLiveState.value = LiveStatusState.offline;
-          liveStatus.value = false;
-          await _tryAutoSwitchToNextLiveRoom(reason: "live_end");
-        } else {
-          errorMsg.value = "播放失败";
-          SmartDialog.showToast("播放失败:$error");
-          await _tryAutoSwitchToNextLiveRoom(reason: "playback_failure");
-        }
+        await _handleExhaustedPlayback(
+          requestSite: requestSite,
+          requestRoomId: requestRoomId,
+          roomGeneration: expectedRoomGeneration,
+          loadGeneration: expectedLoadGeneration,
+          recoveryGeneration: recoveryGeneration,
+        );
       } else {
         await _changePlayLine(currentLineIndex + 1);
       }
@@ -1307,7 +1471,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     Log.d("播放已连续稳定 30 秒，重置自动恢复次数");
   }
 
-  Future<void> _handleDouyuExhaustedPlayback({
+  Future<void> _handleExhaustedPlayback({
     required Site requestSite,
     required String requestRoomId,
     required int roomGeneration,
@@ -1342,7 +1506,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
           roomGeneration, loadGeneration, recoveryGeneration)) {
         return;
       }
-      Log.e("查询斗鱼直播状态失败：$requestRoomId error=$e", stackTrace);
+      Log.e("查询直播状态失败：${requestSite.id}/$requestRoomId error=$e", stackTrace);
       state = LiveStatusState.unknown;
     }
 
@@ -1554,6 +1718,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
     _roomGeneration += 1;
     final roomGeneration = _roomGeneration;
+    _xiaohongshuHostId = null;
+    _douyinSecUserId = null;
     _loadGeneration += 1;
     _urlRequestGeneration++;
     _playRequestGeneration++;
@@ -1580,14 +1746,12 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         false;
 
     // 清除全部消息
-    liveDanmaku.stop();
+    await _stopDanmaku();
+    if (_disposed || roomGeneration != _roomGeneration) return;
     _clearDanmuDedupeState();
     clearLiveEventFlow();
 
     danmakuController?.clear();
-
-    // 重新设置LiveDanmaku
-    liveDanmaku = site.liveSite.getDanmaku();
 
     // 停止播放
     await stopCurrentPlayer();
@@ -1646,6 +1810,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    if (_disposed) return;
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
@@ -1658,17 +1823,18 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       _urlRequestGeneration++;
       _resetAutomaticRecovery();
       resetPlaybackRecoveryTracking();
-      unawaited(pausePlayerMedia());
+      unawaited(_pausePlayback());
     } else
     //返回前台
     if (state == AppLifecycleState.resumed) {
+      if (!isBackground) return;
       Log.d("返回前台");
       _refreshAutoExitCountdown();
       isBackground = false;
       playbackIntent.resume(TvPlaybackSuspension.background);
       if (playbackIntent.shouldPlay && !_disposed) {
-        if (_playbackSessionReady) {
-          unawaited(resumePlayerMedia());
+        if (_playbackSessionReady && _nativeOpenFuture == null) {
+          unawaited(_resumeAllowedPlayback());
         } else if (playUrls.isNotEmpty) {
           unawaited(setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry));
         } else {
@@ -1687,9 +1853,33 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   /// Await this before replacing the single-room route with a multi-room route.
   Future<void> closePlaybackSession() => _closePlaybackFuture ??= _closeRoom();
 
+  @override
+  Future<void> closePlayerSession() async {
+    // Dispose after an issued native open completes; disposing first permits
+    // its completion to touch an already released native player.
+    try {
+      await Future.wait([
+        if (_nativeOpenFuture != null) _nativeOpenFuture!,
+        ..._nativeResumeFutures,
+        ..._nativePauseFutures,
+      ]);
+    } catch (_) {
+      // The opening request owns error reporting.
+    }
+    await super.closePlayerSession();
+  }
+
   Future<void> _closeRoom() async {
     _disposed = true;
+    for (final worker in _accountWorkers) {
+      worker.dispose();
+    }
+    _accountWorkers.clear();
     playbackIntent.close();
+    disposeStream();
+    final reopening = _playerReopenCompleter;
+    _playerReopenCompleter = null;
+    if (reopening != null && !reopening.isCompleted) reopening.complete();
     WidgetsBinding.instance.removeObserver(this);
     _roomGeneration += 1;
     _loadGeneration += 1;
@@ -1700,10 +1890,11 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     _playbackSessionReady = false;
     autoExitTimer?.cancel();
     _clockTimer?.cancel();
+    await _bufferingSubscription?.cancel();
     doubleClickTimer?.cancel();
     hideControlsTimer?.cancel();
     hideSeekTipTimer?.cancel();
-    await liveDanmaku.stop();
+    await _stopDanmaku();
     _liveEventFlowTimer?.cancel();
     clearLiveEventFlow();
 

@@ -15,7 +15,40 @@ import 'package:simple_live_tv_app/models/db/history.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
+import 'package:simple_live_tv_app/services/xiaohongshu_account_service.dart';
+
+class _TestDouyuAccount extends DouyuAccountService {
+  _TestDouyuAccount() : super(site: DouyuSite());
+
+  int revision = 0;
+
+  @override
+  int get userCookieRevision => revision;
+
+  @override
+  // ignore: must_call_super
+  void onInit() {}
+
+  void publish({bool userChange = false}) {
+    if (userChange) revision++;
+    cookieRevision.value++;
+  }
+}
+
+class _TestXiaohongshuAccount extends XiaohongshuAccountService {
+  @override
+  // ignore: must_call_super
+  void onInit() {}
+}
+
+class _FailingDanmaku extends LiveDanmaku {
+  @override
+  Future<void> start(dynamic args) async {
+    throw StateError('interaction signing unavailable');
+  }
+}
 
 class _TestSettings extends AppSettingsController {
   @override
@@ -73,6 +106,10 @@ class _ScriptedSite extends LiveSite {
     int call,
   )? urlResponse;
   final List<LivePlayQuality> requestedQualities = [];
+  LiveDanmaku? danmakuOverride;
+
+  @override
+  LiveDanmaku getDanmaku() => danmakuOverride ?? super.getDanmaku();
 
   @override
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) {
@@ -158,6 +195,14 @@ class _TestRoomController extends LiveRoomController {
   int confirmationWaits = 0;
   int pauseCalls = 0;
   int resumeCalls = 0;
+  int disposeCalls = 0;
+  bool nativePlaying = false;
+  Completer<void>? pendingOpen;
+  Completer<void>? pendingResume;
+  DateTime clock = DateTime(2026, 10, 17);
+
+  @override
+  DateTime playbackNow() => clock;
   bool interceptRoomSwitch = false;
   String? switchedTo;
 
@@ -180,6 +225,8 @@ class _TestRoomController extends LiveRoomController {
       throw StateError('open failed');
     }
     opened.add(media.uri.toString());
+    await pendingOpen?.future;
+    nativePlaying = false;
   }
 
   @override
@@ -188,18 +235,24 @@ class _TestRoomController extends LiveRoomController {
   @override
   Future<void> pausePlayerMedia() async {
     pauseCalls++;
+    nativePlaying = false;
   }
 
   @override
   Future<void> resumePlayerMedia() async {
     resumeCalls++;
+    await pendingResume?.future;
+    nativePlaying = true;
   }
 
   @override
   Future<void> stopCurrentPlayer() async {}
 
   @override
-  Future<void> disposePlayer() async {}
+  Future<void> disposePlayer() async {
+    disposeCalls++;
+    nativePlaying = false;
+  }
 
   @override
   Future<void> resetSystem() async {}
@@ -243,6 +296,268 @@ void main() {
 
   tearDown(Get.reset);
 
+  test('manual account changes reject stale loads and retain user pause',
+      () async {
+    final account =
+        Get.put<DouyuAccountService>(_TestDouyuAccount()) as _TestDouyuAccount;
+    final pending = Completer<LiveRoomDetail>();
+    final provider = _ScriptedSite();
+    var appliedCookie = 'old';
+    final cookiesUsed = <String>[];
+    provider.detailResponse = (roomId, call) {
+      cookiesUsed.add(appliedCookie);
+      return call == 1
+          ? pending.future
+          : Future.value(_detail(roomId, title: 'new-account'));
+    };
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kDouyu, provider), pRoomId: '1');
+    controller.startWatchingAccountChanges();
+    controller.startWatchingAccountChanges();
+    await controller.setUserPaused(true);
+    final loading = controller.loadData();
+    await Future<void>.delayed(Duration.zero);
+    account.publish(); // Automatic renewal does not interrupt playback.
+    await Future<void>.delayed(Duration.zero);
+    expect(provider.detailCalls, 1);
+
+    account.publish(userChange: true);
+    // The real service assigns site.cookie after publishing this revision.
+    appliedCookie = 'new';
+    pending.complete(_detail('1', title: 'stale-account'));
+    await loading;
+    await Future<void>.delayed(Duration.zero);
+    expect(provider.detailCalls, 2); // An idempotent observer reloads once.
+    expect(cookiesUsed, ['old', 'new']);
+    expect(controller.detail.value?.title, 'new-account');
+    expect(controller.opened, isEmpty);
+    expect(controller.playUrls.first, contains('new-account'));
+    expect(controller.userPaused.value, isTrue);
+    expect(controller.resumeCalls, 0);
+    expect(controller.nativePlaying, isFalse);
+
+    await controller.setUserPaused(false);
+    expect(controller.opened, hasLength(1));
+    expect(controller.opened.single, contains('new-account'));
+    expect(controller.nativePlaying, isTrue);
+
+    await controller.closePlaybackSession();
+    account.publish(userChange: true);
+    await Future<void>.delayed(Duration.zero);
+    expect(provider.detailCalls, 2);
+  });
+
+  test('Xiaohongshu account changes reload only that platform', () async {
+    final account =
+        Get.put<XiaohongshuAccountService>(_TestXiaohongshuAccount());
+    final provider = _ScriptedSite();
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kXiaohongshu, provider), pRoomId: '1');
+    controller.startWatchingAccountChanges();
+    await controller.loadData();
+    account.cookieRevision.value++;
+    await Future<void>.delayed(Duration.zero);
+    expect(provider.detailCalls, 2);
+    await controller.resetRoom(_site(Constant.kDouyu, provider), '2');
+    account.cookieRevision.value++;
+    await Future<void>.delayed(Duration.zero);
+    expect(provider.detailCalls, 3);
+    await controller.closePlaybackSession();
+  });
+
+  test('danmaku startup failures keep live video and its status available',
+      () async {
+    final provider = _ScriptedSite()..danmakuOverride = _FailingDanmaku();
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kDouyu, provider), pRoomId: '1');
+    await controller.loadData();
+    expect(controller.roomLiveState.value, LiveStatusState.live);
+    expect(controller.liveStatus.value, isTrue);
+    expect(controller.playbackLoadError.value, isEmpty);
+    expect(controller.nativePlaying, isTrue);
+    expect(controller.danmakuStatus.value, contains('弹幕暂不可用'));
+    await controller.closePlaybackSession();
+  });
+
+  test('pause and background win over a pending native open', () async {
+    for (final background in [false, true]) {
+      final controller = _TestRoomController(
+          pSite: _site(Constant.kDouyu, _ScriptedSite()), pRoomId: '1');
+      final pending = controller.pendingOpen = Completer<void>();
+      final loading = controller.loadData();
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.opened, hasLength(1));
+      if (background) {
+        controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+      } else {
+        await controller.setUserPaused(true);
+      }
+      pending.complete();
+      await loading;
+      expect(controller.nativePlaying, isFalse);
+      expect(controller.resumeCalls, 0);
+      expect(controller.pauseCalls, 2);
+      await controller.closePlaybackSession();
+    }
+  });
+
+  test(
+      'resume during a pending open reopens once and stale work cannot pause it',
+      () async {
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kDouyu, _ScriptedSite()), pRoomId: '1');
+    final pending = controller.pendingOpen = Completer<void>();
+    final loading = controller.loadData();
+    await Future<void>.delayed(Duration.zero);
+    await controller.setUserPaused(true);
+    final resuming = controller.setUserPaused(false);
+    final duplicate = controller.setUserPaused(false);
+    pending.complete();
+    await Future.wait([loading, resuming, duplicate]);
+    expect(controller.opened, hasLength(2));
+    expect(controller.resumeCalls, 1);
+    expect(controller.nativePlaying, isTrue);
+    expect(controller.pauseCalls, 1);
+    await controller.closePlaybackSession();
+  });
+
+  test('a delayed native play cannot undo a newer user pause', () async {
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kDouyu, _ScriptedSite()), pRoomId: '1');
+    await controller.loadData();
+    await controller.setUserPaused(true);
+    final pending = controller.pendingResume = Completer<void>();
+    final resuming = controller.setUserPaused(false);
+    await controller.setUserPaused(true);
+    pending.complete();
+    await resuming;
+    expect(controller.nativePlaying, isFalse);
+    await controller.closePlaybackSession();
+  });
+
+  test('close awaits pending native open and rejects queued reopen and resume',
+      () async {
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kDouyu, _ScriptedSite()), pRoomId: '1');
+    final pending = controller.pendingOpen = Completer<void>();
+    final loading = controller.loadData();
+    await Future<void>.delayed(Duration.zero);
+    final queued = controller.setPlayer();
+    var closed = false;
+    final closing =
+        controller.closePlaybackSession().then((_) => closed = true);
+    controller.onClose();
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, isFalse);
+    expect(controller.disposeCalls, 0);
+    pending.complete();
+    await Future.wait([loading, queued, closing]);
+    controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await controller.setUserPaused(false);
+    expect(controller.opened, hasLength(1));
+    expect(controller.resumeCalls, 0);
+    expect(controller.disposeCalls, 1);
+    expect(controller.nativePlaying, isFalse);
+  });
+
+  test('duplicate resumed notifications do not replay native commands',
+      () async {
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kDouyu, _ScriptedSite()), pRoomId: '1');
+    await controller.loadData();
+    controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+    controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.resumeCalls, 2); // Initial open plus one restoration.
+    await controller.closePlaybackSession();
+  });
+
+  test('close also drains native play before disposing the player', () async {
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kDouyu, _ScriptedSite()), pRoomId: '1');
+    await controller.loadData();
+    await controller.setUserPaused(true);
+    final pending = controller.pendingResume = Completer<void>();
+    final resuming = controller.setUserPaused(false);
+    final closing = controller.closePlaybackSession();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.disposeCalls, 0);
+    pending.complete();
+    await Future.wait([resuming, closing]);
+    expect(controller.disposeCalls, 1);
+    expect(controller.nativePlaying, isFalse);
+  });
+
+  test(
+      'close releases queued reopens without awaiting an unresolved URL request',
+      () async {
+    final site = _ScriptedSite();
+    final controller =
+        _TestRoomController(pSite: _site(Constant.kDouyu, site), pRoomId: '1');
+    await controller.loadData();
+    final pending = Completer<LivePlayUrl>();
+    site.urlResponse = (detail, quality, call) => pending.future;
+    final refresh = controller.setPlayer(refreshUrls: true);
+    await Future<void>.delayed(Duration.zero);
+    final queued = controller.setPlayer();
+    await controller.closePlaybackSession();
+    await queued;
+    expect(controller.disposeCalls, 1);
+    pending.complete(_urls('late', 1, 1));
+    await refresh;
+    expect(controller.opened, hasLength(1));
+  });
+
+  test('other platforms also require confirmed offline after stream exhaustion',
+      () async {
+    final liveSite = _ScriptedSite(urlCount: 1);
+    liveSite.statusResults.add(() async => LiveStatusState.unknown);
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kHuya, liveSite), pRoomId: '1');
+    await controller.loadData();
+    await _exhaustOneLine(controller);
+    expect(controller.roomLiveState.value, LiveStatusState.unknown);
+    expect(controller.playbackLoadError.value, contains('无法确认'));
+    expect(liveSite.statusCalls, 1);
+  });
+
+  test('independent buffering edges degrade once and obey cooldown and pause',
+      () async {
+    final liveSite = _ScriptedSite(qualities: [
+      LivePlayQuality(quality: 'high', data: 0),
+      LivePlayQuality(quality: 'medium', data: 1),
+      LivePlayQuality(quality: 'low', data: 2),
+    ]);
+    AppSettingsController.instance.qualityLevel.value = 2;
+    final controller = _TestRoomController(
+        pSite: _site(Constant.kDouyu, liveSite), pRoomId: '1');
+    await controller.loadData();
+    await controller.observeNetworkBuffering(true);
+    await controller.observeNetworkBuffering(false);
+    expect(controller.currentQuality, 0); // Start-up buffering is ignored.
+    controller.clock = controller.clock.add(const Duration(seconds: 9));
+    await controller.observeNetworkBuffering(true);
+    await controller.observeNetworkBuffering(true);
+    expect(controller.currentQuality, 0);
+    await controller.observeNetworkBuffering(false);
+    await controller.observeNetworkBuffering(true);
+    expect(controller.currentQuality, 1);
+    controller.clock = controller.clock.add(const Duration(seconds: 10));
+    for (var i = 0; i < 2; i++) {
+      await controller.observeNetworkBuffering(false);
+      await controller.observeNetworkBuffering(true);
+    }
+    expect(controller.currentQuality, 1); // Adjustment is still cooling down.
+    await controller.setUserPaused(true);
+    controller.clock = controller.clock.add(const Duration(seconds: 30));
+    for (var i = 0; i < 2; i++) {
+      await controller.observeNetworkBuffering(false);
+      await controller.observeNetworkBuffering(true);
+    }
+    expect(controller.currentQuality, 1);
+  });
+
   test('user pause survives playback errors and background restoration',
       () async {
     final controller = _TestRoomController(
@@ -251,15 +566,16 @@ void main() {
     );
     await controller.loadData();
     await controller.changeVolume(35);
+    final initialResumeCalls = controller.resumeCalls;
     await controller.setUserPaused(true);
     await controller.mediaError('late error');
     controller.didChangeAppLifecycleState(AppLifecycleState.paused);
     controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
     expect(controller.opened, hasLength(1));
-    expect(controller.resumeCalls, 0);
+    expect(controller.resumeCalls, initialResumeCalls);
     expect(controller.playerVolume.value, 35);
     await controller.setUserPaused(false);
-    expect(controller.resumeCalls, 1);
+    expect(controller.resumeCalls, initialResumeCalls + 1);
     await controller.closePlaybackSession();
     await controller.mediaEnd();
     expect(controller.opened, hasLength(1));
@@ -340,9 +656,12 @@ void main() {
   });
 
   test(
-      'non-Douyu completion retains live-end behavior and offline overlay state',
+      'non-Douyu completion confirms offline before showing the offline overlay',
       () async {
     final liveSite = _ScriptedSite(urlCount: 1);
+    liveSite.statusResults
+      ..add(() async => LiveStatusState.offline)
+      ..add(() async => LiveStatusState.offline);
     final controller = _TestRoomController(
       pSite: _site(Constant.kBiliBili, liveSite),
       pRoomId: '1',
@@ -351,7 +670,7 @@ void main() {
     await _exhaustOneLine(controller);
     expect(controller.roomLiveState.value, LiveStatusState.offline);
     expect(controller.liveStatus.value, isFalse);
-    expect(liveSite.statusCalls, 0);
+    expect(liveSite.statusCalls, 2);
     expect(liveSite.urlCalls, 1);
     expect(controller.currentQualityInfo.value, 'HD');
   });
