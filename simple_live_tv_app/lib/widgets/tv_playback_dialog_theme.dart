@@ -168,28 +168,33 @@ class TvPlaybackDialogHeader extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.trailing,
+    this.framedIcon = true,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
   final Widget? trailing;
+  final bool framedIcon;
 
   @override
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
     return Row(
       children: [
-        Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: accent.withValues(alpha: .16),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: accent.withValues(alpha: .34)),
+        if (!framedIcon)
+          Icon(icon, color: accent, size: 30)
+        else
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: .16),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: accent.withValues(alpha: .34)),
+            ),
+            child: Icon(icon, color: accent, size: 25),
           ),
-          child: Icon(icon, color: accent, size: 25),
-        ),
         const SizedBox(width: 14),
         Expanded(
           child: Column(
@@ -293,7 +298,11 @@ class _TvDialogFocusableSurfaceState extends State<TvDialogFocusableSurface> {
               width: _focused ? 2.4 : (widget.selected ? 1.6 : 1),
             ),
           ),
-          child: widget.child,
+          child: Align(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: widget.child,
+          ),
         ),
       ),
     );

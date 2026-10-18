@@ -94,14 +94,15 @@ class _FakeDbService extends DBService {
   List<History> getHistores() => histories.toList(growable: false);
 }
 
-FollowUser _follow(String roomId, String userName) => FollowUser(
+FollowUser _follow(String roomId, String userName, {int status = 0}) =>
+    FollowUser(
       id: '${Constant.kDouyu}_$roomId',
       roomId: roomId,
       siteId: Constant.kDouyu,
       userName: userName,
       face: '',
       addTime: DateTime(2026, 1, 1),
-    );
+    )..liveStatus.value = status;
 
 History _history(String roomId, String userName) => History(
       id: '${Constant.kDouyu}_$roomId',
@@ -219,6 +220,107 @@ Future<void> _writeDialogScreenshot(
 void main() {
   final exportScreenshots =
       Platform.environment['UPDATE_MULTI_ROOM_SCREENSHOTS'] == '1';
+
+  testWidgets('picker centers tab labels and uses an unframed playback icon',
+      (tester) async {
+    final app = _DialogTestApp(tester);
+    addTearDown(app.dispose);
+    await app.pump(
+        home: _launcherHome(
+      openPicker: () => showTvRoomPicker(maxRooms: 4),
+      openLink: () {},
+    ));
+    await tester.tap(find.text('选择直播间'));
+    await tester.pumpAndSettle();
+    for (final section in ['关注', '历史', '搜索']) {
+      final tab = find.byKey(Key('tv-room-picker-tab-$section'));
+      expect(tester.getCenter(find.text(section)).dy,
+          closeTo(tester.getCenter(tab).dy, .5));
+      expect(tester.getSize(tab).height, greaterThanOrEqualTo(48));
+      expect(tester.getSize(tab).height, lessThanOrEqualTo(52));
+    }
+    expect(tester.getRect(find.byKey(const Key('tv-room-picker-tab-关注'))).right,
+        lessThan(tester.getRect(find.byKey(const Key('tv-room-picker-tab-历史'))).left));
+    expect(tester.getRect(find.byKey(const Key('tv-room-picker-tab-历史'))).right,
+        lessThan(tester.getRect(find.byKey(const Key('tv-room-picker-tab-搜索'))).left));
+    final header = tester.widget<TvPlaybackDialogHeader>(
+      find.byType(TvPlaybackDialogHeader),
+    );
+    expect(header.icon, Icons.video_library_outlined);
+    expect(header.framedIcon, isFalse);
+  });
+
+  testWidgets(
+      'live rooms sort first and status updates preserve selection and focus',
+      (tester) async {
+    final offline = _follow('a', '离线甲', status: 1);
+    final live = _follow('b', '直播乙', status: 2);
+    final unknown = _follow('c', '未知丙');
+    final liveSecond = _follow('d', '直播丁', status: 2);
+    final app =
+        _DialogTestApp(tester, follows: [offline, live, unknown, liveSecond]);
+    addTearDown(app.dispose);
+    await app.pump(
+        home: _launcherHome(
+      openPicker: () => showTvRoomPicker(maxRooms: 4),
+      openLink: () {},
+    ));
+    await tester.tap(find.text('选择直播间'));
+    await tester.pumpAndSettle();
+    void expectOrder(List<String> names) {
+      for (var index = 1; index < names.length; index++) {
+        expect(tester.getTopLeft(_pickerTile(names[index - 1])).dy,
+            lessThan(tester.getTopLeft(_pickerTile(names[index])).dy));
+      }
+    }
+
+    expectOrder(['直播乙', '直播丁', '离线甲', '未知丙']);
+    expect(find.text('直播中'), findsNWidgets(2));
+    expect(find.text('未开播'), findsOneWidget);
+    expect(find.text('状态未知'), findsOneWidget);
+    await tester.tap(find.text('离线甲'));
+    await tester.pumpAndSettle();
+    final tile = _pickerTile('离线甲');
+    final element = tester.element(tile);
+    final focusNode = tester
+        .widget<InkWell>(
+          find.descendant(of: tile, matching: find.byType(InkWell)),
+        )
+        .focusNode!;
+    focusNode.requestFocus();
+    await tester.pump();
+    unknown.liveStatus.value = 2;
+    await tester.pumpAndSettle();
+    expectOrder(['直播乙', '未知丙', '直播丁', '离线甲']);
+    expect(find.text('直播中'), findsNWidgets(3));
+    expect(identical(tester.element(tile), element), isTrue);
+    expect(focusNode.hasPrimaryFocus, isTrue);
+    expect(_pickerCheckbox(tester, tile).value, isTrue);
+  });
+
+  testWidgets('history reuses known status and leaves unchecked rooms unknown',
+      (tester) async {
+    final app = _DialogTestApp(
+      tester,
+      follows: [_follow('known', '已关注主播', status: 2)],
+      histories: [_history('other', '未关注历史'), _history('known', '已知历史')],
+    );
+    addTearDown(app.dispose);
+    await app.pump(
+        home: _launcherHome(
+      openPicker: () => showTvRoomPicker(maxRooms: 4),
+      openLink: () {},
+    ));
+    await tester.tap(find.text('选择直播间'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('历史'));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(_pickerTile('已知历史')).dy,
+        lessThan(tester.getTopLeft(_pickerTile('未关注历史')).dy));
+    expect(find.text('直播中'), findsOneWidget);
+    expect(find.text('状态未知'), findsOneWidget);
+    expect(find.text('未开播'), findsNothing);
+  });
 
   testWidgets('picker caps selection at two and returns selected rooms',
       (tester) async {
@@ -433,10 +535,10 @@ void main() {
     testWidgets('picker dialog fits ${width}x$height', (tester) async {
       await _loadScreenshotFonts(tester);
       final app = _DialogTestApp(tester, follows: [
-        _follow('preview-1', '正在同播的主播'),
-        _follow('preview-2', '游戏直播间'),
-        _follow('preview-3', '音乐直播间'),
-        _follow('preview-4', '户外直播间'),
+        _follow('preview-1', '正在同播的主播', status: 2),
+        _follow('preview-2', '游戏直播间', status: 2),
+        _follow('preview-3', '音乐直播间', status: 1),
+        _follow('preview-4', '户外直播间', status: 1),
         _follow('preview-5', '赛事直播间'),
       ]);
       addTearDown(app.dispose);

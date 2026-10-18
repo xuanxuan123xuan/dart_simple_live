@@ -49,6 +49,7 @@ class _TvRoomPickerDialogState extends State<TvRoomPickerDialog> {
   bool _searching = false;
   String? _searchError;
   List<MultiRoomItem> _searchResults = const <MultiRoomItem>[];
+  Map<String, int> _searchResultStatuses = const <String, int>{};
   int _searchGeneration = 0;
 
   @override
@@ -93,6 +94,7 @@ class _TvRoomPickerDialogState extends State<TvRoomPickerDialog> {
     _searching = false;
     _searchError = null;
     _searchResults = const <MultiRoomItem>[];
+    _searchResultStatuses = const <String, int>{};
   }
 
   Future<void> _search() async {
@@ -105,20 +107,27 @@ class _TvRoomPickerDialogState extends State<TvRoomPickerDialog> {
       _searching = true;
       _searchError = null;
       _searchResults = const <MultiRoomItem>[];
+      _searchResultStatuses = const <String, int>{};
     });
     try {
       if (requestAnchor) {
         final result = await requestSite.liveSite.searchAnchors(query, page: 1);
         if (!mounted || generation != _searchGeneration) return;
+        final results = result.items
+            .map((item) => MultiRoomItem(
+                  site: requestSite,
+                  roomId: item.roomId,
+                  userName: item.userName,
+                  face: item.avatar,
+                ))
+            .toList(growable: false);
+        final statuses = <String, int>{
+          for (final item in result.items)
+            '${requestSite.id}_${item.roomId}': item.liveStatus ? 2 : 1,
+        };
         setState(() {
-          _searchResults = result.items
-              .map((item) => MultiRoomItem(
-                    site: requestSite,
-                    roomId: item.roomId,
-                    userName: item.userName,
-                    face: item.avatar,
-                  ))
-              .toList(growable: false);
+          _searchResults = results;
+          _searchResultStatuses = statuses;
         });
       } else {
         final result = await requestSite.liveSite.searchRooms(query, page: 1);
@@ -132,6 +141,7 @@ class _TvRoomPickerDialogState extends State<TvRoomPickerDialog> {
                     face: item.cover,
                   ))
               .toList(growable: false);
+          _searchResultStatuses = const <String, int>{};
         });
       }
     } catch (error) {
@@ -163,26 +173,157 @@ class _TvRoomPickerDialogState extends State<TvRoomPickerDialog> {
     });
   }
 
-  List<MultiRoomItem> get _visibleItems {
+  List<_RoomPickerEntry> _visibleEntries() {
+    final follows = FollowUserService.instance.allList.toList(growable: false);
+    final followStatuses = <String, int>{
+      for (final item in follows)
+        '${item.siteId}_${item.roomId}': item.liveStatus.value,
+    };
+
     if (_section == '关注') {
-      return FollowUserService.instance.allList
-          .map((item) => MultiRoomItem.fromFollow(item))
-          .toList(growable: false);
+      return _liveFirst(follows.map((item) => _RoomPickerEntry(
+            item: MultiRoomItem.fromFollow(item),
+            liveStatus: followStatuses['${item.siteId}_${item.roomId}'] ?? 0,
+          )));
     }
     if (_section == '历史') {
-      return DBService.instance
+      final entries = DBService.instance
           .getHistores()
           .where((item) => Sites.allSites.containsKey(item.siteId))
-          .map((item) => MultiRoomItem.fromHistory(item))
-          .toList(growable: false);
+          .map((item) {
+        final room = MultiRoomItem.fromHistory(item);
+        return _RoomPickerEntry(
+          item: room,
+          liveStatus: followStatuses[room.key] ?? 0,
+        );
+      });
+      return _liveFirst(entries);
     }
-    if (_section == '搜索') return _searchResults;
-    return const <MultiRoomItem>[];
+    if (_section == '搜索') {
+      return _liveFirst(_searchResults.map((item) => _RoomPickerEntry(
+            item: item,
+            liveStatus: _searchResultStatuses[item.key] ??
+                followStatuses[item.key] ??
+                0,
+          )));
+    }
+    return const <_RoomPickerEntry>[];
+  }
+
+  List<_RoomPickerEntry> _liveFirst(Iterable<_RoomPickerEntry> entries) {
+    final live = <_RoomPickerEntry>[];
+    final other = <_RoomPickerEntry>[];
+    for (final entry in entries) {
+      (entry.liveStatus == 2 ? live : other).add(entry);
+    }
+    return [...live, ...other];
+  }
+
+  Key _rowKey(MultiRoomItem item) =>
+      ValueKey<String>('tv-room-picker-row-${item.key}');
+
+  Widget _buildRoomList(BuildContext context) {
+    final entries = _visibleEntries();
+    if (entries.isEmpty) {
+      return Center(
+        child: Text(
+          _section == '搜索' ? '输入关键词后搜索单个平台' : '这里还没有直播间',
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: const Color(0xbfffffff),
+              ),
+        ),
+      );
+    }
+
+    final itemIndexByKey = <Key, int>{};
+    for (var index = 0; index < entries.length; index++) {
+      itemIndexByKey[_rowKey(entries[index].item)] = index;
+    }
+
+    return ListView.separated(
+      itemCount: entries.length,
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      findItemIndexCallback: (key) => itemIndexByKey[key],
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        final item = entry.item;
+        final isSelected = _selected.containsKey(item.key);
+        final isExisting = _isExisting(item.key);
+        final isAtLimit = !isSelected && _selected.length >= widget.maxRooms;
+        final disabled = isExisting || isAtLimit;
+        final name = item.userName.isEmpty ? item.roomId : item.userName;
+
+        return TvDialogFocusableSurface(
+          key: _rowKey(item),
+          minHeight: 72,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          selected: isSelected,
+          disabled: disabled,
+          onTap: () => _toggle(item),
+          child: Row(
+            children: [
+              _RoomAvatar(item: item),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _RoomStatusBadge(status: entry.liveStatus),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${item.site.name} · ${item.roomId}${isExisting ? ' · 正在播放' : ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xbfffffff),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isExisting) ...[
+                const SizedBox(width: 12),
+                const Icon(
+                  Icons.lock_outline,
+                  color: Color(0xbfffffff),
+                  size: 20,
+                ),
+              ],
+              const SizedBox(width: 8),
+              IgnorePointer(
+                child: Checkbox(
+                  value: isSelected,
+                  onChanged: null,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final currentItems = _visibleItems;
     final accent = Theme.of(context).colorScheme.primary;
 
     return TvPlaybackDialogSurface(
@@ -196,9 +337,10 @@ class _TvRoomPickerDialogState extends State<TvRoomPickerDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               TvPlaybackDialogHeader(
-                icon: Icons.grid_view_rounded,
+                icon: Icons.video_library_outlined,
+                framedIcon: false,
                 title: '选择同播直播间',
-                subtitle: '从关注、历史或搜索结果中添加直播间',
+                subtitle: '添加要一起播放的直播间',
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -349,93 +491,7 @@ class _TvRoomPickerDialogState extends State<TvRoomPickerDialog> {
               ],
               const SizedBox(height: 10),
               Expanded(
-                child: currentItems.isEmpty
-                    ? Center(
-                        child: Text(
-                          _section == '搜索' ? '输入关键词后搜索单个平台' : '这里还没有直播间',
-                          style:
-                              Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                    color: const Color(0xbfffffff),
-                                  ),
-                        ),
-                      )
-                    : ListView.separated(
-                        itemCount: currentItems.length,
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final item = currentItems[index];
-                          final isSelected = _selected.containsKey(item.key);
-                          final isExisting = _isExisting(item.key);
-                          final isAtLimit = !isSelected &&
-                              _selected.length >= widget.maxRooms;
-                          final disabled = isExisting || isAtLimit;
-                          final name = item.userName.isEmpty
-                              ? item.roomId
-                              : item.userName;
-
-                          return TvDialogFocusableSurface(
-                            key: Key('tv-room-picker-row-${item.key}'),
-                            minHeight: 72,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
-                            selected: isSelected,
-                            disabled: disabled,
-                            onTap: () => _toggle(item),
-                            child: Row(
-                              children: [
-                                _RoomAvatar(item: item),
-                                const SizedBox(width: 14),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Text(
-                                        name,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        '${item.site.name} · ${item.roomId}${isExisting ? ' · 正在播放' : ''}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: Color(0xbfffffff),
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                if (isExisting) ...[
-                                  const SizedBox(width: 12),
-                                  const Icon(
-                                    Icons.lock_outline,
-                                    color: Color(0xbfffffff),
-                                    size: 20,
-                                  ),
-                                ],
-                                const SizedBox(width: 8),
-                                IgnorePointer(
-                                  child: Checkbox(
-                                    value: isSelected,
-                                    onChanged: null,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
+                child: Obx(() => _buildRoomList(context)),
               ),
               const SizedBox(height: 10),
               _PickerFooter(
@@ -448,6 +504,57 @@ class _TvRoomPickerDialogState extends State<TvRoomPickerDialog> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoomPickerEntry {
+  const _RoomPickerEntry({required this.item, required this.liveStatus});
+
+  final MultiRoomItem item;
+  final int liveStatus;
+}
+
+class _RoomStatusBadge extends StatelessWidget {
+  const _RoomStatusBadge({required this.status});
+
+  final int status;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    final isLive = status == 2;
+    final isOffline = status == 1;
+    final label = isLive
+        ? '直播中'
+        : isOffline
+            ? '未开播'
+            : '状态未知';
+    final foreground = isLive
+        ? accent
+        : isOffline
+            ? const Color(0xffaeb6c2)
+            : const Color(0xffd8dce3);
+    final background = isLive
+        ? accent.withValues(alpha: .16)
+        : isOffline
+            ? const Color(0x18ffffff)
+            : const Color(0x10ffffff);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: foreground,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
