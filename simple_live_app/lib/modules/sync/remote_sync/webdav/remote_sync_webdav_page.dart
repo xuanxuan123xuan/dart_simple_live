@@ -57,7 +57,10 @@ class RemoteSyncWebDAVPage extends GetView<RemoteSyncWebDAVController> {
                         AppStyle.divider,
                         ListTile(
                           title: const Text("恢复到本地"),
-                          subtitle: Text("上次恢复：${controller.lastRecoverTime}"),
+                          subtitle: Text(
+                            "上次恢复：${controller.lastRecoverTime}"
+                            "${controller.lastRecoverSummary.value.isEmpty ? '' : '\n${controller.lastRecoverSummary.value}'}",
+                          ),
                           leading: const Icon(Icons.cloud_download_outlined),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
@@ -138,6 +141,36 @@ class RemoteSyncWebDAVPage extends GetView<RemoteSyncWebDAVController> {
               value: controller.isSyncDouyinAccount.value,
               controlAffinity: ListTileControlAffinity.trailing,
               onChanged: (value) => controller.changeIsSyncDouyinAccount(),
+            ),
+          ),
+          AppStyle.divider,
+          Obx(
+            () => CheckboxListTile(
+              secondary: const Icon(Icons.account_circle_outlined),
+              title: const Text("同步快手账号池"),
+              value: controller.isSyncKuaishouAccount.value,
+              controlAffinity: ListTileControlAffinity.trailing,
+              onChanged: (value) => controller.changeIsSyncKuaishouAccount(),
+            ),
+          ),
+          AppStyle.divider,
+          Obx(
+            () => CheckboxListTile(
+              secondary: const Icon(Icons.sports_esports_outlined),
+              title: const Text("同步斗鱼账号"),
+              value: controller.isSyncDouyuAccount.value,
+              controlAffinity: ListTileControlAffinity.trailing,
+              onChanged: (value) => controller.changeIsSyncDouyuAccount(),
+            ),
+          ),
+          AppStyle.divider,
+          Obx(
+            () => CheckboxListTile(
+              secondary: const Icon(Icons.shopping_bag_outlined),
+              title: const Text("同步小红书账号"),
+              value: controller.isSyncXiaohongshuAccount.value,
+              controlAffinity: ListTileControlAffinity.trailing,
+              onChanged: (value) => controller.changeIsSyncXiaohongshuAccount(),
             ),
           ),
           AppStyle.divider,

@@ -8,8 +8,31 @@ import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
+import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_app/models/db/follow_user.dart';
+import 'package:simple_live_app/models/db/follow_user_tag.dart';
+import 'package:simple_live_app/models/db/history.dart';
+
+class _OfflineFollowService extends FollowService {
+  @override
+  // Keep the fixture offline; import notifications are checked through Hive.
+  // ignore: must_call_super
+  void onInit() {}
+
+  @override
+  Future<void> loadData({
+    bool updateStatus = true,
+    bool forceUpdateStatus = false,
+  }) async {}
+}
 
 void main() {
+  setUpAll(() {
+    Hive.registerAdapter(FollowUserAdapter());
+    Hive.registerAdapter(FollowUserTagAdapter());
+    Hive.registerAdapter(HistoryAdapter());
+  });
   group('ProfileBackupService.isSamePlatformPackage', () {
     test('accepts a package exported by this very platform', () {
       expect(
@@ -81,6 +104,7 @@ void main() {
     Future<ProfileImportSummary> importSettings(
       Map<String, dynamic> settings, {
       required dynamic platform,
+      bool overwrite = false,
     }) {
       return service.importProfileMap(
         {
@@ -89,6 +113,7 @@ void main() {
           if (platform != null) 'platform': platform,
           'settings': settings,
         },
+        overwrite: overwrite,
         options: const ProfileImportOptions(
           settings: true,
           accounts: false,
@@ -122,6 +147,105 @@ void main() {
       expect(box.get(LocalStorageService.kPlayerScaleMode), 2);
       expect(summary.droppedPlatformSettings, 4);
       expect(summary.message, contains('跳过其他平台的播放器设置 4 项'));
+    });
+
+    test('覆盖时跨平台保留本机调优，同平台清除包中缺失调优', () async {
+      final box = LocalStorageService.instance.settingsBox;
+      await box.put(LocalStorageService.kMpvAdvancedOptions, 'ao=wasapi');
+      await box.put(LocalStorageService.kAudioOutputDriver, 'wasapi');
+      await box.put(LocalStorageService.kCustomPlayerOutput, true);
+      await box.put(LocalStorageService.kPlayerScaleMode, 7);
+
+      await importSettings(
+        {LocalStorageService.kPlayerScaleMode: 2},
+        platform: Platform.isAndroid ? 'windows' : 'android',
+        overwrite: true,
+      );
+
+      expect(box.get(LocalStorageService.kMpvAdvancedOptions), 'ao=wasapi');
+      expect(box.get(LocalStorageService.kAudioOutputDriver), 'wasapi');
+      expect(box.get(LocalStorageService.kCustomPlayerOutput), true);
+      expect(box.get(LocalStorageService.kPlayerScaleMode), 2);
+
+      await box.put(LocalStorageService.kMpvAdvancedOptions, 'cache-secs=2');
+      await box.put(LocalStorageService.kAudioOutputDriver, 'audiotrack');
+      await importSettings(
+        {LocalStorageService.kPlayerScaleMode: 4},
+        platform: Platform.operatingSystem,
+        overwrite: true,
+      );
+
+      expect(box.containsKey(LocalStorageService.kMpvAdvancedOptions), isFalse);
+      expect(box.containsKey(LocalStorageService.kAudioOutputDriver), isFalse);
+      expect(box.containsKey(LocalStorageService.kCustomPlayerOutput), isFalse);
+      expect(box.get(LocalStorageService.kPlayerScaleMode), 4);
+    });
+
+    test('TV profile omitting tags does not clear local tags', () async {
+      final db = Get.put(DBService());
+      await db.init();
+      Get.put<FollowService>(_OfflineFollowService());
+      await db.addFollowTag('local tag');
+
+      await service.importProfileMap(
+        {
+          'schema': ProfileBackupService.schema,
+          'schemaVersion': ProfileBackupService.schemaVersion,
+          'followUsers': <dynamic>[],
+        },
+        overwrite: true,
+        options: const ProfileImportOptions(
+          settings: false,
+          accounts: false,
+          shields: false,
+          shieldPresets: false,
+          follows: true,
+          histories: false,
+        ),
+      );
+      expect(db.getFollowTagList().map((tag) => tag.tag), ['local tag']);
+    });
+
+    test('profile omitting shields preserves them during overwrite', () async {
+      final box = LocalStorageService.instance.shieldBox;
+      await box.put('local keyword', 'local keyword');
+      await service.importProfileMap(
+        {'schema': ProfileBackupService.schema, 'schemaVersion': 4},
+        overwrite: true,
+        options: const ProfileImportOptions(
+          settings: false,
+          accounts: false,
+          shields: true,
+          shieldPresets: false,
+          follows: false,
+          histories: false,
+        ),
+      );
+      expect(box.get('local keyword'), 'local keyword');
+    });
+
+    test('TV profile omitting shield presets does not clear local presets',
+        () async {
+      final box = LocalStorageService.instance.shieldPresetBox;
+      await box.put('local preset', '{"keyword":"ad"}');
+
+      await service.importProfileMap(
+        {
+          'schema': ProfileBackupService.schema,
+          'schemaVersion': ProfileBackupService.schemaVersion,
+        },
+        overwrite: true,
+        options: const ProfileImportOptions(
+          settings: false,
+          accounts: false,
+          shields: false,
+          shieldPresets: true,
+          follows: false,
+          histories: false,
+        ),
+      );
+
+      expect(box.get('local preset'), '{"keyword":"ad"}');
     });
 
     test('同平台包保留播放器调优', () async {
@@ -168,7 +292,8 @@ void main() {
       );
 
       final box = LocalStorageService.instance.settingsBox;
-      expect(box.containsKey(LocalStorageService.kImportedMpvConfPath), isFalse);
+      expect(
+          box.containsKey(LocalStorageService.kImportedMpvConfPath), isFalse);
       expect(box.get(LocalStorageService.kPlayerScaleMode), 1);
       // 本机路径不计入"平台专属"计数，它是无条件排除的另一类。
       expect(summary.droppedPlatformSettings, 0);

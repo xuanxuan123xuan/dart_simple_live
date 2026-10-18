@@ -17,21 +17,39 @@ import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/modules/sync/webdav/webdav_client.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/bulk_data_import_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
 import 'package:simple_live_tv_app/services/local_storage_service.dart';
 import 'package:simple_live_tv_app/services/profile_backup_service.dart';
+import 'package:simple_live_tv_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_tv_app/widgets/sync_progress_dialog.dart';
 
 class WebDavController extends BaseController {
+  static const _profileJsonName = 'SimpleLive_Profile_v4.json';
+  static const _legacyProfileJsonNames = {
+    'SimpleLive_Profile_v3.json',
+    'SimpleLive_Profile_v2.json',
+  };
+
+  static bool archiveContainsProfile(Iterable<String> fileNames) =>
+      fileNames.any(
+        (name) =>
+            name == _profileJsonName || _legacyProfileJsonNames.contains(name),
+      );
+
   final isSyncFollows = true.obs;
   final isSyncHistories = true.obs;
   final isSyncBlockWord = true.obs;
   final isSyncBilibiliAccount = true.obs;
   final isSyncDouyinAccount = true.obs;
+  final isSyncKuaishouAccount = true.obs;
+  final isSyncDouyuAccount = true.obs;
+  final isSyncXiaohongshuAccount = true.obs;
   final passwordVisible = true.obs;
   final user = "--".obs;
   final lastRecoverTime = "--".obs;
   final lastUploadTime = "--".obs;
+  final lastRecoverSummary = "".obs;
 
   late DAVClient davClient;
 
@@ -40,9 +58,17 @@ class WebDavController extends BaseController {
   final _userBlockedWordJsonName = 'SimpleLive_blocked_word.json';
   final _userBilibiliAccountJsonName = 'SimpleLive_bilibili_account.json';
   final _userDouyinAccountJsonName = 'SimpleLive_douyin_account.json';
+  final _userDouyuAccountJsonName = 'SimpleLive_douyu_account.json';
+  final _userXiaohongshuAccountJsonName = 'SimpleLive_xiaohongshu_account.json';
   final _userSettingsJsonName = 'SimpleLive_Settings.json';
-  final _profileJsonName = 'SimpleLive_Profile_v3.json';
-  final _legacyProfileJsonName = 'SimpleLive_Profile_v2.json';
+
+  Set<String> get _selectedAccountSiteIds => {
+        if (isSyncBilibiliAccount.value) Constant.kBiliBili,
+        if (isSyncDouyinAccount.value) Constant.kDouyin,
+        if (isSyncKuaishouAccount.value) Constant.kKuaishou,
+        if (isSyncDouyuAccount.value) Constant.kDouyu,
+        if (isSyncXiaohongshuAccount.value) Constant.kXiaohongshu,
+      };
 
   @override
   void onInit() {
@@ -193,14 +219,11 @@ class WebDavController extends BaseController {
       _userBlockedWordJsonName,
       {'data': AppSettingsControllerSafe.keywordValues()},
     );
-    _addJsonFile(archive, _userBilibiliAccountJsonName, {
-      'data': {'cookie': BiliBiliAccountService.instance.cookie},
-    });
-    _addJsonFile(archive, _userDouyinAccountJsonName, {
-      'data': {'cookie': DouyinAccountService.instance.cookie},
-    });
+    // Credentials are represented only by profile.accounts.items.
     _addJsonFile(archive, _userSettingsJsonName, {
-      'data': LocalStorageService.instance.settingsBox.toMap(),
+      'data': ProfileBackupService.instance.filterTransportSettings(
+        LocalStorageService.instance.settingsBox.toMap(),
+      ),
     });
     return ZipEncoder().encode(archive);
   }
@@ -227,9 +250,7 @@ class WebDavController extends BaseController {
           ZipDecoder().decodeBytes(await downloadFile.readAsBytes());
       ArchiveFile? profileFile;
       for (final file in archive) {
-        if (file.isFile &&
-            (file.name == _profileJsonName ||
-                file.name == _legacyProfileJsonName)) {
+        if (file.isFile && archiveContainsProfile([file.name])) {
           profileFile = file;
           break;
         }
@@ -240,23 +261,25 @@ class WebDavController extends BaseController {
           overwrite: true,
           options: ProfileImportOptions(
             settings: true,
+            accounts: _selectedAccountSiteIds.isNotEmpty,
+            accountSiteIds: _selectedAccountSiteIds,
             follows: isSyncFollows.value,
             histories: isSyncHistories.value,
             shields: isSyncBlockWord.value,
           ),
           onProgress: SyncProgressDialog.update,
         );
+        lastRecoverSummary.value = summary.message;
         Log.i("已恢复完整配置包：${summary.message}");
+      } else {
+        final results = <String>[];
         for (final file in archive) {
-          if (file.name == _userBilibiliAccountJsonName ||
-              file.name == _userDouyinAccountJsonName) {
-            await _recovery(file);
+          final result = await _recovery(file);
+          if (result != null && result.isNotEmpty) {
+            results.add(result);
           }
         }
-      } else {
-        for (final file in archive) {
-          await _recovery(file);
-        }
+        lastRecoverSummary.value = results.join('；');
       }
       final recoverTime = DateTime.now();
       lastRecoverTime.value = Utils.parseTime(recoverTime);
@@ -264,10 +287,15 @@ class WebDavController extends BaseController {
         LocalStorageService.kWebDAVLastRecoverTime,
         recoverTime.millisecondsSinceEpoch,
       );
-      SmartDialog.showToast("恢复完成");
+      SmartDialog.showToast(
+        lastRecoverSummary.value.isEmpty
+            ? "恢复完成"
+            : "恢复完成：${lastRecoverSummary.value}",
+      );
     } catch (e) {
-      Log.e("WebDAV 恢复失败：$e", StackTrace.current);
-      SmartDialog.showToast("恢复失败：${exceptionToString(e)}");
+      Log.e("WebDAV 恢复失败：${e.runtimeType}", StackTrace.current);
+      lastRecoverSummary.value = "恢复失败，请检查备份文件后重试";
+      SmartDialog.showToast(lastRecoverSummary.value);
     } finally {
       SyncProgressDialog.dismiss();
       try {
@@ -278,9 +306,9 @@ class WebDavController extends BaseController {
     }
   }
 
-  Future<void> _recovery(ArchiveFile file) async {
+  Future<String?> _recovery(ArchiveFile file) async {
     if (!file.isFile || !file.name.endsWith(".json")) {
-      return;
+      return null;
     }
     final jsonData = json.decode(utf8.decode(file.content))['data'];
     if (file.name == _userFollowJsonName && isSyncFollows.value) {
@@ -291,6 +319,7 @@ class WebDavController extends BaseController {
       );
       EventBus.instance.emit(Constant.kUpdateFollow, 0);
       Log.i('已恢复关注用户列表：${result.logSummary}');
+      return '关注：${result.logSummary}';
     } else if (file.name == _userHistoriesJsonName && isSyncHistories.value) {
       final result = await BulkDataImportService.importHistories(
         jsonData,
@@ -299,6 +328,7 @@ class WebDavController extends BaseController {
       );
       EventBus.instance.emit(Constant.kUpdateHistory, 0);
       Log.i('已恢复观看历史记录：${result.logSummary}');
+      return '历史：${result.logSummary}';
     } else if (file.name == _userBlockedWordJsonName && isSyncBlockWord.value) {
       final result = await BulkDataImportService.importShieldValues(
         jsonData,
@@ -306,28 +336,68 @@ class WebDavController extends BaseController {
         onProgress: SyncProgressDialog.update,
       );
       Log.i('已恢复屏蔽词：${result.logSummary}');
+      return '屏蔽词：${result.logSummary}';
     } else if (file.name == _userBilibiliAccountJsonName &&
         isSyncBilibiliAccount.value) {
       final cookie =
           jsonData is Map ? jsonData['cookie']?.toString() ?? "" : "";
+      if (cookie.trim().isEmpty) {
+        return null;
+      }
       BiliBiliAccountService.instance.setCookie(cookie);
       await BiliBiliAccountService.instance.loadUserInfo();
       Log.i('已恢复哔哩哔哩账号');
+      return '哔哩哔哩账号：已导入';
     } else if (file.name == _userDouyinAccountJsonName &&
         isSyncDouyinAccount.value) {
       final cookie =
           jsonData is Map ? jsonData['cookie']?.toString() ?? "" : "";
       if (cookie.isEmpty) {
-        DouyinAccountService.instance.clearCookie();
-      } else {
-        DouyinAccountService.instance.setCookie(cookie);
+        return null;
       }
+      DouyinAccountService.instance.setCookie(cookie);
       Log.i('已恢复抖音账号');
+      return '抖音账号：已导入';
+    } else if (file.name == _userDouyuAccountJsonName &&
+        isSyncDouyuAccount.value) {
+      final cookie =
+          jsonData is Map ? jsonData['cookie']?.toString() ?? "" : "";
+      if (cookie.trim().isEmpty ||
+          !await DouyuAccountService.instance.setCookie(cookie)) {
+        return null;
+      }
+      return '斗鱼账号：已导入';
+    } else if (file.name == _userXiaohongshuAccountJsonName &&
+        isSyncXiaohongshuAccount.value) {
+      final cookie =
+          jsonData is Map ? jsonData['cookie']?.toString() ?? "" : "";
+      if (cookie.trim().isEmpty ||
+          !await XiaohongshuAccountService.instance.setCookie(cookie)) {
+        return null;
+      }
+      return '小红书账号：已导入';
+    } else if (file.name == _userSettingsJsonName && jsonData is Map) {
+      final summary =
+          await ProfileBackupService.instance.importLegacySettingsMap(jsonData);
+      return '设置：导入 ${summary.settings} 项';
     }
+    return null;
   }
 
   void changeIsSyncDouyinAccount() {
     isSyncDouyinAccount.value = !isSyncDouyinAccount.value;
+  }
+
+  void changeIsSyncKuaishouAccount() {
+    isSyncKuaishouAccount.value = !isSyncKuaishouAccount.value;
+  }
+
+  void changeIsSyncDouyuAccount() {
+    isSyncDouyuAccount.value = !isSyncDouyuAccount.value;
+  }
+
+  void changeIsSyncXiaohongshuAccount() {
+    isSyncXiaohongshuAccount.value = !isSyncXiaohongshuAccount.value;
   }
 }
 

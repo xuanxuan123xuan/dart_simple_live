@@ -84,6 +84,36 @@ class SyncDevicePage extends GetView<SyncDeviceController> {
                     controller.syncDouyinAccount();
                   },
                 ),
+                AppStyle.divider,
+                ListTile(
+                  enabled: controller.info.supportsAccountType('douyu'),
+                  leading: const Icon(Icons.sports_esports_outlined),
+                  title: const Text("同步斗鱼账号"),
+                  subtitle: Text(
+                    controller.info.supportsAccountType('douyu')
+                        ? "同步当前保存的斗鱼 Cookie"
+                        : "接收设备尚未声明支持斗鱼账号同步",
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: controller.info.supportsAccountType('douyu')
+                      ? controller.syncDouyuAccount
+                      : null,
+                ),
+                AppStyle.divider,
+                ListTile(
+                  enabled: controller.info.supportsAccountType('xiaohongshu'),
+                  leading: const Icon(Icons.shopping_bag_outlined),
+                  title: const Text("同步小红书账号"),
+                  subtitle: Text(
+                    controller.info.supportsAccountType('xiaohongshu')
+                        ? "同步当前保存的小红书 Cookie"
+                        : "接收设备尚未声明支持小红书账号同步",
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: controller.info.supportsAccountType('xiaohongshu')
+                      ? controller.syncXiaohongshuAccount
+                      : null,
+                ),
               ],
             ),
           ),

@@ -5,9 +5,11 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/sync_client_info_model.dart';
 import 'package:simple_live_app/requests/sync_client_request.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -17,7 +19,20 @@ class SyncDeviceController extends BaseController {
   SyncDeviceController({required this.client, required this.info});
   SyncClientRequest request = SyncClientRequest();
 
-  Future<bool> _syncTemporaryProfile({
+  Set<String> get _accountSiteIdsForTarget {
+    final targetTypes = info.supportedAccountTypes.toSet();
+    if (targetTypes.isEmpty) {
+      // Older receivers only understand the original account set.
+      return {
+        SyncAccountType.bilibili,
+        SyncAccountType.douyin,
+        SyncAccountType.kuaishou,
+      };
+    }
+    return targetTypes.where(SyncAccountType.values.contains).toSet();
+  }
+
+  Future<String?> _syncTemporaryProfile({
     required bool overlay,
     required String label,
     required ProfileExportOptions options,
@@ -25,12 +40,11 @@ class SyncDeviceController extends BaseController {
     TemporaryProfilePackage? package;
     try {
       SyncProgressDialog.update(SyncProgress(stage: "生成$label配置包"));
-      package = await ProfileBackupService.instance
-          .createTemporaryProfilePackage(
-            options: options,
-            // XHS account transport remains disabled until its targets are specified.
-            includeXiaohongshuAccount: false,
-          );
+      package =
+          await ProfileBackupService.instance.createTemporaryProfilePackage(
+        options: options,
+        accountSiteIds: _accountSiteIdsForTarget,
+      );
       final itemCount = _selectedProfileItemCount(package);
       final summary = _profileSummaryMessage(package);
       Log.i(
@@ -38,7 +52,7 @@ class SyncDeviceController extends BaseController {
       );
       if (itemCount <= 0) {
         SmartDialog.showToast("本机没有可同步的$label，已取消发送");
-        return false;
+        return null;
       }
       SyncProgressDialog.update(SyncProgress(
         stage: "发送$label配置包",
@@ -46,12 +60,11 @@ class SyncDeviceController extends BaseController {
         total: package.byteLength,
         message: summary,
       ));
-      await request.syncProfile(
+      return await request.syncProfile(
         client,
         await package.readAsString(),
         overlay: overlay,
       );
-      return true;
     } finally {
       try {
         await package?.delete();
@@ -137,13 +150,13 @@ class SyncDeviceController extends BaseController {
     try {
       var overlay = await showOverlayDialog();
       SyncProgressDialog.show(SyncProgress(stage: "准备同步$label"));
-      final sent = await _syncTemporaryProfile(
+      final receipt = await _syncTemporaryProfile(
         overlay: overlay,
         label: label,
         options: options,
       );
-      if (sent) {
-        SmartDialog.showToast(successMessage);
+      if (receipt != null) {
+        SmartDialog.showToast("$successMessage：$receipt");
       }
     } catch (e) {
       SmartDialog.showToast("同步失败：${exceptionToString(e)}");
@@ -157,13 +170,13 @@ class SyncDeviceController extends BaseController {
     try {
       var overlay = await showOverlayDialog();
       SyncProgressDialog.show(const SyncProgress(stage: "同步配置包"));
-      final sent = await _syncTemporaryProfile(
+      final receipt = await _syncTemporaryProfile(
         overlay: overlay,
         label: "完整",
         options: const ProfileExportOptions(),
       );
-      if (sent) {
-        SmartDialog.showToast("已同步配置包");
+      if (receipt != null) {
+        SmartDialog.showToast("已同步配置包：$receipt");
       }
     } catch (e) {
       SmartDialog.showToast("同步失败：${exceptionToString(e)}");
@@ -265,6 +278,56 @@ class SyncDeviceController extends BaseController {
     } catch (e) {
       SmartDialog.showToast("同步失败：${exceptionToString(e)}");
       Log.e("同步抖音账号失败：$e", StackTrace.current);
+    } finally {
+      SyncProgressDialog.dismiss();
+    }
+  }
+
+  bool _targetSupportsNewAccount(String accountType, String label) {
+    if (info.supportsAccountType(accountType)) {
+      return true;
+    }
+    SmartDialog.showToast("此设备不支持同步$label账号");
+    return false;
+  }
+
+  void syncDouyuAccount() async {
+    if (!_targetSupportsNewAccount(SyncAccountType.douyu, "斗鱼")) {
+      return;
+    }
+    final account = DouyuAccountService.instance;
+    if (!account.hasCookie.value) {
+      SmartDialog.showToast("未配置斗鱼 Cookie");
+      return;
+    }
+    try {
+      SyncProgressDialog.show(const SyncProgress(stage: "同步斗鱼账号"));
+      await request.syncDouyuAccount(client, account.cookie);
+      SmartDialog.showToast("已同步斗鱼账号");
+    } catch (e) {
+      SmartDialog.showToast("同步失败：${exceptionToString(e)}");
+      Log.e("同步斗鱼账号失败：$e", StackTrace.current);
+    } finally {
+      SyncProgressDialog.dismiss();
+    }
+  }
+
+  void syncXiaohongshuAccount() async {
+    if (!_targetSupportsNewAccount(SyncAccountType.xiaohongshu, "小红书")) {
+      return;
+    }
+    final account = XiaohongshuAccountService.instance;
+    if (!account.hasCookie.value) {
+      SmartDialog.showToast("未配置小红书 Cookie");
+      return;
+    }
+    try {
+      SyncProgressDialog.show(const SyncProgress(stage: "同步小红书账号"));
+      await request.syncXiaohongshuAccount(client, account.cookie);
+      SmartDialog.showToast("已同步小红书账号");
+    } catch (e) {
+      SmartDialog.showToast("同步失败：${exceptionToString(e)}");
+      Log.e("同步小红书账号失败：$e", StackTrace.current);
     } finally {
       SyncProgressDialog.dismiss();
     }

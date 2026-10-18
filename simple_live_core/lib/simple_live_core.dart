@@ -44,3 +44,4 @@ export 'src/model/live_repeated_danmu_summary.dart';
 export 'src/model/follow_refresh_progress.dart';
 export 'src/model/follow_refresh_scope.dart';
 export 'src/model/sync_progress.dart';
+export 'src/model/sync_account_type.dart';

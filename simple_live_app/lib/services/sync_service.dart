@@ -11,6 +11,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
@@ -225,6 +226,7 @@ class SyncService extends GetxService {
       serverRouter.post('/sync/profile', _syncProfileReuqest);
       serverRouter.post('/sync/account/bilibili', _syncBiliAccountReuqest);
       serverRouter.post('/sync/account/douyin', _syncDouyinAccountReuqest);
+      serverRouter.post('/sync/account/douyu', _syncDouyuAccountRequest);
       serverRouter.post(
         '/sync/account/xiaohongshu',
         _syncXiaohongshuAccountRequest,
@@ -295,6 +297,13 @@ class SyncService extends GetxService {
       'version': Utils.packageInfo.version,
       'address': ipAddress.value,
       'port': httpPort,
+      'supportedAccountTypes': const [
+        'bilibili',
+        'douyin',
+        'kuaishou',
+        'douyu',
+        'xiaohongshu',
+      ],
     });
   }
 
@@ -337,7 +346,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '同步数据格式错误或导入失败',
       });
     }
   }
@@ -382,7 +391,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '同步数据格式错误或导入失败',
       });
     }
   }
@@ -425,7 +434,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '同步数据格式错误或导入失败',
       });
     }
   }
@@ -466,7 +475,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '同步数据格式错误或导入失败',
       });
     }
   }
@@ -483,6 +492,7 @@ class SyncService extends GetxService {
         onProgress: SyncProgressDialog.update,
       );
       SmartDialog.showToast('已同步配置包');
+      Log.i('本地同步配置包导入完成：${summary.message}');
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': true,
@@ -492,7 +502,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '配置包无效或导入失败',
       });
     }
   }
@@ -543,7 +553,7 @@ class SyncService extends GetxService {
   Future<shelf.Response> _syncBiliAccountReuqest(shelf.Request request) async {
     try {
       var body = await request.readAsString();
-      Log.d('_syncBiliAccountReuqest: $body');
+      Log.d('_syncBiliAccountReuqest');
       var jsonBody = json.decode(body);
       if (jsonBody is! Map) {
         throw const FormatException("账号数据格式不是对象");
@@ -562,7 +572,7 @@ class SyncService extends GetxService {
     } catch (e) {
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '账号数据无效或凭据未能保存',
       });
     }
   }
@@ -590,7 +600,32 @@ class SyncService extends GetxService {
     } catch (e) {
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '账号数据无效或凭据未能保存',
+      });
+    }
+  }
+
+  Future<shelf.Response> _syncDouyuAccountRequest(
+    shelf.Request request,
+  ) async {
+    try {
+      final jsonBody = json.decode(await request.readAsString());
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      final cookie = jsonBody['cookie']?.toString() ?? '';
+      if (cookie.trim().isEmpty) {
+        throw const FormatException("账号 Cookie 为空");
+      }
+      if (!await DouyuAccountService.instance.setCookie(cookie)) {
+        throw const FormatException("斗鱼 Cookie 格式无效");
+      }
+      SmartDialog.showToast('已同步斗鱼账号');
+      return toJsonResponse({'status': true, 'message': 'success'});
+    } catch (e) {
+      return toJsonResponse({
+        'status': false,
+        'message': '账号数据无效或凭据未能保存',
       });
     }
   }
@@ -617,7 +652,10 @@ class SyncService extends GetxService {
       SmartDialog.showToast('已同步小红书账号');
       return toJsonResponse({'status': true, 'message': 'success'});
     } catch (e) {
-      return toJsonResponse({'status': false, 'message': e.toString()});
+      return toJsonResponse({
+        'status': false,
+        'message': '账号数据无效或凭据未能保存',
+      });
     }
   }
 

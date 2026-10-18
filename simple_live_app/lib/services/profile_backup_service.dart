@@ -10,6 +10,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
@@ -23,6 +24,16 @@ class ProfileBackupService extends GetxService {
   static const schema = "simple_live_profile";
   static const schemaVersion = 4;
   static const Set<int> _supportedSchemaVersions = {1, 2, 3, 4};
+  static bool isSupportedSchemaVersion(int version) =>
+      _supportedSchemaVersions.contains(version);
+  static const Set<String> _supportedSiteIds = {
+    Constant.kBiliBili,
+    Constant.kDouyu,
+    Constant.kHuya,
+    Constant.kDouyin,
+    Constant.kKuaishou,
+    Constant.kXiaohongshu,
+  };
 
   static const Set<String> _excludedSettings = {
     LocalStorageService.kFirstRun,
@@ -35,6 +46,7 @@ class ProfileBackupService extends GetxService {
     LocalStorageService.kWebDAVLastRecoverTime,
     LocalStorageService.kBilibiliCookie,
     LocalStorageService.kDouyinCookie,
+    LocalStorageService.kDouyuCookie,
     LocalStorageService.kXiaohongshuCookie,
     LocalStorageService.kKuaishouCookie,
     LocalStorageService.kKuaishouKww,
@@ -72,6 +84,7 @@ class ProfileBackupService extends GetxService {
   Map<String, dynamic> exportProfileMap({
     ProfileExportOptions options = const ProfileExportOptions(),
     bool includeXiaohongshuAccount = true,
+    Set<String>? accountSiteIds,
   }) {
     if (options.upstreamMode == UpstreamExportMode.dataAndSync) {
       return _exportUpstreamProfileMap(options);
@@ -87,26 +100,27 @@ class ProfileBackupService extends GetxService {
             "users": const [],
             "userGroups": const <String, List<String>>{},
           };
-    final settingsPayload = options.settings
-        ? _exportSettings()
-        : <String, dynamic>{};
+    final settingsPayload =
+        options.settings ? _exportSettings() : <String, dynamic>{};
     final accountsPayload = options.accounts
-        ? _exportAccounts(includeXiaohongshuAccount: includeXiaohongshuAccount)
+        ? _exportAccounts(
+            includeXiaohongshuAccount: includeXiaohongshuAccount,
+            accountSiteIds: accountSiteIds,
+          )
         : {"items": const []};
-    final shieldPresetsPayload = options.shieldPresets
-        ? _exportShieldPresets()
-        : const [];
+    final shieldPresetsPayload =
+        options.shieldPresets ? _exportShieldPresets() : const [];
     final followUsers = options.follows
         ? DBService.instance
-              .getFollowList()
-              .map((item) => item.toJson())
-              .toList()
+            .getFollowList()
+            .map((item) => item.toJson())
+            .toList()
         : const [];
     final followUserTags = options.follows
         ? DBService.instance
-              .getFollowTagList()
-              .map((item) => item.toJson())
-              .toList()
+            .getFollowTagList()
+            .map((item) => item.toJson())
+            .toList()
         : const [];
     final histories = options.histories
         ? DBService.instance.getHistores().map((item) => item.toJson()).toList()
@@ -134,7 +148,7 @@ class ProfileBackupService extends GetxService {
         "followTagCount": followUserTags.length,
         "historyCount": histories.length,
         "shieldPresetCount": shieldPresetsPayload.length,
-        "accountCount": (accountsPayload["items"] as List).length,
+        "accountCount": _countConfiguredAccounts(accountsPayload["items"]),
       },
     };
   }
@@ -144,6 +158,7 @@ class ProfileBackupService extends GetxService {
   Object exportProfilePayload({
     ProfileExportOptions options = const ProfileExportOptions(),
     bool includeXiaohongshuAccount = true,
+    Set<String>? accountSiteIds,
   }) {
     if (options.upstreamMode == UpstreamExportMode.followList) {
       return _exportUpstreamFollowList();
@@ -151,6 +166,7 @@ class ProfileBackupService extends GetxService {
     return exportProfileMap(
       options: options,
       includeXiaohongshuAccount: includeXiaohongshuAccount,
+      accountSiteIds: accountSiteIds,
     );
   }
 
@@ -200,10 +216,12 @@ class ProfileBackupService extends GetxService {
   Future<TemporaryProfilePackage> createTemporaryProfilePackage({
     ProfileExportOptions options = const ProfileExportOptions(),
     bool includeXiaohongshuAccount = true,
+    Set<String>? accountSiteIds,
   }) async {
     final payload = exportProfilePayload(
       options: options,
       includeXiaohongshuAccount: includeXiaohongshuAccount,
+      accountSiteIds: accountSiteIds,
     );
     final content = const JsonEncoder.withIndent("  ").convert(payload);
     final dir = await Directory.systemTemp.createTemp("simple_live_profile_");
@@ -289,7 +307,7 @@ class ProfileBackupService extends GetxService {
     final schemaName = payload["schema"]?.toString() ?? "";
     final version = (payload["schemaVersion"] as num?)?.toInt() ?? 1;
     if (schemaName == schema || schemaName == "simple_live_profile") {
-      if (!_supportedSchemaVersions.contains(version)) {
+      if (!isSupportedSchemaVersion(version)) {
         throw const FormatException("暂不支持该配置包版本");
       }
       return ProfileInspection(
@@ -331,6 +349,8 @@ class ProfileBackupService extends GetxService {
           inspection.payload,
           overwrite: overwrite,
           options: options,
+          allowLegacyAccountSettings:
+              (inspection.schemaVersion ?? 1) < schemaVersion,
           onProgress: onProgress,
         );
       case ProfilePackageKind.legacyProfile:
@@ -374,6 +394,15 @@ class ProfileBackupService extends GetxService {
         onProgress,
       );
     }
+    if (options.accounts) {
+      summary.accounts += await _importAccounts(
+        null,
+        summary: summary,
+        legacySettings: payload["config"],
+        allowLegacySettings: true,
+        accountSiteIds: options.accountSiteIds,
+      );
+    }
 
     if (options.settings || options.shields || options.shieldPresets) {
       AppSettingsController.instance.reloadFromStorage();
@@ -390,7 +419,7 @@ class ProfileBackupService extends GetxService {
     final schemaName = payload["schema"]?.toString() ?? "";
     final version = (payload["schemaVersion"] as num?)?.toInt() ?? 1;
     return (schemaName == schema || schemaName == "simple_live_profile") &&
-            _supportedSchemaVersions.contains(version) ||
+            isSupportedSchemaVersion(version) ||
         payload["type"] == "simple_live" ||
         _looksLikeLegacyDataFile(payload);
   }
@@ -698,9 +727,12 @@ class ProfileBackupService extends GetxService {
     Map<String, dynamic> payload, {
     bool overwrite = false,
     ProfileImportOptions options = const ProfileImportOptions(),
+    bool? allowLegacyAccountSettings,
     SyncProgressCallback? onProgress,
   }) async {
     final summary = ProfileImportSummary();
+    final readLegacyAccountSettings = allowLegacyAccountSettings ??
+        (((payload["schemaVersion"] as num?)?.toInt() ?? 1) < schemaVersion);
     if (options.settings) {
       onProgress?.call(const SyncProgress(stage: "导入设置"));
       await _importSettings(
@@ -721,7 +753,10 @@ class ProfileBackupService extends GetxService {
     if (options.accounts) {
       summary.accounts += await _importAccounts(
         payload["accounts"],
+        summary: summary,
         legacySettings: payload["settings"],
+        allowLegacySettings: readLegacyAccountSettings,
+        accountSiteIds: options.accountSiteIds,
       );
     }
     if (options.shieldPresets) {
@@ -763,60 +798,104 @@ class ProfileBackupService extends GetxService {
   }
 
   Map<String, dynamic> _exportSettings() {
-    final result = <String, dynamic>{};
-    for (final entry
-        in LocalStorageService.instance.settingsBox.toMap().entries) {
-      final key = entry.key.toString();
-      if (_excludedSettings.contains(key) ||
-          _deviceLocalSettings.contains(key)) {
-        continue;
-      }
-      result[key] = _safeJsonValue(entry.value);
-    }
-    return result;
+    return filterTransportSettings(
+      LocalStorageService.instance.settingsBox.toMap(),
+    );
+  }
+
+  /// Removes identity, credential, and device-local values from legacy
+  /// settings JSON files that are still found in older WebDAV archives.
+  Map<String, dynamic> filterTransportSettings(
+    Map<dynamic, dynamic> settings,
+  ) =>
+      {
+        for (final entry in settings.entries)
+          if (!_excludedSettings.contains(entry.key.toString()) &&
+              !_deviceLocalSettings.contains(entry.key.toString()))
+            entry.key.toString(): _safeJsonValue(entry.value),
+      };
+
+  Future<ProfileImportSummary> importLegacySettingsMap(
+    dynamic rawSettings, {
+    bool overwrite = true,
+  }) async {
+    final summary = ProfileImportSummary();
+    await _importSettings(rawSettings, summary, overwrite);
+    AppSettingsController.instance.reloadFromStorage();
+    return summary;
   }
 
   Map<String, dynamic> _exportAccounts({
     bool includeXiaohongshuAccount = true,
+    Set<String>? accountSiteIds,
   }) {
-    return {
-      "items": [
+    final items = <Map<String, dynamic>>[
+      {
+        "siteId": Constant.kBiliBili,
+        "cookie": LocalStorageService.instance.getValue(
+          LocalStorageService.kBilibiliCookie,
+          "",
+        ),
+      },
+      {
+        "siteId": Constant.kDouyin,
+        "cookie": LocalStorageService.instance.getValue(
+          LocalStorageService.kDouyinCookie,
+          "",
+        ),
+      },
+      {
+        "siteId": Constant.kDouyu,
+        "cookie": DouyuAccountService.instance.cookie,
+      },
+      if (includeXiaohongshuAccount)
         {
-          "siteId": Constant.kBiliBili,
-          "cookie": LocalStorageService.instance.getValue(
-            LocalStorageService.kBilibiliCookie,
-            "",
-          ),
-        },
-        {
-          "siteId": Constant.kDouyin,
-          "cookie": LocalStorageService.instance.getValue(
-            LocalStorageService.kDouyinCookie,
-            "",
-          ),
-        },
-        if (includeXiaohongshuAccount) {
           "siteId": Constant.kXiaohongshu,
           "cookie": LocalStorageService.instance.getValue(
             LocalStorageService.kXiaohongshuCookie,
             "",
           ),
         },
-        {
-          "siteId": Constant.kKuaishou,
-          ...KuaishouAccountService.instance.exportBackupMap(),
-        },
-      ],
+      {
+        "siteId": Constant.kKuaishou,
+        ...KuaishouAccountService.instance.exportBackupMap(),
+      },
+    ];
+    return {
+      "items": items.where((item) {
+        final siteId = item["siteId"]?.toString() ?? "";
+        return accountSiteIds == null || accountSiteIds.contains(siteId);
+      }).toList(),
     };
   }
 
+  int _countConfiguredAccounts(dynamic rawItems) {
+    if (rawItems is! List) {
+      return 0;
+    }
+    return rawItems.where((item) {
+      if (item is! Map) {
+        return false;
+      }
+      if (item["siteId"] == Constant.kKuaishou) {
+        final slots = item["slots"];
+        return slots is Map &&
+            slots.values.any(
+              (slot) =>
+                  slot is Map &&
+                  (slot["cookie"]?.toString().trim().isNotEmpty ?? false),
+            );
+      }
+      return item["cookie"]?.toString().trim().isNotEmpty ?? false;
+    }).length;
+  }
+
   Map<String, dynamic> _exportShieldValues() {
-    final raw =
-        LocalStorageService.instance.shieldBox.values
-            .map((e) => e.toString().trim())
-            .where((e) => e.isNotEmpty)
-            .toList()
-          ..sort();
+    final raw = LocalStorageService.instance.shieldBox.values
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList()
+      ..sort();
     final keywords = AppSettingsControllerSafe.keywordValues()..sort();
     final userGroups = AppSettingsControllerSafe.userGroups();
     final users = userGroups.values.expand((e) => e).toSet().toList()..sort();
@@ -866,10 +945,12 @@ class ProfileBackupService extends GetxService {
     if (rawSettings is! Map) {
       return;
     }
-    if (overwrite) {
-      await _clearImportableSettings();
-    }
     final samePlatform = isSamePlatformPackage(sourcePlatform);
+    if (overwrite) {
+      await _clearImportableSettings(
+        preservePlatformSettings: !samePlatform,
+      );
+    }
     final values = <dynamic, dynamic>{};
     final droppedPlatformKeys = <String>[];
     for (final entry in rawSettings.entries) {
@@ -896,10 +977,16 @@ class ProfileBackupService extends GetxService {
     }
   }
 
-  Future<void> _clearImportableSettings() async {
-    final keys = LocalStorageService.instance.settingsBox.keys
-        .where((key) => !_excludedSettings.contains(key.toString()))
-        .toList();
+  Future<void> _clearImportableSettings({
+    required bool preservePlatformSettings,
+  }) async {
+    final keys = LocalStorageService.instance.settingsBox.keys.where((key) {
+      final name = key.toString();
+      return !_excludedSettings.contains(name) &&
+          !_deviceLocalSettings.contains(name) &&
+          (!preservePlatformSettings ||
+              !_platformSpecificSettings.contains(name));
+    }).toList();
     if (keys.isNotEmpty) {
       await LocalStorageService.instance.settingsBox.deleteAll(keys);
     }
@@ -911,42 +998,43 @@ class ProfileBackupService extends GetxService {
     bool overwrite,
     SyncProgressCallback? onProgress,
   ) async {
+    if (rawShield is! Map) {
+      return;
+    }
     if (overwrite) {
       await AppSettingsControllerSafe.clearShieldValues();
     }
-    if (rawShield is Map) {
-      final rawValues = rawShield["raw"];
-      if (rawValues is List && rawValues.isNotEmpty) {
-        final result = await BulkDataImportService.importShieldValues(
-          rawValues,
-          overwrite: false,
-          onProgress: onProgress,
-        );
-        summary.shields += result.imported;
-        summary.skipped += result.skipped;
-        return;
+    final rawValues = rawShield["raw"];
+    if (rawValues is List && rawValues.isNotEmpty) {
+      final result = await BulkDataImportService.importShieldValues(
+        rawValues,
+        overwrite: false,
+        onProgress: onProgress,
+      );
+      summary.shields += result.imported;
+      summary.skipped += result.skipped;
+      return;
+    }
+    final keywords = rawShield["keywords"];
+    if (keywords is List) {
+      for (final keyword in keywords) {
+        AppSettingsControllerSafe.addKeyword(keyword.toString());
+        summary.shields++;
       }
-      final keywords = rawShield["keywords"];
-      if (keywords is List) {
-        for (final keyword in keywords) {
-          AppSettingsControllerSafe.addKeyword(keyword.toString());
-          summary.shields++;
+    }
+    final groups = rawShield["userGroups"];
+    if (groups is Map) {
+      for (final entry in groups.entries) {
+        final users = entry.value;
+        if (users is! List) {
+          continue;
         }
-      }
-      final groups = rawShield["userGroups"];
-      if (groups is Map) {
-        for (final entry in groups.entries) {
-          final users = entry.value;
-          if (users is! List) {
-            continue;
-          }
-          for (final user in users) {
-            AppSettingsControllerSafe.addUser(
-              user.toString(),
-              siteId: entry.key.toString(),
-            );
-            summary.shields++;
-          }
+        for (final user in users) {
+          AppSettingsControllerSafe.addUser(
+            user.toString(),
+            siteId: entry.key.toString(),
+          );
+          summary.shields++;
         }
       }
     }
@@ -957,11 +1045,11 @@ class ProfileBackupService extends GetxService {
     ProfileImportSummary summary,
     bool overwrite,
   ) async {
-    if (overwrite) {
-      await LocalStorageService.instance.shieldPresetBox.clear();
-    }
     if (rawPresets is! List) {
       return;
+    }
+    if (overwrite) {
+      await LocalStorageService.instance.shieldPresetBox.clear();
     }
     for (final item in rawPresets) {
       if (item is! Map) {
@@ -983,51 +1071,136 @@ class ProfileBackupService extends GetxService {
 
   Future<int> _importAccounts(
     dynamic rawAccounts, {
+    required ProfileImportSummary summary,
     dynamic legacySettings,
+    bool allowLegacySettings = false,
+    Set<String>? accountSiteIds,
   }) async {
     var importedCount = 0;
     final items = rawAccounts is Map && rawAccounts["items"] is List
         ? rawAccounts["items"] as List
         : const [];
     var importedKuaishou = false;
+    final importedSites = <String>{};
     for (final item in items) {
       if (item is! Map) {
+        summary.skipped++;
         continue;
       }
-      final siteId = item["siteId"]?.toString() ?? "";
+      final siteId = item["siteId"]?.toString().trim().toLowerCase() ?? "";
+      if (!_supportedSiteIds.contains(siteId)) {
+        summary.skipped++;
+        continue;
+      }
+      if (accountSiteIds != null && !accountSiteIds.contains(siteId)) {
+        continue;
+      }
+      if (!item.containsKey("cookie") && siteId != Constant.kKuaishou) {
+        summary.skipped++;
+        continue;
+      }
       final cookie = item["cookie"]?.toString() ?? "";
       switch (siteId) {
         case Constant.kBiliBili:
+          if (cookie.isEmpty) {
+            break;
+          }
           BiliBiliAccountService.instance.setCookie(cookie);
           importedCount++;
+          importedSites.add(siteId);
           break;
         case Constant.kDouyin:
           if (cookie.isEmpty) {
-            DouyinAccountService.instance.clearCookie();
-          } else {
-            DouyinAccountService.instance.setCookie(cookie);
+            break;
+          }
+          DouyinAccountService.instance.setCookie(cookie);
+          importedCount++;
+          importedSites.add(siteId);
+          break;
+        case Constant.kDouyu:
+          if (cookie.isEmpty) {
+            break;
+          }
+          if (!await DouyuAccountService.instance.setCookie(cookie)) {
+            throw const FormatException("斗鱼 Cookie 格式无效");
           }
           importedCount++;
+          importedSites.add(siteId);
           break;
         case Constant.kXiaohongshu:
+          if (cookie.isEmpty) {
+            break;
+          }
           final restored =
               await XiaohongshuAccountService.instance.setCookie(cookie);
           if (!restored) {
             throw const FormatException("小红书 Cookie 格式无效");
           }
           importedCount++;
+          importedSites.add(siteId);
           break;
         case Constant.kKuaishou:
+          if (!_hasKuaishouCredentials(item)) {
+            break;
+          }
           importedKuaishou = true;
           KuaishouAccountService.instance.importBackupMap(
-            item,
-            legacySettings: legacySettings,
+            _mergeKuaishouBackupPreservingMissingSlots(
+              item,
+              legacySettings: allowLegacySettings ? legacySettings : null,
+            ),
           );
           importedCount++;
+          importedSites.add(siteId);
           break;
       }
     }
-    if (!importedKuaishou && legacySettings is Map) {
+    if (allowLegacySettings && legacySettings is Map) {
+      final legacyCookieKeys = <String, String>{
+        Constant.kBiliBili: LocalStorageService.kBilibiliCookie,
+        Constant.kDouyin: LocalStorageService.kDouyinCookie,
+        Constant.kDouyu: LocalStorageService.kDouyuCookie,
+        Constant.kXiaohongshu: LocalStorageService.kXiaohongshuCookie,
+      };
+      for (final entry in legacyCookieKeys.entries) {
+        if (importedSites.contains(entry.key) ||
+            (accountSiteIds != null && !accountSiteIds.contains(entry.key)) ||
+            !legacySettings.containsKey(entry.value)) {
+          continue;
+        }
+        final cookie = legacySettings[entry.value]?.toString() ?? "";
+        if (cookie.isEmpty) {
+          continue;
+        }
+        switch (entry.key) {
+          case Constant.kBiliBili:
+            BiliBiliAccountService.instance.setCookie(cookie);
+            importedCount++;
+            break;
+          case Constant.kDouyin:
+            DouyinAccountService.instance.setCookie(cookie);
+            importedCount++;
+            break;
+          case Constant.kDouyu:
+            if (!await DouyuAccountService.instance.setCookie(cookie)) {
+              throw const FormatException("斗鱼 Cookie 格式无效");
+            }
+            importedCount++;
+            break;
+          case Constant.kXiaohongshu:
+            if (!await XiaohongshuAccountService.instance.setCookie(cookie)) {
+              throw const FormatException("小红书 Cookie 格式无效");
+            }
+            importedCount++;
+            break;
+        }
+      }
+    }
+    if (allowLegacySettings &&
+        !importedKuaishou &&
+        (accountSiteIds == null ||
+            accountSiteIds.contains(Constant.kKuaishou)) &&
+        legacySettings is Map) {
       final hasLegacyKuaishou = const {
         LocalStorageService.kKuaishouCookie,
         LocalStorageService.kKuaishouKww,
@@ -1038,16 +1211,70 @@ class ProfileBackupService extends GetxService {
         LocalStorageService.kKuaishouAccountPoolState,
       }.any(legacySettings.containsKey);
       if (hasLegacyKuaishou) {
-        KuaishouAccountService.instance.importBackupMap({
+        final legacyKuaishou = {
           'cookie': legacySettings[LocalStorageService.kKuaishouCookie],
           'kww': legacySettings[LocalStorageService.kKuaishouKww],
           'cookieExpiresAt':
               legacySettings[LocalStorageService.kKuaishouCookieExpiresAt],
-        }, legacySettings: legacySettings);
-        importedCount++;
+        };
+        if (_hasKuaishouCredentials(legacyKuaishou) ||
+            _hasKuaishouCredentials(legacySettings)) {
+          KuaishouAccountService.instance.importBackupMap(
+            _mergeKuaishouBackupPreservingMissingSlots(
+              legacyKuaishou,
+              legacySettings: legacySettings,
+            ),
+          );
+          importedCount++;
+        }
       }
     }
     return importedCount;
+  }
+
+  bool _hasKuaishouCredentials(dynamic item) {
+    if (item is! Map) {
+      return false;
+    }
+    bool hasCookie(dynamic value) =>
+        value is Map &&
+        (value['cookie']?.toString().trim().isNotEmpty ?? false);
+    if (hasCookie(item)) {
+      return true;
+    }
+    final slots = item['slots'];
+    if (slots is Map && slots.values.any(hasCookie)) {
+      return true;
+    }
+    return const {
+      LocalStorageService.kKuaishouCookie,
+      LocalStorageService.kKuaishouSecondaryCookie,
+    }.any((key) => item[key]?.toString().trim().isNotEmpty ?? false);
+  }
+
+  Map<String, dynamic> _mergeKuaishouBackupPreservingMissingSlots(
+    dynamic raw, {
+    dynamic legacySettings,
+  }) {
+    final incoming = migrateKuaishouAccountBackup(
+      raw,
+      legacySettings: legacySettings,
+    );
+    final incomingSlots = incoming['slots'];
+    final currentSlots =
+        KuaishouAccountService.instance.exportBackupMap()['slots'];
+    if (incomingSlots is! Map || currentSlots is! Map) {
+      return incoming;
+    }
+
+    final mergedSlots = <String, dynamic>{};
+    for (final slot in const ['primary', 'secondary']) {
+      final incomingSlot = incomingSlots[slot];
+      mergedSlots[slot] = _hasKuaishouCredentials(incomingSlot)
+          ? incomingSlot
+          : currentSlots[slot];
+    }
+    return {...incoming, 'slots': mergedSlots};
   }
 
   Future<void> _importFollowUsers(
@@ -1057,9 +1284,16 @@ class ProfileBackupService extends GetxService {
     SyncProgressCallback? onProgress, {
     bool syncTagsFromUserField = false,
   }) async {
+    if (rawUsers is! List) {
+      return;
+    }
+    final knownUsers = _filterKnownSiteItems(rawUsers, summary);
+    if (knownUsers.isEmpty && rawUsers.isNotEmpty) {
+      return;
+    }
     final result = await BulkDataImportService.importFollowUsers(
-      rawUsers,
-      overwrite: overwrite,
+      knownUsers,
+      overwrite: overwrite && knownUsers.length == rawUsers.length,
       syncTagsFromUserField: syncTagsFromUserField,
       onProgress: onProgress,
     );
@@ -1073,6 +1307,9 @@ class ProfileBackupService extends GetxService {
     bool overwrite,
     SyncProgressCallback? onProgress,
   ) async {
+    if (rawTags is! List) {
+      return;
+    }
     final result = await BulkDataImportService.importFollowTags(
       rawTags,
       overwrite: overwrite,
@@ -1088,13 +1325,38 @@ class ProfileBackupService extends GetxService {
     bool overwrite,
     SyncProgressCallback? onProgress,
   ) async {
+    if (rawHistories is! List) {
+      return;
+    }
+    final knownHistories = _filterKnownSiteItems(rawHistories, summary);
+    if (knownHistories.isEmpty && rawHistories.isNotEmpty) {
+      return;
+    }
     final result = await BulkDataImportService.importHistories(
-      rawHistories,
-      overwrite: overwrite,
+      knownHistories,
+      overwrite: overwrite && knownHistories.length == rawHistories.length,
       onProgress: onProgress,
     );
     summary.histories += result.imported;
     summary.skipped += result.skipped;
+  }
+
+  List<dynamic> _filterKnownSiteItems(
+    List<dynamic> items,
+    ProfileImportSummary summary,
+  ) {
+    final filtered = <dynamic>[];
+    for (final item in items) {
+      if (item is Map &&
+          _supportedSiteIds.contains(
+            item["siteId"]?.toString().trim().toLowerCase(),
+          )) {
+        filtered.add(item);
+      } else {
+        summary.skipped++;
+      }
+    }
+    return filtered;
   }
 
   dynamic _readPayloadList(Map<String, dynamic> payload, List<String> keys) {
@@ -1251,6 +1513,7 @@ class TemporaryProfilePackage {
 class ProfileImportOptions {
   final bool settings;
   final bool accounts;
+  final Set<String>? accountSiteIds;
   final bool shields;
   final bool shieldPresets;
   final bool follows;
@@ -1259,6 +1522,7 @@ class ProfileImportOptions {
   const ProfileImportOptions({
     this.settings = true,
     this.accounts = true,
+    this.accountSiteIds,
     this.shields = true,
     this.shieldPresets = true,
     this.follows = true,
@@ -1270,6 +1534,8 @@ class ProfileImportOptions {
     return ProfileImportOptions(
       settings: selected.contains(ProfileCategory.settings),
       accounts: selected.contains(ProfileCategory.accounts),
+      accountSiteIds:
+          selected.contains(ProfileCategory.accounts) ? null : const <String>{},
       shields: selected.contains(ProfileCategory.shields),
       shieldPresets: selected.contains(ProfileCategory.shieldPresets),
       follows: selected.contains(ProfileCategory.follows),

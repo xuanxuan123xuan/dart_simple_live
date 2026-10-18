@@ -29,6 +29,18 @@ Archive _decodeWebDavBackupArchive(List<int> data) {
 }
 
 class RemoteSyncWebDAVController extends BaseController {
+  static const _profileJsonName = 'SimpleLive_Profile_v4.json';
+  static const _legacyProfileJsonNames = {
+    'SimpleLive_Profile_v3.json',
+    'SimpleLive_Profile_v2.json',
+  };
+
+  static bool archiveContainsProfile(Iterable<String> fileNames) =>
+      fileNames.any(
+        (name) =>
+            name == _profileJsonName || _legacyProfileJsonNames.contains(name),
+      );
+
   // ui
   var passwordVisible = true.obs;
   // ui-用户选择是否同步
@@ -37,11 +49,15 @@ class RemoteSyncWebDAVController extends BaseController {
   var isSyncBlockWord = true.obs;
   var isSyncBilibiliAccount = true.obs;
   var isSyncDouyinAccount = true.obs;
+  var isSyncKuaishouAccount = true.obs;
+  var isSyncDouyuAccount = true.obs;
+  var isSyncXiaohongshuAccount = true.obs;
 
   late DAVClient davClient;
   var user = "--".obs;
   var lastRecoverTime = "--".obs;
   var lastUploadTime = "--".obs;
+  var lastRecoverSummary = "".obs;
 
   final _userFollowJsonName = 'SimpleLive_follows.json';
   final _userHistoriesJsonName = 'SimpleLive_histories.json';
@@ -50,11 +66,14 @@ class RemoteSyncWebDAVController extends BaseController {
   final _userDouyinAccountJsonName = 'SimpleLive_douyin_account.json';
   final _userSettingsJsonName = 'SimpleLive_Settings.json';
   final _userTagsJsonName = 'SimpleLive_Tags.json';
-  final _profileJsonName = 'SimpleLive_Profile_v4.json';
-  final _legacyProfileJsonNames = const {
-    'SimpleLive_Profile_v3.json',
-    'SimpleLive_Profile_v2.json',
-  };
+
+  Set<String> get _selectedAccountSiteIds => {
+        if (isSyncBilibiliAccount.value) Constant.kBiliBili,
+        if (isSyncDouyinAccount.value) Constant.kDouyin,
+        if (isSyncKuaishouAccount.value) Constant.kKuaishou,
+        if (isSyncDouyuAccount.value) Constant.kDouyu,
+        if (isSyncXiaohongshuAccount.value) Constant.kXiaohongshu,
+      };
 
   @override
   void onInit() {
@@ -180,9 +199,7 @@ class RemoteSyncWebDAVController extends BaseController {
     final archive = Archive();
     List<int> zipBytes = [];
     try {
-      final profileMap = ProfileBackupService.instance.exportProfileMap(
-        includeXiaohongshuAccount: false,
-      );
+      final profileMap = ProfileBackupService.instance.exportProfileMap();
       final profileJson =
           const JsonEncoder.withIndent("  ").convert(profileMap);
       archive.addFile(
@@ -213,25 +230,12 @@ class RemoteSyncWebDAVController extends BaseController {
       );
       _addJsonFile(
         archive,
-        _userBilibiliAccountJsonName,
-        {
-          'data': {'cookie': BiliBiliAccountService.instance.cookie}
-        },
-      );
-      _addJsonFile(
-        archive,
-        _userDouyinAccountJsonName,
-        {
-          'data': {'cookie': DouyinAccountService.instance.cookie}
-        },
-      );
-      final transportSettings = Map<dynamic, dynamic>.from(
-        LocalStorageService.instance.settingsBox.toMap(),
-      )..remove(LocalStorageService.kXiaohongshuCookie);
-      _addJsonFile(
-        archive,
         _userSettingsJsonName,
-        {'data': transportSettings},
+        {
+          'data': ProfileBackupService.instance.filterTransportSettings(
+            LocalStorageService.instance.settingsBox.toMap(),
+          )
+        },
       );
       final zipEncoder = ZipEncoder();
       zipBytes = zipEncoder.encode(archive) ?? <int>[];
@@ -273,10 +277,7 @@ class RemoteSyncWebDAVController extends BaseController {
       final archive = _decodeWebDavBackupArchive(data);
       final profileFile = archive
           .where(
-            (file) =>
-                file.isFile &&
-                (file.name == _profileJsonName ||
-                    _legacyProfileJsonNames.contains(file.name)),
+            (file) => file.isFile && archiveContainsProfile([file.name]),
           )
           .firstOrNull;
       if (profileFile != null) {
@@ -286,6 +287,8 @@ class RemoteSyncWebDAVController extends BaseController {
             overwrite: true,
             options: ProfileImportOptions(
               settings: true,
+              accounts: _selectedAccountSiteIds.isNotEmpty,
+              accountSiteIds: _selectedAccountSiteIds,
               follows: isSyncFollows.value,
               histories: isSyncHistories.value,
               shields: isSyncBlockWord.value,
@@ -293,31 +296,39 @@ class RemoteSyncWebDAVController extends BaseController {
             ),
             onProgress: SyncProgressDialog.update,
           );
+          lastRecoverSummary.value = summary.message;
           Log.i("已同步完整配置包：${summary.message}");
         } catch (e) {
-          Log.e("同步完整配置包失败：$e", StackTrace.current);
+          Log.e("同步完整配置包失败：${e.runtimeType}", StackTrace.current);
           rethrow;
         }
+      } else {
+        final results = <String>[];
         for (ArchiveFile file in archive) {
-          if (file.name == _userBilibiliAccountJsonName ||
-              file.name == _userDouyinAccountJsonName) {
-            await _recovery(file, onProgress: SyncProgressDialog.update);
+          final result = await _recovery(
+            file,
+            onProgress: SyncProgressDialog.update,
+          );
+          if (result != null && result.isNotEmpty) {
+            results.add(result);
           }
         }
-      } else {
-        for (ArchiveFile file in archive) {
-          await _recovery(file, onProgress: SyncProgressDialog.update);
-        }
+        lastRecoverSummary.value = results.join('；');
       }
-      SmartDialog.showToast('同步完成');
+      SmartDialog.showToast(
+        lastRecoverSummary.value.isEmpty
+            ? '同步完成'
+            : '同步完成：${lastRecoverSummary.value}',
+      );
       DateTime recoverTime = DateTime.now();
       lastRecoverTime.value = Utils.parseTime(recoverTime);
       LocalStorageService.instance.setValue(
           LocalStorageService.kWebDAVLastRecoverTime,
           recoverTime.millisecondsSinceEpoch);
     } catch (e) {
-      Log.e("WebDAV 恢复失败：$e", StackTrace.current);
-      SmartDialog.showToast("恢复失败：${exceptionToString(e)}");
+      Log.e("WebDAV 恢复失败：${e.runtimeType}", StackTrace.current);
+      lastRecoverSummary.value = "恢复失败，请检查备份文件后重试";
+      SmartDialog.showToast(lastRecoverSummary.value);
     } finally {
       SyncProgressDialog.dismiss();
       try {
@@ -331,7 +342,7 @@ class RemoteSyncWebDAVController extends BaseController {
     }
   }
 
-  Future<void> _recovery(
+  Future<String?> _recovery(
     ArchiveFile file, {
     SyncProgressCallback? onProgress,
   }) async {
@@ -341,26 +352,44 @@ class RemoteSyncWebDAVController extends BaseController {
       // 同步follows
       if (file.name == _userFollowJsonName && isSyncFollows.value) {
         try {
-          final result = await BulkDataImportService.importFollowUsers(
-            jsonData,
+          final result =
+              await ProfileBackupService.instance.importLegacyDataFileMap(
+            {'followUsers': jsonData},
             overwrite: true,
+            options: const ProfileImportOptions(
+              settings: false,
+              accounts: false,
+              shields: false,
+              shieldPresets: false,
+              follows: true,
+              histories: false,
+            ),
             onProgress: onProgress,
           );
           EventBus.instance.emit(Constant.kUpdateFollow, 0);
-          Log.i('已同步关注用户列表：${result.logSummary}');
+          return '关注：${result.message}';
         } catch (e) {
-          Log.e('同步关注用户列表失败: $e', StackTrace.current);
+          Log.e('同步关注用户列表失败: ${e.runtimeType}', StackTrace.current);
         }
       } else if (file.name == _userHistoriesJsonName && isSyncHistories.value) {
         try {
-          final result = await BulkDataImportService.importHistories(
-            jsonData,
+          final result =
+              await ProfileBackupService.instance.importLegacyDataFileMap(
+            {'histories': jsonData},
             onProgress: onProgress,
+            options: const ProfileImportOptions(
+              settings: false,
+              accounts: false,
+              shields: false,
+              shieldPresets: false,
+              follows: false,
+              histories: true,
+            ),
           );
           EventBus.instance.emit(Constant.kUpdateHistory, 0);
-          Log.i('已同步用户观看历史记录：${result.logSummary}');
+          return '历史：${result.message}';
         } catch (e) {
-          Log.e('同步用户观看历史记录失败: $e', StackTrace.current);
+          Log.e('同步用户观看历史记录失败: ${e.runtimeType}', StackTrace.current);
         }
       } else if (file.name == _userBlockedWordJsonName &&
           isSyncBlockWord.value) {
@@ -370,40 +399,40 @@ class RemoteSyncWebDAVController extends BaseController {
             onProgress: onProgress,
           );
           Log.i('已同步用户屏蔽词：${result.logSummary}');
+          return '屏蔽词：${result.logSummary}';
         } catch (e) {
-          Log.e('同步用户屏蔽词失败:$e', StackTrace.current);
+          Log.e('同步用户屏蔽词失败:${e.runtimeType}', StackTrace.current);
         }
       } else if (file.name == _userBilibiliAccountJsonName &&
           isSyncBilibiliAccount.value) {
         try {
-          var cookie = jsonData['cookie'];
+          var cookie = jsonData['cookie']?.toString() ?? "";
+          if (cookie.trim().isEmpty) return null;
           BiliBiliAccountService.instance.setCookie(cookie);
           BiliBiliAccountService.instance.loadUserInfo();
-          Log.i('已同步哔哩哔哩账号');
+          return '哔哩哔哩账号：已导入';
         } catch (e) {
-          Log.e('同步哔哩哔哩账号失败：$e', StackTrace.current);
+          Log.e('同步哔哩哔哩账号失败：${e.runtimeType}', StackTrace.current);
         }
       } else if (file.name == _userDouyinAccountJsonName &&
           isSyncDouyinAccount.value) {
         try {
           final cookie = jsonData['cookie']?.toString() ?? "";
           if (cookie.isEmpty) {
-            DouyinAccountService.instance.clearCookie();
-          } else {
-            DouyinAccountService.instance.setCookie(cookie);
+            return null;
           }
-          Log.i('已同步抖音账号');
+          DouyinAccountService.instance.setCookie(cookie);
+          return '抖音账号：已导入';
         } catch (e) {
-          Log.e('同步抖音账号失败：$e', StackTrace.current);
+          Log.e('同步抖音账号失败：${e.runtimeType}', StackTrace.current);
         }
       } else if (file.name == _userSettingsJsonName) {
         try {
-          await LocalStorageService.instance.settingsBox.clear();
-          LocalStorageService.instance.settingsBox.putAll(jsonData);
-          AppSettingsController.instance.reloadFromStorage();
-          Log.i('已同步用户设置');
+          final result = await ProfileBackupService.instance
+              .importLegacySettingsMap(jsonData);
+          return '设置：导入 ${result.settings} 项';
         } catch (e) {
-          Log.e("同步用户设置失败：$e", StackTrace.current);
+          Log.e("同步用户设置失败：${e.runtimeType}", StackTrace.current);
         }
       } else if (file.name == _userTagsJsonName && isSyncFollows.value) {
         try {
@@ -413,16 +442,17 @@ class RemoteSyncWebDAVController extends BaseController {
             onProgress: onProgress,
           );
           EventBus.instance.emit(Constant.kUpdateFollow, 0);
-          Log.i('已同步用户自定义标签：${result.logSummary}');
+          return '标签：${result.logSummary}';
         } catch (e) {
-          Log.e('同步用户自定义标签失败:$e', StackTrace.current);
+          Log.e('同步用户自定义标签失败:${e.runtimeType}', StackTrace.current);
         }
       } else {
-        return;
+        return null;
       }
     } else {
       Log.i('不是正确的文件名');
     }
+    return null;
   }
 
   // ui控制--密码可见控制
@@ -448,5 +478,17 @@ class RemoteSyncWebDAVController extends BaseController {
 
   void changeIsSyncDouyinAccount() {
     isSyncDouyinAccount.value = !isSyncDouyinAccount.value;
+  }
+
+  void changeIsSyncKuaishouAccount() {
+    isSyncKuaishouAccount.value = !isSyncKuaishouAccount.value;
+  }
+
+  void changeIsSyncDouyuAccount() {
+    isSyncDouyuAccount.value = !isSyncDouyuAccount.value;
+  }
+
+  void changeIsSyncXiaohongshuAccount() {
+    isSyncXiaohongshuAccount.value = !isSyncXiaohongshuAccount.value;
   }
 }

@@ -102,7 +102,7 @@ class SyncClientRequest {
     }
   }
 
-  Future<bool> syncProfile(
+  Future<String> syncProfile(
     SyncClinet client,
     dynamic body, {
     bool overlay = false,
@@ -117,7 +117,7 @@ class SyncClientRequest {
     );
 
     if (data["status"]) {
-      return true;
+      return data["message"]?.toString() ?? "success";
     } else {
       throw data["message"];
     }
@@ -153,5 +153,33 @@ class SyncClientRequest {
     } else {
       throw data["message"];
     }
+  }
+
+  Future<bool> syncDouyuAccount(SyncClinet client, String cookie) async {
+    final url = "http://${client.address}:${client.port}/sync/account/douyu";
+    final data = await HttpClient.instance.postJson(
+      url,
+      data: {"cookie": cookie},
+    );
+    if (data["status"]) {
+      return true;
+    }
+    throw data["message"];
+  }
+
+  Future<bool> syncXiaohongshuAccount(
+    SyncClinet client,
+    String cookie,
+  ) async {
+    final url =
+        "http://${client.address}:${client.port}/sync/account/xiaohongshu";
+    final data = await HttpClient.instance.postJson(
+      url,
+      data: {"cookie": cookie},
+    );
+    if (data["status"]) {
+      return true;
+    }
+    throw data["message"];
   }
 }

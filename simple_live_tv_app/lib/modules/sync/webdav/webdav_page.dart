@@ -79,7 +79,7 @@ class WebDavPage extends GetView<WebDavController> {
                             focusNode: AppFocusNode(),
                             title: "恢复完整备份",
                             subtitle:
-                                "上次恢复：${controller.lastRecoverTime.value}",
+                                "上次恢复：${controller.lastRecoverTime.value}\n${controller.lastRecoverSummary.value}",
                             leading: const Icon(Icons.cloud_download_outlined),
                             onTap: controller.doWebDAVRecovery,
                           ),
@@ -119,6 +119,24 @@ class WebDavPage extends GetView<WebDavController> {
                             icon: Icons.account_circle,
                             value: controller.isSyncDouyinAccount,
                             onTap: controller.changeIsSyncDouyinAccount,
+                          ),
+                          _SwitchTile(
+                            title: "快手账号池",
+                            icon: Icons.account_circle_outlined,
+                            value: controller.isSyncKuaishouAccount,
+                            onTap: controller.changeIsSyncKuaishouAccount,
+                          ),
+                          _SwitchTile(
+                            title: "斗鱼账号",
+                            icon: Icons.sports_esports_outlined,
+                            value: controller.isSyncDouyuAccount,
+                            onTap: controller.changeIsSyncDouyuAccount,
+                          ),
+                          _SwitchTile(
+                            title: "小红书账号",
+                            icon: Icons.shopping_bag_outlined,
+                            value: controller.isSyncXiaohongshuAccount,
+                            onTap: controller.changeIsSyncXiaohongshuAccount,
                           ),
                         ],
                 ),

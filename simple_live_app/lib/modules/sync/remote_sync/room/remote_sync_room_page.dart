@@ -143,8 +143,9 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
                         Icons.qr_code,
                         size: 20,
                       ),
-                      onPressed:
-                          controller.hasValidRoomId ? controller.showQRInfo : null,
+                      onPressed: controller.hasValidRoomId
+                          ? controller.showQRInfo
+                          : null,
                     ),
                     AppStyle.hGap4,
                   ],
@@ -217,6 +218,40 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
                   onTap: () {
                     controller.syncKuaishouAccount();
                   },
+                ),
+                AppStyle.divider,
+                Obx(
+                  () => ListTile(
+                    enabled: controller.canSendNewAccountCredentials,
+                    leading: const Icon(Icons.sports_esports_outlined),
+                    title: const Text("发送斗鱼账号"),
+                    subtitle: Text(
+                      controller.canSendNewAccountCredentials
+                          ? "同步当前保存的斗鱼 Cookie"
+                          : "需所有其他设备均为 Simple Live TV 1.8.0 或更新版本",
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: controller.canSendNewAccountCredentials
+                        ? controller.syncDouyuAccount
+                        : null,
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
+                  () => ListTile(
+                    enabled: controller.canSendNewAccountCredentials,
+                    leading: const Icon(Icons.shopping_bag_outlined),
+                    title: const Text("发送小红书账号"),
+                    subtitle: Text(
+                      controller.canSendNewAccountCredentials
+                          ? "同步当前保存的小红书 Cookie"
+                          : "需所有其他设备均为 Simple Live TV 1.8.0 或更新版本",
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: controller.canSendNewAccountCredentials
+                        ? controller.syncXiaohongshuAccount
+                        : null,
+                  ),
                 ),
               ],
             ),

@@ -15,9 +15,11 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/signalr_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -37,10 +39,70 @@ class RemoteSyncRoomController extends BaseController {
   StreamSubscription? _onBiliAccountSubscription;
   StreamSubscription? _onDouyinAccountSubscription;
   StreamSubscription? _onKuaishouAccountSubscription;
+  StreamSubscription? _onDouyuAccountSubscription;
+  StreamSubscription? _onXiaohongshuAccountSubscription;
   var currentRoomId = "--".obs;
   RxList<RoomUser> roomUsers = <RoomUser>[].obs;
   bool get hasValidRoomId =>
       currentRoomId.value.trim().length == SignalRService.kRoomIdLength;
+
+  bool get canSendNewAccountCredentials => supportsNewAccountTargets(
+        roomUsers,
+        selfConnectionId: signalR.hubConnection.connectionId,
+      );
+
+  static bool supportsNewAccountTargets(
+    Iterable<RoomUser> users, {
+    String? selfConnectionId,
+  }) {
+    final selfId = selfConnectionId?.trim() ?? "";
+    final receivers = users.where((user) {
+      if (user.isSelf || (selfId.isNotEmpty && user.connectionId == selfId)) {
+        return false;
+      }
+      return true;
+    }).toList();
+    return receivers.isNotEmpty &&
+        receivers.every(
+          (user) =>
+              const {"tv", "windows"}
+                  .contains(user.platform.trim().toLowerCase()) &&
+              user.app.trim() == "Simple Live TV" &&
+              _isVersionAtLeast(user.version, "1.8.0"),
+        );
+  }
+
+  static bool _isVersionAtLeast(String version, String minimum) {
+    List<int>? parse(String value) {
+      final numbers = <int>[];
+      for (final part in value.trim().split(".").take(3)) {
+        final match = RegExp(r"^\d+").firstMatch(part);
+        if (match == null) {
+          return null;
+        }
+        numbers.add(int.parse(match.group(0)!));
+      }
+      if (numbers.length < 2) {
+        return null;
+      }
+      while (numbers.length < 3) {
+        numbers.add(0);
+      }
+      return numbers;
+    }
+
+    final current = parse(version);
+    final required = parse(minimum);
+    if (current == null || required == null) {
+      return false;
+    }
+    for (var index = 0; index < current.length; index++) {
+      if (current[index] != required[index]) {
+        return current[index] > required[index];
+      }
+    }
+    return true;
+  }
 
   Timer? _timer;
 
@@ -228,6 +290,13 @@ class RemoteSyncRoomController extends BaseController {
         signalR.onKuaishouAccountStream.listen((data) {
       onReceiveKuaishouAccount(data);
     });
+    _onDouyuAccountSubscription = signalR.onDouyuAccountStream.listen((data) {
+      onReceiveDouyuAccount(data);
+    });
+    _onXiaohongshuAccountSubscription =
+        signalR.onXiaohongshuAccountStream.listen((data) {
+      onReceiveXiaohongshuAccount(data);
+    });
   }
 
   SyncProgress _stageProgress(String stage, RoomSyncPayload payload) {
@@ -403,6 +472,42 @@ class RemoteSyncRoomController extends BaseController {
     } catch (e) {
       SmartDialog.showToast("同步失败:$e");
       Log.logPrint(e);
+    }
+  }
+
+  void onReceiveDouyuAccount(RoomSyncPayload payload) async {
+    try {
+      final raw = json.decode(payload.content);
+      final cookie = SyncAccountType.readCredentialCookie(
+        raw,
+        accountType: SyncAccountType.douyu,
+      );
+      if (cookie == null ||
+          !await DouyuAccountService.instance.setCookie(cookie)) {
+        throw const FormatException("斗鱼账号凭据无效");
+      }
+      SmartDialog.showToast('已同步斗鱼账号');
+    } catch (e) {
+      SmartDialog.showToast("同步斗鱼账号失败，请重试");
+      Log.w("房间斗鱼账号导入失败：${e.runtimeType}");
+    }
+  }
+
+  void onReceiveXiaohongshuAccount(RoomSyncPayload payload) async {
+    try {
+      final raw = json.decode(payload.content);
+      final cookie = SyncAccountType.readCredentialCookie(
+        raw,
+        accountType: SyncAccountType.xiaohongshu,
+      );
+      if (cookie == null ||
+          !await XiaohongshuAccountService.instance.setCookie(cookie)) {
+        throw const FormatException("小红书账号凭据无效");
+      }
+      SmartDialog.showToast('已同步小红书账号');
+    } catch (e) {
+      SmartDialog.showToast("同步小红书账号失败，请重试");
+      Log.w("房间小红书账号导入失败：${e.runtimeType}");
     }
   }
 
@@ -608,6 +713,78 @@ class RemoteSyncRoomController extends BaseController {
     }
   }
 
+  void syncDouyuAccount() async {
+    if (!canSendNewAccountCredentials) {
+      SmartDialog.showToast("需所有已连接设备均为 Simple Live TV 1.8.0 或更新版本");
+      return;
+    }
+    final account = DouyuAccountService.instance;
+    if (!account.hasCookie.value) {
+      SmartDialog.showToast("未配置斗鱼 Cookie");
+      return;
+    }
+    await _sendNewAccountCredentials(
+      accountType: SyncAccountType.douyu,
+      cookie: account.cookie,
+      action: "SendDouyuAccount",
+      label: "斗鱼",
+    );
+  }
+
+  void syncXiaohongshuAccount() async {
+    if (!canSendNewAccountCredentials) {
+      SmartDialog.showToast("需所有已连接设备均为 Simple Live TV 1.8.0 或更新版本");
+      return;
+    }
+    final account = XiaohongshuAccountService.instance;
+    if (!account.hasCookie.value) {
+      SmartDialog.showToast("未配置小红书 Cookie");
+      return;
+    }
+    await _sendNewAccountCredentials(
+      accountType: SyncAccountType.xiaohongshu,
+      cookie: account.cookie,
+      action: "SendXiaohongshuAccount",
+      label: "小红书",
+    );
+  }
+
+  Future<void> _sendNewAccountCredentials({
+    required String accountType,
+    required String cookie,
+    required String action,
+    required String label,
+  }) async {
+    try {
+      if (roomUsers.length <= 1) {
+        SmartDialog.showToast("无设备连接");
+        return;
+      }
+      SyncProgressDialog.show(SyncProgress(stage: "发送$label账号"));
+      final response = await signalR.sendContent(
+        roomName: currentRoomId.value,
+        action: action,
+        overlay: true,
+        content: json.encode(
+          SyncAccountType.credentialsEnvelope(
+            accountType: accountType,
+            cookie: cookie,
+          ),
+        ),
+      );
+      if (response.isSuccess) {
+        SmartDialog.showToast("已发送$label账号");
+      } else {
+        SmartDialog.showToast("发送失败：${response.message}");
+      }
+    } catch (e) {
+      SmartDialog.showToast("同步$label账号失败：${exceptionToString(e)}");
+      Log.w("房间$label账号发送失败：${e.runtimeType}");
+    } finally {
+      SyncProgressDialog.dismiss();
+    }
+  }
+
   void showQRInfo() {
     if (!hasValidRoomId) {
       SmartDialog.showToast("房间号还未创建完成");
@@ -651,6 +828,8 @@ class RemoteSyncRoomController extends BaseController {
     _onBiliAccountSubscription?.cancel();
     _onDouyinAccountSubscription?.cancel();
     _onKuaishouAccountSubscription?.cancel();
+    _onDouyuAccountSubscription?.cancel();
+    _onXiaohongshuAccountSubscription?.cancel();
     signalR.dispose();
     super.onClose();
   }

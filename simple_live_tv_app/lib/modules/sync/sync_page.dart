@@ -114,10 +114,24 @@ class SyncPage extends GetView<SyncController> {
                         () => Visibility(
                           visible: controller.state.value ==
                               SignalRConnectionState.disconnected,
-                          child: Text(
-                            '连接已断开，请尝试重进此页面',
-                            style: AppStyle.textStyleWhite,
-                            textAlign: TextAlign.center,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                controller.connectionError.value.isEmpty
+                                    ? '连接已断开'
+                                    : controller.connectionError.value,
+                                style: AppStyle.textStyleWhite,
+                                textAlign: TextAlign.center,
+                              ),
+                              AppStyle.vGap12,
+                              HighlightButton(
+                                focusNode: AppFocusNode(),
+                                iconData: Icons.refresh,
+                                text: "重试连接",
+                                onTap: controller.retryConnection,
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -138,9 +152,22 @@ class SyncPage extends GetView<SyncController> {
                           visible: controller.state.value ==
                               SignalRConnectionState.connected,
                           child: Text(
-                            "${controller.countDown}秒后将自动关闭服务\n请扫描二维码或输入房间号进行连接",
+                            "${controller.countDown}秒后将自动关闭服务\n请扫描二维码或输入房间号进行连接\n支持接收关注、历史、屏蔽词及B站/抖音/快手/斗鱼/小红书账号",
                             style: AppStyle.textStyleWhite,
                             textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                      Obx(
+                        () => Visibility(
+                          visible: controller.latestResult.value.isNotEmpty,
+                          child: Padding(
+                            padding: EdgeInsets.only(top: 12.w),
+                            child: Text(
+                              controller.latestResult.value,
+                              style: AppStyle.subTextStyleWhite,
+                              textAlign: TextAlign.center,
+                            ),
                           ),
                         ),
                       ),

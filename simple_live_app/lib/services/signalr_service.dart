@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
@@ -72,6 +73,16 @@ class SignalRService {
       StreamController<RoomSyncPayload>.broadcast();
   Stream<RoomSyncPayload> get onKuaishouAccountStream =>
       _onKuaishouAccountStreamController.stream;
+
+  final _onDouyuAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onDouyuAccountStream =>
+      _onDouyuAccountStreamController.stream;
+
+  final _onXiaohongshuAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onXiaohongshuAccountStream =>
+      _onXiaohongshuAccountStreamController.stream;
 
   final _onRoomDestroyedStreamController = StreamController<String>.broadcast();
   Stream<String> get onRoomDestroyedStream =>
@@ -169,9 +180,8 @@ class SignalRService {
     }
     final stopwatch = Stopwatch()..start();
     try {
-      final request = await client
-          .getUrl(healthUrl)
-          .timeout(const Duration(seconds: 5));
+      final request =
+          await client.getUrl(healthUrl).timeout(const Duration(seconds: 5));
       final response =
           await request.close().timeout(const Duration(seconds: 5));
       await response.drain<void>();
@@ -205,7 +215,8 @@ class SignalRService {
     if (error is TimeoutException || text.contains("TimeoutException")) {
       return "连接超时";
     }
-    if (text.contains("SocketException") || text.contains("HandshakeException")) {
+    if (text.contains("SocketException") ||
+        text.contains("HandshakeException")) {
       return "无法连接";
     }
     return text.replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
@@ -297,6 +308,8 @@ class SignalRService {
         "content": content,
         if (action == "SendDouyinAccount") "accountType": "douyin",
         if (action == "SendKuaishouAccount") "accountType": "kuaishou",
+        if (action == "SendDouyuAccount") "accountType": "douyu",
+        if (action == "SendXiaohongshuAccount") "accountType": "xiaohongshu",
         ...extraPayload,
       },
       successTypes: const {"ack"},
@@ -317,6 +330,8 @@ class SignalRService {
     _onBiliAccountStreamController.close();
     _onDouyinAccountStreamController.close();
     _onKuaishouAccountStreamController.close();
+    _onDouyuAccountStreamController.close();
+    _onXiaohongshuAccountStreamController.close();
     _onRoomDestroyedStreamController.close();
     _onRoomUserUpdatedStreamController.close();
     _stopHeartbeat();
@@ -453,28 +468,35 @@ class SignalRService {
   // types can use that stable transport without breaking older servers.
   void _emitAccountPayload(Map<String, dynamic> message) {
     final payload = message["payload"];
-    var accountType = payload is Map
-        ? payload["accountType"]?.toString().toLowerCase()
-        : null;
-    if (accountType == null || accountType.isEmpty) {
+    Object? rawAccountType = payload is Map ? payload["accountType"] : null;
+    if (rawAccountType == null || rawAccountType.toString().trim().isEmpty) {
       final content = payload is Map ? payload["content"] : null;
       if (content is String) {
         try {
           final decoded = jsonDecode(content);
           if (decoded is Map) {
-            accountType = decoded["accountType"]?.toString().toLowerCase();
+            rawAccountType = decoded["accountType"];
           }
         } catch (_) {
           // The normal account handlers report malformed content.
         }
       }
     }
+    final accountType = SyncAccountType.resolve(rawAccountType);
+    if (accountType == null) {
+      return;
+    }
     final target = switch (accountType) {
       "douyin" => _onDouyinAccountStreamController,
       "kuaishou" => _onKuaishouAccountStreamController,
-      _ => _onBiliAccountStreamController,
+      "douyu" => _onDouyuAccountStreamController,
+      "xiaohongshu" => _onXiaohongshuAccountStreamController,
+      "bilibili" => _onBiliAccountStreamController,
+      _ => null,
     };
-    _emitBoolString(message, target);
+    if (target != null) {
+      _emitBoolString(message, target);
+    }
   }
 
   void _handleSocketError(Object error, StackTrace stackTrace) {
@@ -609,6 +631,9 @@ class SignalRService {
         return "sendBiliAccount";
       case "SendKuaishouAccount":
         return "sendBiliAccount";
+      case "SendDouyuAccount":
+      case "SendXiaohongshuAccount":
+        return "sendBiliAccount";
       default:
         return action;
     }
@@ -660,7 +685,8 @@ class SyncServerPreset {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) || (other is SyncServerPreset && other.wsUrl == wsUrl);
+      identical(this, other) ||
+      (other is SyncServerPreset && other.wsUrl == wsUrl);
 
   @override
   int get hashCode => wsUrl.hashCode;
@@ -710,7 +736,8 @@ class RoomSyncPayload {
         try {
           final decoded = jsonDecode(content);
           if (decoded is Map) {
-            accountType = decoded["accountType"]?.toString().toLowerCase() ?? "";
+            accountType =
+                decoded["accountType"]?.toString().toLowerCase() ?? "";
           }
         } catch (_) {}
       }

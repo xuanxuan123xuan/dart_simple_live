@@ -15,8 +15,10 @@ import 'package:simple_live_tv_app/app/log.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/bulk_data_import_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
 import 'package:simple_live_tv_app/services/profile_backup_service.dart';
+import 'package:simple_live_tv_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_tv_app/widgets/sync_progress_dialog.dart';
 import 'package:udp/udp.dart';
 import 'package:uuid/uuid.dart';
@@ -168,7 +170,9 @@ class SyncService extends GetxService {
         ..post('/sync/blocked_word', _syncBlockedWordRequest)
         ..post('/sync/profile', _syncProfileRequest)
         ..post('/sync/account/bilibili', _syncBiliAccountRequest)
-        ..post('/sync/account/douyin', _syncDouyinAccountRequest);
+        ..post('/sync/account/douyin', _syncDouyinAccountRequest)
+        ..post('/sync/account/douyu', _syncDouyuAccountRequest)
+        ..post('/sync/account/xiaohongshu', _syncXiaohongshuAccountRequest);
 
       server = await shelf_io.serve(
         serverRouter,
@@ -228,6 +232,13 @@ class SyncService extends GetxService {
       'version': Utils.packageInfo.version,
       'address': ipAddress.value,
       'port': httpPort,
+      'supportedAccountTypes': const [
+        'bilibili',
+        'douyin',
+        'kuaishou',
+        'douyu',
+        'xiaohongshu',
+      ],
     });
   }
 
@@ -274,7 +285,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '数据无效或同步失败，请检查后重试',
       });
     }
   }
@@ -314,7 +325,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '数据无效或同步失败，请检查后重试',
       });
     }
   }
@@ -362,7 +373,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '数据无效或同步失败，请检查后重试',
       });
     }
   }
@@ -409,7 +420,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '数据无效或同步失败，请检查后重试',
       });
     }
   }
@@ -434,7 +445,7 @@ class SyncService extends GetxService {
       EventBus.instance.emit(Constant.kUpdateHistory, 0);
 
       _finishSyncImport(
-        successMessage: '已同步配置包',
+        successMessage: '已同步配置包：${summary.message}',
       );
       return toJsonResponse({
         'status': true,
@@ -444,7 +455,7 @@ class SyncService extends GetxService {
       SyncProgressDialog.dismiss();
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '数据无效或同步失败，请检查后重试',
       });
     }
   }
@@ -452,7 +463,7 @@ class SyncService extends GetxService {
   Future<shelf.Response> _syncBiliAccountRequest(shelf.Request request) async {
     try {
       final body = await request.readAsString();
-      Log.d('_syncBiliAccountRequest: $body');
+      Log.d('_syncBiliAccountRequest');
       final jsonBody = json.decode(body);
       if (jsonBody is! Map) {
         throw const FormatException("账号数据格式不是对象");
@@ -473,7 +484,7 @@ class SyncService extends GetxService {
     } catch (e) {
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '数据无效或同步失败，请检查后重试',
       });
     }
   }
@@ -503,7 +514,57 @@ class SyncService extends GetxService {
     } catch (e) {
       return toJsonResponse({
         'status': false,
-        'message': e.toString(),
+        'message': '数据无效或同步失败，请检查后重试',
+      });
+    }
+  }
+
+  Future<shelf.Response> _syncDouyuAccountRequest(
+    shelf.Request request,
+  ) async {
+    try {
+      final jsonBody = json.decode(await request.readAsString());
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      final cookie = jsonBody['cookie']?.toString() ?? '';
+      if (cookie.trim().isEmpty) {
+        throw const FormatException("账号 Cookie 为空");
+      }
+      if (!await DouyuAccountService.instance.setCookie(cookie)) {
+        throw const FormatException("斗鱼 Cookie 格式无效");
+      }
+      SmartDialog.showToast('已同步斗鱼账号');
+      return toJsonResponse({'status': true, 'message': 'success'});
+    } catch (e) {
+      return toJsonResponse({
+        'status': false,
+        'message': '数据无效或同步失败，请检查后重试',
+      });
+    }
+  }
+
+  Future<shelf.Response> _syncXiaohongshuAccountRequest(
+    shelf.Request request,
+  ) async {
+    try {
+      final jsonBody = json.decode(await request.readAsString());
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      final cookie = jsonBody['cookie']?.toString() ?? '';
+      if (cookie.trim().isEmpty) {
+        throw const FormatException("账号 Cookie 为空");
+      }
+      if (!await XiaohongshuAccountService.instance.setCookie(cookie)) {
+        throw const FormatException("小红书 Cookie 格式无效");
+      }
+      SmartDialog.showToast('已同步小红书账号');
+      return toJsonResponse({'status': true, 'message': 'success'});
+    } catch (e) {
+      return toJsonResponse({
+        'status': false,
+        'message': '数据无效或同步失败，请检查后重试',
       });
     }
   }

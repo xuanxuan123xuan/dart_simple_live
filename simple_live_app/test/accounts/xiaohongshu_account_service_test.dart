@@ -8,11 +8,20 @@ import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/services/bilibili_account_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
+
+class _OfflineDouyuAccount extends DouyuAccountService {
+  @override
+  // The backup fixture exports an empty account without lifecycle timers.
+  // ignore: must_call_super
+  void onInit() {}
+}
 
 void main() {
   late Directory hiveDirectory;
@@ -34,6 +43,8 @@ void main() {
     Get.put<LocalStorageService>(storage);
     account = Get.put(XiaohongshuAccountService());
     Get.put(KuaishouAccountService());
+    Get.put(BiliBiliAccountService());
+    Get.put<DouyuAccountService>(_OfflineDouyuAccount());
   });
 
   tearDown(() async {
@@ -183,5 +194,64 @@ void main() {
       'xiaohongshu_session=backup-value',
     );
     expect(site.cookie, 'xiaohongshu_session=backup-value');
+  });
+
+  test('honors the selected account list and preserves blank account entries',
+      () async {
+    final bilibili = BiliBiliAccountService.instance;
+    bilibili.setCookie('bili=existing');
+    await account.setCookie('xiaohongshu_session=existing');
+
+    final summary = await ProfileBackupService().importProfileMap(
+      {
+        'schema': ProfileBackupService.schema,
+        'schemaVersion': ProfileBackupService.schemaVersion,
+        'accounts': {
+          'items': [
+            {'siteId': Constant.kBiliBili, 'cookie': 'bili=incoming'},
+            {
+              'siteId': Constant.kXiaohongshu,
+              'cookie': 'xiaohongshu_session=incoming',
+            },
+          ],
+        },
+      },
+      options: const ProfileImportOptions(
+        settings: false,
+        accounts: true,
+        accountSiteIds: {Constant.kXiaohongshu},
+        shields: false,
+        shieldPresets: false,
+        follows: false,
+        histories: false,
+      ),
+    );
+
+    expect(summary.accounts, 1);
+    expect(bilibili.cookie, 'bili=existing');
+    expect(account.cookie, 'xiaohongshu_session=incoming');
+
+    await ProfileBackupService().importProfileMap(
+      {
+        'schema': ProfileBackupService.schema,
+        'schemaVersion': ProfileBackupService.schemaVersion,
+        'accounts': {
+          'items': [
+            {'siteId': Constant.kXiaohongshu, 'cookie': ''},
+          ],
+        },
+      },
+      options: const ProfileImportOptions(
+        settings: false,
+        accounts: true,
+        accountSiteIds: {Constant.kXiaohongshu},
+        shields: false,
+        shieldPresets: false,
+        follows: false,
+        histories: false,
+      ),
+    );
+
+    expect(account.cookie, 'xiaohongshu_session=incoming');
   });
 }

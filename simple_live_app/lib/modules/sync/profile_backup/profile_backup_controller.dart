@@ -47,14 +47,14 @@ class ProfileBackupController extends BaseController {
   }
 
   ProfileExportOptions get exportOptions => ProfileExportOptions(
-    settings: exportSettings.value,
-    follows: exportFollows.value,
-    histories: exportHistories.value,
-    shields: exportShields.value,
-    shieldPresets: exportShieldPresets.value,
-    accounts: exportAccounts.value,
-    upstreamMode: exportUpstreamMode.value,
-  );
+        settings: exportSettings.value,
+        follows: exportFollows.value,
+        histories: exportHistories.value,
+        shields: exportShields.value,
+        shieldPresets: exportShieldPresets.value,
+        accounts: exportAccounts.value,
+        upstreamMode: exportUpstreamMode.value,
+      );
 
   void setUpstreamMode(UpstreamExportMode mode) {
     exportUpstreamMode.value = mode;
@@ -156,8 +156,8 @@ class ProfileBackupController extends BaseController {
       final ProfileInspection inspection;
       try {
         inspection = ProfileBackupService.instance.inspectProfileJson(content);
-      } on FormatException catch (e) {
-        SmartDialog.showToast(e.message);
+      } on FormatException {
+        SmartDialog.showToast("配置包格式无效，请检查文件后重试");
         return;
       }
       if (inspection.isEmpty) {
@@ -174,19 +174,19 @@ class ProfileBackupController extends BaseController {
       }
 
       SyncProgressDialog.show(const SyncProgress(stage: "正在导入配置包"));
-      final summary = await ProfileBackupService.instance
-          .importInspectedProfile(
-            inspection,
-            overwrite: decision.overwrite,
-            options: decision.options,
-            onProgress: SyncProgressDialog.update,
-          );
+      final summary =
+          await ProfileBackupService.instance.importInspectedProfile(
+        inspection,
+        overwrite: decision.overwrite,
+        options: decision.options,
+        onProgress: SyncProgressDialog.update,
+      );
       SyncProgressDialog.dismiss();
       SmartDialog.showToast("导入完成：${summary.message}");
     } catch (e) {
       SyncProgressDialog.dismiss();
-      Log.logPrint(e);
-      SmartDialog.showToast("导入失败：$e");
+      Log.w("配置包导入失败：${e.runtimeType}");
+      SmartDialog.showToast("配置包无效或导入失败，请检查文件后重试");
     }
   }
 
