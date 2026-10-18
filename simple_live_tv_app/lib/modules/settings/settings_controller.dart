@@ -10,7 +10,9 @@ import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
+import 'package:simple_live_tv_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_tv_app/services/signalr_service.dart';
 import 'package:simple_live_tv_app/services/tv_app_update_service.dart';
 import 'package:simple_live_tv_app/modules/settings/tv_update_dialog.dart';
@@ -185,6 +187,122 @@ class SettingsController extends BaseController
         break;
       default:
         break;
+    }
+  }
+
+  Future<void> douyuTap() async {
+    final account = DouyuAccountService.instance;
+    final action = await Utils.showOptionDialog<String>(
+      [
+        "粘贴或编辑 Cookie",
+        if (account.hasCookie.value) "清除 Cookie",
+      ],
+      "粘贴或编辑 Cookie",
+      title: "斗鱼账号",
+    );
+    switch (action) {
+      case "粘贴或编辑 Cookie":
+        await _editDouyuCookie();
+        break;
+      case "清除 Cookie":
+        final confirmed = await Utils.showAlertDialog(
+          "确定要清除斗鱼 Cookie 并恢复匿名观看吗？",
+          title: "清除配置",
+        );
+        if (!confirmed) return;
+        try {
+          await account.clearCookie();
+        } catch (_) {
+          SmartDialog.showToast("斗鱼 Cookie 清除失败，请重试");
+          return;
+        }
+        SmartDialog.showToast("已清除斗鱼 Cookie");
+        update();
+        break;
+      default:
+        break;
+    }
+  }
+
+  Future<void> _editDouyuCookie() async {
+    final account = DouyuAccountService.instance;
+    final value = await Utils.showEditTextDialog(
+      account.cookie,
+      title: "斗鱼 Cookie",
+      hintText: "粘贴完整斗鱼 Cookie；留空则恢复匿名观看",
+      maxLines: 6,
+    );
+    if (value == null) return;
+    try {
+      final saved = await account.setCookie(value);
+      if (!saved) {
+        SmartDialog.showToast("Cookie 格式无效");
+        return;
+      }
+      SmartDialog.showToast(
+        account.cookie.isEmpty ? "已清除斗鱼 Cookie" : "斗鱼 Cookie 已保存",
+      );
+      update();
+    } catch (_) {
+      SmartDialog.showToast("斗鱼 Cookie 保存失败");
+    }
+  }
+
+  Future<void> xiaohongshuTap() async {
+    final account = XiaohongshuAccountService.instance;
+    final action = await Utils.showOptionDialog<String>(
+      [
+        "粘贴或编辑 Cookie",
+        if (account.hasCookie.value) "清除 Cookie",
+      ],
+      "粘贴或编辑 Cookie",
+      title: "小红书账号",
+    );
+    switch (action) {
+      case "粘贴或编辑 Cookie":
+        await _editXiaohongshuCookie();
+        break;
+      case "清除 Cookie":
+        final confirmed = await Utils.showAlertDialog(
+          "确定要清除小红书 Cookie 吗？公开直播仍可匿名播放。",
+          title: "清除配置",
+        );
+        if (!confirmed) return;
+        try {
+          await account.clearCookie();
+        } catch (_) {
+          SmartDialog.showToast("小红书 Cookie 清除失败，请重试");
+          return;
+        }
+        SmartDialog.showToast("已清除小红书 Cookie");
+        update();
+        break;
+      default:
+        break;
+    }
+  }
+
+  Future<void> _editXiaohongshuCookie() async {
+    final account = XiaohongshuAccountService.instance;
+    final value = await Utils.showEditTextDialog(
+      account.cookie,
+      title: "小红书 Cookie",
+      hintText: "粘贴完整 Cookie；留空后仍可匿名观看公开直播",
+      maxLines: 6,
+    );
+    if (value == null) return;
+    try {
+      final saved = await account.setCookie(value);
+      if (!saved) {
+        SmartDialog.showToast("Cookie 格式无效");
+        return;
+      }
+      SmartDialog.showToast(
+        account.cookie.isEmpty ? "已清除小红书 Cookie" : "小红书 Cookie 已保存",
+      );
+      update();
+    } catch (_) {
+      SmartDialog.showToast("小红书 Cookie 保存失败，请重试");
     }
   }
 
@@ -416,10 +534,10 @@ class SettingsController extends BaseController
       slot == KuaishouAccountSlot.primary ? "主账号" : "备用账号";
 
   String _kuaishouModeName(KuaishouAccountPoolMode mode) => switch (mode) {
-    KuaishouAccountPoolMode.primary => "主账号",
-    KuaishouAccountPoolMode.secondary => "备用账号",
-    KuaishouAccountPoolMode.anonymous => "匿名模式",
-  };
+        KuaishouAccountPoolMode.primary => "主账号",
+        KuaishouAccountPoolMode.secondary => "备用账号",
+        KuaishouAccountPoolMode.anonymous => "匿名模式",
+      };
 }
 
 String normalizeKuaishouCookieInput(String input) {

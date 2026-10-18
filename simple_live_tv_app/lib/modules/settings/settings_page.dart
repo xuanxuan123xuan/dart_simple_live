@@ -12,8 +12,10 @@ import 'package:simple_live_tv_app/modules/settings/settings_controller.dart';
 import 'package:simple_live_tv_app/modules/settings/follow_update_interval_options.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
+import 'package:simple_live_tv_app/services/xiaohongshu_account_service.dart';
 import 'package:simple_live_tv_app/services/mpv_options_service.dart';
 import 'package:simple_live_tv_app/services/signalr_service.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
@@ -167,9 +169,8 @@ class SettingsPage extends GetView<SettingsController> {
             autofocus: controller.danmakuEmojiFoucsNode.isFoucsed.value,
             title: "显示弹幕表情",
             items: const {0: "关", 1: "开"},
-            value: AppSettingsController.instance.danmuRenderEmoji.value
-                ? 1
-                : 0,
+            value:
+                AppSettingsController.instance.danmuRenderEmoji.value ? 1 : 0,
             onChanged: (e) {
               AppSettingsController.instance.setDanmuRenderEmoji(e == 1);
             },
@@ -210,9 +211,8 @@ class SettingsPage extends GetView<SettingsController> {
             autofocus: controller.compatibleModeFocusNode.isFoucsed.value,
             title: "兼容模式",
             items: const {0: "关", 1: "开"},
-            value: AppSettingsController.instance.playerCompatMode.value
-                ? 1
-                : 0,
+            value:
+                AppSettingsController.instance.playerCompatMode.value ? 1 : 0,
             onChanged: (e) {
               AppSettingsController.instance.setPlayerCompatMode(
                 e == 1 ? true : false,
@@ -310,11 +310,8 @@ class SettingsPage extends GetView<SettingsController> {
             foucsNode: AppFocusNode(),
             title: "播放失败后自动换下一个直播间",
             items: const {0: "关", 1: "开"},
-            value:
-                AppSettingsController
-                    .instance
-                    .autoSwitchNextOnPlaybackFailure
-                    .value
+            value: AppSettingsController
+                    .instance.autoSwitchNextOnPlaybackFailure.value
                 ? 1
                 : 0,
             onChanged: (e) {
@@ -351,6 +348,19 @@ class SettingsPage extends GetView<SettingsController> {
           ),
         ),
         AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
+            foucsNode: AppFocusNode(),
+            title: "网络波动时自动降低清晰度",
+            items: const {0: "关", 1: "开"},
+            value:
+                AppSettingsController.instance.autoQualityDegrade.value ? 1 : 0,
+            onChanged: (value) {
+              AppSettingsController.instance.setAutoQualityDegrade(value == 1);
+            },
+          ),
+        ),
+        AppStyle.vGap24,
       ],
     );
   }
@@ -376,6 +386,33 @@ class SettingsPage extends GetView<SettingsController> {
             value: AppSettingsController.instance.effectiveMultiRoomGap,
             onChanged: (e) {
               AppSettingsController.instance.setMultiRoomGap(e);
+            },
+          ),
+        ),
+        if (Platform.isAndroid) ...[
+          AppStyle.vGap24,
+          Obx(
+            () => SettingsItemWidget(
+              foucsNode: AppFocusNode(),
+              title: "Android 同时播放路数",
+              items: const {2: "2路", 4: "4路"},
+              value: AppSettingsController.instance.multiRoomMaxRooms.value,
+              onChanged: (value) {
+                AppSettingsController.instance.setMultiRoomMaxRooms(value);
+              },
+            ),
+          ),
+        ],
+        AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
+            foucsNode: AppFocusNode(),
+            title: "多屏混合播放声音",
+            items: const {0: "关", 1: "开"},
+            value:
+                AppSettingsController.instance.multiRoomMixAudio.value ? 1 : 0,
+            onChanged: (value) {
+              AppSettingsController.instance.setMultiRoomMixAudio(value == 1);
             },
           ),
         ),
@@ -688,8 +725,8 @@ class SettingsPage extends GetView<SettingsController> {
             items: const {0: "关", 1: "开"},
             value:
                 AppSettingsController.instance.liveEventFlowOverlayEnable.value
-                ? 1
-                : 0,
+                    ? 1
+                    : 0,
             onChanged: (e) {
               AppSettingsController.instance.setLiveEventFlowOverlayEnable(
                 e == 1,
@@ -712,8 +749,7 @@ class SettingsPage extends GetView<SettingsController> {
               120: "120秒",
             },
             value: AppSettingsController
-                .instance
-                .effectiveLiveEventFlowWindowSeconds,
+                .instance.effectiveLiveEventFlowWindowSeconds,
             onChanged: (e) {
               AppSettingsController.instance.setLiveEventFlowWindowSeconds(e);
             },
@@ -734,8 +770,7 @@ class SettingsPage extends GetView<SettingsController> {
               60: "60秒",
             },
             value: AppSettingsController
-                .instance
-                .effectiveLiveEventFlowDisplaySeconds,
+                .instance.effectiveLiveEventFlowDisplaySeconds,
             onChanged: (e) {
               AppSettingsController.instance.setLiveEventFlowDisplaySeconds(e);
             },
@@ -770,9 +805,8 @@ class SettingsPage extends GetView<SettingsController> {
             autofocus: controller.danmakuDedupeFoucsNode.isFoucsed.value,
             title: "重复过滤",
             items: const {0: "关", 1: "开"},
-            value: AppSettingsController.instance.danmuDedupeEnable.value
-                ? 1
-                : 0,
+            value:
+                AppSettingsController.instance.danmuDedupeEnable.value ? 1 : 0,
             onChanged: (e) {
               AppSettingsController.instance.setDanmuDedupeEnable(e == 1);
             },
@@ -878,18 +912,18 @@ class SettingsPage extends GetView<SettingsController> {
           ),
         ),
         AppStyle.vGap24,
-        HighlightListTile(
-          focusNode: AppFocusNode(),
-          title: "斗鱼账号",
-          subtitle: "无需登录",
-          leading: Image.asset(
-            "assets/images/douyu.png",
-            width: 64.w,
-            height: 64.w,
+        Obx(
+          () => HighlightListTile(
+            focusNode: AppFocusNode(),
+            title: "斗鱼账号",
+            subtitle: DouyuAccountService.instance.summary,
+            leading: Image.asset(
+              "assets/images/douyu.png",
+              width: 64.w,
+              height: 64.w,
+            ),
+            onTap: controller.douyuTap,
           ),
-          onTap: () {
-            SmartDialog.showToast("无需登录斗鱼，您可以直接观看直播");
-          },
         ),
         AppStyle.vGap24,
         HighlightListTile(
@@ -936,6 +970,22 @@ class SettingsPage extends GetView<SettingsController> {
             onTap: controller.kuaishouTap,
           );
         }),
+        AppStyle.vGap24,
+        Obx(
+          () => HighlightListTile(
+            focusNode: AppFocusNode(),
+            title: "小红书账号",
+            subtitle: XiaohongshuAccountService.instance.hasCookie.value
+                ? "已配置可选 Cookie；匿名播放仍可用"
+                : "未配置 Cookie；公开直播可匿名播放",
+            leading: Image.asset(
+              "assets/images/xiaohongshu.png",
+              width: 64.w,
+              height: 64.w,
+            ),
+            onTap: controller.xiaohongshuTap,
+          ),
+        ),
       ],
     );
   }
