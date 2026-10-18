@@ -121,13 +121,7 @@ class AppLiveCategory extends LiveCategory {
     required super.children,
     required this.site,
   }) : childrenExt = children
-            .map((e) => LiveSubCategoryExt(
-                  id: e.id,
-                  name: e.name,
-                  parentId: e.parentId,
-                  pic: e.pic,
-                  site: site,
-                ))
+            .map((e) => LiveSubCategoryExt.fromLiveSubCategory(e, site))
             .toList() {
     showAll.value = children.length < 19;
   }
@@ -153,7 +147,24 @@ class LiveSubCategoryExt extends LiveSubCategory {
     required super.parentId,
     required this.site,
     super.pic,
+    super.children,
   });
+
+  factory LiveSubCategoryExt.fromLiveSubCategory(
+    LiveSubCategory category,
+    Site site,
+  ) {
+    return LiveSubCategoryExt(
+      id: category.id,
+      name: category.name,
+      parentId: category.parentId,
+      pic: category.pic,
+      children: category.children
+          .map((child) => LiveSubCategoryExt.fromLiveSubCategory(child, site))
+          .toList(growable: false),
+      site: site,
+    );
+  }
 
   final Site site;
   AppFocusNode focusNode = AppFocusNode();
