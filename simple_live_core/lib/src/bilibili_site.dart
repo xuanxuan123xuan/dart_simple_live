@@ -24,9 +24,26 @@ import 'package:simple_live_core/src/model/live_category_result.dart';
 class BiliBiliSite implements LiveSite {
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
-    return await getLiveStatus(roomId: roomId)
-        ? LiveStatusState.live
-        : LiveStatusState.offline;
+    try {
+      final response = await HttpClient.instance.getJson(
+        'https://api.live.bilibili.com/room/v1/Room/get_info',
+        queryParameters: {'room_id': roomId},
+        header: await getHeader(),
+      );
+      if (response is! Map || response['code'] != 0 || response['data'] is! Map) {
+        return LiveStatusState.unknown;
+      }
+      final status = int.tryParse('${response['data']['live_status']}');
+      return switch (status) {
+        1 => LiveStatusState.live,
+        0 || 2 => LiveStatusState.offline,
+        _ => LiveStatusState.unknown,
+      };
+    } on CoreCancelledError {
+      rethrow;
+    } catch (_) {
+      return LiveStatusState.unknown;
+    }
   }
 
   @override

@@ -48,8 +48,7 @@ class DouyinSearchAuthError extends CoreError {
 
 class DouyinSite implements LiveSite {
   static const _roomDataRetryDelay = Duration(milliseconds: 300);
-  static const _emptyRoomDataMessage =
-      "抖音暂未返回直播间数据，请稍后重试，或通过主播固定直播间链接重新进入";
+  static const _emptyRoomDataMessage = "抖音暂未返回直播间数据，请稍后重试，或通过主播固定直播间链接重新进入";
 
   DouyinSite({DouyinAbogusSigner? abogusSigner})
       : _abogusSigner = abogusSigner ?? DouyinSign.getAbogusUrl;
@@ -204,9 +203,18 @@ class DouyinSite implements LiveSite {
 
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
-    return await getLiveStatus(roomId: roomId)
-        ? LiveStatusState.live
-        : LiveStatusState.offline;
+    if (roomId.trim().isEmpty) return LiveStatusState.unknown;
+    try {
+      final status = await _tryGetLiveStatus(roomId.trim());
+      if (status != null) {
+        return status ? LiveStatusState.live : LiveStatusState.offline;
+      }
+      return (await getRoomDetail(roomId: roomId)).resolvedLiveStatus;
+    } on CoreCancelledError {
+      rethrow;
+    } catch (_) {
+      return LiveStatusState.unknown;
+    }
   }
 
   @override
@@ -2128,7 +2136,7 @@ class DouyinSite implements LiveSite {
     return null;
   }
 
-  Future<bool> _getLiveStatusByWebRid(String webRid) async {
+  Future<bool?> _getLiveStatusByWebRid(String webRid) async {
     final data = await _getRoomDataByApi(webRid);
     final roomList = data["data"];
     if (roomList is List && roomList.isNotEmpty) {
@@ -2159,9 +2167,9 @@ class DouyinSite implements LiveSite {
     return status == 2;
   }
 
-  bool _isDouyinLiveStatus(dynamic data) {
+  bool? _isDouyinLiveStatus(dynamic data) {
     if (data is! Map) {
-      return false;
+      return null;
     }
     final candidates = <dynamic>[
       data["status"],
@@ -2175,7 +2183,7 @@ class DouyinSite implements LiveSite {
         return parsed == 2;
       }
     }
-    return false;
+    return null;
   }
 
   int? _parseDouyinStatus(dynamic value) {

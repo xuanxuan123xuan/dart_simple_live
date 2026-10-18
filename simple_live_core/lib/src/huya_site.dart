@@ -15,9 +15,21 @@ class HuyaSite implements LiveSite {
 
   @override
   Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
-    return await getLiveStatus(roomId: roomId)
-        ? LiveStatusState.live
-        : LiveStatusState.offline;
+    try {
+      final response = await _getRoomInfo(roomId);
+      final room = response['roomInfo'];
+      final status =
+          room is Map ? int.tryParse('${room['eLiveStatus']}') : null;
+      return switch (status) {
+        2 => LiveStatusState.live,
+        0 || 1 => LiveStatusState.offline,
+        _ => LiveStatusState.unknown,
+      };
+    } on CoreCancelledError {
+      rethrow;
+    } catch (_) {
+      return LiveStatusState.unknown;
+    }
   }
 
   static const baseUrl = "https://m.huya.com/";
@@ -682,8 +694,7 @@ class HuyaSite implements LiveSite {
         roomId: roomId,
         avatar: item["game_avatarUrl180"]?.toString() ?? "",
         userName: item["game_nick"]?.toString() ?? "",
-        liveStatus:
-            item["gameLiveOn"] == true || item["gameLiveOn"] == 1,
+        liveStatus: item["gameLiveOn"] == true || item["gameLiveOn"] == 1,
       );
       items.add(anchorItem);
     }
@@ -750,10 +761,9 @@ class HuyaSite implements LiveSite {
     return _HuyaSearchResult(
       docs: parsedDocs,
       total: total,
-      continuation:
-          total > page * _huyaSearchPageSize
-              ? SearchContinuation.more
-              : SearchContinuation.done,
+      continuation: total > page * _huyaSearchPageSize
+          ? SearchContinuation.more
+          : SearchContinuation.done,
     );
   }
 
