@@ -218,6 +218,172 @@ void main() {
       },
     );
 
+    test('keeps normal output disabled across init, load, and resize',
+        () async {
+      final writes = <String>[];
+      final binding = _binding(writes);
+
+      await binding.setVideoEnabled(false);
+      await binding.onLoad();
+      expect(writes, isEmpty);
+      await binding.handleResize(
+        wid: 41,
+        width: 1280,
+        height: 720,
+        updateNotifiers: () {},
+      );
+      await binding.initialize({..._initialProperties, 'vid': 'auto'});
+
+      expect(writes, contains('vid=no'));
+      expect(writes.last, 'vid=no');
+
+      // The player can reset its selected track while loading new media.
+      writes.add('vid=auto');
+      await binding.setVideoEnabled(false);
+      expect(writes.sublist(writes.length - 2), ['vo=null', 'vid=no']);
+
+      await binding.onLoad();
+      expect(writes.sublist(writes.length - 2), ['vo=null', 'vid=no']);
+
+      final beforeResize = writes.length;
+      await binding.updateSurface(wid: 42, width: 1920, height: 1080);
+      expect(
+        writes.sublist(beforeResize),
+        [
+          'vo=null',
+          'android-surface-size=1920x1080',
+          'wid=42',
+          'vo=null',
+          'vid=no',
+        ],
+      );
+
+      await binding.setVideoEnabled(true);
+      expect(writes.sublist(writes.length - 2), ['vid=auto', 'vo=gpu']);
+    });
+
+    test('compatibility output keeps disabled video through attach and detach',
+        () async {
+      final writes = <String>[];
+      final binding = _binding(
+        writes,
+        vo: 'mediacodec_embed',
+        compatibilityMode: true,
+      );
+      await binding.handleResize(
+        wid: 51,
+        width: 1024,
+        height: 576,
+        updateNotifiers: () {},
+      );
+      await binding.initialize({..._initialProperties, 'vid': 'auto'});
+
+      await binding.setVideoEnabled(false);
+      expect(writes.sublist(writes.length - 2), ['vo=null', 'vid=no']);
+      await binding.onLoad();
+      expect(writes.sublist(writes.length - 2), ['vo=null', 'vid=no']);
+
+      var beforeSurfaceChange = writes.length;
+      await binding.updateSurface(wid: 52, width: 800, height: 450);
+      expect(
+        writes.sublist(beforeSurfaceChange),
+        [
+          'vo=null',
+          'android-surface-size=800x450',
+          'wid=52',
+          'vo=null',
+          'vid=no',
+        ],
+      );
+
+      await binding.setVideoEnabled(true);
+      expect(
+        writes.sublist(writes.length - 2),
+        ['vo=mediacodec_embed', 'vid=auto'],
+      );
+
+      beforeSurfaceChange = writes.length;
+      await binding.updateSurface(wid: 0, width: 800, height: 450);
+      expect(
+        writes.sublist(beforeSurfaceChange),
+        [
+          'vo=null',
+          'android-surface-size=800x450',
+          'wid=0',
+          'vo=null',
+          'vid=no',
+        ],
+      );
+    });
+
+    test('rolls a failed video toggle back to the previous output state',
+        () async {
+      final writes = <String>[];
+      var failNextDisable = false;
+      final binding = AndroidSurfaceBinding(
+        writeProperty: (key, value) async {
+          writes.add('$key=$value');
+          if (failNextDisable && key == 'vid' && value == 'no') {
+            failNextDisable = false;
+            throw StateError('synthetic toggle failure');
+          }
+        },
+        vo: 'gpu',
+        compatibilityMode: false,
+      );
+      await binding.handleResize(
+        wid: 61,
+        width: 960,
+        height: 540,
+        updateNotifiers: () {},
+      );
+      await binding.initialize(_initialProperties);
+      failNextDisable = true;
+
+      await expectLater(
+        binding.setVideoEnabled(false),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(writes.sublist(writes.length - 3), [
+        'vid=no',
+        'vid=auto',
+        'vo=gpu',
+      ]);
+      await binding.onLoad();
+      expect(writes.last, 'vo=gpu');
+    });
+
+    test('serializes video toggles with close and ignores late toggles',
+        () async {
+      final writes = <String>[];
+      final binding = _binding(writes);
+      await binding.initialize(_initialProperties);
+      await binding.updateSurface(wid: 71, width: 640, height: 360);
+
+      final enteredOperation = Completer<void>();
+      final releaseOperation = Completer<void>();
+      final exclusive = binding.runExclusive(() async {
+        enteredOperation.complete();
+        await releaseOperation.future;
+      });
+      await enteredOperation.future;
+      final disabling = binding.setVideoEnabled(false);
+      var cleanupCount = 0;
+      final closing = binding.close(() async {
+        cleanupCount++;
+      });
+
+      releaseOperation.complete();
+      await Future.wait([exclusive, disabling, closing]);
+      final writesAtClose = writes.length;
+      await binding.setVideoEnabled(true);
+
+      expect(writes.sublist(writesAtClose), isEmpty);
+      expect(writes.sublist(writesAtClose - 2), ['vo=null', 'vid=no']);
+      expect(cleanupCount, 1);
+    });
+
     test('ignores callbacks and hooks after close', () async {
       final writes = <String>[];
       final binding = _binding(writes);

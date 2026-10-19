@@ -41,6 +41,15 @@ class MainActivity : FlutterActivity() {
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "getWindowState" -> result.success(buildWindowState())
+                    "exitPip" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                            isInPictureInPictureMode) {
+                            startActivity(Intent(this, MainActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                            })
+                        }
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }

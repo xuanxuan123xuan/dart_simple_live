@@ -156,6 +156,12 @@ class VideoController {
     );
   }
 
+  /// Enables or disables video output while keeping the player and audio active.
+  Future<void> setVideoEnabled(bool enabled) async {
+    final instance = await platform.future;
+    return instance.setVideoEnabled(enabled);
+  }
+
   /// A [Future] that completes when the first video frame has been rendered.
   Future<void> get waitUntilFirstFrameRendered async {
     final instance = await platform.future;

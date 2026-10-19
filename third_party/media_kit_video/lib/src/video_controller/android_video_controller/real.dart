@@ -338,6 +338,18 @@ class AndroidVideoController extends PlatformVideoController {
     );
   }
 
+  /// Changes the video track without taking the player's lock while the
+  /// surface binding lock is held. A media load hook can already own the
+  /// player lock while waiting for that same surface lock.
+  @override
+  Future<void> setVideoEnabled(bool enabled) => _surfaceBinding.setVideoEnabled(
+        enabled,
+        updateVideoTrack: (enabled) => platform.setVideoTrack(
+          enabled ? VideoTrack.auto() : VideoTrack.no(),
+          synchronized: false,
+        ),
+      );
+
   /// Disposes the instance. Releases allocated resources back to the system.
   Future<void> _dispose() async {
     await videoParamsSubscription?.cancel();

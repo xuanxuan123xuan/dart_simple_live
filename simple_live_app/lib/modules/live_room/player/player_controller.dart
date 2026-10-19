@@ -23,6 +23,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/modules/live_room/live_room_auto_quality_buffer_tracker.dart';
 import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
+import 'package:simple_live_app/modules/live_room/player/live_listening_session.dart';
 import 'package:simple_live_app/modules/live_room/player/player_volume_session_policy.dart';
 import 'package:simple_live_app/services/android_resource_diagnostics.dart';
 import 'package:simple_live_app/services/android_video_diagnostic_service.dart';
@@ -130,6 +131,80 @@ class _DanmakuReplayEntry {
 const int _kDanmakuReplayLimit = 300;
 
 mixin PlayerMixin {
+  final RxBool listeningMode = false.obs;
+  final RxBool listeningModeChanging = false.obs;
+  LiveListeningSession? _listeningSession;
+  bool _listeningClosed = false;
+
+  bool get videoPresentationEnabled =>
+      !listeningMode.value && !listeningModeChanging.value;
+
+  bool get listeningPlaybackAvailable =>
+      hasMpvPlayer &&
+      _playerInitialized &&
+      player.state.playlist.medias.isNotEmpty;
+
+  /// Room integrations can veto listening while a recorder is active/starting.
+  bool get listeningRecordingBusy => false;
+
+  bool get canToggleListeningMode =>
+      !_listeningClosed &&
+      listeningPlaybackAvailable &&
+      !listeningModeChanging.value;
+
+  Future<void> prepareListeningPlayback() async {}
+
+  void onListeningModeChanged() {}
+
+  LiveListeningSession get _listening => _listeningSession ??=
+      LiveListeningSession(
+        writeVideoEnabled: (enabled) => videoController.setVideoEnabled(enabled),
+        canChange: () => listeningPlaybackAvailable && !listeningRecordingBusy,
+        prepareToListen: prepareListeningPlayback,
+        onChanged: () {
+          listeningMode.value = _listeningSession!.listening;
+          listeningModeChanging.value = _listeningSession!.changing;
+          _setKeepScreenAwake(player.state.playing);
+          onListeningModeChanged();
+        },
+      );
+
+  Future<void> toggleListeningMode() async {
+    if (!canToggleListeningMode) return;
+    if (!listeningMode.value && listeningRecordingBusy) {
+      SmartDialog.showToast('请先停止录制');
+      return;
+    }
+    try {
+      await _listening.setListening(!listeningMode.value);
+    } catch (error, stackTrace) {
+      Log.e('切换听直播失败: $error', stackTrace);
+      if (!(_listeningSession?.closed ?? true)) {
+        SmartDialog.showToast('切换失败，请重试');
+      }
+    }
+  }
+
+  /// Source loads share the same queue as track changes. mpv can reset track
+  /// selection during load, so reassert listening before and after each open.
+  Future<void> openListeningMedia(
+    Media media, {
+    bool Function()? isCurrent,
+  }) {
+    if (_listeningClosed) return Future<void>.value();
+    return _listening.withSource(() async {
+      if (_listeningClosed || !(isCurrent?.call() ?? true)) return;
+      await player.open(media);
+    });
+  }
+
+  /// Invalidates new and queued listening work before room cleanup can await.
+  /// Safe to call before a session has been created and from multiple closers.
+  Future<void> closeListeningSession() async {
+    _listeningClosed = true;
+    await _listeningSession?.close();
+  }
+
   /// Room-owned recorder must close its file before a native source mutation.
   Future<void> beforePlayerMutationForRecording() async {}
   bool _playerInitialized = false;
@@ -146,7 +221,9 @@ mixin PlayerMixin {
   }
 
   void _setKeepScreenAwake(bool enabled) {
-    _playbackDisplayLease?.setKeepScreenAwake(enabled);
+    _playbackDisplayLease?.setKeepScreenAwake(
+      enabled && videoPresentationEnabled,
+    );
   }
 
   void setPlaybackKeepScreenAwake(bool enabled) {
@@ -1131,7 +1208,9 @@ mixin PlayerStateMixin on PlayerMixin {
 
   /// 隐藏鼠标光标
   void hideMouseCursor() {
-    if (!Platform.isWindows || _controlsAutoHidePaused) {
+    if (!Platform.isWindows ||
+        _controlsAutoHidePaused ||
+        !videoPresentationEnabled) {
       return;
     }
     hideMouseCursorTimer?.cancel();
@@ -1143,7 +1222,7 @@ mixin PlayerStateMixin on PlayerMixin {
   void resetHideControlsTimer() {
     hideControlsTimer?.cancel();
     hideControlsTimer = null;
-    if (_controlsAutoHidePaused) {
+    if (_controlsAutoHidePaused || !videoPresentationEnabled) {
       return;
     }
 
@@ -1157,7 +1236,9 @@ mixin PlayerStateMixin on PlayerMixin {
 
   /// 开始隐藏鼠标光标计时
   void resetHideMouseCursorTimer() {
-    if (!Platform.isWindows || _controlsAutoHidePaused) {
+    if (!Platform.isWindows ||
+        _controlsAutoHidePaused ||
+        !videoPresentationEnabled) {
       return;
     }
 
@@ -1346,7 +1427,8 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
   }
 
   void _replayDanmakuOverlay() {
-    if (!showDanmakuState.value ||
+    if (!videoPresentationEnabled ||
+        !showDanmakuState.value ||
         AppSettingsController.instance.danmuLineCount.value <= 0 ||
         danmakuController == null) {
       return;
@@ -1378,7 +1460,8 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
   }
 
   void addDanmaku(List<DanmakuContentItem> items) {
-    if (!showDanmakuState.value ||
+    if (!videoPresentationEnabled ||
+        !showDanmakuState.value ||
         AppSettingsController.instance.danmuLineCount.value <= 0) {
       return;
     }
@@ -2209,6 +2292,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Future saveScreenshot() async {
+    if (!videoPresentationEnabled) {
+      SmartDialog.showToast('请先返回视频');
+      return;
+    }
     var loadingShown = false;
     try {
       //检查相册权限,仅iOS需要
@@ -2515,6 +2602,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Future<bool> prepareAutoPipOnLeave() async {
+    if (!videoPresentationEnabled) {
+      await cancelAutoPipOnLeave();
+      return false;
+    }
     if (Utils.isOhos) {
       if (_autoPipOnLeaveConfigured) {
         return true;
@@ -2560,6 +2651,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   }
 
   Future enablePIP() async {
+    if (!videoPresentationEnabled) {
+      SmartDialog.showToast('请先返回视频');
+      return;
+    }
     if (Utils.isOhos) {
       _ensureOhosPipStatusListener();
       if (!await OhosPipService.instance.isAvailable()) {
@@ -2870,6 +2965,49 @@ class PlayerController extends BaseController
         PlayerDanmakuMixin,
         PlayerSystemMixin,
         PlayerGestureControlMixin {
+  @override
+  bool get listeningPlaybackAvailable =>
+      !isPlayerClosing && super.listeningPlaybackAvailable;
+
+  @override
+  Future<void> prepareListeningPlayback() async {
+    await cancelAutoPipOnLeave();
+    if (!Platform.isAndroid) return;
+    await _refreshAndroidWindowState();
+    if (!androidInPipState.value) return;
+    await _androidWindowChannel.invokeMethod<void>('exitPip');
+    // Expanding the activity is asynchronous. Never disable video while it is
+    // still the system's visible PiP surface.
+    for (var attempt = 0; attempt < 15 && !isPlayerClosing; attempt++) {
+      await _refreshAndroidWindowState();
+      if (!androidInPipState.value) return;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    throw StateError('画中画尚未退出');
+  }
+
+  @override
+  void onListeningModeChanged() {
+    // Invalidate recovery work that started before a mode transition.
+    _surfaceRecoveryToken++;
+    _surfaceRecoveryInFlight = false;
+    _surfaceRecoveryGraceUntil =
+        DateTime.now().add(_surfaceRecoveryGraceDuration);
+    showMouseCursor();
+    showControls();
+    if (videoPresentationEnabled && !isPlayerClosing) {
+      final width = player.state.width;
+      final height = player.state.height;
+      if (width != null && width > 0 && height != null && height > 0) {
+        decodedVideoWidth.value = width;
+        decodedVideoHeight.value = height;
+        isVertical.value = height > width;
+        updateScaleMode();
+      }
+      refreshIosVideoOutputLimit(force: true);
+    }
+  }
+
   AndroidVideoDiagnosticService? _androidVideoDiagnosticService;
   Worker? _androidVideoDiagnosticLogWorker;
   int? _androidVideoDiagnosticHandle;
@@ -3357,6 +3495,7 @@ class PlayerController extends BaseController
       Log.d("播放器日志：$event");
     });
     _widthSubscription = player.stream.width.listen((event) {
+      if (!videoPresentationEnabled) return;
       Log.d(
           'width:$event  W:${(player.state.width)}  H:${(player.state.height)}');
 
@@ -3377,6 +3516,7 @@ class PlayerController extends BaseController
       unawaited(_syncAndroidExternalWindowLandscapeOrientation());
     });
     _heightSubscription = player.stream.height.listen((event) {
+      if (!videoPresentationEnabled) return;
       Log.d(
           'height:$event  W:${(player.state.width)}  H:${(player.state.height)}');
 
@@ -3397,6 +3537,7 @@ class PlayerController extends BaseController
       unawaited(_syncAndroidExternalWindowLandscapeOrientation());
     });
     _videoParamsSubscription = player.stream.videoParams.listen((params) {
+      if (!videoPresentationEnabled) return;
       if (Platform.isAndroid && !Utils.isOhos) {
         onAndroidVideoParamsAvailable();
       }
@@ -3657,7 +3798,14 @@ class PlayerController extends BaseController
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
         }
-        await player.open(currentMedia);
+        await openListeningMedia(
+          currentMedia,
+          isCurrent: () => !_playerClosing &&
+              expectedGeneration == _livePlaybackGeneration &&
+              canonicalizeLivePlaybackSource(
+                _currentPlaylistMedia()?.uri.toString() ?? '',
+              ) == sourceIdentity,
+        );
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
         }
@@ -3797,7 +3945,7 @@ class PlayerController extends BaseController
   // Fix Issue #57 & #97: 处理异常的视频尺寸（Surface失效）。
   // 恢复流程有界且串行，避免起播/切源时的短暂尺寸事件反复重启解码器。
   Future<void> _handleInvalidVideoSize() async {
-    if (!player.state.playing || _playerClosing) {
+    if (!videoPresentationEnabled || !player.state.playing || _playerClosing) {
       return;
     }
     if (_streamErrorRecoveryInFlight) {
@@ -3899,7 +4047,14 @@ class PlayerController extends BaseController
       )) {
         return;
       }
-      await player.open(activeMedia);
+      await openListeningMedia(
+        activeMedia,
+        isCurrent: () => _isCurrentSurfaceRecovery(
+          token: recoveryToken,
+          generation: generation,
+          sourceIdentity: sourceIdentity,
+        ),
+      );
       if (!_isCurrentSurfaceRecovery(
         token: recoveryToken,
         generation: generation,
@@ -3948,6 +4103,7 @@ class PlayerController extends BaseController
     required String sourceIdentity,
   }) {
     if (token != _surfaceRecoveryToken ||
+        !videoPresentationEnabled ||
         _playerClosing ||
         generation != _livePlaybackGeneration) {
       return false;
@@ -3974,7 +4130,9 @@ class PlayerController extends BaseController
         }
 
         // 检测：播放中但尺寸为null = Surface异常
-        if (player.state.playing && _hasInvalidVideoSize()) {
+        if (videoPresentationEnabled &&
+            player.state.playing &&
+            _hasInvalidVideoSize()) {
           Log.w(
             "Surface健康检查失败: playing=${player.state.playing} "
             "width=${player.state.width} height=${player.state.height}",
@@ -4226,6 +4384,7 @@ class PlayerController extends BaseController
       return;
     }
     _playerClosing = true;
+    await closeListeningSession();
     _androidVideoDiagnosticLogWorker?.dispose();
     _androidVideoDiagnosticLogWorker = null;
     final diagnosticService = _androidVideoDiagnosticService;

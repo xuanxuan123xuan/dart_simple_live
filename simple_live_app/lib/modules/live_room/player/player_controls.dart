@@ -13,6 +13,7 @@ import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/modules/live_room/player/live_listening_panel.dart';
 import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_room_quick_access_panel.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
@@ -28,6 +29,9 @@ Widget playerControls(
   LiveRoomController controller,
 ) {
   return Obx(() {
+    if (!controller.videoPresentationEnabled) {
+      return _buildLiveListeningControls(controller);
+    }
     if (controller.fullScreenState.value) {
       return buildFullControls(
         videoState,
@@ -40,6 +44,66 @@ Widget playerControls(
       controller,
     );
   });
+}
+
+Widget _buildLiveListeningControls(LiveRoomController controller) {
+  return StreamBuilder<bool>(
+    stream: controller.player.stream.playing,
+    initialData: controller.player.state.playing,
+    builder: (context, playingSnapshot) => StreamBuilder<bool>(
+      stream: controller.player.stream.buffering,
+      initialData: controller.player.state.buffering,
+      builder: (context, bufferingSnapshot) => StreamBuilder<double>(
+        stream: controller.player.stream.volume,
+        initialData: controller.player.state.volume,
+        builder: (context, volumeSnapshot) => Obx(
+          () => LiveListeningPanel(
+            avatarUrl: controller.detail.value?.userAvatar ?? '',
+            userName: controller.detail.value?.userName ?? '',
+            title: controller.detail.value?.title ?? '',
+            isListening: controller.listeningMode.value,
+            isChanging: controller.listeningModeChanging.value,
+            canToggleMode: controller.canToggleListeningMode &&
+                (controller.liveStatus.value ||
+                    (playingSnapshot.data ?? false) ||
+                    (bufferingSnapshot.data ?? false)),
+            isPlaying: playingSnapshot.data ?? false,
+            isBuffering: bufferingSnapshot.data ?? false,
+            isFetching: controller.waitingForPlaybackUrl.value,
+            isOffline:
+                controller.roomLiveState.value == LiveStatusState.offline,
+            errorMessage: controller.errorMsg.value,
+            volume: ((volumeSnapshot.data ?? 0) / 100)
+                .clamp(0.0, 1.0)
+                .toDouble(),
+            onTogglePlayback: () =>
+                unawaited(_toggleListeningPlayback(controller)),
+            onVolumeChanged: (volume) => unawaited(
+              controller.setSessionPlayerVolume(volume * 100, persist: true),
+            ),
+            onReturnToVideo: () =>
+                unawaited(controller.toggleListeningMode()),
+            showFullscreenExit: controller.fullScreenState.value,
+            onExitFullscreen: () {
+              if (controller.smallWindowState.value) {
+                controller.exitSmallWindow();
+              } else {
+                controller.exitFull();
+              }
+            },
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+Future<void> _toggleListeningPlayback(LiveRoomController controller) async {
+  if (controller.player.state.playing) {
+    await controller.player.pause();
+    return;
+  }
+  await controller.player.play();
 }
 
 EdgeInsets _fullScreenControlPadding(BuildContext context) {
@@ -189,7 +253,8 @@ Widget _buildPlayerMouseRegion({
 
 Widget buildPlayerSuperChatOverlay(LiveRoomController controller) {
   return Obx(() {
-    if (!AppSettingsController.instance.playershowSuperChat.value) {
+    if (!controller.videoPresentationEnabled ||
+        !AppSettingsController.instance.playershowSuperChat.value) {
       return const SizedBox.shrink();
     }
     return Positioned(
@@ -833,6 +898,9 @@ Widget buildDanmuView(BuildContext context, LiveRoomController controller,
     bottom: padding.bottom,
     child: Obx(
       () {
+        if (!controller.videoPresentationEnabled) {
+          return const SizedBox.shrink();
+        }
         controller.danmakuViewVersion.value;
         return Offstage(
           offstage: !controller.showDanmakuState.value,
@@ -1048,6 +1116,10 @@ void showDanmakuSettings(LiveRoomController controller) {
 }
 
 void showPlayerSettings(LiveRoomController controller) {
+  if (!controller.videoPresentationEnabled) {
+    SmartDialog.showToast('请先返回视频');
+    return;
+  }
   if (controller.useBottomSheetPlayerMenus) {
     controller.showPlayerSettingsSheet();
     return;

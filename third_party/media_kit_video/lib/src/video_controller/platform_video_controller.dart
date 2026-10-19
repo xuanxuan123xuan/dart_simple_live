@@ -56,6 +56,11 @@ abstract class PlatformVideoController {
     int? height,
   });
 
+  /// Enables or disables video output while keeping the player and audio active.
+  Future<void> setVideoEnabled(bool enabled) => player.setVideoTrack(
+        enabled ? VideoTrack.auto() : VideoTrack.no(),
+      );
+
   /// A [Future] that completes when the first video frame has been rendered.
   Future<void> get waitUntilFirstFrameRendered =>
       waitUntilFirstFrameRenderedCompleter.future;

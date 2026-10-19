@@ -1230,7 +1230,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
         Obx(
           () => Visibility(
-            visible: controller.showOfflineOverlay,
+            visible: controller.videoPresentationEnabled &&
+                controller.showOfflineOverlay,
             child: const Center(
               child: Text(
                 "未开播",
@@ -1241,7 +1242,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
         Obx(
           () => Visibility(
-            visible: controller.waitingForPlaybackUrl.value &&
+            visible: controller.videoPresentationEnabled &&
+                controller.waitingForPlaybackUrl.value &&
                 !controller.showOfflineOverlay,
             child: const Center(
               child: Text(
@@ -1253,7 +1255,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         ),
         // 自动网络诊断提示（缓冲 2 次以上触发）
         Obx(
-          () => controller.networkHint.value.isEmpty
+          () => controller.networkHint.value.isEmpty ||
+                  !controller.videoPresentationEnabled
               ? const SizedBox.shrink()
               : Positioned(
                   left: 12,
@@ -1889,6 +1892,38 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (!Utils.isOhos)
+              Obx(() {
+                final listening = controller.listeningMode.value;
+                final changing = controller.listeningModeChanging.value;
+                final hasLivePlayback = controller.liveStatus.value ||
+                    controller.player.state.playing ||
+                    controller.player.state.buffering;
+                final canToggle =
+                    controller.canToggleListeningMode && hasLivePlayback;
+                return ListTile(
+                  key: const ValueKey('live-listening-mode-entry'),
+                  leading: Icon(
+                    listening ? Icons.videocam_outlined : Icons.headphones,
+                  ),
+                  title: Text(listening ? '返回视频' : '听直播'),
+                  trailing: changing
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.chevron_right),
+                  enabled: canToggle,
+                  onTap: canToggle
+                      ? () async {
+                          Get.back();
+                          await Future<void>.delayed(Duration.zero);
+                          await controller.toggleListeningMode();
+                        }
+                      : null,
+                );
+              }),
             ListTile(
               leading: const Icon(Icons.tune),
               title: const Text("播放调整"),

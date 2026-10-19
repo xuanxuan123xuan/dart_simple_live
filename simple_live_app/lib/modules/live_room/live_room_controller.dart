@@ -1153,8 +1153,14 @@ class LiveRoomController extends PlayerController
     roomId: () => roomId,
     roomTitle: () => detail.value?.title ?? '直播录制',
     platform: () => site.name,
-    canRecord: () => !Utils.isOhos && !_roomDisposed &&
-        liveStatus.value && player.state.playing && !isPlayerClosing,
+    canRecord: () {
+      if (!videoPresentationEnabled) {
+        SmartDialog.showToast('请先返回视频');
+        return false;
+      }
+      return !Utils.isOhos && !_roomDisposed && liveStatus.value &&
+          player.state.playing && !isPlayerClosing;
+    },
     danmakuVisible: () => showDanmakuState.value,
   );
 
@@ -1168,6 +1174,14 @@ class LiveRoomController extends PlayerController
     super.setDanmakuVisible(visible);
     if (!Utils.isOhos) recording.visibilityChanged(visible);
   }
+
+  @override
+  bool get listeningRecordingBusy => recording.active || recording.busy;
+
+  @override
+  bool get listeningPlaybackAvailable =>
+      !_roomDisposed && liveStatus.value && _hasActivePlaybackSession &&
+      super.listeningPlaybackAvailable;
 
   // --- 播放中自动降画质（未锁定画质时，缓冲多次自动降一档） ---
 
@@ -3108,6 +3122,7 @@ class LiveRoomController extends PlayerController
       return false;
     }
     if (!(Platform.isAndroid || Utils.isOhos) ||
+        !videoPresentationEnabled ||
         !AppSettingsController.instance.autoPipOnExit.value ||
         !liveStatus.value) {
       if (Platform.isAndroid || Utils.isOhos) {
@@ -3311,6 +3326,7 @@ class LiveRoomController extends PlayerController
 
   @override
   Future<void> closePlayerResources() async {
+    await closeListeningSession();
     await beforePlayerMutationForRecording();
     _cancelHoldPreviewAudioWatchdog();
     if (!_roomDisposed) {
@@ -3322,6 +3338,7 @@ class LiveRoomController extends PlayerController
   @override
   void onClose() async {
     _roomDisposed = true;
+    await closeListeningSession();
     if (!Utils.isOhos) await recording.close();
     _cancelHoldPreviewAudioWatchdog();
     await closeFollowHoldPreview();
@@ -4309,11 +4326,13 @@ class LiveRoomController extends PlayerController
       if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         return;
       }
-      await player.open(
+      await openListeningMedia(
         Media(
           finalUrl,
           httpHeaders: playHeaders,
         ),
+        isCurrent: () =>
+            _isCurrentPlaybackRequest(requestRevision, loadGeneration),
       );
       if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         if (!Utils.isOhos) {
@@ -5179,6 +5198,10 @@ class LiveRoomController extends PlayerController
   }
 
   void showPlayerSettingsSheet() {
+    if (!videoPresentationEnabled) {
+      SmartDialog.showToast('请先返回视频');
+      return;
+    }
     Utils.showBottomSheet(
       title: "画面尺寸",
       child: Obx(

@@ -35,6 +35,7 @@ class AndroidSurfaceBinding {
   bool _initialized = false;
   bool _dirty = true;
   bool _closed = false;
+  bool _videoEnabled = true;
 
   /// Writes initial mpv properties and binds the latest surface atomically.
   Future<void> initialize(Map<String, String> properties) {
@@ -55,7 +56,9 @@ class AndroidSurfaceBinding {
       try {
         if (initializing) {
           for (final entry in properties.entries) {
-            await _writeProperty(entry.key, entry.value);
+            final value =
+                entry.key == 'vid' && !_videoEnabled ? 'no' : entry.value;
+            await _writeProperty(entry.key, value);
           }
           _initialized = true;
           _dirty = true;
@@ -150,6 +153,79 @@ class AndroidSurfaceBinding {
     });
   }
 
+  /// Enables or disables video while serializing with surface lifecycle work.
+  ///
+  /// When supplied, [updateVideoTrack] updates the player's track state and
+  /// writes `vid` itself. The default writes the equivalent mpv property
+  /// directly, which keeps this class independently testable.
+  Future<void> setVideoEnabled(
+    bool enabled, {
+    Future<void> Function(bool enabled)? updateVideoTrack,
+  }) {
+    return lock.synchronized(() async {
+      if (_closed) return;
+      if (!_initialized) {
+        _videoEnabled = enabled;
+        return;
+      }
+      // A media load can reset mpv's track selection while the requested
+      // state remains disabled, so repeat false calls must reassert `vid=no`.
+      if (_videoEnabled == enabled && enabled) return;
+
+      final previous = _videoEnabled;
+      try {
+        await _applyVideoEnabled(enabled, updateVideoTrack);
+        _videoEnabled = enabled;
+      } catch (_) {
+        // A failed property write can leave mpv partway through the change.
+        // Restore the previous output and track state before propagating it.
+        _videoEnabled = previous;
+        try {
+          await _applyVideoEnabled(previous, updateVideoTrack);
+        } catch (_) {
+          // Keep the original failure as the operation's result.
+        }
+        rethrow;
+      }
+    });
+  }
+
+  Future<void> _applyVideoEnabled(
+    bool enabled,
+    Future<void> Function(bool enabled)? updateVideoTrack,
+  ) async {
+    final surfaceReady = _initialized &&
+        !_dirty &&
+        _wid != null &&
+        _wid != 0 &&
+        _width > 1 &&
+        _height > 1;
+
+    Future<void> setTrack() async {
+      if (updateVideoTrack != null) {
+        await updateVideoTrack(enabled);
+      } else {
+        await _writeProperty('vid', enabled ? 'auto' : 'no');
+      }
+    }
+
+    if (!enabled || !surfaceReady) {
+      await _writeProperty('vo', 'null');
+      await setTrack();
+      return;
+    }
+
+    if (compatibilityMode) {
+      // mediacodec_embed must be selected before enabling its video track.
+      await _writeProperty('vo', vo);
+      await setTrack();
+    } else {
+      // Restore the track before attaching the GPU output.
+      await setTrack();
+      await _writeProperty('vo', vo);
+    }
+  }
+
   /// Enables the configured output only after initialization and a valid wid.
   ///
   /// [isRectValid] is evaluated while [lock] is held, so callers can safely
@@ -178,6 +254,26 @@ class AndroidSurfaceBinding {
         'level': valid ? 'info' : 'warning',
         'stage': 'before_vo_enable',
       });
+      if (!_initialized) return;
+      if (!_videoEnabled) {
+        try {
+          await _writeProperty('vo', 'null');
+          await _writeProperty('vid', 'no');
+        } catch (error) {
+          _diagnose('load', {
+            'wid': _wid ?? 0,
+            'width': _width,
+            'height': _height,
+            'valid': valid,
+            'reason': 'property_write_failed',
+            'level': 'error',
+            'error': error.runtimeType.toString(),
+            'stage': 'video_disable_failed',
+          });
+          rethrow;
+        }
+        return;
+      }
       if (!valid) return;
 
       try {
@@ -213,6 +309,9 @@ class AndroidSurfaceBinding {
       });
       try {
         await _writeProperty('vo', 'null');
+        if (!_videoEnabled) {
+          await _writeProperty('vid', 'no');
+        }
       } catch (error) {
         _diagnose('unload', {
           'wid': _wid ?? 0,
@@ -306,11 +405,19 @@ class AndroidSurfaceBinding {
       await _writeProperty('vo', 'null');
       await _writeProperty('android-surface-size', '${_width}x$_height');
       await _writeProperty('wid', '$wid');
-      await _writeProperty('vo', attached ? vo : 'null');
+      await _writeProperty(
+        'vo',
+        attached && _videoEnabled ? vo : 'null',
+      );
 
       // Reinitialize --vid for mediacodec_embed after changing --vo.
       if (compatibilityMode) {
-        await _writeProperty('vid', attached ? 'auto' : 'no');
+        await _writeProperty(
+          'vid',
+          attached && _videoEnabled ? 'auto' : 'no',
+        );
+      } else if (!_videoEnabled) {
+        await _writeProperty('vid', 'no');
       }
 
       _dirty = false;
