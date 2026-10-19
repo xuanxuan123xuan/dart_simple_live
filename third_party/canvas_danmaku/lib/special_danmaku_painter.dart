@@ -54,12 +54,12 @@ class SpecialDanmakuPainter extends CustomPainter {
     int elapsed,
   ) {
     // 透明度动画
-    late final alpha =
-        item.alphaTween?.transform(elapsed / item.duration) ??
-        item.color.opacity;
+    final state = placementFor(item, size, elapsed);
+    if (state == null) return;
+    final alpha = state.opacity;
     final color = item.alphaTween == null
         ? item.color
-        : item.color.withOpacity(alpha);
+        : item.color.withValues(alpha: alpha);
     // 文本
     if (color != item.painterCache?.text?.style?.color) {
       item.painterCache!.text = TextSpan(
@@ -70,7 +70,12 @@ class SpecialDanmakuPainter extends CustomPainter {
           fontWeight: FontWeight.values[fontWeight],
           fontFamily: fontFamily,
           shadows: item.hasStroke
-              ? [Shadow(color: Colors.black.withOpacity(alpha), blurRadius: 2)]
+              ? [
+                  Shadow(
+                    color: Colors.black.withValues(alpha: alpha),
+                    blurRadius: 2,
+                  ),
+                ]
               : null,
         ),
       );
@@ -79,10 +84,33 @@ class SpecialDanmakuPainter extends CustomPainter {
 
     // 路径动画 TODO
 
-    // else 位移动画
-    late double dx, dy;
+    if (item.matrix != null) {
+      canvas.save();
+      canvas.translate(state.offset.dx, state.offset.dy);
+      canvas.transform(item.matrix!.storage);
+      item.painterCache!.paint(canvas, Offset.zero);
+      canvas.restore();
+    } else {
+      item.painterCache!.paint(canvas, state.offset);
+    }
+  }
+
+  /// Returns the translation and alpha used to paint a special item at an
+  /// elapsed renderer time. The recording observer shares this calculation so
+  /// replay placement stays aligned with the live painter.
+  static SpecialDanmakuPlacement? placementFor(
+    SpecialDanmakuContentItem item,
+    Size size,
+    int elapsed,
+  ) {
+    if (elapsed < 0 || elapsed >= item.duration) return null;
+    final alpha =
+        item.alphaTween?.transform(elapsed / item.duration) ?? item.color.a;
+
+    late double dx;
+    late double dy;
     if (elapsed > item.translationStartDelay) {
-      late double translateProgress = item.easingType.transform(
+      final translateProgress = item.easingType.transform(
         min(
           1.0,
           (elapsed - item.translationStartDelay) / item.translationDuration,
@@ -100,19 +128,27 @@ class SpecialDanmakuPainter extends CustomPainter {
       dy = item.translateYTween.begin! * size.height;
     }
 
-    if (item.matrix != null) {
-      canvas.save();
-      canvas.translate(dx, dy);
-      canvas.transform(item.matrix!.storage);
-      item.painterCache!.paint(canvas, Offset.zero);
-      canvas.restore();
-    } else {
-      item.painterCache!.paint(canvas, Offset(dx, dy));
-    }
+    return SpecialDanmakuPlacement(
+      offset: Offset(dx, dy),
+      opacity: alpha,
+      transform: item.matrix?.storage.toList(growable: false),
+    );
   }
 
   @override
   bool shouldRepaint(covariant SpecialDanmakuPainter oldDelegate) {
     return true;
   }
+}
+
+class SpecialDanmakuPlacement {
+  const SpecialDanmakuPlacement({
+    required this.offset,
+    required this.opacity,
+    required this.transform,
+  });
+
+  final Offset offset;
+  final double opacity;
+  final List<double>? transform;
 }

@@ -9,15 +9,19 @@ import 'dart:ui' as ui;
 import 'models/danmaku_option.dart';
 import '/models/danmaku_content_item.dart';
 import 'dart:math';
+import 'danmaku_capture.dart';
+import 'danmaku_capture_painter.dart';
 
 class DanmakuScreen extends StatefulWidget {
   // 创建Screen后返回控制器
   final Function(DanmakuController) createdController;
   final DanmakuOption option;
+  final DanmakuCaptureController? captureController;
 
   const DanmakuScreen({
     required this.createdController,
     required this.option,
+    this.captureController,
     super.key,
   });
 
@@ -88,6 +92,7 @@ class _DanmakuScreenState extends State<DanmakuScreen>
   @override
   void initState() {
     super.initState();
+    widget.captureController?.addListener(_onCaptureControllerChanged);
     _option = widget.option;
     _controller = DanmakuController(
       onAddDanmaku: addDanmaku,
@@ -115,9 +120,17 @@ class _DanmakuScreenState extends State<DanmakuScreen>
   @override
   void didUpdateWidget(covariant DanmakuScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.captureController != widget.captureController) {
+      oldWidget.captureController?.removeListener(_onCaptureControllerChanged);
+      widget.captureController?.addListener(_onCaptureControllerChanged);
+    }
     if (!_isSameOption(oldWidget.option, widget.option)) {
       updateOption(widget.option);
     }
+  }
+
+  void _onCaptureControllerChanged() {
+    if (mounted) setState(() {});
   }
 
   /// 处理 Android/iOS 应用后台或熄屏导致的动画问题
@@ -134,6 +147,7 @@ class _DanmakuScreenState extends State<DanmakuScreen>
   void dispose() {
     _running = false;
     _controller.running = false;
+    widget.captureController?.removeListener(_onCaptureControllerChanged);
     WidgetsBinding.instance.removeObserver(this);
     _animationController.dispose();
     _staticAnimationController.dispose();
@@ -734,6 +748,32 @@ class _DanmakuScreenState extends State<DanmakuScreen>
                       },
                     ),
                   ),
+                  if (widget.captureController != null)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          painter: DanmakuCapturePainter(
+                            repaint: Listenable.merge([
+                              _animationController,
+                              widget.captureController!,
+                            ]),
+                            scrollItems: _scrollDanmakuItems,
+                            topItems: _topDanmakuItems,
+                            bottomItems: _bottomDanmakuItems,
+                            specialItems: _specialDanmakuItems,
+                            controller: widget.captureController,
+                            tick: () => _tick,
+                            fontSize: _option.fontSize,
+                            fontWeight: _option.fontWeight,
+                            fontFamily: _option.fontFamily,
+                            emojiScale: _option.emojiScale,
+                            showStroke: _option.showStroke,
+                            opacity: _option.opacity,
+                            emojiImageCache: _emojiImageCache,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
