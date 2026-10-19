@@ -62,6 +62,8 @@ class _DanmakuScreenState extends State<DanmakuScreen>
 
   /// 弹幕轨道位置
   final List<double> _trackYPositions = [];
+  Size? _trackLayoutSize;
+  double? _trackHeight;
 
   late final _random = Random();
 
@@ -411,6 +413,15 @@ class _DanmakuScreenState extends State<DanmakuScreen>
       _staticAnimationController.duration = Duration(seconds: option.duration);
     }
 
+    // 旧轨道上的弹幕不能继续占用新布局，尤其是降低行数或放大字体时。
+    if (option.maxLines != _option.maxLines ||
+        ((option.maxLines > 0 || _option.maxLines > 0) &&
+            (needClearParagraph ||
+                option.lineHeight != _option.lineHeight ||
+                option.safeArea != _option.safeArea))) {
+      _clearOrdinaryDanmakus();
+    }
+
     /// 需要隐藏弹幕时清理已有弹幕
     if (option.hideScroll && !_option.hideScroll) {
       _scrollDanmakuItems.clear();
@@ -457,11 +468,23 @@ class _DanmakuScreenState extends State<DanmakuScreen>
     }
   }
 
+  void _clearOrdinaryDanmakus() {
+    _scrollDanmakuItems.clear();
+    _topDanmakuItems.clear();
+    _bottomDanmakuItems.clear();
+    _trackCount = 0;
+    _trackYPositions.clear();
+    if (_specialDanmakuItems.isEmpty) {
+      _animationController.stop();
+    }
+  }
+
   bool _isSameOption(DanmakuOption a, DanmakuOption b) {
     return a.fontSize == b.fontSize &&
         a.fontWeight == b.fontWeight &&
         a.fontFamily == b.fontFamily &&
         a.area == b.area &&
+        a.maxLines == b.maxLines &&
         a.lineHeight == b.lineHeight &&
         a.emojiScale == b.emojiScale &&
         a.duration == b.duration &&
@@ -608,12 +631,28 @@ class _DanmakuScreenState extends State<DanmakuScreen>
           _viewWidth = constraints.maxWidth;
         }
 
-        _trackCount =
-            (constraints.maxHeight * _option.area / trackHeight).floor();
+        final layoutSize = Size(constraints.maxWidth, constraints.maxHeight);
+        if (_option.maxLines > 0 &&
+            _trackLayoutSize != null &&
+            (_trackLayoutSize != layoutSize || _trackHeight != trackHeight)) {
+          _clearOrdinaryDanmakus();
+        }
+        _trackLayoutSize = layoutSize;
+        _trackHeight = trackHeight;
 
-        /// 为字幕留出余量
-        if (_option.safeArea && _option.area == 1.0) {
-          _trackCount = _trackCount - 1;
+        if (_option.maxLines > 0) {
+          final availableTracks =
+              (constraints.maxHeight / trackHeight).floor() -
+                  (_option.safeArea ? 1 : 0);
+          _trackCount = min(_option.maxLines, availableTracks);
+        } else {
+          _trackCount =
+              (constraints.maxHeight * _option.area / trackHeight).floor();
+
+          /// 为字幕留出余量
+          if (_option.safeArea && _option.area == 1.0) {
+            _trackCount = _trackCount - 1;
+          }
         }
         _trackCount = _trackCount.clamp(0, 9999).toInt();
 

@@ -38,6 +38,12 @@ class LocalStorageService extends GetxService {
   /// 弹幕区域
   static const String kDanmuArea = "DanmuArea";
 
+  /// TV 端弹幕显示模式：按区域或按行数
+  static const String kDanmuDisplayMode = "DanmuDisplayMode";
+
+  /// TV 端弹幕最大行数
+  static const String kDanmuMaxLines = "DanmuMaxLines";
+
   /// 弹幕透明度
   static const String kDanmuOpacity = "DanmuOpacity";
 

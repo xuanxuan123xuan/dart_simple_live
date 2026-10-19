@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -17,6 +16,7 @@ import 'package:simple_live_tv_app/modules/multi_room/multi_room_overlay_control
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_player_controller.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/widgets/tv_room_picker.dart';
+import 'package:simple_live_tv_app/widgets/tv_danmaku_view.dart';
 
 class MultiRoomPage extends StatefulWidget {
   const MultiRoomPage({super.key});
@@ -1298,18 +1298,9 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
   late FocusNode _focusNode = widget.controller.focusNodeFor(widget.item);
   late Widget _danmakuView = _createDanmakuView();
 
-  Widget _createDanmakuView() => DanmakuScreen(
-        key: GlobalKey(),
+  Widget _createDanmakuView() => TvDanmakuView(
+        screenKey: GlobalKey(),
         createdController: _player.initDanmakuController,
-        option: DanmakuOption(
-          fontSize: AppSettingsController.instance.danmuSize.value.w,
-          fontFamily: Platform.isWindows ? 'Microsoft YaHei' : null,
-          area: AppSettingsController.instance.danmuArea.value,
-          lineHeight: 1.25,
-          emojiScale: 1.4,
-          duration: AppSettingsController.instance.danmuSpeed.value.toInt(),
-          opacity: AppSettingsController.instance.danmuOpacity.value,
-        ),
       );
 
   @override

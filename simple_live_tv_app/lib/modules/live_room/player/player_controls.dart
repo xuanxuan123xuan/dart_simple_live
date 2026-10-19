@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
@@ -21,6 +20,8 @@ import 'package:simple_live_tv_app/widgets/card/anchor_card.dart';
 import 'package:simple_live_tv_app/widgets/settings_item_widget.dart';
 import 'package:simple_live_tv_app/widgets/status/app_empty_widget.dart';
 import 'package:simple_live_tv_app/widgets/tv_room_picker.dart';
+import 'package:simple_live_tv_app/widgets/tv_danmaku_display_settings.dart';
+import 'package:simple_live_tv_app/widgets/tv_danmaku_view.dart';
 
 Widget playerControls(VideoState videoState, LiveRoomController controller) {
   return buildControls(videoState, controller);
@@ -304,18 +305,9 @@ Widget _buildLiveEventFlowOverlay(LiveRoomController controller) {
 
 Widget buildDanmuView(VideoState videoState, LiveRoomController controller) {
   var padding = MediaQuery.of(videoState.context).padding;
-  controller.danmakuView ??= DanmakuScreen(
-    key: controller.globalDanmuKey,
+  controller.danmakuView ??= TvDanmakuView(
+    screenKey: controller.globalDanmuKey,
     createdController: controller.initDanmakuController,
-    option: DanmakuOption(
-      fontSize: AppSettingsController.instance.danmuSize.value.w,
-      fontFamily: Platform.isWindows ? "Microsoft YaHei" : null,
-      area: AppSettingsController.instance.danmuArea.value,
-      lineHeight: 1.25,
-      emojiScale: 1.4,
-      duration: AppSettingsController.instance.danmuSpeed.value.toInt(),
-      opacity: AppSettingsController.instance.danmuOpacity.value,
-    ),
   );
   return Positioned.fill(
     top: padding.top,
@@ -428,7 +420,8 @@ void showPlayerSettings(LiveRoomController controller) {
   var danmakuFoucsNode = AppFocusNode();
   var danmakuSizeFoucsNode = AppFocusNode();
   var danmakuSpeedFoucsNode = AppFocusNode();
-  var danmakuAreaFoucsNode = AppFocusNode();
+  var danmakuDisplayModeFocusNode = AppFocusNode();
+  var danmakuDisplayValueFocusNode = AppFocusNode();
   var danmakuOpacityFoucsNode = AppFocusNode();
   Utils.showSystemRightDialog(
     width: 800.w,
@@ -609,13 +602,6 @@ void showPlayerSettings(LiveRoomController controller) {
                   value: AppSettingsController.instance.danmuSize.value,
                   onChanged: (e) {
                     AppSettingsController.instance.setDanmuSize(e);
-                    controller.updateDanmuOption(
-                      controller.danmakuController?.option.copyWith(
-                        fontSize: (e as double).w,
-                        lineHeight: 1.25,
-                        emojiScale: 1.4,
-                      ),
-                    );
                   },
                 ),
               ),
@@ -637,32 +623,14 @@ void showPlayerSettings(LiveRoomController controller) {
                   value: AppSettingsController.instance.danmuSpeed.value,
                   onChanged: (e) {
                     AppSettingsController.instance.setDanmuSpeed(e);
-                    controller.updateDanmuOption(
-                      controller.danmakuController?.option.copyWith(
-                        duration: (e as double).toInt(),
-                      ),
-                    );
                   },
                 ),
               ),
 
               AppStyle.vGap24,
-              Obx(
-                () => SettingsItemWidget(
-                  foucsNode: danmakuAreaFoucsNode,
-                  autofocus: danmakuAreaFoucsNode.isFoucsed.value,
-                  title: "显示区域",
-                  items: {0.25: "1/4", 0.5: "1/2", 0.75: "3/4", 1.0: "全屏"},
-                  value: AppSettingsController.instance.danmuArea.value,
-                  onChanged: (e) {
-                    AppSettingsController.instance.setDanmuArea(e);
-                    controller.updateDanmuOption(
-                      controller.danmakuController?.option.copyWith(
-                        area: e as double,
-                      ),
-                    );
-                  },
-                ),
+              TvDanmakuDisplaySettings(
+                modeFocusNode: danmakuDisplayModeFocusNode,
+                valueFocusNode: danmakuDisplayValueFocusNode,
               ),
               AppStyle.vGap24,
               Obx(
@@ -685,11 +653,6 @@ void showPlayerSettings(LiveRoomController controller) {
                   value: AppSettingsController.instance.danmuOpacity.value,
                   onChanged: (e) {
                     AppSettingsController.instance.setDanmuOpacity(e);
-                    controller.updateDanmuOption(
-                      controller.danmakuController?.option.copyWith(
-                        opacity: e as double,
-                      ),
-                    );
                   },
                 ),
               ),
@@ -709,7 +672,8 @@ void showPlayerSettings(LiveRoomController controller) {
       danmakuFoucsNode,
       danmakuSizeFoucsNode,
       danmakuSpeedFoucsNode,
-      danmakuAreaFoucsNode,
+      danmakuDisplayModeFocusNode,
+      danmakuDisplayValueFocusNode,
       danmakuOpacityFoucsNode
     ]) {
       node.dispose();

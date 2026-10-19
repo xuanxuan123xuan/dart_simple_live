@@ -22,6 +22,7 @@ import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_list_tile.dart';
 import 'package:simple_live_tv_app/widgets/settings_item_widget.dart';
+import 'package:simple_live_tv_app/widgets/tv_danmaku_display_settings.dart';
 
 class SettingsPage extends GetView<SettingsController> {
   const SettingsPage({super.key});
@@ -643,17 +644,9 @@ class SettingsPage extends GetView<SettingsController> {
           ),
         ),
         AppStyle.vGap24,
-        Obx(
-          () => SettingsItemWidget(
-            foucsNode: controller.danmakuAreaFoucsNode,
-            autofocus: controller.danmakuAreaFoucsNode.isFoucsed.value,
-            title: "显示区域",
-            items: {0.25: "1/4", 0.5: "1/2", 0.75: "3/4", 1.0: "全屏"},
-            value: AppSettingsController.instance.danmuArea.value,
-            onChanged: (e) {
-              AppSettingsController.instance.setDanmuArea(e);
-            },
-          ),
+        TvDanmakuDisplaySettings(
+          modeFocusNode: controller.danmakuDisplayModeFocusNode,
+          valueFocusNode: controller.danmakuDisplayValueFocusNode,
         ),
         AppStyle.vGap24,
         Obx(

@@ -11,6 +11,10 @@ class DanmakuOption {
   /// 显示区域，0.1-1.0
   final double area;
 
+  /// 最大轨道行数。大于 0 时忽略 area，并受视口和字幕安全区限制。
+  /// 0 保留按 area 分配轨道的行为。
+  final int maxLines;
+
   /// 轨道行高倍数，用于控制上下弹幕间距。
   final double lineHeight;
 
@@ -48,6 +52,7 @@ class DanmakuOption {
     this.fontWeight = 4,
     this.fontFamily,
     this.area = 1.0,
+    this.maxLines = 0,
     this.lineHeight = 1.0,
     this.emojiScale = 1.25,
     this.duration = 10,
@@ -66,6 +71,7 @@ class DanmakuOption {
     int? fontWeight,
     String? fontFamily,
     double? area,
+    int? maxLines,
     double? lineHeight,
     double? emojiScale,
     int? duration,
@@ -80,6 +86,7 @@ class DanmakuOption {
   }) {
     return DanmakuOption(
       area: area ?? this.area,
+      maxLines: maxLines ?? this.maxLines,
       lineHeight: lineHeight ?? this.lineHeight,
       emojiScale: emojiScale ?? this.emojiScale,
       fontSize: fontSize ?? this.fontSize,

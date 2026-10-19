@@ -66,7 +66,8 @@ class SettingsController extends BaseController
   var danmakuSizeFoucsNode = AppFocusNode();
   var danmakuEmojiFoucsNode = AppFocusNode();
   var danmakuSpeedFoucsNode = AppFocusNode();
-  var danmakuAreaFoucsNode = AppFocusNode();
+  var danmakuDisplayModeFocusNode = AppFocusNode();
+  var danmakuDisplayValueFocusNode = AppFocusNode();
   var danmakuOpacityFoucsNode = AppFocusNode();
   var danmakuStorkeFoucsNode = AppFocusNode();
   var liveEventFlowFoucsNode = AppFocusNode();

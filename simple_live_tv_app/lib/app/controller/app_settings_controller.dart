@@ -1,5 +1,6 @@
 import 'package:get/get.dart';
 import 'package:simple_live_tv_app/modules/follow_user/tv_follow_grid_layout.dart';
+import 'package:simple_live_tv_app/modules/settings/danmaku_display_settings.dart';
 import 'package:simple_live_tv_app/services/local_storage_service.dart';
 
 class AppSettingsController extends GetxController {
@@ -103,6 +104,18 @@ class AppSettingsController extends GetxController {
         .getValue(LocalStorageService.kDanmuOpacity, 1.0);
     danmuArea.value = LocalStorageService.instance
         .getValue(LocalStorageService.kDanmuArea, 0.25);
+    danmuDisplayMode.value = DanmakuDisplaySettings.normalizeMode(
+      LocalStorageService.instance.getValue<String>(
+        LocalStorageService.kDanmuDisplayMode,
+        DanmakuDisplaySettings.defaultMode,
+      ),
+    );
+    danmuMaxLines.value = DanmakuDisplaySettings.normalizeMaxLines(
+      LocalStorageService.instance.getValue<int>(
+        LocalStorageService.kDanmuMaxLines,
+        DanmakuDisplaySettings.defaultMaxLines,
+      ),
+    );
     danmuSpeed.value = LocalStorageService.instance
         .getValue(LocalStorageService.kDanmuSpeed, 10.0);
     danmuEnable.value = LocalStorageService.instance
@@ -360,6 +373,27 @@ class AppSettingsController extends GetxController {
   void setDanmuArea(double e) {
     danmuArea.value = e;
     LocalStorageService.instance.setValue(LocalStorageService.kDanmuArea, e);
+  }
+
+  var danmuDisplayMode = DanmakuDisplaySettings.defaultMode.obs;
+  int get effectiveDanmuMaxLines => DanmakuDisplaySettings.effectiveMaxLines(
+        mode: danmuDisplayMode.value,
+        maxLines: danmuMaxLines.value,
+      );
+
+  void setDanmuDisplayMode(String value) {
+    final normalized = DanmakuDisplaySettings.normalizeMode(value);
+    danmuDisplayMode.value = normalized;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kDanmuDisplayMode, normalized);
+  }
+
+  var danmuMaxLines = DanmakuDisplaySettings.defaultMaxLines.obs;
+  void setDanmuMaxLines(int value) {
+    final normalized = DanmakuDisplaySettings.normalizeMaxLines(value);
+    danmuMaxLines.value = normalized;
+    LocalStorageService.instance
+        .setValue(LocalStorageService.kDanmuMaxLines, normalized);
   }
 
   var danmuOpacity = 1.0.obs;
