@@ -1,8 +1,8 @@
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from release_notes import SECTIONS, generate, render, validate
+from release_notes import NO_CHANGES, SECTIONS, generate, render, request_summary, validate
 
 
 class ReleaseNotesTest(unittest.TestCase):
@@ -64,6 +64,48 @@ class ReleaseNotesTest(unittest.TestCase):
         request.reset_mock()
         self.assertEqual(generate('commits', 'TV', '', request), text)
         request.assert_not_called()
+
+    def test_empty_changes_skip_ai_even_with_a_key(self):
+        request = Mock()
+        for audience in ['App', 'TV']:
+            for commits in ['', ' \n\t']:
+                with self.subTest(audience=audience, commits=commits):
+                    text = generate(commits, audience, 'key', request)
+                    self.assertIn(NO_CHANGES, text)
+                    self.assertEqual(text.count('### '), 4)
+                    self.assertNotIn('说明暂不可用', text)
+        request.assert_not_called()
+
+    def test_successful_summary_with_no_user_changes_is_not_an_api_failure(self):
+        request = Mock(return_value={key: [] for key in SECTIONS})
+        text = generate('maintenance evidence', 'TV', 'key', request)
+        self.assertIn(NO_CHANGES, text)
+        self.assertNotIn('说明暂不可用', text)
+        request.assert_called_once()
+
+    def test_prompt_scopes_each_client_and_uses_filtered_evidence(self):
+        content = json.dumps(self.value)
+        response = Mock()
+        response.read.return_value = json.dumps({
+            'choices': [{'message': {'content': content}}],
+        }).encode()
+        context = Mock()
+        context.__enter__ = Mock(return_value=response)
+        context.__exit__ = Mock(return_value=False)
+        evidence = '[{"files": ["scoped/path.dart"], "patch": "scoped evidence"}]'
+        for audience, target in [('App', '普通版，面向手机和桌面平台'),
+                                 ('TV', 'TV 版，面向 Android TV 与 Windows TV')]:
+            with self.subTest(audience=audience), patch(
+                'release_notes.urllib.request.urlopen', return_value=context,
+            ) as urlopen:
+                self.assertEqual(request_summary(evidence, audience, 'fake-key'), content)
+                body = json.loads(urlopen.call_args.args[0].data)
+                prompt, data = body['messages']
+                self.assertIn(target, prompt['content'])
+                self.assertIn('不能作为该端功能已实现的证据', prompt['content'])
+                self.assertIn('只根据提供的文件与差异', prompt['content'])
+                self.assertIn('跨端同步', prompt['content'])
+                self.assertEqual(data, {'role': 'user', 'content': evidence})
 
 
 if __name__ == '__main__':

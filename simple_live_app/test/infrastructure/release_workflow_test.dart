@@ -31,8 +31,17 @@ void main() {
           (jobs['release']['steps'] as YamlList).cast<YamlMap>().toList();
       final notes = steps.firstWhere(
           (s) => s['run']?.toString().contains('release_notes.py') ?? false);
-      expect(notes['run'], isNot(contains('sed -E')));
+      final notesScript = notes['run'].toString();
+      final audience = file == 'release_tv.yml' ? 'TV' : 'App';
+      expect(notesScript, contains('release_notes.py" $audience'));
+      expect(notesScript, contains('--repo "\$GITHUB_WORKSPACE"'));
+      expect(notesScript, contains('--tag "\$TAG"'));
+      expect(notesScript, contains('--branch "\$GITHUB_REF_NAME"'));
+      expect(notesScript, contains('--prerelease "\$PRERELEASE"'));
+      expect(notesScript, isNot(contains('git log')));
+      expect(notesScript, isNot(contains('sed -E')));
       if (file == 'release_tv.yml') {
+        expect(notesScript, contains('tv_version_desc.txt'));
         final publish = steps
             .indexWhere((s) => s['uses'] == 'softprops/action-gh-release@v2');
         final sync =

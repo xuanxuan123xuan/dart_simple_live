@@ -371,30 +371,10 @@ jobs:
           rm -f SHA256SUMS-*.txt
           body="$RUNNER_TEMP/release_body.md"
 
-          commits=""
-          if [[ -n "$TAG" ]]; then
-            # 只在同一发布渠道内寻找上一版本，stable 不被 dev/pre 截断。
-            if [[ "$GITHUB_REF_NAME" == "dev" ]]; then
-              previous_tag="$(git -C "$GITHUB_WORKSPACE" tag --list 'tv_v[0-9]*-dev' \
-                --sort=-v:refname | grep -Fxv "$TAG" | head -1 || true)"
-            elif [[ "$PRERELEASE" == "true" ]]; then
-              previous_tag="$(git -C "$GITHUB_WORKSPACE" tag --list 'tv_v[0-9]*-pre' \
-                --sort=-v:refname | grep -Fxv "$TAG" | head -1 || true)"
-            else
-              previous_tag="$(git -C "$GITHUB_WORKSPACE" tag --list 'tv_v[0-9]*' \
-                --sort=-v:refname | grep -Ev -- '-(dev|pre)$' \
-                | grep -Fxv "$TAG" | head -1 || true)"
-            fi
-            if [[ -n "$previous_tag" ]]; then
-              commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges \
-                --max-count=80 "$previous_tag..HEAD")"
-            fi
-          fi
-          if [[ -z "$commits" ]]; then
-            commits="$(git -C "$GITHUB_WORKSPACE" log --oneline --no-merges -30 HEAD)"
-          fi
-
-          ai_summary="$(printf '%s\n' "$commits" | python3 "$GITHUB_WORKSPACE/.github/scripts/release_notes.py" TV)"
+          # TV 与普通版共用收集器，分别按客户端、渠道和实际依赖筛选。
+          ai_summary="$(python3 "$GITHUB_WORKSPACE/.github/scripts/release_notes.py" TV \
+            --repo "$GITHUB_WORKSPACE" --tag "$TAG" \
+            --branch "$GITHUB_REF_NAME" --prerelease "$PRERELEASE")"
           printf '%s\n' "$ai_summary" | sed -n 's/^- //p' > "$RUNNER_TEMP/tv_version_desc.txt"
 
           {
