@@ -178,6 +178,24 @@ class _MinePageState extends State<MinePage> {
               endIndent: 12,
               color: Colors.grey.withAlpha(25),
             ),
+            if (!Utils.isOhos) ...[
+              ListTile(
+                leading: const Icon(Icons.video_library_outlined),
+                  title: const Text("录制文件"),
+                trailing: const Icon(
+                  Icons.chevron_right,
+                  color: Colors.grey,
+                ),
+                onTap: () {
+                  Get.toNamed(RoutePath.kRecordings);
+                },
+              ),
+              Divider(
+                indent: 12,
+                endIndent: 12,
+                color: Colors.grey.withAlpha(25),
+              ),
+            ],
             ListTile(
               leading: const Icon(Remix.account_circle_line),
               title: const Text("账号管理"),

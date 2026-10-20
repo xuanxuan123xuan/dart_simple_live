@@ -1,0 +1,35 @@
+# Recording native libraries
+
+The recording feature uses upstream libmpv builds with output muxers and video
+encoders enabled. The Flutter plugin wrapper sources in the adjacent
+`media_kit_libs_*_video` packages retain their upstream MIT licenses. The
+native artifacts have separate upstream licenses and build terms; consult the
+linked projects before redistributing the app.
+
+## Android
+
+The Android plugin downloads the `encoders-gpl` ABI bundles from
+[libmpv-android-video-build v1.1.11](https://github.com/media-kit/libmpv-android-video-build/releases/tag/v1.1.11).
+The build script pins and verifies the SHA-256 digest for each ABI archive.
+
+## iOS and macOS
+
+The Apple plugins download `video-encodersgpl` universal frameworks from
+[libmpv-darwin-build v0.7.3](https://github.com/media-kit/libmpv-darwin-build/releases/tag/v0.7.3).
+The upstream project documents the included components and their licenses in
+its [README](https://github.com/media-kit/libmpv-darwin-build/blob/main/README.md).
+The Makefiles pin and verify the SHA-256 digest of each archive.
+
+## Windows
+
+The Windows plugin downloads
+[`mpv-dev-x86_64-20261019-git-6a262d11f6.7z`](https://github.com/shinchiro/mpv-winbuild-cmake/releases/tag/20261019)
+from the [mpv-winbuild-cmake project](https://github.com/shinchiro/mpv-winbuild-cmake).
+The app-local CMake recipe verifies its SHA-256 digest and bundles the libmpv
+DLL with the ANGLE runtime DLLs required by the plugin.
+
+## Linux
+
+Linux continues to use the system-provided libmpv through the upstream media-kit
+package. Recording requires that system library to include the needed output
+muxers and encoders; this app does not pin or bundle a Linux libmpv build.

@@ -6,6 +6,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   connectivity_plus
   desktop_webview_window
   dynamic_color
+  ffmpeg_kit_flutter_new
   file_selector_windows
   flutter_js
   media_kit_libs_windows_video

@@ -549,6 +549,16 @@ class _DesktopWindowLifecycle with WindowListener {
       timeout: const Duration(milliseconds: 300),
     );
     await _closeStep(
+      "保存直播录制",
+      () async {
+        if (Get.isRegistered<LiveRoomController>()) {
+          await Get.find<LiveRoomController>()
+              .beforePlayerMutationForRecording();
+        }
+      },
+      timeout: const Duration(seconds: 15),
+    );
+    await _closeStep(
       "关闭播放器",
       () async {
         if (Get.isRegistered<LiveRoomController>()) {

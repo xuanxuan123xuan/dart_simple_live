@@ -19,6 +19,7 @@ import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_room_tab_bar.dart';
+import 'package:simple_live_app/modules/recordings/recording_menu_tile.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/glass/glass_surface.dart';
@@ -1900,6 +1901,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 _showPlaybackActions();
               },
             ),
+            if (!Utils.isOhos)
+              RecordingMenuTile(recording: controller.recording,
+                  closeMenu: () => Get.back()),
             ListTile(
               leading: const Icon(Icons.camera_alt_outlined),
               title: const Text("截图"),

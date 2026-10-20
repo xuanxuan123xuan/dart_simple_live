@@ -60,3 +60,4 @@ pubspec.lock
 /third_party/**/build/
 /third_party/**/oh_modules/
 /third_party/**/example/
+/third_party/media_kit_libs_*/.tmp/

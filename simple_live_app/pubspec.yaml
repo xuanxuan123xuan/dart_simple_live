@@ -98,6 +98,8 @@ dependencies:
   media_kit_video:
     path: ../third_party/media_kit_video
   media_kit_libs_video: ^1.0.7
+  ffmpeg_kit_flutter_new: 4.6.7
+  ffi: 2.1.3
   video_player:
     git:
       url: https://github.com/xuanxuan123xuan/flutter_packages.git
@@ -120,6 +122,16 @@ dev_dependencies:
     sdk: flutter
 
 dependency_overrides:
+  # Local app forks use full-GPL mpv builds so same-stream recording has
+  # muxers and encoders on Android, Apple platforms, and Windows.
+  media_kit_libs_android_video:
+    path: third_party/media_kit_libs_android_video
+  media_kit_libs_ios_video:
+    path: third_party/media_kit_libs_ios_video
+  media_kit_libs_macos_video:
+    path: third_party/media_kit_libs_macos_video
+  media_kit_libs_windows_video:
+    path: third_party/media_kit_libs_windows_video
   # core 声明 git 源 dart_quickjs（纯 Dart，可解析/测试）；
   # app 侧统一覆盖为本地 compat（鸿蒙 OHOS 3.22 工具链不能消费
   # git 源的 Dart 3.10 Native Assets），避免"同一包双源"冲突。
@@ -188,6 +200,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/statement.txt
+    - third_party/recording_native_libraries/THIRD_PARTY_NOTICES.txt
     - assets/images/
     - assets/images/douyin_emoji/
     - assets/icons/

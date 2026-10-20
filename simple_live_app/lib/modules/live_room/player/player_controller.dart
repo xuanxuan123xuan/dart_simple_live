@@ -130,6 +130,8 @@ class _DanmakuReplayEntry {
 const int _kDanmakuReplayLimit = 300;
 
 mixin PlayerMixin {
+  /// Room-owned recorder must close its file before a native source mutation.
+  Future<void> beforePlayerMutationForRecording() async {}
   bool _playerInitialized = false;
   StreamSubscription? _androidTrackSubscription;
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
@@ -346,9 +348,11 @@ mixin PlayerMixin {
         await player.play();
         break;
       case 'pause':
+        await beforePlayerMutationForRecording();
         await player.pause();
         break;
       case 'stop':
+        await beforePlayerMutationForRecording();
         await player.stop();
         await BackgroundPlaybackService.instance.stop();
         break;
@@ -3634,6 +3638,10 @@ class PlayerController extends BaseController
           return;
         }
         Log.i("正在重启解码器...");
+        await beforePlayerMutationForRecording();
+        if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
+          return;
+        }
         await player.pause();
         await Future.delayed(const Duration(milliseconds: 200));
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
@@ -3645,6 +3653,10 @@ class PlayerController extends BaseController
           return;
         }
         _lastPlayerOpenAt = now;
+        await beforePlayerMutationForRecording();
+        if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
+          return;
+        }
         await player.open(currentMedia);
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
@@ -3838,6 +3850,7 @@ class PlayerController extends BaseController
       await suspendLiveLatencyChase(
         MpvLiveLatencyProtectionReason.playbackStalled,
       );
+      await beforePlayerMutationForRecording();
       await player.pause();
       await Future.delayed(const Duration(milliseconds: 300));
       if (!_isCurrentSurfaceRecovery(
@@ -3878,6 +3891,13 @@ class PlayerController extends BaseController
       _decodeFailureCount++;
       if (_decodeFailureCount >= _maxDecodeFailuresBeforeFallback) {
         await _applySoftwareDecodeFallback();
+      }
+      await beforePlayerMutationForRecording();
+      if (!_isCurrentSurfaceRecovery(
+        token: recoveryToken, generation: generation,
+        sourceIdentity: sourceIdentity,
+      )) {
+        return;
       }
       await player.open(activeMedia);
       if (!_isCurrentSurfaceRecovery(
@@ -4265,6 +4285,7 @@ class PlayerController extends BaseController
       await stopBackgroundPlaybackService();
       BackgroundPlaybackService.instance.setAndroidControlHandler(null);
       await stopLiveLatencyChase();
+      await beforePlayerMutationForRecording();
       await player.stop();
       if (smallWindowState.value) {
         await exitSmallWindow();

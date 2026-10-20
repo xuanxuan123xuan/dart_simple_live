@@ -61,6 +61,7 @@ import 'package:simple_live_app/modules/follow_user/follow_user_controller.dart'
 import 'package:simple_live_app/modules/follow_user/follow_user_page.dart';
 import 'package:simple_live_app/modules/mine/history/history_controller.dart';
 import 'package:simple_live_app/modules/mine/history/history_page.dart';
+import 'package:simple_live_app/modules/recordings/recordings_page.dart';
 import 'package:simple_live_app/modules/settings/indexed_settings/indexed_settings_controller.dart';
 import 'package:simple_live_app/modules/settings/indexed_settings/indexed_settings_page.dart';
 import 'package:simple_live_app/modules/settings/other/other_settings_controller.dart';
@@ -131,6 +132,11 @@ class AppPages {
           );
         }),
       ],
+    ),
+    // 本地录制
+    GetPage(
+      name: RoutePath.kRecordings,
+      page: () => const RecordingsPage(),
     ),
     // 关注用户
     GetPage(

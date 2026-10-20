@@ -32,6 +32,8 @@ import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/live_room_danmaku_status.dart';
 import 'package:simple_live_app/modules/live_room/live_room_hold_preview.dart';
+import 'package:simple_live_app/modules/live_room/live_room_recording_coordinator.dart';
+import 'package:simple_live_app/modules/recordings/recording_menu_tile.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_playback_recovery.dart';
@@ -1144,6 +1146,27 @@ class LiveRoomController extends PlayerController
       });
     }
     _setupAutoQualityAdjust();
+  }
+
+  late final recording = LiveRoomRecordingCoordinator(
+    player: () => player,
+    roomId: () => roomId,
+    roomTitle: () => detail.value?.title ?? '直播录制',
+    platform: () => site.name,
+    canRecord: () => !Utils.isOhos && !_roomDisposed &&
+        liveStatus.value && player.state.playing && !isPlayerClosing,
+    danmakuVisible: () => showDanmakuState.value,
+  );
+
+  @override
+  Future<void> beforePlayerMutationForRecording() async {
+    if (!Utils.isOhos) await recording.stop(reason: '播放源或播放状态变化');
+  }
+
+  @override
+  void setDanmakuVisible(bool visible) {
+    super.setDanmakuVisible(visible);
+    if (!Utils.isOhos) recording.visibilityChanged(visible);
   }
 
   // --- 播放中自动降画质（未锁定画质时，缓冲多次自动降一档） ---
@@ -3046,6 +3069,7 @@ class LiveRoomController extends PlayerController
       await stopBackgroundPlaybackService();
       await liveDanmaku.stop();
       if (!Utils.isOhos) {
+        await beforePlayerMutationForRecording();
         await player.stop();
       }
       if (!Utils.isOhos) {
@@ -3287,6 +3311,7 @@ class LiveRoomController extends PlayerController
 
   @override
   Future<void> closePlayerResources() async {
+    await beforePlayerMutationForRecording();
     _cancelHoldPreviewAudioWatchdog();
     if (!_roomDisposed) {
       await closeFollowHoldPreview();
@@ -3297,6 +3322,7 @@ class LiveRoomController extends PlayerController
   @override
   void onClose() async {
     _roomDisposed = true;
+    if (!Utils.isOhos) await recording.close();
     _cancelHoldPreviewAudioWatchdog();
     await closeFollowHoldPreview();
     await _holdPreviewMutations.close();
@@ -3335,6 +3361,7 @@ class LiveRoomController extends PlayerController
       AppSettingsController.instance.setLastLiveRoomResumePending(false),
     );
     if (!Utils.isOhos && !isPlayerClosing) {
+      await beforePlayerMutationForRecording();
       await player.stop();
     }
     await liveDanmaku.stop();
@@ -3454,6 +3481,7 @@ class LiveRoomController extends PlayerController
 
   /// 加载直播间信息
   void loadData() async {
+    await beforePlayerMutationForRecording();
     final loadGeneration = ++_loadGeneration;
     _resetOhosAutoLineSelectionSession();
     final loadStopwatch = Stopwatch()..start();
@@ -4277,6 +4305,10 @@ class LiveRoomController extends PlayerController
       audioOutputFailed.value = false;
       // Warmup 必须覆盖 player.open() 期间产生的起播 buffering 事件。
       markStreamOpening();
+      await beforePlayerMutationForRecording();
+      if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        return;
+      }
       await player.open(
         Media(
           finalUrl,
@@ -4285,6 +4317,7 @@ class LiveRoomController extends PlayerController
       );
       if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         if (!Utils.isOhos) {
+          await beforePlayerMutationForRecording();
           await player.stop();
         }
         return;
@@ -4407,6 +4440,7 @@ class LiveRoomController extends PlayerController
       return;
     }
     try {
+      await beforePlayerMutationForRecording();
       await player.stop();
       await Future.delayed(const Duration(milliseconds: 120));
     } catch (e, stackTrace) {
@@ -4421,6 +4455,7 @@ class LiveRoomController extends PlayerController
     bool? reconnectHostChanged,
     bool suppressOhosAutoLineSelection = false,
   }) async {
+    await beforePlayerMutationForRecording();
     if (!_holdPreviewPromotingMain &&
         _holdPreviewPhase != LiveRoomHoldPreviewPhase.closed) {
       await closeFollowHoldPreview();
@@ -5154,6 +5189,8 @@ class LiveRoomController extends PlayerController
             shrinkWrap: true,
             padding: AppStyle.edgeInsetsV12,
             children: [
+              if (!Utils.isOhos) RecordingMenuTile(
+                recording: recording, closeMenu: () => Get.back()),
               if (supportsDouyinDualScreenLayout) ...[
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -6018,6 +6055,7 @@ class LiveRoomController extends PlayerController
               revision == _holdPreviewRevision,
           requestPlay: (forceRestart) async {
             if (forceRestart) {
+              await beforePlayerMutationForRecording();
               await player.pause();
             }
             await player.play();
@@ -6188,6 +6226,7 @@ class LiveRoomController extends PlayerController
               _holdPreviewMainWasPlaying,
           requestPlay: (forceRestart) async {
             if (forceRestart) {
+              await beforePlayerMutationForRecording();
               await player.pause();
             }
             await player.play();
@@ -6724,6 +6763,7 @@ class LiveRoomController extends PlayerController
       return;
     }
     await suspendLiveLatencyChase(MpvLiveLatencyProtectionReason.sourceChanged);
+    await beforePlayerMutationForRecording();
     await player.pause();
   }
 
@@ -6933,6 +6973,7 @@ class LiveRoomController extends PlayerController
         _stopLiveLatencyTelemetry();
         await stopBackgroundPlaybackService();
         if (!Utils.isOhos) {
+          await beforePlayerMutationForRecording();
           await player.stop();
         }
 

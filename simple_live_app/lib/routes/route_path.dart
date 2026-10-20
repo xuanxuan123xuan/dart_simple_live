@@ -57,6 +57,9 @@ class RoutePath {
   /// 历史记录
   static const kHistory = "/user/history";
 
+  /// 录制列表
+  static const kRecordings = "/user/recordings";
+
   /// 我的关注
   static const kFollowUser = "/user/follow";
 

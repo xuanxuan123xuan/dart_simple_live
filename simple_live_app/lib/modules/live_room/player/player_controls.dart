@@ -16,6 +16,8 @@ import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_room_quick_access_panel.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
+import 'package:simple_live_app/modules/recordings/recording_menu_tile.dart';
+import 'package:simple_live_app/services/recording/recording_viewport.dart';
 import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/superchat_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -71,7 +73,7 @@ Widget buildFullControls(
     child: Stack(
       children: [
         const SizedBox.expand(),
-        buildDanmuView(videoState.context, controller),
+        buildDanmuView(videoState.context, controller, videoState: videoState),
         buildPlayerSuperChatOverlay(controller),
         _buildBufferingIndicator(videoState),
         buildPlayerGestureLayer(
@@ -98,6 +100,7 @@ Widget buildFullControls(
           alignLeft: true,
         ),
         buildGestureTip(controller),
+        if (!Utils.isOhos) _buildRecordingIndicator(controller),
       ],
     ),
   );
@@ -146,7 +149,7 @@ Widget buildControls(
     child: Stack(
       children: [
         const SizedBox.expand(),
-        buildDanmuView(videoState.context, controller),
+        buildDanmuView(videoState.context, controller, videoState: videoState),
         buildPlayerSuperChatOverlay(controller),
         _buildBufferingIndicator(videoState),
         buildPlayerGestureLayer(controller),
@@ -156,6 +159,7 @@ Widget buildControls(
           volumeButtonKey: volumeButtonKey,
         ),
         buildGestureTip(controller),
+        if (!Utils.isOhos) _buildRecordingIndicator(controller),
       ],
     ),
   );
@@ -194,6 +198,47 @@ Widget buildPlayerSuperChatOverlay(LiveRoomController controller) {
       child: PlayerSuperChatOverlay(controller: controller),
     );
   });
+}
+
+Widget _buildRecordingIndicator(LiveRoomController controller) {
+  final recording = controller.recording;
+  return Positioned(
+    top: 52,
+    left: 12,
+    child: AnimatedBuilder(
+      animation: recording,
+      builder: (context, _) {
+        if (!recording.active) return const SizedBox.shrink();
+        final seconds = recording.elapsed.inSeconds;
+        final hours = (seconds ~/ 3600).toString().padLeft(2, '0');
+        final minutes = (seconds ~/ 60 % 60).toString().padLeft(2, '0');
+        final remainder = (seconds % 60).toString().padLeft(2, '0');
+        return IgnorePointer(
+          child: SafeArea(
+            bottom: false,
+            child: Material(
+              color: const Color(0x99000000),
+              borderRadius: BorderRadius.circular(20),
+              child: InkWell(
+                key: const ValueKey('live-room-recording-indicator'),
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.fiber_manual_record,
+                      color: Colors.redAccent, size: 14),
+                    const SizedBox(width: 6),
+                    Text('$hours:$minutes:$remainder',
+                      style: const TextStyle(color: Colors.white, fontSize: 12)),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    ),
+  );
 }
 
 Widget _buildBufferingIndicator(VideoState videoState) {
@@ -769,7 +814,8 @@ Widget buildGestureTip(LiveRoomController controller) {
   });
 }
 
-Widget buildDanmuView(BuildContext context, LiveRoomController controller) {
+Widget buildDanmuView(BuildContext context, LiveRoomController controller,
+    {VideoState? videoState}) {
   var padding = controller.fullScreenState.value
       ? _fullScreenControlPadding(context)
       : Utils.isOhos
@@ -812,7 +858,39 @@ Widget buildDanmuView(BuildContext context, LiveRoomController controller) {
                   lineCount: settings.danmuLineCount.value,
                 );
                 final hideDanmu = resolvedLineCount <= 0;
+                if (!Utils.isOhos && videoState != null) {
+                  controller.recording.videoRect = () {
+                    if (!context.mounted || !videoState.mounted) return null;
+                    final root = videoState.context.findRenderObject();
+                    final overlay = context.findRenderObject();
+                    final source =
+                        videoState.widget.controller.notifier.value?.rect.value;
+                    if (root is! RenderBox ||
+                        overlay is! RenderBox ||
+                        !root.hasSize ||
+                        source == null ||
+                        source.isEmpty) {
+                      return null;
+                    }
+                    final params = videoState.videoViewParametersNotifier.value;
+                    return recordingVideoRect(
+                      source: Size(
+                        params.aspectRatio == null
+                            ? source.width
+                            : source.height * params.aspectRatio!,
+                        source.height,
+                      ),
+                      viewport: root.size,
+                      fit: params.fit,
+                      alignment: params.alignment,
+                      danmakuOrigin: root.globalToLocal(
+                        overlay.localToGlobal(Offset.zero),
+                      ),
+                    );
+                  };
+                }
                 return DanmakuScreen(
+                  captureController: Utils.isOhos ? null : controller.recording.capture,
                   key: controller.globalDanmuKey,
                   createdController: controller.initDanmakuController,
                   option: DanmakuOption(
@@ -982,6 +1060,8 @@ void showPlayerSettings(LiveRoomController controller) {
       () => ListView(
         padding: AppStyle.edgeInsetsV12,
         children: [
+          if (!Utils.isOhos) RecordingMenuTile(
+            recording: controller.recording, closeMenu: Utils.hideRightDialog),
           if (controller.supportsDouyinDualScreenLayout) ...[
             Padding(
               padding: AppStyle.edgeInsetsH16.copyWith(top: 8, bottom: 4),
