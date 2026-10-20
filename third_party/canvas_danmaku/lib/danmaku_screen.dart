@@ -57,6 +57,8 @@ class _DanmakuScreenState extends State<DanmakuScreen>
 
   /// 高级弹幕
   final List<DanmakuItem> _specialDanmakuItems = [];
+  bool _addingBatch = false;
+  bool _batchNeedsStaticRepaint = false;
 
   /// 弹幕高度
   late double _danmakuHeight;
@@ -96,6 +98,7 @@ class _DanmakuScreenState extends State<DanmakuScreen>
     _option = widget.option;
     _controller = DanmakuController(
       onAddDanmaku: addDanmaku,
+      onAddDanmakuBatch: addDanmakuBatch,
       onUpdateOption: updateOption,
       onPause: pause,
       onResume: resume,
@@ -357,7 +360,11 @@ class _DanmakuScreenState extends State<DanmakuScreen>
       case DanmakuItemType.top:
       case DanmakuItemType.bottom:
         // 重绘静态弹幕
-        setState(() {});
+        if (_addingBatch) {
+          _batchNeedsStaticRepaint = true;
+        } else {
+          setState(() {});
+        }
         break;
       case DanmakuItemType.scroll:
       case DanmakuItemType.special:
@@ -370,6 +377,24 @@ class _DanmakuScreenState extends State<DanmakuScreen>
     }
     if (_hasDanmakuItems) {
       _startTick();
+    }
+  }
+
+  void addDanmakuBatch(List<DanmakuContentItem> contents) {
+    if (!_running || !mounted || contents.isEmpty) return;
+    _addingBatch = true;
+    try {
+      for (final content in contents) {
+        addDanmaku(content);
+      }
+    } finally {
+      _addingBatch = false;
+      if (_batchNeedsStaticRepaint && mounted) {
+        _batchNeedsStaticRepaint = false;
+        setState(() {});
+      } else {
+        _batchNeedsStaticRepaint = false;
+      }
     }
   }
 

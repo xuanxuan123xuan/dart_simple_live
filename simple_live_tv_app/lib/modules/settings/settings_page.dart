@@ -193,6 +193,21 @@ class SettingsPage extends GetView<SettingsController> {
         AppStyle.vGap24,
         Obx(
           () => SettingsItemWidget(
+            foucsNode: controller.tvPerformanceModeFocusNode,
+            autofocus: controller.tvPerformanceModeFocusNode.isFoucsed.value,
+            title: "直播间性能模式",
+            items: const {
+              AppSettingsController.kTvPerformanceModeSmooth: "流畅优先",
+              AppSettingsController.kTvPerformanceModeRealtime: "实时弹幕",
+            },
+            value: AppSettingsController.instance.tvPerformanceMode.value,
+            onChanged: (value) => AppSettingsController.instance
+                .setTvPerformanceMode(value as String),
+          ),
+        ),
+        AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
             foucsNode: controller.hardwareDecodeFocusNode,
             autofocus: controller.hardwareDecodeFocusNode.isFoucsed.value,
             title: "硬件解码",

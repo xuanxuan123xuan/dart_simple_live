@@ -20,6 +20,7 @@ import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/models/db/follow_user.dart';
 import 'package:simple_live_tv_app/models/db/history.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/player_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/player/tv_danmaku_burst_scheduler.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_playback_intent.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
@@ -165,6 +166,13 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   LiveRepeatedDanmuAggregator _liveEventFlowAggregator =
       LiveRepeatedDanmuAggregator();
   Timer? _liveEventFlowTimer;
+  TvDanmakuBurstScheduler? _danmakuBurstScheduler;
+
+  TvDanmakuBurstScheduler get _danmakuScheduler =>
+      _danmakuBurstScheduler ??= TvDanmakuBurstScheduler(
+        onBatch: addDanmaku,
+        realtime: !AppSettingsController.instance.tvPerformanceSmooth,
+      );
 
   @override
   void onInit() {
@@ -349,9 +357,14 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   void toggleDanmaku() {
-    showDanmakuState.value = !showDanmakuState.value;
-    AppSettingsController.instance.setDanmuEnable(showDanmakuState.value);
+    setDanmakuVisible(!showDanmakuState.value);
     SmartDialog.showToast(showDanmakuState.value ? "弹幕已开启" : "弹幕已关闭");
+  }
+
+  void setDanmakuVisible(bool enabled) {
+    showDanmakuState.value = enabled;
+    AppSettingsController.instance.setDanmuEnable(enabled);
+    if (!enabled) _danmakuScheduler.clear();
   }
 
   Future<void> toggleMute() async {
@@ -636,14 +649,17 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
       final renderEmoji = AppSettingsController.instance.danmuRenderEmoji.value;
       final parts = renderEmoji ? _buildDanmakuContentParts(msg.spans) : null;
-      addDanmaku([
+      _danmakuScheduler.realtime =
+          !AppSettingsController.instance.tvPerformanceSmooth;
+      _danmakuScheduler.add(
         DanmakuContentItem(
           msg.message,
           color: Color.fromARGB(255, msg.color.r, msg.color.g, msg.color.b),
           imageUrls: renderEmoji && parts == null ? msg.imageUrls : null,
           parts: parts,
         ),
-      ]);
+        generation: _loadGeneration,
+      );
     } else if (msg.type == LiveMessageType.online) {
       online.value = msg.data;
     } else if (msg.type == LiveMessageType.superChat) {
@@ -800,7 +816,6 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     }
     _ensureLiveEventFlowAggregatorSettings();
     _liveEventFlowAggregator.add(text);
-    _flushLiveEventFlow();
   }
 
   void _flushLiveEventFlow() {
@@ -892,6 +907,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     final requestRoomId = roomId;
     final roomGeneration = _roomGeneration;
     final loadGeneration = ++_loadGeneration;
+    _danmakuScheduler.beginGeneration(loadGeneration);
     _urlRequestGeneration++;
     _playRequestGeneration++;
     _resetAutomaticRecovery();
@@ -1318,6 +1334,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       } finally {
         if (identical(_nativeOpenFuture, opening)) _nativeOpenFuture = null;
       }
+      Log.i('媒体打开完成：generation=$playbackGeneration');
       // Pause invalidates the request, but must still win over a late native
       // open. This request holds the reopen lock, so no newer open can race it.
       if (!_disposed && !playbackIntent.shouldPlay) await _pausePlayback();
@@ -1897,6 +1914,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     await _stopDanmaku();
     _liveEventFlowTimer?.cancel();
     clearLiveEventFlow();
+    _danmakuBurstScheduler?.dispose();
 
     danmakuController = null;
     focusNode.dispose();

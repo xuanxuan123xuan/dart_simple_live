@@ -71,6 +71,9 @@ class LocalStorageService extends GetxService {
   /// 显示弹幕表情
   static const String kDanmuRenderEmoji = "DanmuRenderEmoji";
 
+  /// TV 直播间起播和弹幕调度性能模式
+  static const String kTvPerformanceMode = "TvPerformanceMode";
+
   /// 重点动态
   static const String kLiveEventFlowEnable = "LiveEventFlowEnable";
   static const String kLiveEventFlowLimit = "LiveEventFlowLimit";

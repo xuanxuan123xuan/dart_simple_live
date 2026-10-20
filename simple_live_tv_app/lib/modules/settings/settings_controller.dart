@@ -54,6 +54,7 @@ class SettingsController extends BaseController
   var hardwareDecodeFocusNode = AppFocusNode()..isFoucsed.value = true;
   var compatibleModeFocusNode = AppFocusNode();
   var mpvProfileFocusNode = AppFocusNode();
+  var tvPerformanceModeFocusNode = AppFocusNode();
   var customPlayerOutputFocusNode = AppFocusNode();
   var videoOutputFocusNode = AppFocusNode();
   var hardwareDecoderFocusNode = AppFocusNode();

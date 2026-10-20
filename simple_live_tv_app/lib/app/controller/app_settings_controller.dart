@@ -30,6 +30,8 @@ class AppSettingsController extends GetxController {
   static const int kMultiRoomDefaultGap = 8;
   static const int kMultiRoomMinGap = 0;
   static const int kMultiRoomMaxGap = 24;
+  static const String kTvPerformanceModeSmooth = 'smooth';
+  static const String kTvPerformanceModeRealtime = 'realtime';
   static const List<int> kUpdateFollowThreadOptions = [
     0,
     1,
@@ -55,6 +57,20 @@ class AppSettingsController extends GetxController {
   final multiRoomMaxRooms = 2.obs;
   final multiRoomLayout = 'grid'.obs;
   final multiRoomMixAudio = false.obs;
+  final tvPerformanceMode = kTvPerformanceModeSmooth.obs;
+
+  bool get tvPerformanceSmooth =>
+      tvPerformanceMode.value == kTvPerformanceModeSmooth;
+
+  void setTvPerformanceMode(String value) {
+    tvPerformanceMode.value = value == kTvPerformanceModeRealtime
+        ? kTvPerformanceModeRealtime
+        : kTvPerformanceModeSmooth;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kTvPerformanceMode,
+      tvPerformanceMode.value,
+    );
+  }
 
   void setMultiRoomMaxRooms(int value) {
     multiRoomMaxRooms.value = value == 4 ? 4 : 2;
@@ -96,6 +112,13 @@ class AppSettingsController extends GetxController {
         LocalStorageService.instance.getValue('TvMultiRoomMixAudio', false);
     autoQualityDegrade.value =
         LocalStorageService.instance.getValue('TvAutoQualityDegrade', true);
+    tvPerformanceMode.value = LocalStorageService.instance.getValue<String>(
+              LocalStorageService.kTvPerformanceMode,
+              kTvPerformanceModeSmooth,
+            ) ==
+            kTvPerformanceModeRealtime
+        ? kTvPerformanceModeRealtime
+        : kTvPerformanceModeSmooth;
     firstRun = LocalStorageService.instance
         .getValue(LocalStorageService.kFirstRun, true);
     danmuSize.value = LocalStorageService.instance

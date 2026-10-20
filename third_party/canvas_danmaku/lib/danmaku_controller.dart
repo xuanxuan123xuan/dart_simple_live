@@ -3,12 +3,14 @@ import '/models/danmaku_content_item.dart';
 
 class DanmakuController {
   final Function(DanmakuContentItem) onAddDanmaku;
+  final Function(List<DanmakuContentItem>)? onAddDanmakuBatch;
   final Function(DanmakuOption) onUpdateOption;
   final Function onPause;
   final Function onResume;
   final Function onClear;
   DanmakuController({
     required this.onAddDanmaku,
+    this.onAddDanmakuBatch,
     required this.onUpdateOption,
     required this.onPause,
     required this.onResume,
@@ -48,6 +50,18 @@ class DanmakuController {
   /// 添加弹幕
   void addDanmaku(DanmakuContentItem item) {
     onAddDanmaku.call(item);
+  }
+
+  void addDanmakuBatch(List<DanmakuContentItem> items) {
+    if (items.isEmpty) return;
+    final batch = onAddDanmakuBatch;
+    if (batch != null) {
+      batch.call(items);
+      return;
+    }
+    for (final item in items) {
+      onAddDanmaku.call(item);
+    }
   }
 
   /// 更新弹幕配置

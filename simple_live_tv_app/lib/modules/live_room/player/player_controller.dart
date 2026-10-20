@@ -50,6 +50,13 @@ mixin PlayerMixin {
   }
 
   Future<void> initializePlayer() async {
+    final startedAt = DateTime.now();
+    // The Video widget creates the Android Surface asynchronously after the
+    // first frame. Do not let mpv open the stream before that output is ready.
+    await videoController.platform.future;
+    Log.i(
+      '视频输出初始化完成：耗时=${DateTime.now().difference(startedAt).inMilliseconds}ms',
+    );
     await MpvOptionsService.applyToPlayer(player);
   }
 }
@@ -185,9 +192,7 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
     if (!showDanmakuState.value) {
       return;
     }
-    for (var item in items) {
-      danmakuController?.addDanmaku(item);
-    }
+    danmakuController?.addDanmakuBatch(items);
   }
 }
 mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
@@ -245,6 +250,8 @@ class PlayerController extends BaseController
   final PlaybackStallTracker _playbackStallTracker = PlaybackStallTracker();
   int playbackGeneration = 0;
   int _playbackDiagnosticsLoggedGeneration = -1;
+  DateTime? _playbackGenerationStartedAt;
+  int _startupDimensionsLoggedGeneration = -1;
 
   void initStream() {
     _errorSubscription = player.stream.error.listen((event) {
@@ -268,6 +275,7 @@ class PlayerController extends BaseController
       Log.w(
           'width:$event  W:${(player.state.width)}  H:${(player.state.height)}');
       width.value = event ?? 0;
+      _maybeLogStartupDimensions();
       _maybeLogPlaybackDiagnostics();
       // isVertical.value =
       //     (player.state.height ?? 9) > (player.state.width ?? 16);
@@ -276,6 +284,7 @@ class PlayerController extends BaseController
       Log.w(
           'height:$event  W:${(player.state.width)}  H:${(player.state.height)}');
       height.value = event ?? 0;
+      _maybeLogStartupDimensions();
       _maybeLogPlaybackDiagnostics();
       // isVertical.value =
       //     (player.state.height ?? 9) > (player.state.width ?? 16);
@@ -344,6 +353,9 @@ class PlayerController extends BaseController
 
   void beginPlaybackGeneration() {
     playbackGeneration += 1;
+    _playbackGenerationStartedAt = DateTime.now();
+    _startupDimensionsLoggedGeneration = -1;
+    Log.i('播放起播开始：generation=$playbackGeneration');
     _armStartupVideoWatchdog();
   }
 
@@ -453,6 +465,23 @@ class PlayerController extends BaseController
     }
     _playbackDiagnosticsLoggedGeneration = generation;
     unawaited(_logPlaybackDiagnostics(generation));
+  }
+
+  void _maybeLogStartupDimensions() {
+    final generation = playbackGeneration;
+    if (generation <= 0 ||
+        _startupDimensionsLoggedGeneration == generation ||
+        width.value <= 0 ||
+        height.value <= 0) {
+      return;
+    }
+    _startupDimensionsLoggedGeneration = generation;
+    final startedAt = _playbackGenerationStartedAt;
+    Log.i(
+      '首个有效视频尺寸：generation=$generation '
+      'size=${width.value}x${height.value} '
+      '耗时=${startedAt == null ? 'unknown' : '${DateTime.now().difference(startedAt).inMilliseconds}ms'}',
+    );
   }
 
   Future<void> _logPlaybackDiagnostics(int generation) async {
