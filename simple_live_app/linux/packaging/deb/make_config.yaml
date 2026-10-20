@@ -14,6 +14,9 @@ dependencies:
   - libmpv2
   - libepoxy0
   - libasound2t64 | libasound2
+  - libjson-glib-1.0-0
+  - libopencore-amrnb0
+  - libvo-amrwbenc0
 icon: assets/logo.png
 
 keywords:
