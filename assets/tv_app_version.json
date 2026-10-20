@@ -1,7 +1,7 @@
 {
-  "version": "26.4.2",
-  "version_num": 26402,
-  "version_desc": "暂无相关更新。\n暂无相关更新。\n修复按住玻璃导航控件时点击丢失的问题\n暂无相关更新。",
-  "download_url": "https://github.com/xuanxuan123xuan/dart_simple_live/releases/tag/tv_v26.4.2-dev",
+  "version": "26.4.3",
+  "version_num": 26403,
+  "version_desc": "直播设置可限制弹幕显示行数与显示模式\n单窗口多房间播放完成，关注页可多选主播同屏观看\n新增斗鱼账号与小红书直播入口，支持链接打开直播间\n房间选择器显示直播状态，并优先排列直播中房间\n多房间控制栏空闲自动隐藏，遥控器操作时保持显示\n多房间控制布局统一，双画面与音量调节更顺手\n分类页保留多级分类，返回时恢复遥控器焦点\n播放控制可用遥控器聚焦，暂停后恢复不丢状态\n多画面弹幕开关相互独立，切换画面不再覆盖\n直播状态获取失败时显示未知，避免误判为离线\n小红书保存的主播可定位当前直播场次\n切换账号后自动重载直播配置并恢复播放\nWindows TV 小红书缺少运行库时提示安装后重试\n斗鱼登录凭据在应用活跃期间自动续期\n同步页支持斗鱼与小红书账号配置\nAndroid TV 与 Windows TV 支持多房间布局与混音设置",
+  "download_url": "https://github.com/xuanxuan123xuan/dart_simple_live/releases/tag/tv_v26.4.3-dev",
   "prerelease": false
 }
