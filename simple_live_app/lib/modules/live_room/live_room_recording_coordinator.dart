@@ -22,6 +22,7 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
       mediaPosition: () => readMpvRecordingPosition(player()),
       onFrame: _onFrame,
       onError: (_, __) {
+        if (_disposed || !active) return;
         _service.markCaptureFailure();
         unawaited(stop(reason: '弹幕素材写入失败'));
       },

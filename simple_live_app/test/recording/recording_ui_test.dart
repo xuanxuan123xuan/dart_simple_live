@@ -17,6 +17,7 @@ class _RoomRecording extends LiveRoomRecordingCoordinator {
             danmakuVisible: () => true);
   bool enabled = false, working = false;
   int toggles = 0;
+  int stops = 0;
   @override
   bool get active => enabled;
   @override
@@ -27,6 +28,11 @@ class _RoomRecording extends LiveRoomRecordingCoordinator {
   }
 
   @override
+  Future<void> stop({String reason = 'test'}) async {
+    stops++;
+  }
+
+  @override
   Future<void> close() async {
     enabled = false;
     await super.close();
@@ -34,6 +40,17 @@ class _RoomRecording extends LiveRoomRecordingCoordinator {
 }
 
 void main() {
+  testWidgets('late capture errors cannot stop an inactive or closed room',
+      (tester) async {
+    final recording = _RoomRecording();
+    recording.capture.onError!(StateError('late frame'), StackTrace.current);
+    expect(recording.stops, 0);
+    await recording.close();
+    final stops = recording.stops;
+    recording.capture.onError!(StateError('old callback'), StackTrace.current);
+    expect(recording.stops, stops);
+  });
+
   testWidgets('More menu switch closes menu before starting or stopping',
       (tester) async {
     final recording = _RoomRecording();
