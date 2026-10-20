@@ -332,7 +332,11 @@ void main() {
       start,
     );
     final method = controller.substring(start, end);
-    final playerOpen = method.indexOf('await player.open(currentMedia);');
+    // Source opens now share the listening session queue and request guard.
+    final playerOpen = RegExp(r'await openListeningMedia\(\s*currentMedia,')
+            .firstMatch(method)
+            ?.start ??
+        -1;
     final reset = method.indexOf('await resetLiveLatencyChase();');
     final reconnectEvent = method.indexOf('LiveLinkEventType.cdnReconnect');
 
