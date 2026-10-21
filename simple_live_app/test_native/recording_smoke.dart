@@ -233,6 +233,46 @@ Future<void> _run(Directory root, Map<String, dynamic> results) async {
           'height': info.height,
           'path': session.outputPath
         };
+
+        // Reuse the same live player for a second segment. This exercises the
+        // stop/flush/restart boundary used when a room reconnects.
+        await service.start(RecordingStartRequest(
+            roomId: name,
+            roomTitle: '$name segment 2',
+            platform: 'local fixture',
+            mode: RecordingMode.videoOnly,
+            source: MpvRecordingSource(player)));
+        await Future<void>.delayed(const Duration(seconds: 2));
+        await service.stop(reason: 'smoke-segment-boundary');
+        final second = service.sessions.first;
+        await _wait(service, second);
+        if (second.status != RecordingStatus.complete ||
+            second.outputPath == null) {
+          throw StateError('Second segment failed: ${second.error}');
+        }
+        final secondInfo = await FFmpegRecordingBackend().probe(
+          second.outputPath!,
+        );
+        await _ffmpeg([
+          '-v',
+          'error',
+          '-xerror',
+          '-i',
+          second.outputPath!,
+          '-f',
+          'null',
+          '-'
+        ]);
+        (results[name] as Map<String, dynamic>)['segments'] = [
+          {
+            'durationMs': info.duration.inMilliseconds,
+            'path': session.outputPath,
+          },
+          {
+            'durationMs': secondInfo.duration.inMilliseconds,
+            'path': second.outputPath,
+          },
+        ];
       } finally {
         capture?.cancel();
         await logs.cancel();

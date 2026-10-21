@@ -7,6 +7,30 @@ RecordingFingerprint frame(int microseconds, String hash) =>
     RecordingFingerprint(Duration(microseconds: microseconds), hash);
 
 void main() {
+  group('isMpvRecordingFailureLog', () {
+    test('accepts explicit recorder errors', () {
+      expect(
+        isMpvRecordingFailureLog(
+          prefix: 'recorder',
+          text: 'failed to open muxer',
+          level: 'error',
+        ),
+        isTrue,
+      );
+    });
+
+    test('ignores informational recorder shutdown messages', () {
+      expect(
+        isMpvRecordingFailureLog(
+          prefix: 'cplayer',
+          text: 'Disabling recording',
+          level: 'info',
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('matchRecordingTimeline', () {
     test('three independent frames establish media offset regardless of order',
         () {

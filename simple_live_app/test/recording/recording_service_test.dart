@@ -33,14 +33,28 @@ class FakeSource implements RecordingSource {
 class FakeBackend implements RecordingBackend {
   int remuxes = 0, transcodes = 0;
   bool failRemux = false, invalidOutput = false;
+  bool invalidRaw = false;
+  int probeFailures = 0;
   Completer<void>? gate;
   @override
-  Future<RecordingMediaInfo> probe(String path) async => RecordingMediaInfo(
-      duration: const Duration(seconds: 10),
-      width: invalidOutput && path.endsWith('partial.mp4') ? 640 : 1920,
-      height: 1080,
-      videoCodec: 'h264',
-      audioCodec: 'aac');
+  Future<RecordingMediaInfo> probe(String path) async {
+    if (probeFailures > 0) {
+      probeFailures--;
+      throw StateError('flush pending');
+    }
+    return RecordingMediaInfo(
+        duration: invalidRaw
+            ? Duration.zero
+            : const Duration(seconds: 10),
+        width: invalidRaw
+            ? 0
+            : invalidOutput && path.endsWith('partial.mp4')
+                ? 640
+                : 1920,
+        height: 1080,
+        videoCodec: 'h264',
+        audioCodec: 'aac');
+  }
   @override
   Future<void> remux(String input, String output,
       {Duration? duration, Duration start = Duration.zero}) async {
@@ -141,6 +155,24 @@ void main() {
     await waitFor(service, RecordingStatus.complete);
     expect(backend.transcodes, 0);
     expect(service.sessions.single.outputPath, service.sessions.single.rawPath);
+  });
+
+  test('stop retries a delayed flush before exporting', () async {
+    backend.probeFailures = 2;
+    await service.start(request());
+    await service.stop();
+    await waitFor(service, RecordingStatus.complete);
+    expect(service.sessions.single.outputPath, isNotNull);
+    expect(backend.remuxes, 1);
+  });
+
+  test('invalid raw media is retained without exposing a playable path', () async {
+    backend.invalidRaw = true;
+    await service.start(request());
+    await service.stop();
+    await waitFor(service, RecordingStatus.failed);
+    expect(service.sessions.single.outputPath, isNull);
+    expect(await File(service.sessions.single.rawPath).exists(), isTrue);
   });
 
   test('stop waits for an in-flight source start before detaching recorder',

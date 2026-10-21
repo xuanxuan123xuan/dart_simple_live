@@ -1162,13 +1162,24 @@ class LiveRoomController extends PlayerController
           player.state.playing && !isPlayerClosing;
     },
     danmakuVisible: () => showDanmakuState.value,
+    protectPlayerMutation: runRecordingNativeMutation,
+    playerMutationQuiet: () => recordingNativeMutationQuiet,
   );
 
   @override
   Future<void> beforePlayerMutationForRecording({
     bool resumeRecordingAfterMutation = false,
   }) async {
-    if (!Utils.isOhos) await recording.stop(reason: '播放源或播放状态变化');
+    if (!Utils.isOhos) {
+      await recording.suspendForPlayerMutation(
+        resumeAfterMutation: resumeRecordingAfterMutation,
+      );
+    }
+  }
+
+  @override
+  Future<void> afterPlayerMutationForRecording() async {
+    if (!Utils.isOhos) await recording.resumeAfterPlayerMutation();
   }
 
   @override
@@ -4537,7 +4548,9 @@ class LiveRoomController extends PlayerController
     bool? reconnectHostChanged,
     bool suppressOhosAutoLineSelection = false,
   }) async {
-    await beforePlayerMutationForRecording();
+    await beforePlayerMutationForRecording(
+      resumeRecordingAfterMutation: true,
+    );
     if (!_holdPreviewPromotingMain &&
         _holdPreviewPhase != LiveRoomHoldPreviewPhase.closed) {
       await closeFollowHoldPreview();
@@ -4596,6 +4609,7 @@ class LiveRoomController extends PlayerController
           !_hasActivePlaybackSession) {
         return false;
       }
+      await afterPlayerMutationForRecording();
       final recordedReason = reconnectReason ??
           (playbackUrlRefreshed
               ? LiveReconnectReason.playbackUrlRefresh
@@ -4644,7 +4658,7 @@ class LiveRoomController extends PlayerController
 
   @override
   void mediaEnd() async {
-    if (_roomDisposed || _roomSwitching) {
+    if (_roomDisposed || _roomSwitching || recordingNativeMutationQuiet) {
       return;
     }
     final recoveryGeneration = _loadGeneration;
@@ -4729,7 +4743,7 @@ class LiveRoomController extends PlayerController
   int mediaErrorRetryCount = 0;
   @override
   void mediaError(String error) async {
-    if (_roomDisposed || _roomSwitching) {
+    if (_roomDisposed || _roomSwitching || recordingNativeMutationQuiet) {
       return;
     }
     final recoveryGeneration = _loadGeneration;

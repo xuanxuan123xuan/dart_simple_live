@@ -206,7 +206,37 @@ mixin PlayerMixin {
   }
 
   /// Room-owned recorder must close its file before a native source mutation.
-  Future<void> beforePlayerMutationForRecording() async {}
+  Future<void> beforePlayerMutationForRecording({
+    bool resumeRecordingAfterMutation = false,
+  }) async {}
+
+  Future<void> afterPlayerMutationForRecording() async {}
+
+  /// Runs a native recorder mutation while playback recovery is temporarily
+  /// suppressed. Some libmpv builds emit a transient completed/paused signal
+  /// while stream-record is being attached or detached.
+  int _recordingNativeMutationDepth = 0;
+  DateTime? _recordingNativeMutationQuietUntil;
+
+  bool get recordingNativeMutationQuiet {
+    final until = _recordingNativeMutationQuietUntil;
+    return _recordingNativeMutationDepth > 0 ||
+        (until != null && DateTime.now().isBefore(until));
+  }
+
+  Future<void> runRecordingNativeMutation(
+      Future<void> Function() operation) async {
+    _recordingNativeMutationDepth++;
+    try {
+      await operation();
+    } finally {
+      if (_recordingNativeMutationDepth > 0) {
+        _recordingNativeMutationDepth--;
+      }
+      _recordingNativeMutationQuietUntil =
+          DateTime.now().add(const Duration(seconds: 2));
+    }
+  }
   bool _playerInitialized = false;
   StreamSubscription? _androidTrackSubscription;
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
@@ -3406,6 +3436,10 @@ class PlayerController extends BaseController
     }
     _errorSubscription = player.stream.error.listen((event) {
       Log.d("播放器错误：$event");
+      if (recordingNativeMutationQuiet) {
+        Log.d('忽略录制原生操作期间的播放器瞬时错误：$event');
+        return;
+      }
       // 无音频输出不走换线重试（画面是好的），但要留痕给播放信息，
       // 否则这类永久性故障对用户完全不可见。
       // Could not open/initialize audio device -> no sound.
@@ -3450,6 +3484,7 @@ class PlayerController extends BaseController
     _playingSubscription = player.stream.playing.listen((event) {
       _setKeepScreenAwake(!isPlayerClosing && event);
       unawaited(_syncBackgroundPlaybackService(event));
+      if (recordingNativeMutationQuiet) return;
       if (event) {
         _surfaceRecoveryGraceUntil =
             DateTime.now().add(_surfaceRecoveryGraceDuration);
@@ -3468,7 +3503,7 @@ class PlayerController extends BaseController
     });
 
     _completedSubscription = player.stream.completed.listen((event) {
-      if (event) {
+      if (event && !recordingNativeMutationQuiet) {
         unawaited(
           suspendLiveLatencyChase(
             MpvLiveLatencyProtectionReason.sourceChanged,
@@ -3851,7 +3886,7 @@ class PlayerController extends BaseController
   }
 
   void _checkPlaybackStall() {
-    if (_playerClosing) {
+    if (_playerClosing || recordingNativeMutationQuiet) {
       return;
     }
     final state = player.state;

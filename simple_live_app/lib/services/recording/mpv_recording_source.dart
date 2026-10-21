@@ -5,6 +5,7 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:path/path.dart' as p;
 
 import 'recording_models.dart';
 
@@ -40,6 +41,8 @@ class RecordingFingerprint {
   final Duration position;
   final String fingerprint;
 }
+
+enum MpvRecordingState { idle, starting, recording, stopping, failed }
 
 /// mpv rebases recorded packets. Recover that offset by matching several unique
 /// decoded frames from the already-playing stream against the local recording.
@@ -101,11 +104,32 @@ List<RecordingFingerprint> parseRecordingFingerprints(String metadata) {
   }
 }
 
+bool isMpvRecordingFailureLog({
+  required String prefix,
+  required String text,
+  required String level,
+}) {
+  final value = text.toLowerCase();
+  final normalizedLevel = level.toLowerCase();
+  final severe = normalizedLevel == 'error' || normalizedLevel == 'fatal';
+  final warning = severe || normalizedLevel == 'warn' || normalizedLevel == 'warning';
+  final recorderPrefix = prefix.toLowerCase().contains('recorder');
+  final failureWord = value.contains('error') ||
+      value.contains('fail') ||
+      value.contains('cannot') ||
+      value.contains('unable') ||
+      value.contains('invalid');
+  return (recorderPrefix && warning) ||
+      (value.contains('stream-record') && warning && failureWord) ||
+      (value.contains('disabling recording') && severe);
+}
+
 /// Writes packets from the existing native player. It never resolves or opens
 /// another live URL. A second player is used only for the finalized local file.
 class MpvRecordingSource implements RecordingSource {
-  MpvRecordingSource(this.player);
+  MpvRecordingSource(this.player, {this.onError});
   final Player player;
+  final void Function(Object error, StackTrace stackTrace)? onError;
   static const _label = 'simplelive_recording';
   // mpv_get_property_string may query a node twice while formatting JSON.
   // Clearing on query would consume it before the formatted result is read.
@@ -113,25 +137,54 @@ class MpvRecordingSource implements RecordingSource {
   final List<RecordingFingerprint> _sourceFrames = [];
   final Set<int> _sourcePositions = {};
   Timer? _fingerprintTimer;
+  StreamSubscription<PlayerLog>? _logs;
   Future<void> _sampling = Future.value();
   String? _path;
   bool _attached = false;
   bool _filterAttached = false;
   int _generation = 0;
   Duration? _sourceFirstPosition;
+  MpvRecordingState _state = MpvRecordingState.idle;
+  Object? _lastError;
+  bool _errorReported = false;
+
+  MpvRecordingState get state => _state;
 
   NativePlayer get _native => player.platform as NativePlayer;
 
   @override
   Future<void> start(String path) async {
-    if (_attached) throw StateError('录制已经开始');
+    if (_attached || _state != MpvRecordingState.idle) {
+      throw StateError('录制已经开始');
+    }
     if (await File(path).exists()) throw StateError('录制目标文件已存在');
+    _state = MpvRecordingState.starting;
+    _lastError = null;
+    _errorReported = false;
     final generation = ++_generation;
     _path = path;
     // A small, bounded fingerprint history is sufficient to establish the
     // packet rebase offset without guessing at the demuxer cache tail.
-    await _native.command(['vf', 'add', _filter]);
-    _filterAttached = true;
+    try {
+      await _native.command(['vf', 'add', _filter]);
+      _filterAttached = true;
+      _logs = player.stream.log.listen((log) {
+        if ((_state != MpvRecordingState.starting &&
+                _state != MpvRecordingState.recording) ||
+            !isMpvRecordingFailureLog(
+              prefix: log.prefix,
+              text: log.text,
+              level: log.level,
+            )) {
+          return;
+        }
+        final error = StateError('录制器错误：${log.text}');
+        _lastError = error;
+        if (!_errorReported) {
+          _errorReported = true;
+          onError?.call(error, StackTrace.current);
+        }
+      });
     _fingerprintTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       _sampling = _sampling.then((_) async {
         if (generation != _generation || !_filterAttached) return;
@@ -153,19 +206,36 @@ class MpvRecordingSource implements RecordingSource {
         _fingerprintTimer?.cancel();
       });
     });
-    _attached = true;
-    await _native.setProperty('stream-record', path);
+      _attached = true;
+      await _native.setProperty('stream-record', path);
     // Setting the option can succeed even when the bundled libavformat has no
     // muxers. Confirm file creation instead of displaying false success. MKV
     // buffers its first cluster, so size can stay zero until stop flushes it;
     // track/size/duration validation belongs to finalization.
-    for (var attempt = 0; attempt < 60; attempt++) {
-      if (generation != _generation) throw StateError('录制已取消');
-      final file = File(path);
-      if (await file.exists()) return;
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      for (var attempt = 0; attempt < 60; attempt++) {
+        if (generation != _generation) throw StateError('录制已取消');
+        final error = _lastError;
+        if (error != null) throw error;
+        final file = File(path);
+        if (await file.exists()) {
+          final activePath = await _native.getProperty('stream-record');
+          if (activePath.trim().isNotEmpty &&
+              p.equals(p.absolute(activePath.trim()), p.absolute(path))) {
+            _state = MpvRecordingState.recording;
+            return;
+          }
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      throw StateError('播放器未能写入录制文件，请检查录制库支持和直播连接');
+    } on Object catch (error, stackTrace) {
+      _state = MpvRecordingState.failed;
+      if (!_errorReported) onError?.call(error, stackTrace);
+      try {
+        await stop();
+      } on Object {/* Preserve the original start error. */}
+      rethrow;
     }
-    throw StateError('播放器未能写入录制文件，请检查录制库支持和直播连接');
   }
 
   Future<void> _removeFilter() async {
@@ -176,14 +246,41 @@ class MpvRecordingSource implements RecordingSource {
 
   @override
   Future<void> stop() async {
+    if (_state == MpvRecordingState.idle) return;
+    _state = MpvRecordingState.stopping;
     _generation++;
     _fingerprintTimer?.cancel();
+    await _logs?.cancel();
+    _logs = null;
     await _sampling;
     try {
       if (_attached) await _native.setProperty('stream-record', '');
+      await _waitForFileFlush();
     } finally {
       _attached = false;
       await _removeFilter();
+      _state = MpvRecordingState.idle;
+    }
+  }
+
+  Future<void> _waitForFileFlush() async {
+    final path = _path;
+    if (path == null) return;
+    var previous = -1;
+    var stable = 0;
+    for (var attempt = 0; attempt < 20; attempt++) {
+      final file = File(path);
+      if (await file.exists()) {
+        final length = await file.length();
+        if (length == previous) {
+          stable++;
+          if (stable >= 3) return;
+        } else {
+          previous = length;
+          stable = 0;
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
     }
   }
 

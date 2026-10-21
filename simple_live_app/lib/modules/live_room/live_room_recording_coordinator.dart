@@ -17,7 +17,9 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
       required this.roomTitle,
       required this.platform,
       required this.canRecord,
-      required this.danmakuVisible}) {
+      required this.danmakuVisible,
+      this.protectPlayerMutation,
+      this.playerMutationQuiet = _alwaysFalse}) {
     capture = DanmakuCaptureController(
       mediaPosition: () => readMpvRecordingPosition(player()),
       onFrame: _onFrame,
@@ -33,19 +35,24 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
   final Player Function() player;
   final String Function() roomId, roomTitle, platform;
   final bool Function() canRecord, danmakuVisible;
+  final Future<void> Function(Future<void> Function())?
+      protectPlayerMutation;
+  final bool Function() playerMutationQuiet;
   final _service = RecordingService.instance;
   late final DanmakuCaptureController capture;
   StreamSubscription<bool>? _playing;
-  StreamSubscription<PlayerLog>? _logs;
   Timer? _clock;
   Future<void>? _startPending;
   Future<void>? _stopPending;
   String? _sessionId;
   bool _disposed = false, _choosing = false;
+  bool _resumeAfterPlayerMutation = false;
+  RecordingMode? _intentMode;
   Rect? Function()? videoRect;
   bool get active =>
       _sessionId != null && _service.activeSession?.id == _sessionId;
   bool get busy => _choosing || _startPending != null || _stopPending != null;
+  bool get mutationInProgress => _startPending != null || _stopPending != null;
   Duration get elapsed {
     final session = _service.activeSession;
     return active && session != null
@@ -59,9 +66,10 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
       _sessionId = null;
       _clock?.cancel();
       unawaited(_playing?.cancel());
-      unawaited(_logs?.cancel());
       _playing = null;
-      _logs = null;
+    }
+    if (active && !playerMutationQuiet() && !player().state.playing) {
+      unawaited(stop(reason: '播放已暂停'));
     }
     if (!_disposed) notifyListeners();
   }
@@ -77,6 +85,7 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
     try {
       final mode = await chooseRecordingMode(context);
       if (mode == null || _disposed || !canRecord()) return;
+      _intentMode = mode;
       final directory = await resolveOrChooseRecordingDirectory();
       if (directory == null || _disposed || !canRecord()) return;
       await _service.initialize(directory.path);
@@ -84,6 +93,7 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
       _startPending = start;
       await start;
     } on Object catch (error) {
+      if (!active) _intentMode = null;
       if (!_disposed) SmartDialog.showToast('无法开始录制：$error');
     } finally {
       _startPending = null;
@@ -94,17 +104,24 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
 
   Future<void> _start(RecordingMode mode) async {
     await capture.reset();
-    await _service.start(RecordingStartRequest(
-      roomId: roomId(),
-      roomTitle: roomTitle(),
-      platform: platform(),
-      mode: mode,
-      source: MpvRecordingSource(player()),
-      beforeStop: () async {
-        capture.enabled = false;
-        await capture.flush();
+    final source = MpvRecordingSource(
+      player(),
+      onError: (_, __) {
+        if (_disposed || !active) return;
+        unawaited(stop(reason: '录制写入中断'));
       },
-    ));
+    );
+    await _runProtected(() => _service.start(RecordingStartRequest(
+          roomId: roomId(),
+          roomTitle: roomTitle(),
+          platform: platform(),
+          mode: mode,
+          source: source,
+          beforeStop: () async {
+            capture.enabled = false;
+            await capture.flush();
+          },
+        )));
     _sessionId = _service.activeSession?.id;
     if (_disposed) {
       await _service.stop(reason: '离开直播间');
@@ -112,14 +129,8 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
     }
     capture.enabled = mode != RecordingMode.videoOnly;
     _playing = player().stream.playing.listen((playing) {
-      if (!playing && active) unawaited(stop(reason: '播放已暂停'));
-    });
-    _logs = player().stream.log.listen((log) {
-      if (active &&
-          (log.prefix.contains('recorder') ||
-              log.text.contains('Disabling recording')) &&
-          (log.level == 'error' || log.text.contains('Disabling recording'))) {
-        unawaited(stop(reason: '录制写入中断'));
+      if (!playing && active && !playerMutationQuiet()) {
+        unawaited(stop(reason: '播放已暂停'));
       }
     });
     _clock = Timer.periodic(const Duration(seconds: 1), (_) => _changed());
@@ -184,6 +195,8 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
   }
 
   Future<void> stop({String reason = '手动停止'}) {
+    _resumeAfterPlayerMutation = false;
+    _intentMode = null;
     final pending = _stopPending;
     if (pending != null) return pending;
     final operation = _stop(reason);
@@ -197,19 +210,22 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
       try {
         await pending;
       } on Object {
+        if (!_resumeAfterPlayerMutation) _intentMode = null;
         return;
       }
     }
-    if (!active) return;
+    if (!active) {
+      if (!_resumeAfterPlayerMutation) _intentMode = null;
+      return;
+    }
     capture.enabled = false;
     await capture.flush();
     await _playing?.cancel();
     _playing = null;
-    await _logs?.cancel();
-    _logs = null;
     _clock?.cancel();
-    await _service.stop(reason: reason);
+    await _runProtected(() => _service.stop(reason: reason));
     _sessionId = null;
+    if (!_resumeAfterPlayerMutation) _intentMode = null;
     if (!_disposed) {
       notifyListeners();
       SmartDialog.showToast('本段录制已保存，可在“录制文件”中查看');
@@ -218,12 +234,59 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
 
   Future<void> close() async {
     _disposed = true;
+    _resumeAfterPlayerMutation = false;
+    _intentMode = null;
     await stop(reason: '离开直播间');
     await _playing?.cancel();
-    await _logs?.cancel();
     _clock?.cancel();
     _service.removeListener(_changed);
     capture.dispose();
     super.dispose();
   }
+
+  Future<void> suspendForPlayerMutation({
+    bool resumeAfterMutation = false,
+  }) async {
+    if (resumeAfterMutation) {
+      _resumeAfterPlayerMutation = true;
+    } else if (!_resumeAfterPlayerMutation) {
+      _intentMode = null;
+    }
+    await _stop('播放源或播放状态变化');
+  }
+
+  Future<void> resumeAfterPlayerMutation() async {
+    if (!_resumeAfterPlayerMutation) return;
+    final mode = _intentMode;
+    _resumeAfterPlayerMutation = false;
+    if (_disposed || mode == null) {
+      _intentMode = null;
+      return;
+    }
+    for (var attempt = 0;
+        attempt < 20 && !_disposed && !player().state.playing;
+        attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    if (_disposed || !canRecord()) {
+      _intentMode = null;
+      return;
+    }
+    try {
+      final start = _start(mode);
+      _startPending = start;
+      await start;
+    } catch (_) {
+      _intentMode = null;
+    } finally {
+      _startPending = null;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<void> _runProtected(Future<void> Function() operation) {
+    return protectPlayerMutation?.call(operation) ?? operation();
+  }
+
+  static bool _alwaysFalse() => false;
 }

@@ -197,23 +197,60 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> stop({String reason = 'manual'}) =>
       _captureOperation(() => _stop(reason));
 
+  Future<RecordingMediaInfo> _probeValid(String path) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 8; attempt++) {
+      try {
+        final info = await _backend.probe(path);
+        if (info.valid) return info;
+        lastError = StateError('Invalid recording media');
+      } on Object catch (error) {
+        lastError = error;
+      }
+      if (attempt < 7) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+    }
+    throw StateError('Invalid recording: $lastError');
+  }
+
   Future<void> _stop(String reason) async {
     final session = _active;
     if (session == null || _transitioning) return;
     _transitioning = true;
+    RecordingMediaInfo? info;
+    var probeAttempted = false;
     try {
-      await _beforeStop?.call();
-      final position = await _source!.mediaPosition();
+      Object? beforeStopError;
+      try {
+        await _beforeStop?.call();
+      } on Object catch (error) {
+        beforeStopError = error;
+      }
+      Duration? position;
+      try {
+        position = await _source!.mediaPosition();
+      } on Object {
+        // The player may already be in the source-switching path. The flushed
+        // file is still usable when its own media metadata is valid.
+      }
       await _source!.stop();
-      final info = await _backend.probe(session.rawPath);
-      if (!info.valid) throw StateError('Invalid recording');
-      final timeline = await _source!.timeline();
+      probeAttempted = true;
+      info = await _probeValid(session.rawPath);
+      if (beforeStopError != null) throw beforeStopError;
+      RecordingTimeline? timeline;
+      try {
+        timeline = await _source!.timeline();
+      } on Object {
+        timeline = null;
+      }
       session.mediaStartMs = timeline?.mediaStart.inMilliseconds;
       session.fileStartMs = timeline?.fileStart.inMilliseconds ?? 0;
       session.timelineConfirmed = timeline?.confirmed ?? false;
-      session.durationMs = timeline == null
-          ? info.duration.inMilliseconds
-          : (position - timeline.mediaStart).inMilliseconds.clamp(0, 1 << 53);
+      final duration = timeline == null || position == null
+          ? info.duration - Duration(milliseconds: session.fileStartMs)
+          : position - timeline.mediaStart;
+      session.durationMs = duration.inMilliseconds.clamp(0, 1 << 53);
       session.captureDurationMs =
           session.timelineConfirmed && session.durationMs > 0
               ? session.durationMs
@@ -222,7 +259,7 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
       await _frames?.flush();
       await _frames?.close();
       if (_materialError != null) throw StateError('Material write failed');
-      if (await File(session.rawPath).exists()) {
+      if (info.valid && await File(session.rawPath).exists()) {
         session.outputPath = session.rawPath;
       }
       session.stopReason = reason;
@@ -234,8 +271,15 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
           ? '弹幕素材捕获失败，原始视频已保留，可单独播放或无损导出'
           : '录制停止时发生错误，原始文件与弹幕素材已保留';
       final raw = File(session.rawPath);
-      if (await raw.exists() && await raw.length() > 0) {
+      if (info?.valid == true) {
         session.outputPath = raw.path;
+      } else if (!probeAttempted) {
+        try {
+          info = await _probeValid(raw.path);
+          session.outputPath = info.valid ? raw.path : null;
+        } on Object {
+          session.outputPath = null;
+        }
       }
       // Always attempt to detach stream-record even if position sampling failed.
       try {
