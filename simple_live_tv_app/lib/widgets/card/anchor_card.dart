@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
 import 'package:simple_live_tv_app/app/app_style.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/widgets/highlight_widget.dart';
 import 'package:simple_live_tv_app/widgets/net_image.dart';
@@ -31,6 +32,7 @@ class AnchorCard extends StatelessWidget {
   final FocusOnKeyDownCallback? onDownKey;
   final FocusOnKeyDownCallback? onLeftKey;
   final FocusOnKeyDownCallback? onRightKey;
+  final List<LiveRoomChannel> channels;
   final AppFocusNode? focusNode;
   final AnchorCardDisplayStyle displayStyle;
 
@@ -52,6 +54,7 @@ class AnchorCard extends StatelessWidget {
     this.onDownKey,
     this.onLeftKey,
     this.onRightKey,
+    this.channels = const <LiveRoomChannel>[],
     this.displayStyle = AnchorCardDisplayStyle.defaultList,
     super.key,
   });
@@ -64,7 +67,11 @@ class AnchorCard extends StatelessWidget {
       () => HighlightWidget(
         onTap: onTap ??
             () {
-              AppNavigator.toLiveRoomDetail(site: site, roomId: roomId);
+              AppNavigator.toLiveRoomDetail(
+                site: site,
+                roomId: roomId,
+                channels: channels,
+              );
             },
         onLongPress: onLongPress,
         onUpKey: onUpKey,

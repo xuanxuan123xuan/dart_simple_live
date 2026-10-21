@@ -8,6 +8,7 @@ import 'package:simple_live_tv_app/app/constant.dart';
 import 'package:simple_live_tv_app/widgets/tv_xiaohongshu_link_notice.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/modules/search/room/search_room_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
@@ -131,6 +132,12 @@ class SearchRoomPage extends GetView<SearchRoomController> {
                                 AppNavigator.toLiveRoomDetail(
                                   site: controller.site,
                                   roomId: item.roomId,
+                                  channels: controller.list
+                                      .map((entry) => LiveRoomChannel(
+                                            siteId: controller.site.id,
+                                            roomId: entry.roomId,
+                                          ))
+                                      .toList(growable: false),
                                 );
                               },
                             );

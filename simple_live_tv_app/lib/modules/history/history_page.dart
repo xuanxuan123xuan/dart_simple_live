@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
 import 'package:simple_live_tv_app/app/app_style.dart';
 import 'package:simple_live_tv_app/modules/history/history_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
 import 'package:simple_live_tv_app/widgets/card/anchor_card.dart';
@@ -65,12 +66,19 @@ class HistoryPage extends GetView<HistoryController> {
                 physics: const NeverScrollableScrollPhysics(),
                 itemBuilder: (_, i) {
                   var item = controller.list[i];
+                  final channels = controller.list
+                      .map((entry) => LiveRoomChannel(
+                            siteId: entry.siteId,
+                            roomId: entry.roomId,
+                          ))
+                      .toList(growable: false);
                   return AnchorCard(
                     face: item.face,
                     name: item.userName,
                     siteId: item.siteId,
                     liveStatus: 0,
                     roomId: item.roomId,
+                    channels: channels,
                   );
                 },
               ),

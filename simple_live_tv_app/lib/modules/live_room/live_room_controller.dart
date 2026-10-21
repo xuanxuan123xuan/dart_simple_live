@@ -20,6 +20,7 @@ import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/models/db/follow_user.dart';
 import 'package:simple_live_tv_app/models/db/history.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/player_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_danmaku_burst_scheduler.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_playback_intent.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
@@ -40,9 +41,12 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     required this.pRoomId,
     String? pXiaohongshuHostId,
     String? pDouyinSecUserId,
+    List<LiveRoomChannel> channelContext = const <LiveRoomChannel>[],
   }) {
     _xiaohongshuHostId = pXiaohongshuHostId;
     _douyinSecUserId = pDouyinSecUserId;
+    _channelContext = List<LiveRoomChannel>.unmodifiable(channelContext);
+    _entryRoomId = pRoomId;
     rxSite = pSite.obs;
     rxRoomId = pRoomId.obs;
     liveDanmaku = site.liveSite.getDanmaku();
@@ -50,6 +54,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   final FocusNode focusNode = FocusNode();
   String? _xiaohongshuHostId;
   String? _douyinSecUserId;
+  late List<LiveRoomChannel> _channelContext;
+  late String _entryRoomId;
   String? get xiaohongshuHostId => _xiaohongshuHostId;
   String? get douyinSecUserId => _douyinSecUserId;
   final danmakuStatus = ''.obs;
@@ -939,6 +945,11 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       if (!_isCurrentLoad(roomGeneration, loadGeneration)) return;
 
       detail.value = loadedDetail;
+      _applyCanonicalRoomIdentity(
+        requestSite: requestSite,
+        requestedRoomId: requestRoomId,
+        loadedDetail: loadedDetail,
+      );
       final status = loadedDetail.resolvedLiveStatus;
       roomLiveState.value = status;
       liveStatus.value = status == LiveStatusState.live;
@@ -982,6 +993,28 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         pageLoadding.value = false;
       }
     }
+  }
+
+  void _applyCanonicalRoomIdentity({
+    required Site requestSite,
+    required String requestedRoomId,
+    required LiveRoomDetail loadedDetail,
+  }) {
+    if (requestSite.id != Constant.kDouyu) return;
+    final canonicalRoomId = loadedDetail.roomId.trim();
+    if (canonicalRoomId.isEmpty || canonicalRoomId == requestedRoomId) {
+      return;
+    }
+    _entryRoomId = requestedRoomId;
+    rxRoomId.value = canonicalRoomId;
+    CurrentRoomService.instance.setRoom(requestSite, canonicalRoomId);
+    followed.value = DBService.instance.getFollowExist(
+      '${requestSite.id}_$canonicalRoomId',
+    );
+    specialFollowed.value = DBService.instance.followBox
+            .get('${requestSite.id}_$canonicalRoomId')
+            ?.isSpecialFollow ??
+        false;
   }
 
   /// 初始化播放器
@@ -1745,6 +1778,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     _playbackSessionReady = false;
     rxSite.value = site;
     rxRoomId.value = roomId;
+    _entryRoomId = roomId;
     detail.value = null;
     roomLiveState.value = LiveStatusState.unknown;
     liveStatus.value = false;
@@ -1778,50 +1812,53 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     await loadData();
   }
 
-  void nextChannel() {
-    //读取正在直播的频道
-    var liveChannels = FollowUserService.instance.livingList;
-    if (liveChannels.isEmpty) {
-      SmartDialog.showToast("没有正在直播的频道");
-      return;
-    }
-    var index = liveChannels
-        .indexWhere((element) => element.id == "${site.id}_$roomId");
-    if (index == -1) {
-      SmartDialog.showToast("当前直播间不在直播列表中");
-      return;
-    }
-    index += 1;
-    if (index >= liveChannels.length) {
-      index = 0;
-    }
-    var nextChannel = liveChannels[index];
-
-    unawaited(
-        resetRoom(Sites.allSites[nextChannel.siteId]!, nextChannel.roomId));
+  List<LiveRoomChannel> get _switchableChannels {
+    if (_channelContext.isNotEmpty) return _channelContext;
+    return List<LiveRoomChannel>.unmodifiable(
+      FollowUserService.instance.livingList.map(
+        (item) => LiveRoomChannel(
+          siteId: item.siteId,
+          roomId: item.roomId,
+        ),
+      ),
+    );
   }
 
-  void prevChannel() {
-    //读取正在直播的频道
-    var liveChannels = FollowUserService.instance.livingList;
-    if (liveChannels.isEmpty) {
+  Iterable<String> get _currentRoomIds sync* {
+    yield roomId;
+    yield _entryRoomId;
+    final detailRoomId = detail.value?.roomId;
+    if (detailRoomId != null) yield detailRoomId;
+  }
+
+  void _switchChannel(LiveRoomChannelDirection direction) {
+    final channels = _switchableChannels;
+    if (channels.isEmpty) {
       SmartDialog.showToast("没有正在直播的频道");
       return;
     }
-    var index = liveChannels
-        .indexWhere((element) => element.id == "${site.id}_$roomId");
-    if (index == -1) {
+    final target = LiveRoomChannelResolver.neighbor(
+      channels,
+      siteId: site.id,
+      roomIds: _currentRoomIds,
+      direction: direction,
+    );
+    if (target == null) {
       SmartDialog.showToast("当前直播间不在直播列表中");
       return;
     }
-    index -= 1;
-    if (index < 0) {
-      index = liveChannels.length - 1;
-    }
-    var nextChannel = liveChannels[index];
+    final targetSite = Sites.allSites[target.siteId];
+    if (targetSite == null) return;
+    setChannelContext(channels);
+    unawaited(resetRoom(targetSite, target.roomId));
+  }
 
-    unawaited(
-        resetRoom(Sites.allSites[nextChannel.siteId]!, nextChannel.roomId));
+  void nextChannel() => _switchChannel(LiveRoomChannelDirection.next);
+
+  void prevChannel() => _switchChannel(LiveRoomChannelDirection.previous);
+
+  void setChannelContext(Iterable<LiveRoomChannel> channels) {
+    _channelContext = List<LiveRoomChannel>.unmodifiable(channels);
   }
 
   @override

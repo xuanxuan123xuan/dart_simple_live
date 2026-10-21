@@ -8,6 +8,7 @@ import 'package:simple_live_tv_app/app/constant.dart';
 import 'package:simple_live_tv_app/widgets/tv_xiaohongshu_link_notice.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/modules/hot_live/hot_live_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
@@ -97,42 +98,50 @@ class HotLivePage extends GetView<HotliveController> {
           AppStyle.vGap24,
           Expanded(
             child: Obx(
-              () => controller.siteId.value == Constant.kXiaohongshu
-                  ? const TvXiaohongshuLinkNotice()
-                  : MasonryGridView.count(
-                      padding: AppStyle.edgeInsetsA48,
-                      itemCount: controller.list.length,
-                      crossAxisCount: 5,
-                      crossAxisSpacing: 48.w,
-                      mainAxisSpacing: 40.w,
-                      controller: controller.scrollController,
-                      itemBuilder: (_, i) {
-                        var item = controller.list[i];
-
-                        if (i == 0) {
-                          Future.delayed(Duration.zero, () {
-                            if (controller.currentPage == 2) {
-                              item.focusNode.requestFocus();
-                            }
-                          });
-                        }
-                        return LiveRoomCard(
-                          cover: item.cover,
-                          anchor: item.userName,
-                          title: item.title,
-                          focusNode: item.focusNode,
+              () {
+                final channels = controller.list
+                    .map((item) => LiveRoomChannel(
+                          siteId: controller.site.id,
                           roomId: item.roomId,
-                          online: item.online,
-                          onTap: () {
-                            AppNavigator.toLiveRoomDetail(
-                              site: controller.site,
-                              roomId: item.roomId,
-                            );
-                          },
-                        );
-                      },
-                    ),
-            ),
+                        ))
+                    .toList(growable: false);
+                return controller.siteId.value == Constant.kXiaohongshu
+                    ? const TvXiaohongshuLinkNotice()
+                    : MasonryGridView.count(
+                        padding: AppStyle.edgeInsetsA48,
+                        itemCount: controller.list.length,
+                        crossAxisCount: 5,
+                        crossAxisSpacing: 48.w,
+                        mainAxisSpacing: 40.w,
+                        controller: controller.scrollController,
+                        itemBuilder: (_, i) {
+                          var item = controller.list[i];
+
+                          if (i == 0) {
+                            Future.delayed(Duration.zero, () {
+                              if (controller.currentPage == 2) {
+                                item.focusNode.requestFocus();
+                              }
+                            });
+                          }
+                          return LiveRoomCard(
+                            cover: item.cover,
+                            anchor: item.userName,
+                            title: item.title,
+                            focusNode: item.focusNode,
+                            roomId: item.roomId,
+                            online: item.online,
+                            onTap: () {
+                              AppNavigator.toLiveRoomDetail(
+                                site: controller.site,
+                                roomId: item.roomId,
+                                channels: channels,
+                              );
+                            },
+                          );
+                        },
+                      );
+              },
           ),
         ],
       ),

@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_inlined_adds
 
 import 'package:get/get.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_tv_app/modules/account/bilibili/qr_login_controller.dart';
 import 'package:simple_live_tv_app/modules/account/bilibili/qr_login_page.dart';
 import 'package:simple_live_tv_app/modules/agreement/agreement_page.dart';
@@ -16,6 +17,7 @@ import 'package:simple_live_tv_app/modules/home/home_page.dart';
 import 'package:simple_live_tv_app/modules/hot_live/hot_live_controller.dart';
 import 'package:simple_live_tv_app/modules/hot_live/hot_live_page.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_tv_app/routes/live_room_route_args.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_page.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_controller.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
@@ -80,12 +82,24 @@ class AppPages {
       name: RoutePath.kLiveRoomDetail,
       page: () => const LiveRoomPage(),
       binding: BindingsBuilder.put(
-        () => LiveRoomController(
-          pSite: Get.arguments,
-          pRoomId: Get.parameters["roomId"] ?? "",
-          pDouyinSecUserId: Get.parameters["douyinSecUserId"],
-          pXiaohongshuHostId: Get.parameters["xiaohongshuHostId"],
-        ),
+        () {
+          final args = Get.arguments;
+          if (args is LiveRoomRouteArgs) {
+            return LiveRoomController(
+              pSite: args.site,
+              pRoomId: args.roomId,
+              pDouyinSecUserId: args.douyinSecUserId,
+              pXiaohongshuHostId: args.xiaohongshuHostId,
+              channelContext: args.channels,
+            );
+          }
+          return LiveRoomController(
+            pSite: args as Site,
+            pRoomId: Get.parameters["roomId"] ?? "",
+            pDouyinSecUserId: Get.parameters["douyinSecUserId"],
+            pXiaohongshuHostId: Get.parameters["xiaohongshuHostId"],
+          );
+        },
       ),
     ),
     // 单窗口多屏同播

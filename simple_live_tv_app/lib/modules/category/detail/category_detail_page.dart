@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
 import 'package:simple_live_tv_app/app/app_style.dart';
 import 'package:simple_live_tv_app/modules/category/detail/category_detail_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
@@ -105,6 +106,12 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
                   onRefresh: controller.refreshData,
                 );
               }
+              final channels = controller.list
+                  .map((item) => LiveRoomChannel(
+                        siteId: controller.site.id,
+                        roomId: item.roomId,
+                      ))
+                  .toList(growable: false);
               return MasonryGridView.count(
                 key: ValueKey('rooms-${controller.currentSubCategory.id}'),
                 padding: AppStyle.edgeInsetsA48,
@@ -126,6 +133,7 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
                       AppNavigator.toLiveRoomDetail(
                         site: controller.site,
                         roomId: item.roomId,
+                        channels: channels,
                       );
                     },
                   );

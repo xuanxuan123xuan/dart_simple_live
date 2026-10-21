@@ -11,6 +11,7 @@ import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_player_control_bar.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
@@ -686,16 +687,20 @@ void showPlayerSettings(LiveRoomController controller) {
 
 void showFollowUser(LiveRoomController controller) {
   controller.hideControlsTimer?.cancel();
+  final channels = FollowUserService.instance.livingList
+      .map((item) => LiveRoomChannel(
+            siteId: item.siteId,
+            roomId: item.roomId,
+          ))
+      .toList(growable: false);
   var currentIndex = 0;
-  if (controller.followed.value) {
-    currentIndex = FollowUserService.instance.livingList.indexWhere(
-      (e) =>
-          e.id ==
-          "${controller.rxSite.value.id}_${controller.detail.value?.roomId}",
-    );
-    if (currentIndex == -1) {
-      currentIndex = 0;
-    }
+  final resolvedIndex = LiveRoomChannelResolver.findCurrentIndex(
+    channels,
+    siteId: controller.rxSite.value.id,
+    roomIds: [controller.roomId, controller.detail.value?.roomId ?? ''],
+  );
+  if (resolvedIndex != null) {
+    currentIndex = resolvedIndex;
   }
   final followScrollController = ScrollController(
     initialScrollOffset: currentIndex * 172.w,
@@ -767,6 +772,7 @@ void showFollowUser(LiveRoomController controller) {
                       autofocus: i == currentIndex,
                       focusNode: i == currentIndex ? currentFocusNode : null,
                       onTap: () {
+                        controller.setChannelContext(channels);
                         controller.resetRoom(site, item.roomId);
                         Get.back();
                       },

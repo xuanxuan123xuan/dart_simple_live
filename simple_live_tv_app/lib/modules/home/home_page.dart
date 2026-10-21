@@ -10,6 +10,7 @@ import 'package:simple_live_tv_app/app/app_style.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/modules/home/home_controller.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/modules/follow_user/tv_follow_grid_layout.dart';
 import 'package:simple_live_tv_app/services/live_room_link_parser.dart';
@@ -282,6 +283,11 @@ class HomePage extends GetView<HomeController> {
     final settings = AppSettingsController.instance;
     settings.followOnlyLive.value;
     final items = FollowUserService.instance.list.toList();
+    final channels = List<LiveRoomChannel>.unmodifiable(
+      items.map(
+        (item) => LiveRoomChannel(siteId: item.siteId, roomId: item.roomId),
+      ),
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
         final style = settings.followDisplayStyle.value;
@@ -344,6 +350,7 @@ class HomePage extends GetView<HomeController> {
                 siteId: item.siteId,
                 liveStatus: item.liveStatus.value,
                 roomId: item.roomId,
+                channels: channels,
                 showLiveCover: showLiveCover,
                 displayStyle: displayStyle,
               ),

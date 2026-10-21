@@ -12,6 +12,7 @@ import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/models/db/follow_user.dart';
 import 'package:simple_live_tv_app/modules/follow_user/tv_follow_grid_layout.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/services/live_room_link_parser.dart';
@@ -520,8 +521,17 @@ class _FollowUserPageState extends State<FollowUserPage> {
                 await FollowUserService.instance.resolveFollowBeforeEnter(item);
             final site = Sites.allSites[resolved.siteId];
             if (site == null) return;
+            final channels = FollowUserService.instance.list
+                .map((entry) => LiveRoomChannel(
+                      siteId: entry.siteId,
+                      roomId: entry.roomId,
+                    ))
+                .toList(growable: false);
             await AppNavigator.toLiveRoomDetail(
-                site: site, roomId: resolved.roomId);
+              site: site,
+              roomId: resolved.roomId,
+              channels: channels,
+            );
           },
         ),
         if (_multiSelectionMode)
