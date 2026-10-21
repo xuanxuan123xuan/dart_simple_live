@@ -100,6 +100,7 @@ class DouyuSite implements LiveSite {
   static const String _userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43';
   static const Duration _encryptionCacheTtl = Duration(minutes: 5);
+  static const int _maxEncryptionEncTime = 4096;
   static const Duration _authRefreshCooldown = Duration(seconds: 60);
 
   DouyuSite({
@@ -672,8 +673,8 @@ class DouyuSite implements LiveSite {
         randStr.isEmpty ||
         encData.isEmpty ||
         encTime == null ||
-        encTime < 0 ||
-        encTime > 128 ||
+        encTime < 1 ||
+        encTime > _maxEncryptionEncTime ||
         expireAt == null ||
         expireAt <= 0 ||
         expireAt > 8640000000000) {

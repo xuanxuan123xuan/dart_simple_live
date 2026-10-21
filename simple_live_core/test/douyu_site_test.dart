@@ -286,6 +286,35 @@ void main() {
       }
     });
 
+    test('accepts authenticated encryption descriptors with 1000 rounds',
+        () async {
+      site.cookie =
+          'dy_did=authenticated-device; acf_uid=17; acf_jwt_token=${_jwt(now.add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000)}';
+      interceptor.encryptionResponse = _encryptionResponse(
+        now,
+        encTime: 1000,
+        isSpecial: true,
+      );
+
+      final qualities = await site.getPlayQualites(detail: _detail());
+
+      expect(qualities.map((quality) => quality.quality), ['高清', '流畅']);
+      final encryptionRequest = interceptor.encryptionRequests.single;
+      expect(encryptionRequest.uri.queryParameters['did'], 'authenticated-device');
+      expect(encryptionRequest.headers['cookie'], contains('acf_uid=17'));
+
+      final playRequest = interceptor.playbackRequests.single;
+      final body = Uri.splitQueryString(playRequest.data as String);
+      var secret = 'random-seed';
+      for (var i = 0; i < 1000; i++) {
+        secret = _md5('${secret}key-secret');
+      }
+      final timestamp = (now.millisecondsSinceEpoch ~/ 1000).toString();
+      expect(body['auth'], _md5('${secret}key-secret'));
+      expect(body['tt'], timestamp);
+      expect(body['did'], 'authenticated-device');
+    });
+
     test('keeps user cookie fields and chooses dy_did before acf_did',
         () async {
       site.cookie = 'acf_uid=17; acf_did=secondary; dy_did=preferred';
@@ -350,9 +379,17 @@ void main() {
       expect(interceptor.encryptionRequests, hasLength(2));
     });
 
-    test('rejects server errors and invalid encryption expiries', () async {
+    test('rejects server errors and invalid encryption parameters', () async {
       for (final response in [
         {'error': 100, 'data': _encryptionResponse(now)['data']},
+        for (final encTime in [0, -1, 4097])
+          {
+            'error': 0,
+            'data': {
+              ...(_encryptionResponse(now)['data'] as Map),
+              'enc_time': encTime,
+            },
+          },
         for (final expiry in [-1, 0, 8640000000001])
           {
             'error': 0,
