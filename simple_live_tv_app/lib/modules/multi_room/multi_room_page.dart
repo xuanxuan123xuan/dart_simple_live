@@ -1898,6 +1898,13 @@ class _MultiRoomSettingsDialog extends StatelessWidget {
                   onChanged: controller.setMixAudio,
                 ),
               ),
+              Obx(
+                () => SwitchListTile(
+                  value: controller.allAudioOnEntry,
+                  title: const Text('进入多开默认全部有声'),
+                  onChanged: controller.setAllAudioOnEntry,
+                ),
+              ),
               const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerRight,

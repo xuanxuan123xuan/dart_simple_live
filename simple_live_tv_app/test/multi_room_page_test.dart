@@ -509,6 +509,15 @@ void main() {
     await tester.tap(find.text('多屏设置'));
     await tester.pumpAndSettle();
     expect(find.text('多屏设置'), findsOneWidget);
+    expect(find.text('进入多开默认全部有声'), findsOneWidget);
+    await tester.tap(find.text('进入多开默认全部有声'));
+    await tester.pumpAndSettle();
+    expect(fixture.settings.multiRoomAllAudioOnEntry.value, isFalse);
+    expect(fixture.rooms.audioRoomKeys, hasLength(fixture.rooms.rooms.length));
+    expect(
+      fixture.rooms.sessions.values.every((session) => !session.muted.value),
+      isTrue,
+    );
     await tester.pump(const Duration(seconds: 8));
     _expectOverlayState(tester, visible: true);
     expect(FocusManager.instance.primaryFocus?.context, isNotNull);
@@ -598,5 +607,49 @@ void main() {
         ]));
     await tester.tap(find.text('完成'));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('all-audio mode enables rooms and respects manual mute',
+      (tester) async {
+    final fixture = MultiRoomUiFixture(count: 4, allAudioOnEntry: true);
+    addTearDown(() => fixture.dispose(tester));
+    await fixture.pump(tester);
+    await tester.pump();
+
+    expect(
+      fixture.rooms.sessions.values.every((session) => !session.muted.value),
+      isTrue,
+    );
+    expect(fixture.rooms.audioRoomKeys, hasLength(4));
+
+    final manuallyMuted = fixture.rooms.rooms[1];
+    await fixture.rooms.setAudioEnabled(manuallyMuted.key, false);
+    expect(fixture.session(1).muted.value, isTrue);
+    expect(fixture.rooms.audioRoomKeys, isNot(contains(manuallyMuted.key)));
+
+    await fixture.rooms.refreshAll();
+    expect(fixture.session(1).muted.value, isTrue);
+    expect(fixture.rooms.audioRoomKeys, isNot(contains(manuallyMuted.key)));
+
+    await fixture.rooms.toggleAllAudio();
+    expect(fixture.rooms.audioRoomKeys, isEmpty);
+    expect(
+      fixture.rooms.sessions.values.every((session) => session.muted.value),
+      isTrue,
+    );
+    await fixture.rooms.toggleAllAudio();
+    expect(fixture.rooms.audioRoomKeys, hasLength(4));
+    expect(
+      fixture.rooms.sessions.values.every((session) => !session.muted.value),
+      isTrue,
+    );
+
+    fixture.rooms.setAllAudioOnEntry(false);
+    await tester.pump();
+    expect(fixture.rooms.audioRoomKeys, {fixture.rooms.rooms.first.key});
+    expect(fixture.session(0).muted.value, isFalse);
+    for (var index = 1; index < fixture.rooms.rooms.length; index++) {
+      expect(fixture.session(index).muted.value, isTrue);
+    }
   });
 }

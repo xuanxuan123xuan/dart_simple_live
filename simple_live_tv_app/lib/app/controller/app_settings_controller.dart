@@ -57,6 +57,7 @@ class AppSettingsController extends GetxController {
   final multiRoomMaxRooms = 2.obs;
   final multiRoomLayout = 'grid'.obs;
   final multiRoomMixAudio = false.obs;
+  final multiRoomAllAudioOnEntry = false.obs;
   final tvPerformanceMode = kTvPerformanceModeSmooth.obs;
 
   bool get tvPerformanceSmooth =>
@@ -89,6 +90,14 @@ class AppSettingsController extends GetxController {
     LocalStorageService.instance.setValue('TvMultiRoomMixAudio', value);
   }
 
+  void setMultiRoomAllAudioOnEntry(bool value) {
+    multiRoomAllAudioOnEntry.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kMultiRoomAllAudioOnEntry,
+      value,
+    );
+  }
+
   void setAutoQualityDegrade(bool value) {
     autoQualityDegrade.value = value;
     LocalStorageService.instance.setValue('TvAutoQualityDegrade', value);
@@ -110,6 +119,10 @@ class AppSettingsController extends GetxController {
         : 'grid';
     multiRoomMixAudio.value =
         LocalStorageService.instance.getValue('TvMultiRoomMixAudio', false);
+    multiRoomAllAudioOnEntry.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kMultiRoomAllAudioOnEntry,
+      false,
+    );
     autoQualityDegrade.value =
         LocalStorageService.instance.getValue('TvAutoQualityDegrade', true);
     tvPerformanceMode.value = LocalStorageService.instance.getValue<String>(

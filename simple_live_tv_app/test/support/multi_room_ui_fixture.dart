@@ -27,6 +27,10 @@ class MultiRoomUiSettings extends AppSettingsController {
   void setMultiRoomMixAudio(bool value) => multiRoomMixAudio.value = value;
 
   @override
+  void setMultiRoomAllAudioOnEntry(bool value) =>
+      multiRoomAllAudioOnEntry.value = value;
+
+  @override
   void setMultiRoomMaxRooms(int value) => multiRoomMaxRooms.value = value;
 }
 
@@ -160,7 +164,11 @@ class MultiRoomUiRooms extends MultiRoomController {
 }
 
 class MultiRoomUiFixture {
-  MultiRoomUiFixture({int count = 4, bool globalDanmakuEnabled = true}) {
+  MultiRoomUiFixture({
+    int count = 4,
+    bool globalDanmakuEnabled = true,
+    bool allAudioOnEntry = false,
+  }) {
     Get.testMode = true;
     settings = Get.put<AppSettingsController>(MultiRoomUiSettings())
         as MultiRoomUiSettings;
@@ -175,6 +183,9 @@ class MultiRoomUiFixture {
             userName: '直播间 ${index + 1}',
             face: ''),
     ])) as MultiRoomUiRooms;
+    if (allAudioOnEntry) {
+      rooms.setAllAudioOnEntry(true);
+    }
   }
 
   late final MultiRoomUiSettings settings;

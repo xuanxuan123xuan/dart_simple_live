@@ -32,6 +32,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
   final expandedRoomKey = RxnString();
   final RxMap<String, bool> _danmakuOverrides = <String, bool>{}.obs;
   final audioRoomKeys = <String>{}.obs;
+  final _allAudioOverride = RxnBool();
   final allPaused = false.obs;
   final allMuted = true.obs;
   final allowRoutePop = false.obs;
@@ -62,6 +63,10 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
   bool get areAllPaused =>
       sessions.isNotEmpty &&
       sessions.values.every((session) => session.userPaused.value);
+
+  bool get allAudioOnEntry =>
+      _allAudioOverride.value ??
+      AppSettingsController.instance.multiRoomAllAudioOnEntry.value;
 
   @override
   void onInit() {
@@ -174,6 +179,9 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     for (final item in accepted) {
       _createSession(item);
     }
+    if (allAudioOnEntry) {
+      unawaited(_enableAudioForRooms(accepted));
+    }
     unawaited(_syncDanmakuSelection());
     if (accepted.length < candidates.length) {
       SmartDialog.showToast('最多同时播放 $roomLimit 路，已添加 ${accepted.length} 路');
@@ -204,6 +212,7 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
     }
     if (hadAudio &&
         audioRoomKeys.isEmpty &&
+        !allAudioOnEntry &&
         !AppSettingsController.instance.multiRoomMixAudio.value) {
       await setAudioEnabled(mainRoomKey.value, true);
     }
@@ -278,7 +287,8 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
   Future<void> _setAudioEnabled(String key, bool enabled) async {
     final target = sessions[key];
     if (target == null) return;
-    if (enabled && !AppSettingsController.instance.multiRoomMixAudio.value) {
+    if (enabled && !allAudioOnEntry &&
+        !AppSettingsController.instance.multiRoomMixAudio.value) {
       for (final entry in sessions.entries.toList()) {
         if (entry.key != key) await entry.value.setMuted(true);
       }
@@ -336,9 +346,42 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
           audioRoomKeys.clear();
           allMuted.value = true;
         } else if (rooms.isNotEmpty) {
-          await _setAudioEnabled(mainRoomKey.value, true);
+          if (allAudioOnEntry) {
+            await _enableAudioForRoomsNow(rooms);
+          } else {
+            await _setAudioEnabled(mainRoomKey.value, true);
+          }
         }
       });
+
+  Future<void> _enableAudioForRoomsNow(Iterable<MultiRoomItem> items) async {
+    for (final item in items) {
+      final session = sessions[item.key];
+      if (session == null) continue;
+      await session.setMuted(false);
+      if (identical(sessions[item.key], session)) {
+        audioRoomKeys.add(item.key);
+      }
+    }
+    allMuted.value = audioRoomKeys.isEmpty;
+  }
+
+  Future<void> _enableAudioForRooms(Iterable<MultiRoomItem> items) =>
+      _enqueueAudio(() async {
+        await _enableAudioForRoomsNow(items);
+      });
+
+  void setAllAudioOnEntry(bool enabled) {
+    _allAudioOverride.value = enabled;
+    unawaited(_enqueueAudio(() async {
+      if (enabled) {
+        await _enableAudioForRoomsNow(rooms);
+        return;
+      }
+      if (rooms.isEmpty) return;
+      await _setAudioEnabled(mainRoomKey.value, true);
+    }));
+  }
 
   Future<void> toggleAllPause() async {
     final shouldPause =
@@ -363,8 +406,13 @@ class MultiRoomController extends GetxController with WidgetsBindingObserver {
   void _reconcileAudio({bool initial = false}) {
     unawaited(_enqueueAudio(() async {
       if (initial && rooms.isNotEmpty) {
-        await _setAudioEnabled(rooms.first.key, true);
-      } else if (!AppSettingsController.instance.multiRoomMixAudio.value &&
+        if (allAudioOnEntry) {
+          await _enableAudioForRoomsNow(rooms);
+        } else {
+          await _setAudioEnabled(rooms.first.key, true);
+        }
+      } else if (!allAudioOnEntry &&
+          !AppSettingsController.instance.multiRoomMixAudio.value &&
           audioRoomKeys.length > 1) {
         final key = audioRoomKeys.contains(mainRoomKey.value)
             ? mainRoomKey.value

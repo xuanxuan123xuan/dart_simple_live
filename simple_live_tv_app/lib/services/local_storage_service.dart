@@ -20,6 +20,10 @@ class LocalStorageService extends GetxService {
   /// 多开布局间距
   static const String kMultiRoomGap = "MultiRoomGap";
 
+  /// 进入多开时默认让所有房间有声
+  static const String kMultiRoomAllAudioOnEntry =
+      "TvMultiRoomAllAudioOnEntry";
+
   /// 显示模式
   /// * [0] 跟随系统
   /// * [1] 浅色模式

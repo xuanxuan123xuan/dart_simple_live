@@ -432,6 +432,20 @@ class SettingsPage extends GetView<SettingsController> {
             },
           ),
         ),
+        AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
+            foucsNode: AppFocusNode(),
+            title: "进入多开默认全部有声",
+            items: const {0: "关", 1: "开"},
+            value: AppSettingsController
+                .instance.multiRoomAllAudioOnEntry.value ? 1 : 0,
+            onChanged: (value) {
+              AppSettingsController.instance
+                  .setMultiRoomAllAudioOnEntry(value == 1);
+            },
+          ),
+        ),
       ],
     );
   }
