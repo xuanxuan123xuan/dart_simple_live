@@ -1165,7 +1165,9 @@ class LiveRoomController extends PlayerController
   );
 
   @override
-  Future<void> beforePlayerMutationForRecording() async {
+  Future<void> beforePlayerMutationForRecording({
+    bool resumeRecordingAfterMutation = false,
+  }) async {
     if (!Utils.isOhos) await recording.stop(reason: '播放源或播放状态变化');
   }
 
@@ -4176,6 +4178,61 @@ class LiveRoomController extends PlayerController
     );
   }
 
+  static const _desktopVideoOutputReadyTimeout = Duration(seconds: 3);
+  static const _desktopVideoOutputReadyPollInterval =
+      Duration(milliseconds: 50);
+
+  Future<bool> _waitForDesktopVideoOutputReady({
+    required int requestRevision,
+    required int loadGeneration,
+  }) async {
+    if (!Platform.isWindows) {
+      return true;
+    }
+
+    Log.d(
+      '等待 Windows 视频纹理就绪：room=$roomId '
+      'request=$requestRevision generation=$loadGeneration',
+    );
+    final stopwatch = Stopwatch()..start();
+    while (stopwatch.elapsed < _desktopVideoOutputReadyTimeout) {
+      if (_roomDisposed ||
+          isPlayerClosing ||
+          !_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
+        Log.d(
+          'Windows 视频纹理等待已取消：room=$roomId '
+          'request=$requestRevision generation=$loadGeneration',
+        );
+        return false;
+      }
+
+      final width = player.state.width;
+      final height = player.state.height;
+      final rect = videoController.rect.value;
+      if (width != null &&
+          width > 0 &&
+          height != null &&
+          height > 0 &&
+          rect != null &&
+          rect.width > 0 &&
+          rect.height > 0) {
+        Log.d(
+          'Windows 视频纹理已就绪：room=$roomId '
+          'size=${width}x$height rect=${rect.width}x${rect.height}',
+        );
+        return true;
+      }
+
+      await Future<void>.delayed(_desktopVideoOutputReadyPollInterval);
+    }
+
+    Log.w(
+      'Windows 视频纹理就绪超时，跳过后台换线：room=$roomId '
+      'request=$requestRevision generation=$loadGeneration',
+    );
+    return false;
+  }
+
   Future<void> _selectFastestLineAfterPlaybackStart({
     required int requestRevision,
     required int loadGeneration,
@@ -4184,6 +4241,12 @@ class LiveRoomController extends PlayerController
     required List<int> candidateIndices,
     required List<String> candidates,
   }) async {
+    if (!await _waitForDesktopVideoOutputReady(
+      requestRevision: requestRevision,
+      loadGeneration: loadGeneration,
+    )) {
+      return;
+    }
     int fastest;
     try {
       fastest = await NetworkDiagnoseService.findFastestLine(candidates);

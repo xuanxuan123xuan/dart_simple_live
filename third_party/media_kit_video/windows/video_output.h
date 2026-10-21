@@ -11,6 +11,8 @@
 
 #include <optional>
 
+#include <atomic>
+
 #include <client.h>
 #include <render.h>
 #include <render_gl.h>
@@ -101,7 +103,7 @@ class VideoOutput {
   // For preventing any asynchronous operations (primarily texture objects
   // deletion after unregister in |Resize|) access this object after
   // destruction.
-  bool destroyed_ = false;
+  std::atomic_bool destroyed_{false};
 
   std::mutex textures_mutex_ = std::mutex();
 
@@ -125,6 +127,12 @@ class VideoOutput {
   // ID is changed. Only happens when video output resolution changes.
   std::function<void(int64_t, int64_t, int64_t)> texture_update_callback_ =
       [](int64_t, int64_t, int64_t) {};
+
+  // Texture registrar callbacks can outlive a resize operation. Keep a
+  // separate lifetime token so those callbacks can return without touching
+  // |this| after the VideoOutput has been destroyed.
+  std::shared_ptr<std::atomic_bool> lifetime_ =
+      std::make_shared<std::atomic_bool>(true);
 };
 
 #endif  // VIDEO_OUTPUT_H_

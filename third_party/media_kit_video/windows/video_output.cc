@@ -108,55 +108,67 @@ VideoOutput::VideoOutput(int64_t handle,
 }
 
 VideoOutput::~VideoOutput() {
-  destroyed_ = true;
-  auto promise = std::promise<void>();
-  if (texture_id_) {
+  destroyed_.store(true);
+  lifetime_->store(false);
+
+  // Stop mpv from scheduling new callbacks, then drain every render/resize
+  // task already queued for this output before the object can be deleted.
+  auto stop_callback_future = thread_pool_ref_->Post([this]() {
+    if (render_context_ != nullptr) {
+      mpv_render_context_set_update_callback(render_context_, nullptr,
+                                              nullptr);
+    }
+  });
+  stop_callback_future.wait();
+  auto drain_future = thread_pool_ref_->Post([]() {});
+  drain_future.wait();
+
+  const auto old_texture_id = texture_id_;
+  texture_id_ = 0;
+  if (old_texture_id) {
+    auto unregistered = std::make_shared<std::promise<void>>();
+    auto unregistered_future = unregistered->get_future();
     registrar_->texture_registrar()->UnregisterTexture(
-        texture_id_, [&, texture_id = texture_id_]() {
-          // Add one more task into the thread pool queue & exit the destructor
-          // only when it gets executed. This will ensure that all the tasks
-          // posted to the thread pool i.e. render or resize before this are
-          // executed (and won't reference the dead object anymore), most
-          // notably |CheckAndResize| & |Render|.
-          auto future = thread_pool_ref_->Post([&, id = texture_id]() {
-            std::cout << "media_kit: VideoOutput: Free Texture: " << id
-                      << std::endl;
-            std::cout << "VideoOutput::~VideoOutput: "
-                      << reinterpret_cast<int64_t>(handle_) << std::endl;
-            std::lock_guard<std::mutex> lock(textures_mutex_);
-            texture_variants_.clear();
-            // H/W
-            textures_.clear();
-            // S/W
-            pixel_buffer_textures_.clear();
-            // Free (call destructor) |ANGLESurfaceManager| through the thread
-            // pool. This will ensure synchronized EGL or ANGLE usage & won't
-            // conflict with |Render| or |CheckAndResize| of other
-            // |VideoOutput|s.
-            surface_manager_.reset(nullptr);
-            promise.set_value();
-          });
-        });
+        old_texture_id, [unregistered]() { unregistered->set_value(); });
+    unregistered_future.wait();
   }
 
-  promise.get_future().wait();
-  texture_id_ = 0;
-
-  thread_pool_ref_->Post([render_context = render_context_]() {
-    mpv_render_context_free(render_context);
+  auto cleanup_future = thread_pool_ref_->Post([this]() {
+    std::lock_guard<std::mutex> lock(textures_mutex_);
+    texture_variants_.clear();
+    textures_.clear();
+    pixel_buffer_textures_.clear();
+    surface_manager_.reset(nullptr);
+    if (render_context_ != nullptr) {
+      mpv_render_context_free(render_context_);
+      render_context_ = nullptr;
+    }
+    pixel_buffer_.reset();
   });
+  cleanup_future.wait();
 }
 
 void VideoOutput::NotifyRender() {
-  if (destroyed_) {
+  if (destroyed_.load()) {
     return;
   }
-  thread_pool_ref_->Post(std::bind(&VideoOutput::CheckAndResize, this));
-  thread_pool_ref_->Post(std::bind(&VideoOutput::Render, this));
+  thread_pool_ref_->Post([this]() {
+    if (!destroyed_.load()) {
+      CheckAndResize();
+    }
+  });
+  thread_pool_ref_->Post([this]() {
+    if (!destroyed_.load()) {
+      Render();
+    }
+  });
 }
 
 void VideoOutput::Render() {
-  if (texture_id_) {
+  if (destroyed_.load() || !texture_id_) {
+    return;
+  }
+  {
     // H/W
     if (surface_manager_ != nullptr) {
       surface_manager_->Draw([&]() {
@@ -189,12 +201,12 @@ void VideoOutput::Render() {
       };
       mpv_render_context_render(render_context_, params);
     }
-    try {
-      // Notify Flutter that a new frame is available.
-      registrar_->texture_registrar()->MarkTextureFrameAvailable(texture_id_);
-    } catch (...) {
-      // Prevent any redundant exceptions if the texture is unregistered etc.
-    }
+  }
+  try {
+    // Notify Flutter that a new frame is available.
+    registrar_->texture_registrar()->MarkTextureFrameAvailable(texture_id_);
+  } catch (...) {
+    // Prevent any redundant exceptions if the texture is unregistered etc.
   }
 }
 
@@ -206,7 +218,10 @@ void VideoOutput::SetTextureUpdateCallback(
 
 void VideoOutput::SetSize(std::optional<int64_t> width,
                           std::optional<int64_t> height) {
-  thread_pool_ref_->Post([&, width, height]() {
+  thread_pool_ref_->Post([this, width, height]() {
+    if (destroyed_.load()) {
+      return;
+    }
     if (width.has_value()) {
       // H/W
       if (surface_manager_ != nullptr) {
@@ -239,6 +254,9 @@ void VideoOutput::SetSize(std::optional<int64_t> width,
 }
 
 void VideoOutput::CheckAndResize() {
+  if (destroyed_.load()) {
+    return;
+  }
   // Check if a new texture with different dimensions is needed.
   auto required_width = GetVideoWidth(), required_height = GetVideoHeight();
   if (required_width < 1 || required_height < 1) {
@@ -266,33 +284,26 @@ void VideoOutput::CheckAndResize() {
 }
 
 void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
+  if (destroyed_.load()) {
+    return;
+  }
   std::cout << required_width << " " << required_height << std::endl;
   // Unregister previously registered texture & delete underlying objects.
-  if (texture_id_) {
+  const auto old_texture_id = texture_id_;
+  texture_id_ = 0;
+  if (old_texture_id) {
+    auto unregistered = std::make_shared<std::promise<void>>();
+    auto unregistered_future = unregistered->get_future();
     registrar_->texture_registrar()->UnregisterTexture(
-        texture_id_, [&, id = texture_id_]() {
-          if (id) {
-            std::cout << "media_kit: VideoOutput: Free Texture: " << id
-                      << std::endl;
-            std::lock_guard<std::mutex> lock(textures_mutex_);
-            if (destroyed_) {
-              return;
-            }
-            if (texture_variants_.find(id) != texture_variants_.end()) {
-              texture_variants_.erase(id);
-            }
-            // H/W
-            if (textures_.find(id) != textures_.end()) {
-              textures_.erase(id);
-            }
-            // S/W
-            if (pixel_buffer_textures_.find(id) !=
-                pixel_buffer_textures_.end()) {
-              pixel_buffer_textures_.erase(id);
-            }
-          }
-        });
-    texture_id_ = 0;
+        old_texture_id, [unregistered]() { unregistered->set_value(); });
+    // Do not publish a replacement texture until Flutter has finished
+    // unregistering the old one. This keeps the external texture registry and
+    // the ANGLE surface transition serialized during room/line switches.
+    unregistered_future.wait();
+    std::lock_guard<std::mutex> lock(textures_mutex_);
+    texture_variants_.erase(old_texture_id);
+    textures_.erase(old_texture_id);
+    pixel_buffer_textures_.erase(old_texture_id);
   }
   // H/W
   if (surface_manager_ != nullptr) {
@@ -308,9 +319,14 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
     texture->release_context = nullptr;
     texture->release_callback = [](void*) {};
     texture->format = kFlutterDesktopPixelFormatBGRA8888;
+    const auto lifetime = lifetime_;
     auto texture_variant =
         std::make_unique<flutter::TextureVariant>(flutter::GpuSurfaceTexture(
-            kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle, [&](auto, auto) {
+            kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle,
+            [this, lifetime](auto, auto) {
+              if (!lifetime->load()) {
+                return (FlutterDesktopGpuSurfaceDescriptor*)nullptr;
+              }
               std::lock_guard<std::mutex> lock(textures_mutex_);
               if (texture_id_) {
                 surface_manager_->Read();
@@ -339,8 +355,12 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
     pixel_buffer_texture->height = required_height;
     pixel_buffer_texture->release_context = nullptr;
     pixel_buffer_texture->release_callback = [](void*) {};
+    const auto lifetime = lifetime_;
     auto texture_variant = std::make_unique<flutter::TextureVariant>(
-        flutter::PixelBufferTexture([&](auto, auto) {
+        flutter::PixelBufferTexture([this, lifetime](auto, auto) {
+          if (!lifetime->load()) {
+            return (FlutterDesktopPixelBuffer*)nullptr;
+          }
           std::lock_guard<std::mutex> lock(textures_mutex_);
           if (texture_id_) {
             return pixel_buffer_textures_.at(texture_id_).get();
