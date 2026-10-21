@@ -43,10 +43,9 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
 
   /// Whether the indicator position is owned by an external continuous source.
   ///
-  /// When true, the host (for example a [TabController.animation]) is the
-  /// only writer of the indicator position. Local gesture bookkeeping still
-  /// runs so taps and accessibility remain functional, but gesture callbacks
-  /// must not write a second position into [tabXAlign].
+  /// When true, the host (for example a [TabController.animation]) owns the
+  /// resting position. An active bar drag temporarily owns the position so
+  /// the pill can follow the pointer and drag-end can resolve its destination.
   bool get usesExternalIndicatorPosition => false;
 
   /// Whether a native tap should commit its selection on pointer-up.
@@ -104,9 +103,9 @@ mixin TabDragGestureMixin<T extends StatefulWidget> on State<T> {
   /// Current horizontal alignment of the indicator in the range [-1, 1].
   double tabXAlign = 0.0;
 
-  /// Writes the local indicator position unless the host owns it.
+  /// Writes the local position while dragging or when no host owns it.
   void setLocalTabXAlign(double alignment) {
-    if (!usesExternalIndicatorPosition) tabXAlign = alignment;
+    if (tabIsDragging || !usesExternalIndicatorPosition) tabXAlign = alignment;
   }
 
   /// Lateral sway offset in logical pixels.

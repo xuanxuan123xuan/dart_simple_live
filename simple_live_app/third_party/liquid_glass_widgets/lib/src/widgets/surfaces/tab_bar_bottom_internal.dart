@@ -552,10 +552,10 @@ class TabIndicatorState extends State<TabIndicator>
         widget.indicatorPosition == null) {
       setLocalTabXAlign(computeTabAlignment(widget.tabIndex));
     }
-    // When the host supplies a continuous position, it is the sole source of
-    // truth for the pill location. Do not briefly retarget to selectedIndex,
-    // which would feed a second destination into the indicator spring.
-    if (widget.indicatorPosition == null) {
+    // During a bar drag the pointer owns the pill, even if the host rebuilds.
+    // Otherwise an external position owns it until the host returns control
+    // to the local selection spring.
+    if (!tabIsDragging && widget.indicatorPosition == null) {
       updateTabAlignIfNeeded(oldWidget.tabIndex, oldWidget.tabCount);
     }
 
@@ -572,7 +572,7 @@ class TabIndicatorState extends State<TabIndicator>
         theme.textTheme.textStyle.color?.withValues(alpha: .1) ??
         _fallbackIndicatorColor;
     final targetAlignment = computeTabAlignment(widget.tabIndex);
-    final externalPosition = widget.indicatorPosition;
+    final externalPosition = tabIsDragging ? null : widget.indicatorPosition;
     final indicatorAlignment = externalPosition == null
         ? tabXAlign
         : computeTabAlignmentForPosition(externalPosition);

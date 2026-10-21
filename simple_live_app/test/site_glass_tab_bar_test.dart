@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
@@ -239,6 +240,63 @@ void main() {
     expect(
       tester.widget<TabIndicator>(find.byType(TabIndicator)).indicatorPosition,
       closeTo(0.25, 0.001),
+    );
+  });
+
+  testWidgets(
+      'auto glass selector follows a held mouse drag and resumes page tracking',
+      (tester) async {
+    settings.glassMode.value = AppGlassMode.auto;
+    final controller = await pumpBar(
+      tester,
+      width: 600,
+      iconOnly: false,
+      glass: true,
+    );
+    final barRect = tester.getRect(find.byType(TabIndicator));
+    Offset tabCenter(int index) => Offset(
+          barRect.left + barRect.width * (index + 0.5) / controller.length,
+          barRect.center.dy,
+        );
+    final mouse = await tester.startGesture(
+      tabCenter(0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await mouse.moveTo(tabCenter(1));
+    await tester.pump(const Duration(milliseconds: 100));
+    await mouse.moveTo(tabCenter(2));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(controller.index, 0, reason: 'Selection commits only on release.');
+    final expectedAlignment = -1 + 4 / (controller.length - 1);
+    final paintedIndicator = tester.widget<AnimatedGlassIndicator>(
+      find.byType(AnimatedGlassIndicator).last,
+    );
+    expect(
+      paintedIndicator.alignment.resolve(TextDirection.ltr).x,
+      closeTo(expectedAlignment, 0.02),
+      reason: 'The visible pill must follow the mouse while the page is idle.',
+    );
+
+    await mouse.up();
+    await tester.pumpAndSettle();
+    expect(controller.index, 2);
+    expect(
+      tester.widget<TabIndicator>(find.byType(TabIndicator)).indicatorPosition,
+      isNull,
+    );
+
+    controller.offset = -0.25;
+    await tester.pump();
+    final resumedIndicator = tester.widget<AnimatedGlassIndicator>(
+      find.byType(AnimatedGlassIndicator).last,
+    );
+    expect(
+      resumedIndicator.alignment.resolve(TextDirection.ltr).x,
+      closeTo(-1 + 2 * 1.75 / (controller.length - 1), 0.001),
+      reason: 'After release, page swipes must own the indicator again.',
     );
   });
 

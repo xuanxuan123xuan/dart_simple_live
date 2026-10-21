@@ -486,7 +486,11 @@ class _VelocitySpringBuilderState extends State<VelocitySpringBuilder>
     }
 
     if (oldWidget.followValueDirectly && !widget.followValueDirectly) {
-      _ctrl.setValue(widget.value);
+      // The direct follower rendered [oldWidget.value] on the last frame.
+      // Seed the retained spring with that visible position before retargeting
+      // it below; seeding with the new target causes a stale handoff frame to
+      // snap back and then travel toward the selection again.
+      _ctrl.setValue(oldWidget.value);
     }
 
     // Spring selection changes when drag state or spring params change.
@@ -507,7 +511,13 @@ class _VelocitySpringBuilderState extends State<VelocitySpringBuilder>
       if (reduceMotion || widget.teleportEpoch != oldWidget.teleportEpoch) {
         _ctrl.setValue(widget.value);
       } else {
-        _ctrl.animateTo(widget.value);
+        // Pointer drags continuously retarget the spring and should preserve
+        // momentum. Discrete selection changes must discard momentum from an
+        // obsolete target so rapid taps only pursue the latest selection.
+        _ctrl.animateTo(
+          widget.value,
+          fromVelocity: widget.active ? null : 0.0,
+        );
       }
     }
   }
