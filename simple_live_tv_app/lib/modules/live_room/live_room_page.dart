@@ -49,12 +49,13 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       requestExitPlayer();
       return KeyEventResult.handled;
     }
+    final shortcut = resolveLiveRoomShortcut(key.logicalKey);
+    if (shortcut == LiveRoomShortcut.multiRoom) {
+      unawaited(showMultiRoomPicker(controller));
+      return KeyEventResult.handled;
+    }
     if (controller.showControlsState.value) {
       controller.resetHideControlsTimer();
-      if (key.logicalKey == LogicalKeyboardKey.contextMenu) {
-        showPlayerSettings(controller);
-        return KeyEventResult.handled;
-      }
       if (controller.handleKeyboardShortcut(key.logicalKey)) {
         return KeyEventResult.handled;
       }
@@ -71,9 +72,8 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       return KeyEventResult.handled;
     }
 
-    // 点击Menu打开/关闭设置
-    if (key.logicalKey == LogicalKeyboardKey.contextMenu ||
-        key.logicalKey == LogicalKeyboardKey.arrowRight) {
+    // 右键打开设置
+    if (shortcut == LiveRoomShortcut.settings) {
       showPlayerSettings(controller);
       return KeyEventResult.handled;
     }
@@ -234,4 +234,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         "${minutes.toString().padLeft(2, '0')}:"
         "${seconds.toString().padLeft(2, '0')}";
   }
+}
+
+enum LiveRoomShortcut { none, multiRoom, settings }
+
+LiveRoomShortcut resolveLiveRoomShortcut(LogicalKeyboardKey key) {
+  if (key == LogicalKeyboardKey.contextMenu) {
+    return LiveRoomShortcut.multiRoom;
+  }
+  if (key == LogicalKeyboardKey.arrowRight) {
+    return LiveRoomShortcut.settings;
+  }
+  return LiveRoomShortcut.none;
 }
