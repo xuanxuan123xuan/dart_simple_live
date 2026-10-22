@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/recording/recording_models.dart';
 
@@ -30,7 +31,7 @@ Future<RecordingMode?> chooseRecordingMode(BuildContext context) async {
     orElse: () => RecordingMode.videoOnly,
   );
 
-  final result = await showDialog<RecordingMode>(
+  final result = await Utils.showDialogSafe<RecordingMode>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setDialogState) => AlertDialog(

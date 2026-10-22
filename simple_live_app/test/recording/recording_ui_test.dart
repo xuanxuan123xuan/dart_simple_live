@@ -1,10 +1,18 @@
+import 'dart:io';
+
+import 'package:hive/hive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
+import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_recording_coordinator.dart';
 import 'package:simple_live_app/modules/recordings/recording_menu_tile.dart';
+import 'package:simple_live_app/modules/recordings/recording_preferences.dart';
 import 'package:simple_live_app/modules/recordings/recording_session_tile.dart';
+import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/recording/recording_models.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 
 class _RoomRecording extends LiveRoomRecordingCoordinator {
   _RoomRecording()
@@ -110,5 +118,112 @@ void main() {
     await tester.tap(find.text('导出弹幕素材'));
     expect(composed, 1);
     expect(materials, 1);
+  });
+
+  group('recording dialogs', () {
+    late Directory hiveDirectory;
+    late LocalStorageService storage;
+
+    setUpAll(() async {
+      hiveDirectory = await Directory.systemTemp.createTemp(
+        'simple-live-recording-dialogs-',
+      );
+      Hive.init(hiveDirectory.path);
+      storage = LocalStorageService();
+      await storage.init();
+    });
+
+    setUp(() {
+      Get.testMode = true;
+      Get.put<LocalStorageService>(storage);
+    });
+
+    tearDown(() async {
+      Utils.hideRightDialog();
+      Get.reset();
+    });
+
+    testWidgets('recording mode chooser uses the glass dialog route',
+        (tester) async {
+      await tester.pumpWidget(
+        GetMaterialApp(
+          theme: AppStyle.lightTheme,
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () {
+                chooseRecordingMode(context);
+              },
+              child: const Text('open recording mode'),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('open recording mode'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(GlassOverlaySurface), findsOneWidget);
+      expect(
+        find.byKey(GlassOverlaySurface.readabilityLayerKey),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('视频＋弹幕数据'));
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+      expect(
+        storage.getValue<String>('RecordingMode', ''),
+        RecordingMode.videoWithDanmaku.name,
+      );
+    });
+
+    testWidgets('delete confirmation uses the glass dialog route',
+        (tester) async {
+      var deleted = false;
+      await tester.pumpWidget(
+        GetMaterialApp(
+          theme: AppStyle.lightTheme,
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                final confirmed = await Utils.showDialogSafe<bool>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: const Text('删除录制'),
+                    content: const Text('确定删除录制文件吗？'),
+                    actions: [
+                      TextButton(
+                        onPressed: () =>
+                            Navigator.of(dialogContext).pop(false),
+                        child: const Text('取消'),
+                      ),
+                      FilledButton(
+                        onPressed: () =>
+                            Navigator.of(dialogContext).pop(true),
+                        child: const Text('删除'),
+                      ),
+                    ],
+                  ),
+                );
+                deleted = confirmed == true;
+              },
+              child: const Text('open delete confirmation'),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('open delete confirmation'));
+      await tester.pumpAndSettle();
+      expect(find.byType(GlassOverlaySurface), findsOneWidget);
+      expect(
+        find.byKey(GlassOverlaySurface.readabilityLayerKey),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(deleted, isFalse);
+    });
   });
 }

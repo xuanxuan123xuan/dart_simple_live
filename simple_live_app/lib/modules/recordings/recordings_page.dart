@@ -71,7 +71,7 @@ class _RecordingsPageState extends State<RecordingsPage> {
   }
 
   Future<void> _deleteSession(RecordingSession session) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await Utils.showDialogSafe<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('删除录制'),
