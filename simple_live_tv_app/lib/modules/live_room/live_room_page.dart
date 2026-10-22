@@ -11,8 +11,38 @@ import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/player_controls.dart';
 
-class LiveRoomPage extends GetView<LiveRoomController> {
+class LiveRoomPage extends StatefulWidget {
   const LiveRoomPage({Key? key}) : super(key: key);
+
+  @override
+  State<LiveRoomPage> createState() => _LiveRoomPageState();
+}
+
+class _LiveRoomPageState extends State<LiveRoomPage> {
+  static const _menuKeyLongPressDuration = Duration(milliseconds: 600);
+
+  LiveRoomController get controller => Get.find<LiveRoomController>();
+
+  late final TvMenuKeyGesture _menuKeyGesture;
+
+  @override
+  void initState() {
+    super.initState();
+    _menuKeyGesture = TvMenuKeyGesture(
+      longPressDuration: _menuKeyLongPressDuration,
+      onShortPress: () {
+        controller.resetHideControlsTimer();
+        unawaited(controller.refreshRoom());
+      },
+      onLongPress: () => unawaited(showMultiRoomPicker(controller)),
+    );
+  }
+
+  @override
+  void dispose() {
+    _menuKeyGesture.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +56,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       child: Focus(
         focusNode: controller.focusNode,
         autofocus: true,
+        onFocusChange: (focused) {
+          if (!focused) _menuKeyGesture.cancel();
+        },
         onKeyEvent: (_, event) => onKeyEvent(event),
         child: Scaffold(
           backgroundColor: Colors.black,
@@ -38,6 +71,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   }
 
   KeyEventResult onKeyEvent(KeyEvent key) {
+    final menuResult = _menuKeyGesture.handle(key);
+    if (menuResult != KeyEventResult.ignored) return menuResult;
+
     if (key is! KeyDownEvent) {
       return KeyEventResult.ignored;
     }
@@ -50,10 +86,6 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       return KeyEventResult.handled;
     }
     final shortcut = resolveLiveRoomShortcut(key.logicalKey);
-    if (shortcut == LiveRoomShortcut.multiRoom) {
-      unawaited(showMultiRoomPicker(controller));
-      return KeyEventResult.handled;
-    }
     if (controller.showControlsState.value) {
       controller.resetHideControlsTimer();
       if (controller.handleKeyboardShortcut(key.logicalKey)) {
@@ -236,14 +268,75 @@ class LiveRoomPage extends GetView<LiveRoomController> {
   }
 }
 
-enum LiveRoomShortcut { none, multiRoom, settings }
+enum LiveRoomShortcut { none, settings }
 
 LiveRoomShortcut resolveLiveRoomShortcut(LogicalKeyboardKey key) {
-  if (key == LogicalKeyboardKey.contextMenu) {
-    return LiveRoomShortcut.multiRoom;
-  }
   if (key == LogicalKeyboardKey.arrowRight) {
     return LiveRoomShortcut.settings;
   }
   return LiveRoomShortcut.none;
+}
+
+class TvMenuKeyGesture {
+  TvMenuKeyGesture({
+    required this.onShortPress,
+    required this.onLongPress,
+    this.longPressDuration = const Duration(milliseconds: 600),
+  });
+
+  final VoidCallback onShortPress;
+  final VoidCallback onLongPress;
+  final Duration longPressDuration;
+
+  Timer? _longPressTimer;
+  bool _keyDownSeen = false;
+  bool _longPressTriggered = false;
+
+  KeyEventResult handle(KeyEvent event) {
+    if (event.logicalKey != LogicalKeyboardKey.contextMenu) {
+      return KeyEventResult.ignored;
+    }
+
+    if (event is KeyDownEvent) {
+      if (_keyDownSeen) return KeyEventResult.handled;
+      _cancelTimer();
+      _keyDownSeen = true;
+      _longPressTriggered = false;
+      _longPressTimer = Timer(longPressDuration, () {
+        _longPressTimer = null;
+        if (!_keyDownSeen) return;
+        _longPressTriggered = true;
+        onLongPress();
+      });
+      return KeyEventResult.handled;
+    }
+
+    if (event is KeyRepeatEvent) {
+      return KeyEventResult.handled;
+    }
+
+    if (event is KeyUpEvent) {
+      _cancelTimer();
+      final shouldShortPress = _keyDownSeen && !_longPressTriggered;
+      _keyDownSeen = false;
+      _longPressTriggered = false;
+      if (shouldShortPress) onShortPress();
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  void cancel() {
+    _cancelTimer();
+    _keyDownSeen = false;
+    _longPressTriggered = false;
+  }
+
+  void dispose() => cancel();
+
+  void _cancelTimer() {
+    _longPressTimer?.cancel();
+    _longPressTimer = null;
+  }
 }
