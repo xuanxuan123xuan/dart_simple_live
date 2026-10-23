@@ -1653,6 +1653,15 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                 trackVisibility: false,
                 fadeDuration: const Duration(milliseconds: 220),
                 timeToFade: const Duration(milliseconds: 500),
+                // Only user-driven drag updates should wake the hint. Layout
+                // and auto-follow updates from incoming messages stay quiet.
+                notificationPredicate: (notification) {
+                  if (notification.depth != 0) return false;
+                  if (notification is ScrollUpdateNotification) {
+                    return notification.dragDetails != null;
+                  }
+                  return true;
+                },
                 thickness: 4,
                 radius: const Radius.circular(4),
                 mainAxisMargin: 8,
