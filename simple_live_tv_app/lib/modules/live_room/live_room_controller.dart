@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
-import 'package:canvas_danmaku/models/danmaku_content_item.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -22,6 +21,7 @@ import 'package:simple_live_tv_app/models/db/history.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_danmaku_burst_scheduler.dart';
+import 'package:simple_live_tv_app/modules/live_room/player/tv_danmaku_content.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_playback_intent.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
@@ -653,16 +653,12 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         return;
       }
 
-      final renderEmoji = AppSettingsController.instance.danmuRenderEmoji.value;
-      final parts = renderEmoji ? _buildDanmakuContentParts(msg.spans) : null;
       _danmakuScheduler.realtime =
           !AppSettingsController.instance.tvPerformanceSmooth;
       _danmakuScheduler.add(
-        DanmakuContentItem(
-          msg.message,
-          color: Color.fromARGB(255, msg.color.r, msg.color.g, msg.color.b),
-          imageUrls: renderEmoji && parts == null ? msg.imageUrls : null,
-          parts: parts,
+        buildTvDanmakuContent(
+          msg,
+          renderEmoji: AppSettingsController.instance.danmuRenderEmoji.value,
         ),
         generation: _loadGeneration,
       );
@@ -671,35 +667,6 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     } else if (msg.type == LiveMessageType.superChat) {
       //superChats.add(msg.data);
     }
-  }
-
-  List<DanmakuContentPart>? _buildDanmakuContentParts(
-    List<LiveMessageSpan>? spans,
-  ) {
-    final source = spans ?? const <LiveMessageSpan>[];
-    if (source.isEmpty) {
-      return null;
-    }
-    final parts = <DanmakuContentPart>[];
-    for (final span in source) {
-      if (span.isText) {
-        final text = span.text ?? "";
-        if (text.isNotEmpty) {
-          parts.add(DanmakuContentPart.text(text));
-        }
-      } else if (span.isImage) {
-        final imageUrl = (span.imageUrl ?? "").trim();
-        if (imageUrl.isNotEmpty) {
-          parts.add(
-            DanmakuContentPart.image(
-              imageUrl,
-              fallbackText: span.fallbackText,
-            ),
-          );
-        }
-      }
-    }
-    return parts.isEmpty ? null : parts;
   }
 
   bool _isDuplicateDanmu(LiveMessage msg) {

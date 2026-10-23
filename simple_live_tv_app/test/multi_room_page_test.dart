@@ -4,6 +4,12 @@ import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get/get.dart';
+import 'package:simple_live_core/simple_live_core.dart';
+import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_tv_app/app/sites.dart';
+import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
+import 'package:simple_live_tv_app/modules/multi_room/multi_room_player_controller.dart';
 
 import 'support/multi_room_ui_fixture.dart';
 
@@ -77,6 +83,68 @@ Future<void> _tapRoom(
     WidgetTester tester, MultiRoomUiFixture fixture, int index) async {
   await tester.tap(_tile(fixture, index));
   await tester.pumpAndSettle();
+}
+
+LiveMessage _chatMessage(
+  String text, {
+  List<LiveMessageSpan>? spans,
+  List<String>? imageUrls,
+}) {
+  return LiveMessage(
+    type: LiveMessageType.chat,
+    userName: '观众',
+    message: text,
+    color: LiveMessageColor(255, 255, 255),
+    spans: spans,
+    imageUrls: imageUrls,
+  );
+}
+
+/// Records what the room finally pushes into its danmaku canvas.
+class _DanmakuRecorder {
+  final List<DanmakuContentItem> items = <DanmakuContentItem>[];
+
+  late final DanmakuController controller = DanmakuController(
+    onAddDanmaku: items.add,
+    onAddDanmakuBatch: items.addAll,
+    onUpdateOption: (_) {},
+    onPause: () {},
+    onResume: () {},
+    onClear: () {},
+  );
+}
+
+/// One multi-room player wired to a recording canvas, without a real socket.
+class _DanmakuRoomHarness {
+  _DanmakuRoomHarness({required bool smooth}) {
+    Get.testMode = true;
+    settings = Get.put<AppSettingsController>(MultiRoomUiSettings())
+        as MultiRoomUiSettings;
+    settings.tvPerformanceMode.value = smooth
+        ? AppSettingsController.kTvPerformanceModeSmooth
+        : AppSettingsController.kTvPerformanceModeRealtime;
+    final site = Site(
+      id: 'douyu',
+      name: '斗鱼',
+      logo: '',
+      index: 0,
+      liveSite: DouyuSite(),
+    );
+    player = MultiRoomPlayerController(
+      MultiRoomItem(site: site, roomId: '1', userName: '直播间 1', face: ''),
+    );
+    player.showDanmakuState.value = true;
+    player.initDanmakuController(recorder.controller);
+  }
+
+  final recorder = _DanmakuRecorder();
+  late final MultiRoomUiSettings settings;
+  late final MultiRoomPlayerController player;
+
+  Future<void> dispose() async {
+    await player.closePlaybackSession();
+    Get.reset();
+  }
 }
 
 void main() {
@@ -651,5 +719,121 @@ void main() {
     for (var index = 1; index < fixture.rooms.rooms.length; index++) {
       expect(fixture.session(index).muted.value, isTrue);
     }
+  });
+
+  testWidgets('multi-room danmaku keeps emoji images and text order',
+      (tester) async {
+    final harness = _DanmakuRoomHarness(smooth: false);
+    addTearDown(harness.dispose);
+
+    harness.player.handleDanmakuMessage(
+      _chatMessage(
+        '送你礼物',
+        spans: const [
+          LiveMessageSpan.text('送你'),
+          LiveMessageSpan.image(
+            'https://cdn.example/a.png',
+            fallbackText: '[a]',
+          ),
+          LiveMessageSpan.text('礼物'),
+        ],
+        imageUrls: const ['https://cdn.example/a.png'],
+      ),
+    );
+
+    expect(harness.recorder.items, hasLength(1));
+    final item = harness.recorder.items.single;
+    expect(item.text, '送你礼物');
+    expect(item.color, const Color.fromARGB(255, 255, 255, 255));
+    expect(
+      item.parts!.map((part) => part.text ?? part.imageUrl),
+      ['送你', 'https://cdn.example/a.png', '礼物'],
+    );
+    expect(item.imageUrls, isNull);
+  });
+
+  testWidgets('multi-room danmaku falls back to imageUrls without spans',
+      (tester) async {
+    final harness = _DanmakuRoomHarness(smooth: false);
+    addTearDown(harness.dispose);
+
+    harness.player.handleDanmakuMessage(
+      _chatMessage(
+        '表情弹幕',
+        imageUrls: const ['https://cdn.example/b.png'],
+      ),
+    );
+
+    final item = harness.recorder.items.single;
+    expect(item.parts, isNull);
+    expect(item.imageUrls, ['https://cdn.example/b.png']);
+  });
+
+  testWidgets('multi-room smooth mode batches danmaku per frame',
+      (tester) async {
+    final harness = _DanmakuRoomHarness(smooth: true);
+    addTearDown(harness.dispose);
+
+    for (var index = 0; index < 10; index++) {
+      harness.player.handleDanmakuMessage(_chatMessage('消息$index'));
+    }
+    expect(harness.recorder.items, isEmpty);
+
+    await tester.pump();
+    expect(harness.recorder.items, hasLength(4));
+    await tester.pump();
+    expect(harness.recorder.items, hasLength(8));
+    await tester.pump();
+    expect(harness.recorder.items, hasLength(10));
+    expect(
+      harness.recorder.items.map((item) => item.text),
+      [for (var index = 0; index < 10; index++) '消息$index'],
+    );
+  });
+
+  testWidgets('multi-room realtime mode sends danmaku immediately',
+      (tester) async {
+    final harness = _DanmakuRoomHarness(smooth: false);
+    addTearDown(harness.dispose);
+
+    harness.player.handleDanmakuMessage(_chatMessage('立即显示'));
+
+    expect(harness.recorder.items, hasLength(1));
+    expect(harness.recorder.items.single.text, '立即显示');
+  });
+
+  testWidgets('stopping a room drops its queued danmaku', (tester) async {
+    final harness = _DanmakuRoomHarness(smooth: true);
+    addTearDown(harness.dispose);
+
+    for (var index = 0; index < 10; index++) {
+      harness.player.handleDanmakuMessage(_chatMessage('消息$index'));
+    }
+    await harness.player.setDanmakuActive(false);
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(harness.recorder.items, isEmpty);
+    expect(harness.player.showDanmakuState.value, isFalse);
+  });
+
+  testWidgets('a new room generation drops the previous danmaku queue',
+      (tester) async {
+    final harness = _DanmakuRoomHarness(smooth: true);
+    addTearDown(harness.dispose);
+
+    for (var index = 0; index < 10; index++) {
+      harness.player.handleDanmakuMessage(_chatMessage('消息$index'));
+    }
+    harness.player.markLoadScheduled();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(harness.recorder.items, isEmpty);
+
+    // Messages from the previous connection must not reach the new canvas.
+    harness.player.handleDanmakuMessage(
+      _chatMessage('旧连接'),
+      generation: 0,
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(harness.recorder.items, isEmpty);
   });
 }

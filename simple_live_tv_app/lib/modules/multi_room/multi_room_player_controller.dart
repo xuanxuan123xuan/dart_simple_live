@@ -11,6 +11,8 @@ import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/app/constant.dart';
 import 'package:simple_live_tv_app/app/log.dart';
+import 'package:simple_live_tv_app/modules/live_room/player/tv_danmaku_burst_scheduler.dart';
+import 'package:simple_live_tv_app/modules/live_room/player/tv_danmaku_content.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_playback_intent.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_tv_app/services/live_play_quality_presentation.dart';
@@ -92,6 +94,15 @@ class MultiRoomPlayerController extends GetxController {
   StreamSubscription<PlayerLog>? _logSubscription;
   LiveDanmaku? _danmaku;
   DanmakuController? _danmakuController;
+  TvDanmakuBurstScheduler? _danmakuBurstScheduler;
+
+  /// Each room keeps its own burst scheduler so a dense room cannot starve the
+  /// other tiles' canvases.
+  TvDanmakuBurstScheduler get _danmakuScheduler =>
+      _danmakuBurstScheduler ??= TvDanmakuBurstScheduler(
+        onBatch: _addDanmakuBatch,
+        realtime: !AppSettingsController.instance.tvPerformanceSmooth,
+      );
 
   String get title {
     final roomTitle = detail.value?.title.trim();
@@ -208,7 +219,7 @@ class MultiRoomPlayerController extends GetxController {
     _loadScheduled = true;
     ++_loadGeneration;
     ++_playbackGeneration;
-    ++_danmakuGeneration;
+    _bumpDanmakuGeneration();
     _loadingInFlight = false;
     _bufferTracker.reset();
   }
@@ -228,7 +239,7 @@ class MultiRoomPlayerController extends GetxController {
     if (_disposed || _releasedForMemory) return;
     _loadScheduled = false;
     final generation = ++_loadGeneration;
-    ++_danmakuGeneration;
+    _bumpDanmakuGeneration();
     _playbackGeneration++;
     _loadingInFlight = true;
     _playUrls = const [];
@@ -308,7 +319,7 @@ class MultiRoomPlayerController extends GetxController {
           _releasedForMemory = false;
           await _openCurrentUrl(generation);
           if (_isCurrentLoad(generation) && _danmakuActive) {
-            final danmakuGeneration = ++_danmakuGeneration;
+            final danmakuGeneration = _bumpDanmakuGeneration();
             unawaited(_startDanmaku(roomDetail, danmakuGeneration));
           }
           return;
@@ -620,7 +631,7 @@ class MultiRoomPlayerController extends GetxController {
     }
     _danmakuActive = nextActive;
     showDanmakuState.value = _danmakuActive;
-    final generation = ++_danmakuGeneration;
+    final generation = _bumpDanmakuGeneration();
     final currentDetail = detail.value;
     if (_danmakuActive && currentDetail != null) {
       await _startDanmaku(currentDetail, generation);
@@ -639,25 +650,14 @@ class MultiRoomPlayerController extends GetxController {
     return _enqueueDanmaku(() async {
       await _stopCurrentDanmaku();
       if (!_isCurrentDanmaku(generation)) return;
+      _danmakuScheduler.realtime =
+          !AppSettingsController.instance.tvPerformanceSmooth;
+      _danmakuScheduler.beginGeneration(generation);
       try {
         final current = _danmaku ??= item.site.liveSite.getDanmaku();
         current.onMessage = (message) {
-          if (!_isCurrentDanmaku(generation) ||
-              !identical(_danmaku, current) ||
-              message.type != LiveMessageType.chat) {
-            return;
-          }
-          _danmakuController?.addDanmaku(
-            DanmakuContentItem(
-              message.message,
-              color: Color.fromARGB(
-                255,
-                message.color.r,
-                message.color.g,
-                message.color.b,
-              ),
-            ),
-          );
+          if (!identical(_danmaku, current)) return;
+          handleDanmakuMessage(message, generation: generation);
         };
         await current.start(roomDetail.danmakuData);
         if (!_isCurrentDanmaku(generation)) await _stopCurrentDanmaku();
@@ -668,6 +668,49 @@ class MultiRoomPlayerController extends GetxController {
     });
   }
 
+  /// Renders one chat message on this room's canvas.
+  ///
+  /// Exposed so multi-room tests can drive the callback path without opening a
+  /// real danmaku socket.
+  @visibleForTesting
+  void handleDanmakuMessage(LiveMessage message, {int? generation}) {
+    if (message.type != LiveMessageType.chat) return;
+    final targetGeneration = generation ?? _danmakuGeneration;
+    if (!_canReceiveDanmaku(targetGeneration)) return;
+    final settings = AppSettingsController.instance;
+    final scheduler = _danmakuScheduler;
+    scheduler.realtime = !settings.tvPerformanceSmooth;
+    // A new connection may start before its first message arrives.
+    if (scheduler.generation != targetGeneration) {
+      scheduler.beginGeneration(targetGeneration);
+    }
+    scheduler.add(
+      buildTvDanmakuContent(
+        message,
+        renderEmoji: settings.danmuRenderEmoji.value,
+      ),
+      generation: targetGeneration,
+    );
+  }
+
+  void _addDanmakuBatch(List<DanmakuContentItem> items) {
+    if (items.isEmpty || !_canDrawDanmaku) return;
+    _danmakuController?.addDanmakuBatch(items);
+  }
+
+  bool get _canDrawDanmaku =>
+      !_disposed && !_releasedForMemory && showDanmakuState.value;
+
+  bool _canReceiveDanmaku(int generation) =>
+      _canDrawDanmaku && generation == _danmakuGeneration;
+
+  /// Advances the danmaku generation and drops anything still queued for the
+  /// previous connection so a stale burst never reaches the new canvas.
+  int _bumpDanmakuGeneration() {
+    _danmakuBurstScheduler?.clear();
+    return ++_danmakuGeneration;
+  }
+
   bool _isCurrentDanmaku(int generation) =>
       !_disposed &&
       !_releasedForMemory &&
@@ -676,6 +719,7 @@ class MultiRoomPlayerController extends GetxController {
       generation == _danmakuGeneration;
 
   Future<void> _stopCurrentDanmaku() async {
+    _danmakuBurstScheduler?.clear();
     _danmakuController?.clear();
     final current = _danmaku;
     if (current != null) {
@@ -707,7 +751,7 @@ class MultiRoomPlayerController extends GetxController {
     playbackIntent.suspend(TvPlaybackSuspension.resources);
     _releasedForMemory = true;
     ++_loadGeneration;
-    ++_danmakuGeneration;
+    _bumpDanmakuGeneration();
     _loadingInFlight = false;
     _playbackGeneration++;
     await _stopDanmaku();
@@ -763,7 +807,7 @@ class MultiRoomPlayerController extends GetxController {
 
   Future<void> _close() async {
     _disposed = true;
-    ++_danmakuGeneration;
+    _bumpDanmakuGeneration();
     playbackIntent.close();
     _loadGeneration++;
     _playbackGeneration++;
@@ -777,6 +821,8 @@ class MultiRoomPlayerController extends GetxController {
     }
     _accountWorkers.clear();
     await _stopDanmaku();
+    _danmakuBurstScheduler?.dispose();
+    _danmakuBurstScheduler = null;
     await _nativeQueue;
     final activePlayer = _player;
     _videoController = null;
