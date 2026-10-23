@@ -36,6 +36,7 @@ import 'package:simple_live_app/modules/live_room/live_room_hold_preview.dart';
 import 'package:simple_live_app/modules/live_room/live_room_recording_coordinator.dart';
 import 'package:simple_live_app/modules/recordings/recording_menu_tile.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
+import 'package:simple_live_app/modules/live_room/widgets/live_room_follow_filter_bar.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_playback_recovery.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
@@ -59,7 +60,6 @@ import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_network_service.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/services/xiaohongshu_host_id.dart';
-import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/desktop_refresh_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
 import 'package:simple_live_app/widgets/immersive_volume_slider.dart';
@@ -6615,7 +6615,6 @@ class LiveRoomController extends PlayerController
     bool liveOnly = false,
     bool enableHoldPreview = false,
   }) {
-    const options = ["全部", "直播中", "未开播"];
     return Obx(() {
       final filterMode = liveRoomFollowFilterMode.value;
       final followUsers = liveOnly
@@ -6628,28 +6627,13 @@ class LiveRoomController extends PlayerController
           Column(
             children: [
               if (!liveOnly)
-                Padding(
-                  padding: AppStyle.edgeInsetsA12.copyWith(bottom: 0),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: List.generate(options.length, (index) {
-                        return Padding(
-                          padding: EdgeInsets.only(
-                            right: index == options.length - 1 ? 0 : 12,
-                          ),
-                          child: FilterButton(
-                            text: options[index],
-                            selected: filterMode == index,
-                            onTap: () {
-                              liveRoomFollowFilterMode.value = index;
-                            },
-                          ),
-                        );
-                      }),
-                    ),
-                  ),
+                LiveRoomFollowFilterBar(
+                  selectedIndex: filterMode,
+                  onSelected: (index) {
+                    liveRoomFollowFilterMode.value = index;
+                  },
                 ),
+              if (!liveOnly) const SizedBox(height: 16),
               Expanded(
                 child: RefreshIndicator(
                   onRefresh: FollowService.instance.loadData,
@@ -6659,7 +6643,10 @@ class LiveRoomController extends PlayerController
                     ),
                     controller: scrollController,
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: AppStyle.edgeInsetsA12.copyWith(bottom: 20),
+                    padding: AppStyle.edgeInsetsA12.copyWith(
+                      top: 0,
+                      bottom: 20,
+                    ),
                     itemCount: followUsers.length,
                     separatorBuilder: (_, __) => AppStyle.vGap8,
                     itemBuilder: (_, i) {
