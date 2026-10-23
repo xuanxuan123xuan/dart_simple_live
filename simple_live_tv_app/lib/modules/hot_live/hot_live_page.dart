@@ -142,6 +142,7 @@ class HotLivePage extends GetView<HotliveController> {
                         },
                       );
               },
+            ),
           ),
         ],
       ),
