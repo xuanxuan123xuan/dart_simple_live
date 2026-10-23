@@ -106,6 +106,7 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
     await capture.reset();
     final source = MpvRecordingSource(
       player(),
+      captureTimeline: mode != RecordingMode.videoOnly,
       onError: (_, __) {
         if (_disposed || !active) return;
         unawaited(stop(reason: '录制写入中断'));

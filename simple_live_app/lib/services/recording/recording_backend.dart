@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_session.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path/path.dart' as p;
 
@@ -14,8 +16,14 @@ import 'recording_models.dart';
 /// A serial, local-files-only FFmpeg pipeline. Arguments are passed as a list,
 /// never interpolated into a shell command or sent to a network endpoint.
 class FFmpegRecordingBackend implements RecordingBackend {
+  static const _probeTimeout = Duration(seconds: 8);
+  static const _executeTimeout = Duration(minutes: 5);
   int? _sessionId;
   bool _cancelRequested = false;
+
+  void _stage(String name) {
+    developer.log('stage=$name', name: 'simple_live.recording');
+  }
 
   /// Renders a local preview with the same compositor used by exported frames.
   Future<Uint8List> renderOverlayPreview(RecordingOverlayFrame frame,
@@ -54,9 +62,16 @@ class FFmpegRecordingBackend implements RecordingBackend {
       }
     });
     _sessionId = session.getSessionId();
+    _stage('ffmpegStarted');
     if (_cancelRequested) await FFmpegKit.cancel(_sessionId);
     try {
-      await done.future;
+      await done.future.timeout(_executeTimeout);
+      _stage('ffmpegCompleted');
+    } on TimeoutException {
+      _cancelRequested = true;
+      await FFmpegKit.cancel(_sessionId);
+      _stage('ffmpegTimeout');
+      throw StateError('FFmpeg 操作超时');
     } finally {
       _sessionId = null;
     }
@@ -71,7 +86,10 @@ class FFmpegRecordingBackend implements RecordingBackend {
 
   @override
   Future<RecordingMediaInfo> probe(String path) async {
-    final session = await FFprobeKit.executeWithArguments([
+    _stage('ffprobeStarted');
+    final completed = Completer<FFprobeSession>();
+    late final FFprobeSession session;
+    session = await FFprobeKit.executeWithArgumentsAsync([
       '-protocol_whitelist',
       'file,pipe',
       '-v',
@@ -81,12 +99,23 @@ class FFmpegRecordingBackend implements RecordingBackend {
       '-of',
       'json',
       path,
-    ]);
-    if (!ReturnCode.isSuccess(await session.getReturnCode())) {
+    ], (value) {
+      if (!completed.isCompleted) completed.complete(value);
+    });
+    FFprobeSession finished;
+    try {
+      finished = await completed.future.timeout(_probeTimeout);
+    } on TimeoutException {
+      await session.cancel();
+      _stage('ffprobeTimeout');
+      throw StateError('FFprobe 操作超时');
+    }
+    if (!ReturnCode.isSuccess(await finished.getReturnCode())) {
       throw StateError('Cannot inspect recording');
     }
     final json =
-        jsonDecode(await session.getOutput() ?? '{}') as Map<String, dynamic>;
+        jsonDecode(await finished.getOutput() ?? '{}') as Map<String, dynamic>;
+    _stage('ffprobeCompleted');
     final streams =
         (json['streams'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
     final video = streams.firstWhere((s) => s['codec_type'] == 'video');

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -11,6 +12,7 @@ import 'recording_models.dart';
 export 'recording_models.dart';
 
 class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
+  static const _probeTimeout = Duration(seconds: 8);
   RecordingService({RecordingBackend? backend})
       : _backend = backend ?? FFmpegRecordingBackend();
   static final RecordingService instance = RecordingService();
@@ -201,7 +203,8 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
     Object? lastError;
     for (var attempt = 0; attempt < 8; attempt++) {
       try {
-        final info = await _backend.probe(path);
+        final info =
+            await _backend.probe(path).timeout(_probeTimeout);
         if (info.valid) return info;
         lastError = StateError('Invalid recording media');
       } on Object catch (error) {
@@ -218,12 +221,19 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
     final session = _active;
     if (session == null || _transitioning) return;
     _transitioning = true;
+    final stageClock = Stopwatch()..start();
+    void stage(String name) => developer.log(
+          'stage=$name elapsedMs=${stageClock.elapsedMilliseconds}',
+          name: 'simple_live.recording',
+        );
+    stage('stopping');
     RecordingMediaInfo? info;
     var probeAttempted = false;
     try {
       Object? beforeStopError;
       try {
         await _beforeStop?.call();
+        stage('captureFlushed');
       } on Object catch (error) {
         beforeStopError = error;
       }
@@ -235,8 +245,10 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
         // file is still usable when its own media metadata is valid.
       }
       await _source!.stop();
+      stage('sourceStopped');
       probeAttempted = true;
       info = await _probeValid(session.rawPath);
+      stage('probed');
       if (beforeStopError != null) throw beforeStopError;
       RecordingTimeline? timeline;
       try {
@@ -244,6 +256,7 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
       } on Object {
         timeline = null;
       }
+      stage('timelineChecked');
       session.mediaStartMs = timeline?.mediaStart.inMilliseconds;
       session.fileStartMs = timeline?.fileStart.inMilliseconds ?? 0;
       session.timelineConfirmed = timeline?.confirmed ?? false;
@@ -355,7 +368,8 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         final temporary = p.join(session.directory, 'export.partial.mp4');
         try {
-          final info = await _backend.probe(session.rawPath);
+          final info =
+              await _backend.probe(session.rawPath).timeout(_probeTimeout);
           if (!info.valid) throw StateError('Invalid media');
           session.durationMs = info.duration.inMilliseconds;
           final capturedMs = session.captureDurationMs;
@@ -400,9 +414,11 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
             session.error = 'MP4无法无损封装，已保留原始MKV（含录制缓存尾部）';
             await _save(session);
             notifyListeners();
+            developer.log('stage=exported mode=raw', name: 'simple_live.recording');
             continue;
           }
-          final result = await _backend.probe(temporary);
+          final result =
+              await _backend.probe(temporary).timeout(_probeTimeout);
           if (!result.valid ||
               !result.mp4Compatible ||
               (session.exportBurnDanmaku && result.videoCodec != 'h264') ||
@@ -423,6 +439,7 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
                   !session.timelineConfirmed
               ? '已保存视频与弹幕素材；未能确认媒体时间映射，暂无法合成弹幕'
               : null;
+          developer.log('stage=exported mode=mp4', name: 'simple_live.recording');
         } on Object {
           if (!_foreground && !_cancelled.contains(session.id)) {
             session.status = RecordingStatus.queued;

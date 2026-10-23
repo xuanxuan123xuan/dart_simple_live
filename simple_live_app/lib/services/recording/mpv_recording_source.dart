@@ -1,38 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
-import 'dart:ffi';
 
-import 'package:ffi/ffi.dart';
 import 'package:media_kit/media_kit.dart';
-import 'package:path/path.dart' as p;
 
 import 'recording_models.dart';
 
 /// Sample at paint time instead of using the throttled Dart position stream.
-/// The short C API call reads only a double, never a live URL or credentials.
+/// The position in [PlayerState] is maintained by media_kit's event loop. Do
+/// not call the synchronous libmpv FFI from a Flutter paint callback: on
+/// Windows that call can wait for demuxer or network work and freeze the UI.
 Duration readMpvRecordingPosition(Player player) {
-  final native = player.platform;
-  if (native is! NativePlayer || native.disposed || native.ctx.address == 0) {
-    return player.state.position;
-  }
-  final name = 'time-pos'.toNativeUtf8();
-  final value = calloc<Double>();
-  try {
-    final result = native.mpv.mpv_get_property(
-      native.ctx,
-      name.cast(),
-      5,
-      value.cast(),
-    );
-    final seconds = value.value;
-    return result >= 0 && seconds.isFinite
-        ? Duration(microseconds: (seconds * 1000000).round())
-        : player.state.position;
-  } finally {
-    calloc.free(name);
-    calloc.free(value);
-  }
+  return player.state.position;
 }
 
 /// One decoded frame fingerprint paired with its media PTS, never wall time.
@@ -127,10 +107,13 @@ bool isMpvRecordingFailureLog({
 /// Writes packets from the existing native player. It never resolves or opens
 /// another live URL. A second player is used only for the finalized local file.
 class MpvRecordingSource implements RecordingSource {
-  MpvRecordingSource(this.player, {this.onError});
+  MpvRecordingSource(this.player,
+      {this.onError, this.captureTimeline = true});
   final Player player;
   final void Function(Object error, StackTrace stackTrace)? onError;
+  final bool captureTimeline;
   static const _label = 'simplelive_recording';
+  static const _nativeOperationTimeout = Duration(seconds: 3);
   // mpv_get_property_string may query a node twice while formatting JSON.
   // Clearing on query would consume it before the formatted result is read.
   static const _filter = '@$_label:fingerprint=clear-on-query=no';
@@ -144,6 +127,7 @@ class MpvRecordingSource implements RecordingSource {
   bool _filterAttached = false;
   int _generation = 0;
   Duration? _sourceFirstPosition;
+  final Stopwatch _stageClock = Stopwatch();
   MpvRecordingState _state = MpvRecordingState.idle;
   Object? _lastError;
   bool _errorReported = false;
@@ -152,6 +136,51 @@ class MpvRecordingSource implements RecordingSource {
 
   NativePlayer get _native => player.platform as NativePlayer;
 
+  void _stage(String name) {
+    developer.log(
+      'stage=$name elapsedMs=${_stageClock.elapsedMilliseconds}',
+      name: 'simple_live.recording',
+    );
+  }
+
+  Future<void> _nativeCommand(List<String> command, String stage) async {
+    try {
+      await _native.command(command).timeout(_nativeOperationTimeout);
+    } on TimeoutException {
+      throw StateError('录制原生操作超时：$stage');
+    }
+  }
+
+  void _startFingerprintSampling(int generation) {
+    if (!captureTimeline) return;
+    // Fingerprints are useful for the optional danmaku timeline, but querying
+    // vf-metadata synchronously is expensive. Start only after recording has
+    // become ready and sample at a bounded rate so Windows remains responsive.
+    _fingerprintTimer =
+        Timer.periodic(const Duration(milliseconds: 250), (_) {
+      _sampling = _sampling.then((_) async {
+        if (generation != _generation || !_filterAttached) return;
+        final frames = parseRecordingFingerprints(
+          await _native.getProperty('vf-metadata/$_label'),
+        );
+        _sourceFrames.addAll(
+            frames.where((frame) =>
+                _sourcePositions.add(frame.position.inMicroseconds)));
+        if (frames.isNotEmpty) _sourceFirstPosition ??= frames.first.position;
+        if (_sourceFrames.length >= 2048 ||
+            (frames.isNotEmpty &&
+                _sourceFirstPosition != null &&
+                frames.last.position - _sourceFirstPosition! >
+                    const Duration(seconds: 35))) {
+          _fingerprintTimer?.cancel();
+          await _removeFilter();
+        }
+      }).catchError((Object _) {
+        _fingerprintTimer?.cancel();
+      });
+    });
+  }
+
   @override
   Future<void> start(String path) async {
     if (_attached || _state != MpvRecordingState.idle) {
@@ -159,15 +188,25 @@ class MpvRecordingSource implements RecordingSource {
     }
     if (await File(path).exists()) throw StateError('录制目标文件已存在');
     _state = MpvRecordingState.starting;
+    _stageClock
+      ..reset()
+      ..start();
+    _stage('requested');
     _lastError = null;
     _errorReported = false;
     final generation = ++_generation;
     _path = path;
+    _sourceFrames.clear();
+    _sourcePositions.clear();
+    _sourceFirstPosition = null;
     // A small, bounded fingerprint history is sufficient to establish the
     // packet rebase offset without guessing at the demuxer cache tail.
     try {
-      await _native.command(['vf', 'add', _filter]);
-      _filterAttached = true;
+      if (captureTimeline) {
+        await _nativeCommand(['vf', 'add', _filter], '添加指纹滤镜');
+        _filterAttached = true;
+        _stage('filterAttached');
+      }
       _logs = player.stream.log.listen((log) {
         if ((_state != MpvRecordingState.starting &&
                 _state != MpvRecordingState.recording) ||
@@ -185,45 +224,23 @@ class MpvRecordingSource implements RecordingSource {
           onError?.call(error, StackTrace.current);
         }
       });
-    _fingerprintTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
-      _sampling = _sampling.then((_) async {
-        if (generation != _generation || !_filterAttached) return;
-        final frames = parseRecordingFingerprints(
-          await _native.getProperty('vf-metadata/$_label'),
-        );
-        _sourceFrames.addAll(frames.where(
-            (frame) => _sourcePositions.add(frame.position.inMicroseconds)));
-        if (frames.isNotEmpty) _sourceFirstPosition ??= frames.first.position;
-        if (_sourceFrames.length >= 2048 ||
-            (frames.isNotEmpty &&
-                _sourceFirstPosition != null &&
-                frames.last.position - _sourceFirstPosition! >
-                    const Duration(seconds: 35))) {
-          _fingerprintTimer?.cancel();
-          await _removeFilter();
-        }
-      }).catchError((Object _) {
-        _fingerprintTimer?.cancel();
-      });
-    });
       _attached = true;
-      await _native.setProperty('stream-record', path);
-    // Setting the option can succeed even when the bundled libavformat has no
-    // muxers. Confirm file creation instead of displaying false success. MKV
-    // buffers its first cluster, so size can stay zero until stop flushes it;
-    // track/size/duration validation belongs to finalization.
+      await _nativeCommand(['set', 'stream-record', path], '开始写入录制');
+      _stage('recordingAttached');
+      // Setting the option can succeed even when the bundled libavformat has no
+      // muxers. Confirm file creation instead of displaying false success. MKV
+      // buffers its first cluster, so size can stay zero until stop flushes it;
+      // track/size/duration validation belongs to finalization.
       for (var attempt = 0; attempt < 60; attempt++) {
         if (generation != _generation) throw StateError('录制已取消');
         final error = _lastError;
         if (error != null) throw error;
         final file = File(path);
         if (await file.exists()) {
-          final activePath = await _native.getProperty('stream-record');
-          if (activePath.trim().isNotEmpty &&
-              p.equals(p.absolute(activePath.trim()), p.absolute(path))) {
-            _state = MpvRecordingState.recording;
-            return;
-          }
+          _state = MpvRecordingState.recording;
+          _stage('fileCreated');
+          _startFingerprintSampling(generation);
+          return;
         }
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
@@ -241,24 +258,38 @@ class MpvRecordingSource implements RecordingSource {
   Future<void> _removeFilter() async {
     if (!_filterAttached) return;
     _filterAttached = false;
-    await _native.command(['vf', 'remove', '@$_label']);
+    await _nativeCommand(['vf', 'remove', '@$_label'], '移除指纹滤镜');
   }
 
   @override
   Future<void> stop() async {
     if (_state == MpvRecordingState.idle) return;
     _state = MpvRecordingState.stopping;
+    _stage('stopping');
     _generation++;
     _fingerprintTimer?.cancel();
     await _logs?.cancel();
     _logs = null;
-    await _sampling;
     try {
-      if (_attached) await _native.setProperty('stream-record', '');
+      await _sampling.timeout(const Duration(milliseconds: 500));
+    } on TimeoutException {
+      // A blocked metadata read must never keep the stop path pending.
+    } on Object {
+      // Sampling failures only affect optional timeline confirmation.
+    }
+    try {
+      if (_attached) {
+        await _nativeCommand(['set', 'stream-record', ''], '停止写入录制');
+      }
       await _waitForFileFlush();
+      _stage('flushed');
     } finally {
       _attached = false;
-      await _removeFilter();
+      try {
+        await _removeFilter();
+      } on Object {
+        // A failed filter cleanup must not leave the source stuck in stopping.
+      }
       _state = MpvRecordingState.idle;
     }
   }
@@ -286,11 +317,7 @@ class MpvRecordingSource implements RecordingSource {
 
   @override
   Future<Duration> mediaPosition() async {
-    final seconds = double.tryParse(await _native.getProperty('time-pos'));
-    if (seconds == null || !seconds.isFinite) {
-      throw StateError('播放器没有可用的媒体时间');
-    }
-    return Duration(microseconds: (seconds * 1000000).round());
+    return player.state.position;
   }
 
   @override
