@@ -114,6 +114,7 @@ class MpvRecordingSource implements RecordingSource {
   final bool captureTimeline;
   static const _label = 'simplelive_recording';
   static const _nativeOperationTimeout = Duration(seconds: 3);
+  static const _timelineOpenTimeout = Duration(seconds: 5);
   // mpv_get_property_string may query a node twice while formatting JSON.
   // Clearing on query would consume it before the formatted result is read.
   static const _filter = '@$_label:fingerprint=clear-on-query=no';
@@ -343,7 +344,9 @@ class MpvRecordingSource implements RecordingSource {
       await native.setProperty('hwdec', 'no');
       await native.setProperty('cache-on-disk', 'no');
       await native.setProperty('vf', _filter);
-      await local.open(Media(path), play: false);
+      await local
+          .open(Media(path), play: false)
+          .timeout(_timelineOpenTimeout);
       Duration? firstFrame;
       for (var attempt = 0; attempt < 800; attempt++) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -366,7 +369,11 @@ class MpvRecordingSource implements RecordingSource {
       }
       return null;
     } finally {
-      await local.dispose();
+      try {
+        await local.dispose().timeout(_nativeOperationTimeout);
+      } on Object {
+        // A broken local verifier must not block the recording owner.
+      }
     }
   }
 }

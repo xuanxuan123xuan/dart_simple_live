@@ -13,6 +13,7 @@ export 'recording_models.dart';
 
 class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
   static const _probeTimeout = Duration(seconds: 8);
+  static const _timelineTimeout = Duration(seconds: 12);
   RecordingService({RecordingBackend? backend})
       : _backend = backend ?? FFmpegRecordingBackend();
   static final RecordingService instance = RecordingService();
@@ -252,7 +253,7 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
       if (beforeStopError != null) throw beforeStopError;
       RecordingTimeline? timeline;
       try {
-        timeline = await _source!.timeline();
+        timeline = await _source!.timeline().timeout(_timelineTimeout);
       } on Object {
         timeline = null;
       }
