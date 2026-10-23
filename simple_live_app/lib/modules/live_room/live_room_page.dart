@@ -15,11 +15,11 @@ import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/modules/recordings/recording_menu_tile.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_contribution_rank_panel.dart';
 import 'package:simple_live_app/modules/live_room/widgets/live_room_tab_bar.dart';
-import 'package:simple_live_app/modules/recordings/recording_menu_tile.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/glass/glass_surface.dart';
@@ -1592,6 +1592,11 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                       keys,
                       index,
                     ),
+                    onTabChanged: (index) {
+                      if (index >= 0 && index < keys.length) {
+                        controller.liveRoomSelectedPanelKey.value = keys[index];
+                      }
+                    },
                     iconBuilder: _liveRoomTabIcon,
                   );
                 },
@@ -1640,8 +1645,14 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               behavior:
                   ScrollConfiguration.of(context).copyWith(scrollbars: false),
               child: RawScrollbar(
+                key: const ValueKey('live-room-chat-scrollbar'),
                 controller: controller.scrollController,
-                thumbVisibility: _isDesktop,
+                // Keep the hint transient. A permanently visible thumb is
+                // especially distracting while the live message list grows.
+                thumbVisibility: false,
+                trackVisibility: false,
+                fadeDuration: const Duration(milliseconds: 220),
+                timeToFade: const Duration(milliseconds: 500),
                 thickness: 4,
                 radius: const Radius.circular(4),
                 mainAxisMargin: 8,
@@ -1937,8 +1948,10 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               },
             ),
             if (!Utils.isOhos)
-              RecordingMenuTile(recording: controller.recording,
-                  closeMenu: () => Get.back()),
+              RecordingMenuTile(
+                recording: controller.recording,
+                closeMenu: () => Get.back(),
+              ),
             ListTile(
               leading: const Icon(Icons.camera_alt_outlined),
               title: const Text("截图"),

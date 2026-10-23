@@ -31,6 +31,7 @@ import 'package:simple_live_app/modules/live_room/player/player_controller.dart'
 import 'package:simple_live_app/modules/live_room/player/live_player_layout.dart';
 import 'package:simple_live_app/modules/live_room/player/ohos_video_player.dart';
 import 'package:simple_live_app/modules/live_room/live_room_danmaku_status.dart';
+import 'package:simple_live_app/modules/live_room/live_room_chat_scroll_policy.dart';
 import 'package:simple_live_app/modules/live_room/live_room_hold_preview.dart';
 import 'package:simple_live_app/modules/live_room/live_room_recording_coordinator.dart';
 import 'package:simple_live_app/modules/recordings/recording_menu_tile.dart';
@@ -1167,6 +1168,14 @@ class LiveRoomController extends PlayerController
   );
 
   @override
+  bool get listeningRecordingBusy => recording.active || recording.busy;
+
+  @override
+  bool get listeningPlaybackAvailable =>
+      !_roomDisposed && liveStatus.value && _hasActivePlaybackSession &&
+      super.listeningPlaybackAvailable;
+
+  @override
   Future<void> beforePlayerMutationForRecording({
     bool resumeRecordingAfterMutation = false,
   }) async {
@@ -1187,14 +1196,6 @@ class LiveRoomController extends PlayerController
     super.setDanmakuVisible(visible);
     if (!Utils.isOhos) recording.visibilityChanged(visible);
   }
-
-  @override
-  bool get listeningRecordingBusy => recording.active || recording.busy;
-
-  @override
-  bool get listeningPlaybackAvailable =>
-      !_roomDisposed && liveStatus.value && _hasActivePlaybackSession &&
-      super.listeningPlaybackAvailable;
 
   // --- 播放中自动降画质（未锁定画质时，缓冲多次自动降一档） ---
 
@@ -1470,14 +1471,12 @@ class LiveRoomController extends PlayerController
     if (!scrollController.hasClients) {
       return;
     }
-    if (_isChatNearBottom()) {
-      disableAutoScroll.value = false;
-      return;
-    }
-    if (scrollController.position.userScrollDirection ==
-        ScrollDirection.forward) {
-      disableAutoScroll.value = true;
-    }
+    final position = scrollController.position;
+    disableAutoScroll.value = updateChatAutoScrollDisabled(
+      currentlyDisabled: disableAutoScroll.value,
+      userScrollDirection: position.userScrollDirection,
+      isNearBottom: position.extentAfter <= 24,
+    );
   }
 
   bool _isChatNearBottom() {
@@ -4258,6 +4257,7 @@ class LiveRoomController extends PlayerController
     )) {
       return;
     }
+
     int fastest;
     try {
       fastest = await NetworkDiagnoseService.findFastestLine(candidates);
