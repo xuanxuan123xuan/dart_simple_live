@@ -20,6 +20,14 @@ class WindowsFullscreenService {
     return result ?? false;
   }
 
+  static Future<bool> completeEnter() async {
+    if (!Platform.isWindows) {
+      return true;
+    }
+    final result = await _channel.invokeMethod<bool>('completeEnter');
+    return result ?? false;
+  }
+
   static Future<bool> isFullScreen() async {
     if (!Platform.isWindows) {
       return false;

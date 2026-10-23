@@ -67,6 +67,8 @@ bool FlutterWindow::OnCreate() {
                  result) {
         if (call.method_name() == "enter") {
           result->Success(windows_fullscreen_.Enter(GetHandle()));
+        } else if (call.method_name() == "completeEnter") {
+          result->Success(windows_fullscreen_.CompleteEnter(GetHandle()));
         } else if (call.method_name() == "exit") {
           result->Success(windows_fullscreen_.Exit(GetHandle()));
         } else if (call.method_name() == "isActive") {
@@ -113,6 +115,12 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   if (message == WM_NCCALCSIZE && wparam != FALSE &&
       windows_fullscreen_.IsActive()) {
     return 0;
+  }
+  if (windows_fullscreen_.IsActive() && message == WM_NCPAINT) {
+    return 0;
+  }
+  if (windows_fullscreen_.IsActive() && message == WM_NCACTIVATE) {
+    return TRUE;
   }
 
   switch (message) {

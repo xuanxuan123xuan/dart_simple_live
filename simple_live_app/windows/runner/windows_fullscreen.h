@@ -9,6 +9,7 @@
 class WindowsFullscreenController {
  public:
   bool Enter(HWND window);
+  bool CompleteEnter(HWND window);
   bool Exit(HWND window);
   bool IsActive() const { return active_; }
 
@@ -17,6 +18,9 @@ class WindowsFullscreenController {
   LONG_PTR ex_style_ = 0;
   WINDOWPLACEMENT placement_{};
   bool active_ = false;
+  BOOL previous_dwm_transitions_ = FALSE;
+  bool previous_dwm_transitions_read_ = false;
+  bool dwm_transitions_changed_ = false;
 };
 
 #endif  // RUNNER_WINDOWS_FULLSCREEN_H_

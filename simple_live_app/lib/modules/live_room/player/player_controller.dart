@@ -1675,9 +1675,29 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           // Let the native Win32 resize reach Flutter before moving the Video
           // widget into the fullscreen layout.
           await WidgetsBinding.instance.endOfFrame;
+          if (Platform.isWindows) {
+            final transitionCompleted = await WindowsFullscreenService
+                .completeEnter()
+                .timeout(const Duration(seconds: 2));
+            if (!transitionCompleted) {
+              await _setWindowsFullScreenState(false);
+              fullScreenState.value = false;
+              return;
+            }
+          }
           fullScreenState.value = true;
           Log.d('Desktop fullscreen: enter complete');
         } catch (e, stackTrace) {
+          if (Platform.isWindows) {
+            try {
+              await _setWindowsFullScreenState(false);
+            } catch (rollbackError, rollbackStackTrace) {
+              Log.e(
+                'Desktop fullscreen: rollback failed: $rollbackError',
+                rollbackStackTrace,
+              );
+            }
+          }
           fullScreenState.value = false;
           Log.e('Desktop fullscreen: enter failed: $e', stackTrace);
         }

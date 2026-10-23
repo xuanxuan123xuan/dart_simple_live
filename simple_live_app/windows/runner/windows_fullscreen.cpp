@@ -70,6 +70,9 @@ bool WindowsFullscreenController::Enter(HWND window) {
 
   const DwmTransitionState dwm_transition_state =
       DisableDwmTransitions(window);
+  previous_dwm_transitions_ = dwm_transition_state.previous_value;
+  previous_dwm_transitions_read_ = dwm_transition_state.previous_value_read;
+  dwm_transitions_changed_ = dwm_transition_state.changed;
   SetWindowLongPtr(window, GWL_STYLE, fullscreen_style);
   SetWindowLongPtr(window, GWL_EXSTYLE, ex_style_);
 
@@ -83,17 +86,39 @@ bool WindowsFullscreenController::Enter(HWND window) {
                     monitor_rect.right - monitor_rect.left,
                     monitor_rect.bottom - monitor_rect.top,
                     SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOOWNERZORDER |
-                        SWP_NOACTIVATE)) {
+                        SWP_NOACTIVATE | SWP_NOCOPYBITS)) {
     SetWindowLongPtr(window, GWL_STYLE, style_);
     SetWindowLongPtr(window, GWL_EXSTYLE, ex_style_);
     active_ = false;
     RedrawNonClientArea(window);
     RestoreDwmTransitions(window, dwm_transition_state);
+    dwm_transitions_changed_ = false;
     return false;
   }
 
   RedrawNonClientArea(window);
-  RestoreDwmTransitions(window, dwm_transition_state);
+  return true;
+}
+
+bool WindowsFullscreenController::CompleteEnter(HWND window) {
+  if (!window || !active_) {
+    return false;
+  }
+
+  if (!dwm_transitions_changed_) {
+    return true;
+  }
+
+  // Let the resized, borderless frame reach DWM before transitions are
+  // enabled again. This prevents the previous non-client frame from being
+  // presented during the first fullscreen composition.
+  RedrawNonClientArea(window);
+  DwmFlush();
+  const DwmTransitionState state{
+      previous_dwm_transitions_, previous_dwm_transitions_read_,
+      dwm_transitions_changed_};
+  RestoreDwmTransitions(window, state);
+  dwm_transitions_changed_ = false;
   return true;
 }
 
@@ -104,6 +129,13 @@ bool WindowsFullscreenController::Exit(HWND window) {
 
   const DwmTransitionState dwm_transition_state =
       DisableDwmTransitions(window);
+  if (dwm_transitions_changed_) {
+    const DwmTransitionState enter_state{
+        previous_dwm_transitions_, previous_dwm_transitions_read_,
+        dwm_transitions_changed_};
+    RestoreDwmTransitions(window, enter_state);
+    dwm_transitions_changed_ = false;
+  }
   // The regular frame is being restored below. Let WM_NCCALCSIZE calculate
   // the normal client area while the placement is applied.
   active_ = false;

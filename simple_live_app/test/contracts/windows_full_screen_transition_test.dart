@@ -79,12 +79,43 @@ void main() {
     expect(fullscreen, contains('SWP_FRAMECHANGED'));
     expect(fullscreen, contains('SWP_NOOWNERZORDER'));
     expect(fullscreen, contains('SWP_NOACTIVATE'));
+    expect(fullscreen, contains('SWP_NOCOPYBITS'));
     expect(fullscreen, contains('RedrawWindow'));
+    expect(fullscreen, contains('DwmFlush'));
     expect(fullscreen, contains('DwmGetWindowAttribute'));
     expect(fullscreen, contains('DwmSetWindowAttribute'));
     expect(fullscreen, contains('kDwmTransitionsForcedDisabled'));
     expect(fullscreen, contains('SetWindowPlacement'));
     expect(runner, contains('WM_NCCALCSIZE'));
+    expect(runner, contains('WM_NCPAINT'));
+    expect(runner, contains('WM_NCACTIVATE'));
     expect(runner, contains('windows_fullscreen_.IsActive()'));
+    expect(runner, contains('windows_fullscreen_.CompleteEnter(GetHandle())'));
   });
+
+  test(
+    'desktop fullscreen completes native transition after the first frame',
+    () {
+      final source = File(
+        'lib/modules/live_room/player/player_controller.dart',
+      ).readAsStringSync();
+      final enterStart = source.indexOf('Future<void> enterFullScreen()');
+      final enterEnd = source.indexOf(
+        'Future<void> restoreFullScreenSystemUi()',
+        enterStart,
+      );
+      final enterFullScreen = source.substring(enterStart, enterEnd);
+      final desktopStart = enterFullScreen.indexOf(
+        "Log.d('Desktop fullscreen: enter start')",
+      );
+      final desktopEnter = enterFullScreen.substring(desktopStart);
+      final frame = desktopEnter.indexOf('WidgetsBinding.instance.endOfFrame');
+      final complete = desktopEnter.indexOf('completeEnter()');
+      final state = desktopEnter.indexOf('fullScreenState.value = true');
+
+      expect(frame, greaterThanOrEqualTo(0));
+      expect(complete, greaterThan(frame));
+      expect(state, greaterThan(complete));
+    },
+  );
 }
