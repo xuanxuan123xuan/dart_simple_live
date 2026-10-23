@@ -44,11 +44,31 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          if ($env:REQUESTED_VERSION -notmatch '^[vV]?\d+\.\d+(\.\d+)?$') { throw "版本号必须是 major.minor 或 major.minor.patch。" }
-          $version = $env:REQUESTED_VERSION.TrimStart('v','V')
+          $requested = $env:REQUESTED_VERSION.Trim() -replace '^[vV]', ''
+          $match = [regex]::Match($requested, '^(\d+)\.(\d+)(?:\.(\d+))?$')
+          if (-not $match.Success) { throw "版本号必须是 major.minor 或 major.minor.patch。" }
+
+          $major = [int]$match.Groups[1].Value
+          $minor = [int]$match.Groups[2].Value
+          $patch = if ($match.Groups[3].Success) { [int]$match.Groups[3].Value } else { 0 }
+          $version = "$major.$minor.$patch"
+          $buildNumber = $major * 1000 + $minor * 100 + $patch
+          $expectedLine = "version: $version+$buildNumber"
+
           $pubspec = Get-Content pubspec.yaml -Raw
-          $pubspec = [regex]::Replace($pubspec, '(?m)^version:\s*[^\r\n]+', "version: $version+1", 1)
+          if ($pubspec -notmatch '(?m)^version:\s*[^\r\n]+') {
+            throw "pubspec.yaml 中缺少 version 字段。"
+          }
+          $pubspec = [regex]::Replace($pubspec, '(?m)^version:\s*[^\r\n]+', $expectedLine, 1)
           Set-Content pubspec.yaml $pubspec -NoNewline
+
+          $actualLine = (Get-Content pubspec.yaml |
+            Where-Object { $_ -match '^version:' } |
+            Select-Object -First 1).Trim()
+          if ($actualLine -ne $expectedLine) {
+            throw "版本写入校验失败：期望 '$expectedLine'，实际 '$actualLine'。"
+          }
+          Write-Host "已应用 Android TV 版本：$actualLine"
 
       - name: 校验应用版本
         working-directory: simple_live_tv_app
