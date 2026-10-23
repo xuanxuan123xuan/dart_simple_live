@@ -153,6 +153,7 @@ Future<void> _run(Directory root, Map<String, dynamic> results) async {
         debugPrint('mpv ${log.prefix}: ${log.text}');
       });
       Timer? capture;
+      final heartbeat = _UiHeartbeat()..start();
       try {
         final native = player.platform as NativePlayer;
         await native.setProperty('vo', 'null');
@@ -176,6 +177,7 @@ Future<void> _run(Directory root, Map<String, dynamic> results) async {
             platform: 'local fixture',
             mode: RecordingMode.videoWithDanmaku,
             source: MpvRecordingSource(player)));
+        final startGapMs = heartbeat.maxGapMs;
         final recorder = ui.PictureRecorder();
         ui.Canvas(recorder).drawRect(const ui.Rect.fromLTWH(0, 0, 60, 20),
             ui.Paint()..color = const ui.Color(0xFFFF0000));
@@ -200,6 +202,11 @@ Future<void> _run(Directory root, Map<String, dynamic> results) async {
         await Future<void>.delayed(const Duration(seconds: 7));
         capture.cancel();
         await service.stop();
+        final stopGapMs = heartbeat.maxGapMs;
+        if (startGapMs > 500 || stopGapMs > 500) {
+          throw StateError(
+              'UI heartbeat stalled: start=${startGapMs}ms stop=${stopGapMs}ms');
+        }
         final session = service.sessions.single;
         await _wait(service, session);
         if (!session.timelineConfirmed) {
@@ -231,6 +238,7 @@ Future<void> _run(Directory root, Map<String, dynamic> results) async {
           'audioCodec': info.audioCodec,
           'width': info.width,
           'height': info.height,
+          'uiHeartbeatMaxGapMs': heartbeat.maxGapMs,
           'path': session.outputPath
         };
 
@@ -274,6 +282,7 @@ Future<void> _run(Directory root, Map<String, dynamic> results) async {
           },
         ];
       } finally {
+        heartbeat.stop();
         capture?.cancel();
         await logs.cancel();
         await player.dispose();
@@ -282,6 +291,31 @@ Future<void> _run(Directory root, Map<String, dynamic> results) async {
     }
   } finally {
     await server.close(force: true);
+  }
+}
+
+class _UiHeartbeat {
+  final Stopwatch _clock = Stopwatch();
+  Timer? _timer;
+  int _lastTickMs = -1;
+  int maxGapMs = 0;
+
+  void start() {
+    _clock.start();
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      final now = _clock.elapsedMilliseconds;
+      if (_lastTickMs >= 0) {
+        final gap = now - _lastTickMs;
+        if (gap > maxGapMs) maxGapMs = gap;
+      }
+      _lastTickMs = now;
+    });
+  }
+
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+    _clock.stop();
   }
 }
 
