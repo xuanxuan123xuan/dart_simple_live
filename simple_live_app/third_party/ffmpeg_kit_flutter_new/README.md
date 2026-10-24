@@ -261,3 +261,32 @@ FFmpeg and the bundled third-party libraries keep their own licenses. On Windows
 - Questions and discussion: [Discord](https://discord.gg/8NVwykjA)
 - Bug reports and feature requests: [GitHub issues](https://github.com/sk3llo/ffmpeg_kit_flutter/issues)
 - Support development: [Buy Me a Coffee](https://buymeacoffee.com/sk3llo)
+
+
+## Local maintenance in Simple Live
+
+This is the resolved `ffmpeg_kit_flutter_new` 4.6.7 package, including its native
+8.1.2 packaging scripts and original license. Generated build directories,
+downloaded frameworks, caches and examples are not vendored.
+
+The Windows plugin differs from the resolved package in these ways:
+
+- `libffmpegkit.dll` is pinned for the process lifetime. If pinning fails, its
+  explicit load reference is retained instead of unloading active native code.
+- Native callbacks and detached calls retain an independent `PluginAsyncState`.
+  They do not capture or dereference the Flutter plugin object after teardown.
+- Session callback routing uses weak state references. Detaching invalidates
+  message delivery before the event window and sink are destroyed.
+
+Pinning is a final unload safeguard, not a cancellation or completion barrier.
+The application must still await `RecordingService.shutdown()` before engine
+destruction. Native cancellation is only complete after the session's completion
+callback has arrived.
+
+The other platform implementations and native download versions are preserved.
+Keep fixes in this directory; do not patch the machine-wide Pub cache.
+
+The repository's Windows teardown test starts an encoder, waits for positive
+frame/time statistics, and then destroys the engine either during execution or
+immediately after requesting cancellation. Its harness runs each case 30 times
+and checks exit codes and new Application Error events.

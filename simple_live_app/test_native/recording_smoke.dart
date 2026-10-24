@@ -281,10 +281,68 @@ Future<void> _run(Directory root, Map<String, dynamic> results) async {
             'path': second.outputPath,
           },
         ];
+        // The third mode performs its burn automatically after capture. Reopen
+        // the fixture only after both previous sources have released the core.
+        await player.open(Media('http://127.0.0.1:${server.port}/$name'));
+        for (var i = 0;
+            i < 100 && player.state.position.inMilliseconds < 500;
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        await service.start(RecordingStartRequest(
+            roomId: name,
+            roomTitle: '$name auto burn',
+            platform: 'local fixture',
+            mode: RecordingMode.burnDanmaku,
+            source: MpvRecordingSource(player)));
+        await service.registerSprite('marker', png);
+        capture = Timer.periodic(const Duration(milliseconds: 16), (_) {
+          service.recordFrame(RecordingOverlayFrame(
+              position: readMpvRecordingPosition(player),
+              canvasWidth: 320,
+              canvasHeight: 180,
+              items: const [
+                RecordingOverlayItem(
+                    spriteId: 'marker', x: 20, y: 20, width: 60, height: 20)
+              ]));
+        });
+        // stream-record begins at the demuxer cache tail. Keep decoding long
+        // enough to overlap that tail before requiring fingerprint evidence;
+        // an insufficiently overlapping short HEVC capture must refuse burning.
+        await Future<void>.delayed(const Duration(seconds: 12));
+        capture.cancel();
+        await service.stop();
+        final automatic = service.sessions.first;
+        await _wait(service, automatic);
+        if (automatic.status != RecordingStatus.complete ||
+            automatic.outputPath == null ||
+            !automatic.timelineConfirmed) {
+          throw StateError('Automatic burn failed: ${automatic.error}');
+        }
+        final automaticInfo =
+            await FFmpegRecordingBackend().probe(automatic.outputPath!);
+        await _ffmpeg([
+          '-v',
+          'error',
+          '-xerror',
+          '-i',
+          automatic.outputPath!,
+          '-f',
+          'null',
+          '-'
+        ]);
+        (results[name] as Map<String, dynamic>)['automaticBurn'] = {
+          'durationMs': automaticInfo.duration.inMilliseconds,
+          'path': automatic.outputPath,
+          'timelineConfirmed': automatic.timelineConfirmed,
+        };
+        (results[name] as Map<String, dynamic>)['modes'] =
+            RecordingMode.values.map((mode) => mode.name).toList();
       } finally {
         heartbeat.stop();
         capture?.cancel();
         await logs.cancel();
+        await service.shutdown();
         await player.dispose();
         service.dispose();
       }
