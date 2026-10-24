@@ -16,17 +16,30 @@ import 'package:simple_live_app/services/ohos_document_service.dart';
 import 'package:simple_live_app/services/recording/recording_service.dart';
 
 class RecordingsPage extends StatefulWidget {
-  const RecordingsPage({super.key});
+  const RecordingsPage(
+      {super.key,
+      this.service,
+      this.resolveDirectory,
+      this.chooseDirectory,
+      this.rememberDirectory});
+
+  final RecordingService? service;
+  final Future<Directory> Function()? resolveDirectory;
+  final Future<Directory?> Function()? chooseDirectory;
+  final Future<void> Function(Directory)? rememberDirectory;
 
   @override
   State<RecordingsPage> createState() => _RecordingsPageState();
 }
 
 class _RecordingsPageState extends State<RecordingsPage> {
-  final RecordingService _service = RecordingService.instance;
+  late final RecordingService _service =
+      widget.service ?? RecordingService.instance;
   Directory? _directory;
   String? _loadError;
   bool _loading = true;
+  bool _loadingDirectory = false;
+  final Set<String> _pendingActions = {};
 
   @override
   void initState() {
@@ -35,8 +48,12 @@ class _RecordingsPageState extends State<RecordingsPage> {
   }
 
   Future<void> _loadSessions() async {
+    if (_loadingDirectory) return;
+    _loadingDirectory = true;
+    if (mounted) setState(() => _loading = true);
     try {
-      final directory = await resolveRecordingDirectory(create: true);
+      final directory = await (widget.resolveDirectory?.call() ??
+          resolveRecordingDirectory(create: true));
       await _service.initialize(directory.path);
       if (mounted) {
         setState(() {
@@ -52,21 +69,37 @@ class _RecordingsPageState extends State<RecordingsPage> {
           _loadError = '读取录制列表失败：$error';
         });
       }
+    } finally {
+      _loadingDirectory = false;
     }
   }
 
   Future<void> _chooseDirectory() async {
+    if (_loadingDirectory) return;
     if (_service.isRecording) {
       SmartDialog.showToast('录制期间不能更换保存目录');
       return;
     }
+    _loadingDirectory = true;
+    setState(() => _loading = true);
     try {
-      final selected = await chooseRecordingDirectory();
+      final selected =
+          await (widget.chooseDirectory?.call() ?? chooseRecordingDirectory());
       if (selected == null || !mounted) return;
       await _service.initialize(selected.path);
-      setState(() => _directory = selected);
+      await (widget.rememberDirectory?.call(selected) ??
+          rememberRecordingDirectory(selected));
+      if (mounted) {
+        setState(() {
+          _directory = selected;
+          _loadError = null;
+        });
+      }
     } catch (error) {
       SmartDialog.showToast('切换保存目录失败：$error');
+    } finally {
+      _loadingDirectory = false;
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -89,23 +122,27 @@ class _RecordingsPageState extends State<RecordingsPage> {
       ),
     );
     if (confirmed != true) return;
-    await _runAction(() => _service.deleteSession(session.id), '删除失败');
+    await _runSessionAction(
+        session, () => _service.deleteSession(session.id), '删除失败');
   }
 
   Future<void> _exportSession(RecordingSession session) async {
-    await _runAction(
+    await _runSessionAction(
+        session,
         () => _service.exportSession(session.id,
             burnDanmaku: session.exportBurnDanmaku),
         '导出失败');
   }
 
-  Future<void> _composeSession(RecordingSession session) => _runAction(
-      () => _service.exportSession(session.id, burnDanmaku: true), '合成失败');
+  Future<void> _composeSession(RecordingSession session) => _runSessionAction(
+      session,
+      () => _service.exportSession(session.id, burnDanmaku: true),
+      '合成失败');
 
   Future<void> _shareMaterials(RecordingSession session) async {
     final directory = session.directory;
     final archivePath = p.join(directory, 'danmaku-materials.zip');
-    await _runAction(() async {
+    await _runSessionAction(session, () async {
       SmartDialog.showLoading(msg: '正在打包录制素材');
       try {
         await Isolate.run(() async {
@@ -133,90 +170,90 @@ class _RecordingsPageState extends State<RecordingsPage> {
         await SmartDialog.dismiss(status: SmartStatus.loading);
       }
       await _shareFiles([archivePath]);
-    }, '素材导出失败');
+    }, '素材导出失败', fileLease: true);
   }
 
   Future<void> _cancelExport(RecordingSession session) async {
-    await _runAction(() => _service.cancelExport(session.id), '取消导出失败');
+    await _runSessionAction(
+        session, () => _service.cancelExport(session.id), '取消导出失败');
   }
 
-  Future<void> _shareSession(RecordingSession session) async {
+  Future<String> _existingOutput(RecordingSession session) async {
     final path = session.outputPath;
     if (path == null || path.isEmpty || !await File(path).exists()) {
-      SmartDialog.showToast('录制文件不存在');
-      return;
+      throw StateError('录制文件不存在');
     }
-    await _runAction(() async {
-      if (Utils.isOhos) {
-        await OhosDocumentService.shareFile(path, title: p.basename(path));
+    return path;
+  }
+
+  Future<void> _shareSession(RecordingSession session) =>
+      _runSessionAction(session, () async {
+        final path = await _existingOutput(session);
+        if (Utils.isOhos) {
+          await OhosDocumentService.shareFile(path, title: p.basename(path));
+        } else {
+          await _shareFiles([path]);
+        }
+      }, '分享失败', fileLease: true);
+
+  Future<void> _saveAs(RecordingSession session) =>
+      _runSessionAction(session, () async {
+        final path = await _existingOutput(session);
+        if (Utils.isOhos) {
+          SmartDialog.showToast('请使用分享功能保存录制文件');
+          return;
+        }
+        if (!_isDesktop) {
+          await _shareFiles([path], subject: '保存录制视频到文件');
+          return;
+        }
+        final extension = p.extension(path).replaceFirst('.', '').toLowerCase();
+        final target = await FilePicker.platform.saveFile(
+          dialogTitle: '另存录制文件',
+          fileName: p.basename(path),
+          type: extension.isEmpty ? FileType.any : FileType.custom,
+          allowedExtensions: extension.isEmpty ? null : [extension],
+        );
+        if (target == null || p.equals(p.absolute(path), p.absolute(target))) {
+          return;
+        }
+        await File(path).copy(target);
+        SmartDialog.showToast('已另存录制文件');
+      }, '另存失败', fileLease: true);
+
+  Future<void> _playSession(RecordingSession session) =>
+      _runSessionAction(session, () async {
+        final path = await _existingOutput(session);
+        if (!mounted) return;
+        final lifetime = RecordingPlaybackLifetime();
+        try {
+          await Navigator.of(context).push<void>(MaterialPageRoute(
+            builder: (_) => RecordingPlayerPage(
+                path: path,
+                lifetime: lifetime,
+                title: session.roomTitle.isEmpty ? '录制回放' : session.roomTitle),
+          ));
+        } finally {
+          await lifetime.close();
+        }
+      }, '播放失败', fileLease: true);
+
+  Future<void> _runSessionAction(
+      RecordingSession session, Future<void> Function() action, String failure,
+      {bool fileLease = false}) async {
+    if (!_pendingActions.add(session.id)) return;
+    if (mounted) setState(() {});
+    try {
+      if (fileLease) {
+        await _service.withSessionFiles(session.id, (_) => action());
       } else {
-        await _shareFiles([path]);
+        await action();
       }
-    }, '分享失败');
-  }
-
-  Future<void> _saveAs(RecordingSession session) async {
-    final sourcePath = session.outputPath;
-    if (sourcePath == null || sourcePath.isEmpty) {
-      SmartDialog.showToast('录制文件不存在');
-      return;
-    }
-    final source = File(sourcePath);
-    if (!await source.exists()) {
-      SmartDialog.showToast('录制文件不存在');
-      return;
-    }
-    final extension =
-        p.extension(sourcePath).replaceFirst('.', '').toLowerCase();
-    if (Utils.isOhos) {
-      SmartDialog.showToast('请使用分享功能保存录制文件');
-      return;
-    }
-    if (!_isDesktop) {
-      await _runAction(() async {
-        await _shareFiles([sourcePath], subject: '保存录制视频到文件');
-      }, '导出失败');
-      return;
-    }
-    try {
-      final targetPath = await FilePicker.platform.saveFile(
-        dialogTitle: '另存录制文件',
-        fileName: p.basename(sourcePath),
-        type: extension.isEmpty ? FileType.any : FileType.custom,
-        allowedExtensions: extension.isEmpty ? null : [extension],
-      );
-      if (targetPath == null) return;
-      if (p.equals(p.absolute(sourcePath), p.absolute(targetPath))) return;
-      await source.copy(targetPath);
-      SmartDialog.showToast('已另存录制文件');
-    } catch (error) {
-      SmartDialog.showToast('另存失败：$error');
-    }
-  }
-
-  Future<void> _playSession(RecordingSession session) async {
-    final path = session.outputPath;
-    if (path == null || path.isEmpty || !await File(path).exists()) {
-      SmartDialog.showToast('录制文件不存在');
-      return;
-    }
-    if (!mounted) return;
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => RecordingPlayerPage(
-          path: path,
-          title: session.roomTitle.isEmpty ? '录制回放' : session.roomTitle,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _runAction(
-      Future<void> Function() action, String failure) async {
-    try {
-      await action();
     } catch (error) {
       SmartDialog.showToast('$failure：$error');
+    } finally {
+      _pendingActions.remove(session.id);
+      if (mounted) setState(() {});
     }
   }
 
@@ -242,12 +279,12 @@ class _RecordingsPageState extends State<RecordingsPage> {
           if (_isDesktop)
             IconButton(
               tooltip: '选择保存目录',
-              onPressed: _chooseDirectory,
+              onPressed: _loading ? null : _chooseDirectory,
               icon: const Icon(Icons.folder_open_outlined),
             ),
           IconButton(
             tooltip: '刷新',
-            onPressed: _loadSessions,
+            onPressed: _loading ? null : _loadSessions,
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -262,7 +299,7 @@ class _RecordingsPageState extends State<RecordingsPage> {
             return _MessageState(
               message: _loadError!,
               action: TextButton.icon(
-                onPressed: _loadSessions,
+                onPressed: _loading ? null : _loadSessions,
                 icon: const Icon(Icons.refresh),
                 label: const Text('重试'),
               ),
@@ -284,6 +321,8 @@ class _RecordingsPageState extends State<RecordingsPage> {
               final session = sessions[index];
               return RecordingSessionTile(
                 session: session,
+                operationBusy: _pendingActions.contains(session.id) ||
+                    _service.isScanningDirectory,
                 onDelete: () => _deleteSession(session),
                 onExport: () => _exportSession(session),
                 onCancelExport: () => _cancelExport(session),

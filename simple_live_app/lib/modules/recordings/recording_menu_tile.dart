@@ -16,13 +16,15 @@ class RecordingMenuTile extends StatelessWidget {
           secondary: Icon(Icons.fiber_manual_record,
               color: recording.active ? Colors.redAccent : null),
           title: const Text('录制直播'),
-          subtitle: Text(recording.busy
-              ? '正在处理录制'
-              : recording.active
-                  ? '关闭开关停止并保存本段录制'
-                  : '选择录制方式并保存到本地'),
-          value: recording.active,
-          onChanged: recording.busy
+          subtitle: Text(recording.waitingToResume
+              ? '等待播放恢复，关闭开关取消续录'
+              : recording.busy
+                  ? '正在处理录制'
+                  : recording.active
+                      ? '关闭开关停止并保存本段录制'
+                      : '选择录制方式并保存到本地'),
+          value: recording.requested,
+          onChanged: recording.busy && !recording.requested
               ? null
               : (_) async {
                   final pageContext =

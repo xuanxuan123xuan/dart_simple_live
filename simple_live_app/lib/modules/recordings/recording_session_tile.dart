@@ -14,10 +14,12 @@ class RecordingSessionTile extends StatelessWidget {
     required this.onPlay,
     required this.onCompose,
     required this.onShareMaterials,
+    this.operationBusy = false,
     super.key,
   });
 
   final RecordingSession session;
+  final bool operationBusy;
   final VoidCallback onDelete;
   final VoidCallback onExport;
   final VoidCallback onCancelExport;
@@ -37,7 +39,8 @@ class RecordingSessionTile extends StatelessWidget {
         true,
       _ => false,
     };
-    final taskBusy = session.status == RecordingStatus.recording ||
+    final taskBusy = operationBusy ||
+        session.status == RecordingStatus.recording ||
         session.status == RecordingStatus.exporting ||
         session.status == RecordingStatus.queued;
     final canPlay = !taskBusy && (session.outputPath?.isNotEmpty ?? false);
@@ -96,7 +99,7 @@ class RecordingSessionTile extends StatelessWidget {
                         icon: const Icon(Icons.folder_zip_outlined),
                         label: const Text('导出弹幕素材'),
                       ),
-                    if (canExport)
+                    if (canExport && !operationBusy)
                       TextButton.icon(
                         onPressed: onExport,
                         icon: const Icon(Icons.refresh),
@@ -106,7 +109,7 @@ class RecordingSessionTile extends StatelessWidget {
                       ),
                     if (session.status == RecordingStatus.exporting)
                       TextButton.icon(
-                        onPressed: onCancelExport,
+                        onPressed: operationBusy ? null : onCancelExport,
                         icon: const Icon(Icons.close),
                         label: const Text('取消导出'),
                       ),

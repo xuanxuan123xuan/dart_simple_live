@@ -73,7 +73,7 @@ Future<RecordingMode?> chooseRecordingMode(BuildContext context) async {
   return result;
 }
 
-/// Picks and remembers a desktop destination. Phones use the app's documents
+/// Picks a desktop destination without changing the saved preference. Phones use the app's documents
 /// directory and do not show a platform file picker.
 Future<Directory?> chooseRecordingDirectory() async {
   if (!_isDesktop) return resolveRecordingDirectory(create: true);
@@ -86,8 +86,14 @@ Future<Directory?> chooseRecordingDirectory() async {
   );
   if (selectedPath == null || selectedPath.trim().isEmpty) return null;
 
-  await storage.setValue(_recordingDirectoryKey, selectedPath);
   return Directory(selectedPath);
+}
+
+/// Persist only after RecordingService has accepted and scanned this folder.
+Future<void> rememberRecordingDirectory(Directory directory) async {
+  if (!_isDesktop) return;
+  await LocalStorageService.instance
+      .setValue(_recordingDirectoryKey, directory.path);
 }
 
 Future<Directory?> resolveOrChooseRecordingDirectory() async {
