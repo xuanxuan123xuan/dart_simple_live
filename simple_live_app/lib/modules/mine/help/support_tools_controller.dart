@@ -14,6 +14,7 @@ import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/recording/recording_diagnostics.dart';
 import 'package:simple_live_app/services/ohos_document_service.dart';
 
 class SupportToolsController extends BaseController {
@@ -46,6 +47,7 @@ class SupportToolsController extends BaseController {
   }
 
   Future<void> loadLogFiles() async {
+    await RecordingDiagnostics.instance.flush();
     final supportDir = await getApplicationSupportDirectory();
     final logDir = Directory("${supportDir.path}/log");
     if (!await logDir.exists()) await logDir.create();
@@ -71,6 +73,7 @@ class SupportToolsController extends BaseController {
       return;
     }
     await Log.flushWriter();
+    await RecordingDiagnostics.instance.flush();
     final supportDir = await getApplicationSupportDirectory();
     final logDir = Directory("${supportDir.path}/log");
     if (await logDir.exists()) await logDir.delete(recursive: true);
@@ -82,6 +85,7 @@ class SupportToolsController extends BaseController {
     Rect? sharePositionOrigin,
   }) async {
     await Log.flushWriter();
+    await RecordingDiagnostics.instance.flush();
     if (Utils.isOhos) {
       await OhosDocumentService.shareFile(item.path, title: item.name);
       return;
@@ -96,6 +100,7 @@ class SupportToolsController extends BaseController {
 
   Future<void> saveLogFile(SupportLogFile item) async {
     await Log.flushWriter();
+    await RecordingDiagnostics.instance.flush();
     if (Utils.isOhos) {
       final saved = await OhosDocumentService.saveBytes(
         fileName: item.name,

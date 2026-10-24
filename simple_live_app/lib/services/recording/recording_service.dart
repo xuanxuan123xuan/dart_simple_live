@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
 import 'recording_backend.dart';
+import 'recording_diagnostics.dart';
 import 'recording_models.dart';
 export 'recording_models.dart';
 
@@ -72,7 +73,19 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
     final inFlight = _initializations[root];
     if (inFlight != null) return inFlight;
 
-    final task = _captureOperation(() => _initializeRoot(root));
+    final task = _captureOperation(() async {
+      RecordingDiagnostics.instance
+          .write('service.directory.request', data: {'directory': root});
+      try {
+        await _initializeRoot(root);
+        RecordingDiagnostics.instance.write('service.directory.ready',
+            data: {'directory': _root, 'sessions': _sessions.length});
+      } on Object catch (error, stack) {
+        RecordingDiagnostics.instance.write('service.directory.failed',
+            data: {'directory': root}, error: error, stackTrace: stack);
+        rethrow;
+      }
+    });
     _initializations[root] = task;
     _initializationTail = task.then<void>(
       (_) {},
@@ -198,7 +211,25 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> start(RecordingStartRequest request) =>
-      _captureOperation(() => _start(request));
+      _captureOperation(() async {
+        RecordingDiagnostics.instance.write('service.start.request', data: {
+          'directory': _root,
+          'roomId': request.roomId,
+          'platform': request.platform,
+          'mode': request.mode.name,
+          'shuttingDown': _shuttingDown,
+          'transitioning': _transitioning,
+          'activeSession': _active?.id,
+          'pendingSourceCleanup': _pendingReleaseSource != null,
+        });
+        try {
+          await _start(request);
+        } on Object catch (error, stack) {
+          RecordingDiagnostics.instance
+              .write('service.start.failed', error: error, stackTrace: stack);
+          rethrow;
+        }
+      });
 
   Future<void> _start(RecordingStartRequest request) async {
     if (_shuttingDown) throw StateError('Recording service is shut down');
@@ -220,12 +251,26 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
         platform: request.platform,
         mode: request.mode,
         createdAt: now);
+    var phase = 'createSessionDirectory';
+    void stage(String name) {
+      phase = name;
+      RecordingDiagnostics.instance.write('service.start.stage', data: {
+        'sessionId': id,
+        'phase': name,
+        'rawPath': session.rawPath,
+      });
+    }
+
     try {
+      stage(phase);
       await Directory(p.join(session.directory, 'sprites'))
           .create(recursive: true);
+      stage('saveInitialManifest');
       await _save(session);
       _source = request.source;
+      stage('attachSource');
       await request.source.start(session.rawPath);
+      stage('openFrameFile');
       _active = session;
       _beforeStop = request.beforeStop;
       _lastFrameMs = -1;
@@ -240,15 +285,32 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
         _materialError = error;
       }));
       _sessions.insert(0, session);
-    } on Object {
+      stage('ready');
+    } on Object catch (error, stack) {
+      RecordingDiagnostics.instance.write('service.start.stageFailed',
+          data: {
+            'sessionId': id,
+            'phase': phase,
+            'rawPath': session.rawPath,
+          },
+          error: error,
+          stackTrace: stack);
       try {
         await request.source.stop();
-      } on Object {/* Keep partial media. */}
+      } on Object catch (error, stack) {
+        RecordingDiagnostics.instance.write('service.start.cleanupStopFailed',
+            data: {'sessionId': id}, error: error, stackTrace: stack);
+      }
       Object? releaseError;
       try {
         await _releaseSourceOwner(request.source);
-      } on Object catch (error) {
+      } on Object catch (error, stack) {
         releaseError = error;
+        RecordingDiagnostics.instance.write(
+            'service.start.cleanupReleaseFailed',
+            data: {'sessionId': id},
+            error: error,
+            stackTrace: stack);
       }
       session.status = RecordingStatus.failed;
       session.error = releaseError == null

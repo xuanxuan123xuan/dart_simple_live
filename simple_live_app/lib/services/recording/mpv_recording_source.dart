@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:media_kit/media_kit.dart';
 
 import 'recording_models.dart';
+import 'recording_diagnostics.dart';
 import 'recording_mpv_bridge.dart';
 
 /// Sample at paint time instead of using the throttled Dart position stream.
@@ -136,10 +137,14 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
     try {
       return _bridge ??=
           await (_bridgeCreation ??= IsolateRecordingMpvBridge.create(player));
-    } on RecordingMpvInitializationError {
+    } on Object catch (error, stack) {
+      RecordingDiagnostics.instance.write('mpv.client.failed',
+          data: {'rawPath': _path}, error: error, stackTrace: stack);
       // Only the worker's explicit cleanup acknowledgement proves that no
       // partial client is left behind. A fatal isolate error retains ownership.
-      _bridgeCreationFailed = true;
+      if (error is RecordingMpvInitializationError) {
+        _bridgeCreationFailed = true;
+      }
       rethrow;
     }
   }
@@ -167,6 +172,13 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
   MpvRecordingState get state => _state;
 
   void _stage(String name) {
+    RecordingDiagnostics.instance.write('mpv.stage', data: {
+      'phase': name,
+      'elapsedMs': _stageClock.elapsedMilliseconds,
+      'state': _state.name,
+      'rawPath': _path,
+      'captureTimeline': captureTimeline,
+    });
     developer.log(
       'stage=$name elapsedMs=${_stageClock.elapsedMilliseconds}',
       name: 'simple_live.recording',
@@ -177,16 +189,43 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
     Future<void> operation() async => (await _transport).command(command);
     // Keep the quiet window alive until the actual reply, even if the caller
     // times out. A timeout is uncertainty, never proof of native cancellation.
+    final commandClock = Stopwatch()..start();
+    RecordingDiagnostics.instance.write('mpv.command.request', data: {
+      'phase': stage,
+      'command': command,
+      'rawPath': _path,
+    });
     final mutation = protectNativeMutation?.call(operation) ?? operation();
     _nativeMutations.add(mutation);
     unawaited(mutation.then<void>((_) {
       _nativeMutations.remove(mutation);
-    }, onError: (Object _, StackTrace __) {
+      RecordingDiagnostics.instance.write('mpv.command.completed', data: {
+        'phase': stage,
+        'rawPath': _path,
+        'elapsedMs': commandClock.elapsedMilliseconds,
+        'nativeCode': 0,
+      });
+    }, onError: (Object error, StackTrace stack) {
       _nativeMutations.remove(mutation);
+      RecordingDiagnostics.instance.write('mpv.command.failed',
+          data: {
+            'phase': stage,
+            'rawPath': _path,
+            'elapsedMs': commandClock.elapsedMilliseconds,
+            if (error is RecordingMpvError) 'nativeCode': error.code,
+          },
+          error: error,
+          stackTrace: stack);
     }));
     try {
       await mutation.timeout(_nativeOperationTimeout);
     } on TimeoutException {
+      RecordingDiagnostics.instance.write('mpv.command.timeout', data: {
+        'phase': stage,
+        'rawPath': _path,
+        'timeoutMs': _nativeOperationTimeout.inMilliseconds,
+        'nativeCompletionPending': true,
+      });
       throw TimeoutException('录制原生操作超时：$stage', _nativeOperationTimeout);
     }
   }
@@ -315,6 +354,12 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
           return;
         }
         final error = StateError('录制器错误：${log.text}');
+        RecordingDiagnostics.instance.write('mpv.recorder.error', data: {
+          'rawPath': _path,
+          'prefix': log.prefix,
+          'level': log.level,
+          'message': log.text,
+        });
         _lastError = error;
         if (!_errorReported) {
           _errorReported = true;
@@ -344,6 +389,15 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
       }
       throw StateError('播放器未能写入录制文件，请检查录制库支持和直播连接');
     } on Object catch (error, stackTrace) {
+      RecordingDiagnostics.instance.write('mpv.start.failed',
+          data: {
+            'rawPath': _path,
+            'elapsedMs': _stageClock.elapsedMilliseconds,
+            'attached': _attached,
+            'filterAttached': _filterAttached,
+          },
+          error: error,
+          stackTrace: stackTrace);
       _state = MpvRecordingState.failed;
       if (!_errorReported) onError?.call(error, stackTrace);
       rethrow;

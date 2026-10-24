@@ -6,6 +6,7 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:simple_live_app/modules/recordings/recording_preferences.dart';
 import 'package:simple_live_app/services/recording/mpv_recording_source.dart';
+import 'package:simple_live_app/services/recording/recording_diagnostics.dart';
 import 'package:simple_live_app/services/recording/recording_service.dart';
 
 /// Room-owned binding. Recording persistence and exporting live in the service;
@@ -149,11 +150,21 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
       }
       return;
     }
-    if (_disposed || busy || !canRecord()) return;
+    if (_disposed || busy || !canRecord()) {
+      RecordingDiagnostics.instance.write('ui.start.blocked', data: {
+        'room': _roomKey,
+        'disposed': _disposed,
+        'busy': busy,
+      });
+      return;
+    }
     _choosing = true;
     final revision = ++_intentRevision;
     final room = _roomKey;
     notifyListeners();
+    var phase = 'chooseMode';
+    RecordingDiagnostics.instance
+        .write('ui.start.request', data: {'room': room, 'revision': revision});
     try {
       final mode = await chooseRecordingMode(context);
       if (mode == null ||
@@ -163,6 +174,9 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
           !canRecord()) {
         return;
       }
+      phase = 'resolveDirectory';
+      RecordingDiagnostics.instance.write('ui.start.mode',
+          data: {'room': room, 'revision': revision, 'mode': mode.name});
       final directory = await resolveOrChooseRecordingDirectory();
       if (directory == null ||
           _disposed ||
@@ -171,7 +185,14 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
           !canRecord()) {
         return;
       }
+      phase = 'initializeDirectory';
+      RecordingDiagnostics.instance.write('ui.start.directory', data: {
+        'room': room,
+        'revision': revision,
+        'directory': directory.path,
+      });
       await _service.initialize(directory.path);
+      phase = 'rememberDirectory';
       await rememberRecordingDirectory(directory);
       if (_disposed ||
           revision != _intentRevision ||
@@ -179,10 +200,20 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
           !canRecord()) {
         return;
       }
+      phase = 'startSource';
       await _requestStart(mode);
-    } on Object catch (error) {
+    } on Object catch (error, stack) {
+      RecordingDiagnostics.instance.write('ui.start.failed',
+          data: {
+            'room': room,
+            'revision': revision,
+            'phase': phase,
+          },
+          error: error,
+          stackTrace: stack);
       if (!active) _cancelIntent();
       if (!_disposed) showMessage('无法开始录制：$error');
+      await RecordingDiagnostics.instance.flush();
     } finally {
       _choosing = false;
       if (!_disposed) notifyListeners();
@@ -216,6 +247,15 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
       return;
     }
     void onSourceError(Object error, StackTrace stack) {
+      RecordingDiagnostics.instance.write('ui.source.error',
+          data: {
+            'room': _roomKey,
+            'revision': revision,
+            'current': _current(revision),
+            'sessionId': _sessionId,
+          },
+          error: error,
+          stackTrace: stack);
       if (_disposed || !_current(revision)) return;
       _stopSafely('录制写入中断');
     }
@@ -245,6 +285,13 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
       rethrow;
     }
     _sessionId = _service.activeSession?.id;
+    RecordingDiagnostics.instance.write('ui.start.ready', data: {
+      'room': _roomKey,
+      'revision': revision,
+      'sessionId': _sessionId,
+      'mode': mode.name,
+      'current': _current(revision),
+    });
     if (!_current(revision)) {
       await _stopCurrent('录制已取消');
       return;
