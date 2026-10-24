@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:media_kit/media_kit.dart';
 
 import 'recording_models.dart';
+import 'recording_mpv_bridge.dart';
 
 /// Sample at paint time instead of using the throttled Dart position stream.
 /// The position in [PlayerState] is maintained by media_kit's event loop. Do
@@ -92,7 +93,8 @@ bool isMpvRecordingFailureLog({
   final value = text.toLowerCase();
   final normalizedLevel = level.toLowerCase();
   final severe = normalizedLevel == 'error' || normalizedLevel == 'fatal';
-  final warning = severe || normalizedLevel == 'warn' || normalizedLevel == 'warning';
+  final warning =
+      severe || normalizedLevel == 'warn' || normalizedLevel == 'warning';
   final recorderPrefix = prefix.toLowerCase().contains('recorder');
   final failureWord = value.contains('error') ||
       value.contains('fail') ||
@@ -105,16 +107,45 @@ bool isMpvRecordingFailureLog({
 }
 
 /// Writes packets from the existing native player. It never resolves or opens
-/// another live URL. A second player is used only for the finalized local file.
-class MpvRecordingSource implements RecordingSource {
+/// another live URL. A headless worker verifies only the finalized local file.
+class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
   MpvRecordingSource(this.player,
-      {this.onError, this.captureTimeline = true});
+      {this.onError,
+      this.captureTimeline = true,
+      RecordingMpvBridge? bridge,
+      Duration nativeOperationTimeout = const Duration(seconds: 3),
+      this.protectNativeMutation})
+      : _bridge = bridge,
+        _nativeOperationTimeout = nativeOperationTimeout;
   final Player player;
   final void Function(Object error, StackTrace stackTrace)? onError;
   final bool captureTimeline;
+  final Future<void> Function(Future<void> Function())? protectNativeMutation;
+  RecordingMpvBridge? _bridge;
+  Future<RecordingMpvBridge>? _bridgeCreation;
+  Future<void>? _stopFuture;
+  Future<void>? _startFuture;
+  final Set<Future<void>> _nativeMutations = {};
+  Future<void>? _releaseFuture;
+  Future<RecordingTimeline?>? _timelineFuture;
+  bool _timelineCancelled = false;
+  bool _released = false;
+  bool _bridgeCreationFailed = false;
+
+  Future<RecordingMpvBridge> get _transport async {
+    try {
+      return _bridge ??=
+          await (_bridgeCreation ??= IsolateRecordingMpvBridge.create(player));
+    } on RecordingMpvInitializationError {
+      // Only the worker's explicit cleanup acknowledgement proves that no
+      // partial client is left behind. A fatal isolate error retains ownership.
+      _bridgeCreationFailed = true;
+      rethrow;
+    }
+  }
+
   static const _label = 'simplelive_recording';
-  static const _nativeOperationTimeout = Duration(seconds: 3);
-  static const _timelineOpenTimeout = Duration(seconds: 5);
+  final Duration _nativeOperationTimeout;
   // mpv_get_property_string may query a node twice while formatting JSON.
   // Clearing on query would consume it before the formatted result is read.
   static const _filter = '@$_label:fingerprint=clear-on-query=no';
@@ -135,8 +166,6 @@ class MpvRecordingSource implements RecordingSource {
 
   MpvRecordingState get state => _state;
 
-  NativePlayer get _native => player.platform as NativePlayer;
-
   void _stage(String name) {
     developer.log(
       'stage=$name elapsedMs=${_stageClock.elapsedMilliseconds}',
@@ -145,10 +174,42 @@ class MpvRecordingSource implements RecordingSource {
   }
 
   Future<void> _nativeCommand(List<String> command, String stage) async {
+    Future<void> operation() async => (await _transport).command(command);
+    // Keep the quiet window alive until the actual reply, even if the caller
+    // times out. A timeout is uncertainty, never proof of native cancellation.
+    final mutation = protectNativeMutation?.call(operation) ?? operation();
+    _nativeMutations.add(mutation);
+    unawaited(mutation.then<void>((_) {
+      _nativeMutations.remove(mutation);
+    }, onError: (Object _, StackTrace __) {
+      _nativeMutations.remove(mutation);
+    }));
     try {
-      await _native.command(command).timeout(_nativeOperationTimeout);
+      await mutation.timeout(_nativeOperationTimeout);
     } on TimeoutException {
-      throw StateError('录制原生操作超时：$stage');
+      throw TimeoutException('录制原生操作超时：$stage', _nativeOperationTimeout);
+    }
+  }
+
+  Future<void> _drainMutations() async {
+    while (_nativeMutations.isNotEmpty) {
+      await Future.wait(_nativeMutations
+          .map((future) =>
+              future.then<void>((_) {}, onError: (Object _, StackTrace __) {}))
+          .toList());
+    }
+  }
+
+  Future<String> _fingerprints(RecordingMpvBridge bridge) async {
+    try {
+      return await bridge
+          .getProperty('vf-metadata/$_label')
+          .timeout(_nativeOperationTimeout);
+    } on RecordingMpvError catch (error) {
+      // loadfile acceptance precedes the first decoded frame. This specific
+      // native response means retry later, rather than a failed query/command.
+      if (error.code == RecordingMpvError.propertyUnavailable) return '';
+      rethrow;
     }
   }
 
@@ -157,16 +218,14 @@ class MpvRecordingSource implements RecordingSource {
     // Fingerprints are useful for the optional danmaku timeline, but querying
     // vf-metadata synchronously is expensive. Start only after recording has
     // become ready and sample at a bounded rate so Windows remains responsive.
-    _fingerprintTimer =
-        Timer.periodic(const Duration(milliseconds: 250), (_) {
+    _fingerprintTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
       _sampling = _sampling.then((_) async {
         if (generation != _generation || !_filterAttached) return;
         final frames = parseRecordingFingerprints(
-          await _native.getProperty('vf-metadata/$_label'),
+          await _fingerprints(await _transport),
         );
-        _sourceFrames.addAll(
-            frames.where((frame) =>
-                _sourcePositions.add(frame.position.inMicroseconds)));
+        _sourceFrames.addAll(frames.where(
+            (frame) => _sourcePositions.add(frame.position.inMicroseconds)));
         if (frames.isNotEmpty) _sourceFirstPosition ??= frames.first.position;
         if (_sourceFrames.length >= 2048 ||
             (frames.isNotEmpty &&
@@ -184,18 +243,48 @@ class MpvRecordingSource implements RecordingSource {
 
   @override
   Future<void> start(String path) async {
-    if (_attached || _state != MpvRecordingState.idle) {
+    if (_startFuture != null ||
+        _released ||
+        _releaseFuture != null ||
+        _attached ||
+        _state != MpvRecordingState.idle) {
+      throw StateError('录制正在开始或尚未关闭');
+    }
+    final operation = _start(path);
+    _startFuture = operation;
+    try {
+      await operation;
+    } on Object {
+      _startFuture = null;
+      try {
+        await stop();
+      } on Object {/* Retain uncertain ownership for release. */}
+      _state = MpvRecordingState.failed;
+      rethrow;
+    } finally {
+      _startFuture = null;
+    }
+  }
+
+  Future<void> _start(String path) async {
+    if (_released ||
+        _releaseFuture != null ||
+        _attached ||
+        _state != MpvRecordingState.idle) {
       throw StateError('录制已经开始');
     }
-    if (await File(path).exists()) throw StateError('录制目标文件已存在');
     _state = MpvRecordingState.starting;
+    final generation = ++_generation;
+    if (await File(path).exists()) throw StateError('录制目标文件已存在');
+    if (_released || _releaseFuture != null || generation != _generation) {
+      throw StateError('录制已关闭');
+    }
     _stageClock
       ..reset()
       ..start();
     _stage('requested');
     _lastError = null;
     _errorReported = false;
-    final generation = ++_generation;
     _path = path;
     _sourceFrames.clear();
     _sourcePositions.clear();
@@ -204,13 +293,20 @@ class MpvRecordingSource implements RecordingSource {
     // packet rebase offset without guessing at the demuxer cache tail.
     try {
       if (captureTimeline) {
-        await _nativeCommand(['vf', 'add', _filter], '添加指纹滤镜');
         _filterAttached = true;
+        try {
+          await _nativeCommand(['vf', 'add', _filter], '添加指纹滤镜');
+        } on RecordingMpvError {
+          _filterAttached = false;
+          rethrow;
+        }
+        if (generation != _generation) throw StateError('录制已取消');
         _stage('filterAttached');
       }
       _logs = player.stream.log.listen((log) {
         if ((_state != MpvRecordingState.starting &&
-                _state != MpvRecordingState.recording) ||
+                _state != MpvRecordingState.recording &&
+                _state != MpvRecordingState.stopping) ||
             !isMpvRecordingFailureLog(
               prefix: log.prefix,
               text: log.text,
@@ -227,6 +323,7 @@ class MpvRecordingSource implements RecordingSource {
       });
       _attached = true;
       await _nativeCommand(['set', 'stream-record', path], '开始写入录制');
+      if (generation != _generation) throw StateError('录制已取消');
       _stage('recordingAttached');
       // Setting the option can succeed even when the bundled libavformat has no
       // muxers. Confirm file creation instead of displaying false success. MKV
@@ -249,50 +346,115 @@ class MpvRecordingSource implements RecordingSource {
     } on Object catch (error, stackTrace) {
       _state = MpvRecordingState.failed;
       if (!_errorReported) onError?.call(error, stackTrace);
-      try {
-        await stop();
-      } on Object {/* Preserve the original start error. */}
       rethrow;
     }
   }
 
   Future<void> _removeFilter() async {
     if (!_filterAttached) return;
+    try {
+      await _nativeCommand(['vf', 'remove', '@$_label'], '移除指纹滤镜');
+    } on RecordingMpvError {
+      // A previous timed-out remove may already have succeeded. Verify its
+      // absence through the asynchronous client before releasing ownership.
+      final filters = await (await _transport)
+          .getProperty('vf')
+          .timeout(_nativeOperationTimeout);
+      if (filters.contains(_label)) rethrow;
+    }
     _filterAttached = false;
-    await _nativeCommand(['vf', 'remove', '@$_label'], '移除指纹滤镜');
   }
 
   @override
-  Future<void> stop() async {
-    if (_state == MpvRecordingState.idle) return;
+  Future<void> stop() => _stopFuture ??= _stop().whenComplete(() {
+        _stopFuture = null;
+      });
+
+  Future<void> _stop() async {
+    if (_state == MpvRecordingState.idle && !_attached && !_filterAttached) {
+      return;
+    }
     _state = MpvRecordingState.stopping;
     _stage('stopping');
     _generation++;
     _fingerprintTimer?.cancel();
-    await _logs?.cancel();
-    _logs = null;
     try {
-      await _sampling.timeout(const Duration(milliseconds: 500));
-    } on TimeoutException {
-      // A blocked metadata read must never keep the stop path pending.
-    } on Object {
-      // Sampling failures only affect optional timeline confirmation.
-    }
-    try {
+      try {
+        await _startFuture?.timeout(_nativeOperationTimeout);
+      } on TimeoutException {
+        rethrow;
+      } on Object {
+        // A rejected start still needs compensating native cleanup.
+      }
+      // Drain late attach/query replies before compensating. The bounded caller
+      // may fail, but the client and ownership stay alive for release/retry.
+      await _drainMutations().timeout(_nativeOperationTimeout);
+      if (_bridgeCreationFailed) {
+        _attached = false;
+        _filterAttached = false;
+      }
+      final bridge =
+          _bridgeCreationFailed ? null : _bridge ?? await _bridgeCreation;
+      await bridge?.drain().timeout(_nativeOperationTimeout);
+      await _sampling;
       if (_attached) {
         await _nativeCommand(['set', 'stream-record', ''], '停止写入录制');
+        _attached = false;
       }
+      await _removeFilter();
+      await _logs?.cancel();
+      _logs = null;
       await _waitForFileFlush();
       _stage('flushed');
-    } finally {
-      _attached = false;
-      try {
-        await _removeFilter();
-      } on Object {
-        // A failed filter cleanup must not leave the source stuck in stopping.
-      }
+      final error = _lastError;
+      if (error != null) throw error;
       _state = MpvRecordingState.idle;
+    } on Object {
+      _state = MpvRecordingState.failed;
+      rethrow;
     }
+  }
+
+  /// Unbounded ownership barrier. Native completion cannot safely be replaced
+  /// with a timer: the caller must retain the player until this future settles.
+  @override
+  Future<void> release() => _releaseFuture ??=
+          _release().onError((Object error, StackTrace stackTrace) {
+        _releaseFuture = null;
+        _state = MpvRecordingState.failed;
+        Error.throwWithStackTrace(error, stackTrace);
+      });
+
+  Future<void> _release() async {
+    _timelineCancelled = true;
+    _fingerprintTimer?.cancel();
+    try {
+      await _timelineFuture;
+    } on Object {
+      // The verifier's finally still drains and destroys its worker-owned core.
+    }
+    try {
+      await _startFuture;
+    } on Object {
+      // The start caller handles its error; this barrier handles its resources.
+    }
+    await _drainMutations();
+    final bridge =
+        _bridgeCreationFailed ? null : _bridge ?? await _bridgeCreation;
+    await bridge?.drain();
+    try {
+      await stop();
+    } on Object {
+      // A recording failure may be reported after successful detach. It does
+      // not prevent releasing a fully drained client; uncertain detach does.
+      if (_attached || _filterAttached) {
+        rethrow;
+      }
+    }
+    await _logs?.cancel();
+    _logs = null;
+    await bridge?.close();
+    _released = true;
   }
 
   Future<void> _waitForFileFlush() async {
@@ -322,41 +484,48 @@ class MpvRecordingSource implements RecordingSource {
   }
 
   @override
-  Future<RecordingTimeline?> timeline() async {
+  Future<RecordingTimeline?> timeline() {
+    if (_released || _releaseFuture != null) return Future.value(null);
+    return _timelineFuture ??= _verifyTimeline();
+  }
+
+  Future<RecordingTimeline?> _verifyTimeline() async {
     final path = _path;
-    if (path == null || _sourceFrames.length < 3) {
+    if (path == null || _sourceFrames.length < 3 || _timelineCancelled) {
       return null;
     }
-    final local = Player(
-        configuration: const PlayerConfiguration(
-      title: 'Recording timestamp verification',
-      logLevel: MPVLogLevel.error,
-    ));
+    RecordingMpvBridge? bridge;
     final frames = <RecordingFingerprint>[];
     final positions = <int>{};
     try {
-      final native = local.platform as NativePlayer;
-      await native.setProperty('vo', 'null');
-      await native.setProperty('ao', 'null');
-      // media_kit defaults to vid=no until a VideoController attaches. The
-      // local verifier is headless, but must still decode video fingerprints.
-      await native.setProperty('vid', 'auto');
-      await native.setProperty('hwdec', 'no');
-      await native.setProperty('cache-on-disk', 'no');
-      await native.setProperty('vf', _filter);
-      await local
-          .open(Media(path), play: false)
-          .timeout(_timelineOpenTimeout);
+      bridge = await IsolateRecordingMpvBridge.createVerifier();
+      Future<void> command(List<String> value) =>
+          bridge!.command(value).timeout(_nativeOperationTimeout);
+      for (final entry in {
+        'vo': 'null',
+        'ao': 'null',
+        'vid': 'auto',
+        'hwdec': 'no',
+        'cache-on-disk': 'no',
+        'vf': _filter,
+        'pause': 'yes',
+      }.entries) {
+        if (_timelineCancelled) return null;
+        await command(['set', entry.key, entry.value]);
+      }
+      if (_timelineCancelled) return null;
+      await command(['loadfile', path, 'replace']);
       Duration? firstFrame;
-      for (var attempt = 0; attempt < 800; attempt++) {
+      for (var attempt = 0; attempt < 800 && !_timelineCancelled; attempt++) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
+        if (_timelineCancelled) break;
         frames.addAll(parseRecordingFingerprints(
-          await native.getProperty('vf-metadata/$_label'),
+          await _fingerprints(bridge),
         ).where((frame) => positions.add(frame.position.inMicroseconds)));
         if (firstFrame == null && frames.isNotEmpty) {
           firstFrame = frames.first.position;
-          await native.setProperty('speed', '4');
-          await local.play();
+          await command(['set', 'speed', '4']);
+          await command(['set', 'pause', 'no']);
         }
         final result = matchRecordingTimeline(_sourceFrames, frames);
         if (result != null && firstFrame != null) {
@@ -365,15 +534,13 @@ class MpvRecordingSource implements RecordingSource {
               confirmed: true,
               fileStart: firstFrame);
         }
-        if (frames.length >= 2048 || local.state.completed) break;
+        if (frames.length >= 2048) break;
       }
       return null;
     } finally {
-      try {
-        await local.dispose().timeout(_nativeOperationTimeout);
-      } on Object {
-        // A broken local verifier must not block the recording owner.
-      }
+      // A timed-out request still owns its native resources. Drain it and
+      // destroy the verifier core before the source releases its ownership.
+      await bridge?.close();
     }
   }
 }
