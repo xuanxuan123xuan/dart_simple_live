@@ -8,6 +8,7 @@ import 'package:simple_live_app/services/recording/recording_mpv_bridge.dart';
 
 class _Platform extends PlatformPlayer {
   _Platform() : super(configuration: const PlayerConfiguration());
+  void emitLog(PlayerLog log) => logController.add(log);
 }
 
 class _Bridge implements RecordingMpvBridge {
@@ -78,6 +79,49 @@ void main() {
   tearDown(() async {
     await platform.dispose();
     await directory.delete(recursive: true);
+  });
+
+  const experimentalNotice = PlayerLog(
+      prefix: 'recorder',
+      level: 'warn',
+      text: 'This is an experimental feature. Output files might be broken or '
+          'not play correctly with various players (including mpv itself).');
+
+  test(
+      'startup notice before the native reply does not reject a successful start',
+      () async {
+    bridge.handler = (command) async {
+      if (command[1] == 'stream-record' && command.last.isNotEmpty) {
+        platform.emitLog(experimentalNotice);
+        await Future<void>.delayed(Duration.zero);
+      }
+    };
+    await source.start('${directory.path}/raw.mkv');
+    expect(source.state, MpvRecordingState.recording);
+    await source.stop();
+    await source.release();
+    expect(bridge.closed, isTrue);
+  });
+
+  test('a real write failure after the notice still reaches the error callback',
+      () async {
+    final errors = <Object>[];
+    source = MpvRecordingSource(Player(platformPlayer: platform),
+        bridge: bridge,
+        captureTimeline: false,
+        onError: (error, _) => errors.add(error));
+    await source.start('${directory.path}/raw.mkv');
+    platform.emitLog(experimentalNotice);
+    await Future<void>.delayed(Duration.zero);
+    expect(errors, isEmpty);
+    platform.emitLog(const PlayerLog(
+        prefix: 'recorder',
+        level: 'warn',
+        text: 'Error writing packet: No space left on device'));
+    await Future<void>.delayed(Duration.zero);
+    expect(errors.single.toString(), contains('No space left on device'));
+    await expectLater(source.stop(), throwsStateError);
+    await source.release();
   });
 
   test('stop rejection remains failed and release retries detach', () async {

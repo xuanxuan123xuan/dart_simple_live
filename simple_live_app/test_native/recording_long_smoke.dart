@@ -2,6 +2,8 @@
 // it does not change the regular recording smoke test.
 // Set SIMPLE_LIVE_RECORDING_LONG_SECONDS=10 for a short native validation.
 // The default performs an actual six-minute media-position capture.
+// Keep mpv warning logs enabled, matching the ordinary player's default.
+// Startup advisories must exercise the same error classifier as real rooms.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -139,7 +141,7 @@ Future<void> _runLongRecording({
     });
 
     player = Player(
-      configuration: const PlayerConfiguration(logLevel: MPVLogLevel.error),
+      configuration: const PlayerConfiguration(logLevel: MPVLogLevel.warn),
     );
     playerLogs = player.stream.log.listen((log) {
       debugPrint('mpv ${log.prefix}: ${log.text}');

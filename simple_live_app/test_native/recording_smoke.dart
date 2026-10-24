@@ -1,6 +1,8 @@
 // Run on a desktop/device host with native plugins, for example:
 // flutter run -d windows -t test_native/recording_smoke.dart --no-pub
 // Set SIMPLE_LIVE_RECORDING_SMOKE_DIR to an absolute writable output directory.
+// Keep mpv warning logs enabled, matching the ordinary player's default.
+// Startup advisories must exercise the same error classifier as real rooms.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -146,8 +148,7 @@ Future<void> _run(Directory root, Map<String, dynamic> results) async {
     for (final name in ['fixture.flv', 'fixture.m3u8', 'fixture-hevc.m3u8']) {
       final service = RecordingService();
       final player = Player(
-          configuration:
-              const PlayerConfiguration(logLevel: MPVLogLevel.error));
+          configuration: const PlayerConfiguration(logLevel: MPVLogLevel.warn));
       final logs = player.stream.log.listen((log) {
         // Fixtures have no credentials or private addresses.
         debugPrint('mpv ${log.prefix}: ${log.text}');

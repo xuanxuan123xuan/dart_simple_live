@@ -8,6 +8,59 @@ RecordingFingerprint frame(int microseconds, String hash) =>
 
 void main() {
   group('isMpvRecordingFailureLog', () {
+    const experimentalNotice = 'This is an experimental feature. Output files '
+        'might be broken or not play correctly with various players '
+        '(including mpv itself).';
+
+    test('the startup experimental-feature warning is not a recording failure',
+        () {
+      for (final level in ['warn', 'warning']) {
+        expect(
+            isMpvRecordingFailureLog(
+              prefix: 'recorder',
+              text: experimentalNotice,
+              level: level,
+            ),
+            isFalse);
+        expect(
+            isMpvRecordingFailureLog(
+              prefix: 'recorder',
+              text: experimentalNotice.replaceAll('. ', '.\n'),
+              level: level,
+            ),
+            isFalse);
+      }
+    });
+
+    test('the notice exemption never suppresses severe recorder logs', () {
+      for (final level in ['error', 'fatal']) {
+        expect(
+            isMpvRecordingFailureLog(
+              prefix: 'recorder',
+              text: experimentalNotice,
+              level: level,
+            ),
+            isTrue);
+      }
+    });
+
+    test('actual and unknown recorder warnings still stop recording', () {
+      for (final text in [
+        'Error writing packet: No space left on device',
+        'Could not write output header',
+        'Recording buffer full, discarding data',
+        'Unknown recorder warning',
+      ]) {
+        expect(
+            isMpvRecordingFailureLog(
+              prefix: 'recorder',
+              text: text,
+              level: 'warn',
+            ),
+            isTrue);
+      }
+    });
+
     test('accepts explicit recorder errors', () {
       expect(
         isMpvRecordingFailureLog(

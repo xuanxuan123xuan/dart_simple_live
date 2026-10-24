@@ -97,6 +97,17 @@ bool isMpvRecordingFailureLog({
   final warning =
       severe || normalizedLevel == 'warn' || normalizedLevel == 'warning';
   final recorderPrefix = prefix.toLowerCase().contains('recorder');
+  // mpv emits this advisory at warning level every time stream-record starts.
+  // It describes the feature, not a failed operation. Exempt only this known
+  // message at warning level; unknown warnings and severe logs remain failures.
+  const experimentalNotice = 'this is an experimental feature. output files '
+      'might be broken or not play correctly with various players '
+      '(including mpv itself).';
+  if (recorderPrefix &&
+      !severe &&
+      value.trim().replaceAll(RegExp(r'\s+'), ' ') == experimentalNotice) {
+    return false;
+  }
   final failureWord = value.contains('error') ||
       value.contains('fail') ||
       value.contains('cannot') ||
@@ -343,14 +354,25 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
         _stage('filterAttached');
       }
       _logs = player.stream.log.listen((log) {
-        if ((_state != MpvRecordingState.starting &&
-                _state != MpvRecordingState.recording &&
-                _state != MpvRecordingState.stopping) ||
-            !isMpvRecordingFailureLog(
-              prefix: log.prefix,
-              text: log.text,
-              level: log.level,
-            )) {
+        if (_state != MpvRecordingState.starting &&
+            _state != MpvRecordingState.recording &&
+            _state != MpvRecordingState.stopping) {
+          return;
+        }
+        if (!isMpvRecordingFailureLog(
+          prefix: log.prefix,
+          text: log.text,
+          level: log.level,
+        )) {
+          if (log.prefix.toLowerCase().contains('recorder') &&
+              {'warn', 'warning'}.contains(log.level.toLowerCase())) {
+            RecordingDiagnostics.instance.write('mpv.recorder.notice', data: {
+              'rawPath': _path,
+              'prefix': log.prefix,
+              'level': log.level,
+              'message': log.text,
+            });
+          }
           return;
         }
         final error = StateError('录制器错误：${log.text}');
