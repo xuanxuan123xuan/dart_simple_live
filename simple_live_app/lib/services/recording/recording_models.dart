@@ -24,6 +24,12 @@ abstract interface class RecordingSource {
   Future<RecordingTimeline?> timeline();
 }
 
+/// Releases source-side observers and native operations after [RecordingSource.stop].
+/// Implementations must wait for any in-flight timeline or file-finalization work.
+abstract interface class RecordingSourceLifetime {
+  Future<void> release();
+}
+
 class RecordingTimeline {
   const RecordingTimeline(
       {required this.mediaStart,
@@ -203,12 +209,17 @@ class RecordingMediaInfo {
       required this.height,
       required this.videoCodec,
       this.audioCodec,
-      this.frameRate = 30});
+      this.frameRate = 30,
+      this.firstVideoFrameStart});
   final Duration duration;
   final int width, height;
   final String videoCodec;
   final String? audioCodec;
   final double frameRate;
+
+  /// Timestamp of the first decoded video frame relative to the raw file.
+  /// Null when the probe could not find a decodable frame promptly.
+  final Duration? firstVideoFrameStart;
   bool get valid => duration > Duration.zero && width > 0 && height > 0;
   bool get mp4Compatible =>
       (videoCodec == 'h264' || videoCodec == 'hevc') &&
@@ -223,6 +234,8 @@ abstract interface class RecordingBackend {
   Future<void> burn(
       RecordingSession session, String output, bool Function() cancelled,
       {void Function(double progress)? onProgress});
+
+  /// Requests cancellation and waits until the active native operation exits.
   Future<void> cancel();
 }
 

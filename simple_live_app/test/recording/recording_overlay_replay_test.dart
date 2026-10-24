@@ -163,4 +163,32 @@ void main() {
     expect(rgba[(2 * 4 + 2) * 4 + 3], 255);
     expect(rgba[(3 * 4 + 3) * 4 + 3], 0);
   });
+
+  test('oversized PNG dimensions are rejected before native image decoding',
+      () async {
+    final bytes = Uint8List(24);
+    bytes.setAll(0, [137, 80, 78, 71, 13, 10, 26, 10]);
+    bytes[11] = 13;
+    bytes.setAll(12, [73, 72, 68, 82]);
+    final dimensions = ByteData.sublistView(bytes, 16, 24);
+    dimensions.setUint32(0, 10000, Endian.big);
+    dimensions.setUint32(4, 10000, Endian.big);
+    await File('${root.path}/sprites/large.png').writeAsBytes(bytes);
+
+    await expectLater(
+        backend.renderOverlayPreview(
+            const RecordingOverlayFrame(
+                position: Duration.zero,
+                canvasWidth: 4,
+                canvasHeight: 4,
+                items: [
+                  RecordingOverlayItem(
+                      spriteId: 'large', x: 0, y: 0, width: 1, height: 1)
+                ]),
+            width: 4,
+            height: 4,
+            directory: root.path),
+        throwsA(isA<StateError>().having((error) => error.message, 'message',
+            contains('decoded image budget'))));
+  });
 }
