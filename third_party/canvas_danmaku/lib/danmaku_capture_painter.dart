@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import 'danmaku_capture.dart';
 import 'models/danmaku_content_item.dart';
@@ -45,6 +45,9 @@ class DanmakuCapturePainter extends CustomPainter {
   final Map<String, ui.Image> emojiImageCache;
 
   static const double _spritePadding = 4;
+  static const _maxSpritePixels = 16 * 1024 * 1024;
+  static const _maxInFlightBytes = 64 * 1024 * 1024;
+  static int _inFlightBytes = 0;
   static final Paint _selfSendPaint = Paint()
     ..style = PaintingStyle.stroke
     ..strokeWidth = 1.5
@@ -239,6 +242,7 @@ class DanmakuCapturePainter extends CustomPainter {
       transform: state.transform,
       transformOriginX: _spritePadding,
       transformOriginY: _spritePadding,
+      dispose: painter.dispose,
       renderPng: () => _renderPng(spriteWidth, spriteHeight, (canvas) {
         painter.paint(canvas, const Offset(_spritePadding, _spritePadding));
       }),
@@ -248,19 +252,35 @@ class DanmakuCapturePainter extends CustomPainter {
   static Future<Uint8List> _renderPng(
     int width,
     int height,
-    void Function(Canvas canvas) paint,
-  ) async {
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    paint(canvas);
-    final picture = recorder.endRecording();
-    late final ui.Image image;
-    try {
-      image = await picture.toImage(width, height);
-    } finally {
-      picture.dispose();
+    void Function(Canvas canvas) paint, {
+    Future<ui.Image> Function(ui.Picture picture, int width, int height)?
+        rasterize,
+  }) async {
+    if (width <= 0 ||
+        height <= 0 ||
+        width > _maxSpritePixels ||
+        height > _maxSpritePixels ||
+        width * height > _maxSpritePixels) {
+      throw StateError(
+          'Danmaku capture sprite dimensions exceed the 16M-pixel limit.');
     }
+    // Reserve for both the RGBA image and its encoding/readback workspace.
+    // Keep the reservation until the image and picture have both been disposed.
+    final bytes = width * height * 8;
+    if (_inFlightBytes + bytes > _maxInFlightBytes) {
+      throw StateError(
+          'Danmaku capture exceeded its 64MiB raster memory budget.');
+    }
+    _inFlightBytes += bytes;
+    ui.PictureRecorder? recorder;
+    ui.Picture? picture;
+    ui.Image? image;
     try {
+      recorder = ui.PictureRecorder();
+      paint(Canvas(recorder));
+      picture = recorder.endRecording();
+      image = await (rasterize?.call(picture, width, height) ??
+          picture.toImage(width, height));
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       if (byteData == null) {
         throw StateError('Could not encode a danmaku capture sprite as PNG.');
@@ -270,9 +290,22 @@ class DanmakuCapturePainter extends CustomPainter {
         byteData.lengthInBytes,
       );
     } finally {
-      image.dispose();
+      try {
+        image?.dispose();
+        picture?.dispose();
+        if (recorder?.isRecording ?? false) recorder!.endRecording().dispose();
+      } finally {
+        _inFlightBytes -= bytes;
+      }
     }
   }
+
+  @visibleForTesting
+  static Future<Uint8List> renderPngForTesting(
+          int width, int height, void Function(Canvas canvas) paint,
+          {Future<ui.Image> Function(ui.Picture picture, int width, int height)?
+              rasterize}) =>
+      _renderPng(width, height, paint, rasterize: rasterize);
 
   @override
   bool shouldRepaint(covariant DanmakuCapturePainter oldDelegate) => true;

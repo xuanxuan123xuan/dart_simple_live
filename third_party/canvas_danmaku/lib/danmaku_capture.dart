@@ -76,6 +76,32 @@ class DanmakuCaptureController extends ChangeNotifier {
     double opacity = 1,
     required List<DanmakuCaptureSource> sources,
   }) {
+    try {
+      return _capture(
+        rendererTickMilliseconds: rendererTickMilliseconds,
+        viewportSize: viewportSize,
+        opacity: opacity,
+        sources: sources,
+      );
+    } finally {
+      // Sources own only their temporary capture painters. renderPng records
+      // its Picture synchronously, before any asynchronous raster/PNG work.
+      for (final source in sources.toSet()) {
+        try {
+          source.dispose?.call();
+        } catch (error, stackTrace) {
+          _reportError(error, stackTrace);
+        }
+      }
+    }
+  }
+
+  bool _capture({
+    required int rendererTickMilliseconds,
+    required Size viewportSize,
+    required double opacity,
+    required List<DanmakuCaptureSource> sources,
+  }) {
     if (!_enabled) return false;
     final lastCaptureTick = _lastCaptureTick;
     if (lastCaptureTick != null &&
@@ -123,6 +149,9 @@ class DanmakuCaptureController extends ChangeNotifier {
     required double opacity,
     required List<DanmakuCaptureSource> sources,
   }) {
+    if (sources.length > 500) {
+      throw StateError('Danmaku capture exceeded its 500-item frame limit.');
+    }
     final capturedAt = DateTime.now();
     final position = mediaPosition?.call();
     final placements = <DanmakuCapturePlacement>[];
@@ -133,9 +162,15 @@ class DanmakuCaptureController extends ChangeNotifier {
       activeKeys.add(source.visualKey);
       var sprite = _spriteCache[source.visualKey];
       if (sprite == null) {
+        final pngBytes = source.renderPng();
+        // A later sprite can fail while delivery is awaiting an earlier one.
+        // Observe immediately, while preserving the original failing future
+        // for ordered delivery and the recording failure callback.
+        unawaited(
+            pngBytes.then<void>((_) {}, onError: (Object _, StackTrace __) {}));
         sprite = _CachedSprite(
           id: 'danmaku-sprite-${++_nextSpriteId}',
-          pngBytes: source.renderPng(),
+          pngBytes: pngBytes,
         );
         _spriteCache[source.visualKey] = sprite;
       }
@@ -202,6 +237,7 @@ class DanmakuCaptureController extends ChangeNotifier {
   }
 
   void _reportError(Object error, StackTrace stackTrace) {
+    _enabled = false;
     try {
       onError?.call(error, stackTrace);
     } catch (_) {
@@ -226,10 +262,15 @@ class DanmakuCaptureSource {
     this.transform,
     this.transformOriginX = 0,
     this.transformOriginY = 0,
+    this.dispose,
   });
 
   final String visualKey;
   final Future<Uint8List> Function() renderPng;
+
+  /// Releases temporary painter resources after synchronous snapshot recording,
+  /// including cache hits and skipped/rejected capture calls.
+  final VoidCallback? dispose;
   final double x;
   final double y;
   final double width;
