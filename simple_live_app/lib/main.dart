@@ -29,6 +29,7 @@ import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/other/debug_log_page.dart';
+import 'package:simple_live_app/modules/recordings/recording_player_page.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/app_pages.dart';
 import 'package:simple_live_app/routes/route_path.dart';
@@ -49,6 +50,7 @@ import 'package:simple_live_app/services/ohos_follow_widget_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
+import 'package:simple_live_app/services/recording/recording_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
 import 'package:simple_live_app/services/windows_fullscreen_service.dart';
 import 'package:simple_live_app/widgets/guide_overlay.dart';
@@ -548,25 +550,26 @@ class _DesktopWindowLifecycle with WindowListener {
       saveWindowPlacement,
       timeout: const Duration(milliseconds: 300),
     );
-    await _closeStep(
-      "保存直播录制",
-      () async {
-        if (Get.isRegistered<LiveRoomController>()) {
-          await Get.find<LiveRoomController>()
-              .beforePlayerMutationForRecording();
-        }
-      },
-      timeout: const Duration(seconds: 15),
-    );
-    await _closeStep(
-      "关闭播放器",
-      () async {
-        if (Get.isRegistered<LiveRoomController>()) {
-          await Get.find<LiveRoomController>().closePlayerResources();
-        }
-      },
-      timeout: const Duration(milliseconds: 900),
-    );
+    try {
+      if (!Utils.isOhos) {
+        // Disable auto-export synchronously before the room stop can finish.
+        // Both barriers must complete before the engine is destroyed.
+        await Future.wait<void>([
+          RecordingService.instance.shutdown(),
+          RecordingPlayerPage.closeAll(),
+          if (Get.isRegistered<LiveRoomController>())
+            Get.find<LiveRoomController>().recording.stop(reason: '退出应用'),
+        ]);
+      }
+      if (Get.isRegistered<LiveRoomController>()) {
+        await Get.find<LiveRoomController>().closePlayerResources();
+      }
+    } catch (error, stack) {
+      Log.e('等待录制与播放器关闭失败: $error', stack);
+      SmartDialog.showToast('录制资源仍在收尾，请稍后重试关闭');
+      _closing = false;
+      return;
+    }
     _closeStepSync("关闭同步服务", () {
       if (Get.isRegistered<SyncService>()) {
         SyncService.instance.onClose();

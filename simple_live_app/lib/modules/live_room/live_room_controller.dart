@@ -1168,7 +1168,7 @@ class LiveRoomController extends PlayerController
   );
 
   @override
-  bool get listeningRecordingBusy => recording.active || recording.busy;
+  bool get listeningRecordingBusy => recording.requested || recording.busy;
 
   @override
   bool get listeningPlaybackAvailable =>
@@ -3173,7 +3173,7 @@ class LiveRoomController extends PlayerController
     }
 
     _resetPlaybackHealthSession();
-    loadData();
+    loadData(resumeRecording: true);
   }
 
   Future<void> rebuildKuaishouDeviceSession() async {
@@ -3338,6 +3338,7 @@ class LiveRoomController extends PlayerController
 
   @override
   Future<void> closePlayerResources() async {
+    if (!Utils.isOhos) await recording.close();
     await closeListeningSession();
     await beforePlayerMutationForRecording();
     _cancelHoldPreviewAudioWatchdog();
@@ -3351,7 +3352,13 @@ class LiveRoomController extends PlayerController
   void onClose() async {
     _roomDisposed = true;
     await closeListeningSession();
-    if (!Utils.isOhos) await recording.close();
+    if (!Utils.isOhos) {
+      try {
+        await recording.close();
+      } catch (error, stack) {
+        Log.e('离房录制资源仍待清理，保留播放器所有权: $error', stack);
+      }
+    }
     _cancelHoldPreviewAudioWatchdog();
     await closeFollowHoldPreview();
     await _holdPreviewMutations.close();
@@ -3390,8 +3397,12 @@ class LiveRoomController extends PlayerController
       AppSettingsController.instance.setLastLiveRoomResumePending(false),
     );
     if (!Utils.isOhos && !isPlayerClosing) {
-      await beforePlayerMutationForRecording();
-      await player.stop();
+      try {
+        await beforePlayerMutationForRecording();
+        await player.stop();
+      } catch (error, stack) {
+        Log.e('离房暂停播放器前仍需录制清理: $error', stack);
+      }
     }
     await liveDanmaku.stop();
     super.onClose();
@@ -3509,8 +3520,16 @@ class LiveRoomController extends PlayerController
   }
 
   /// 加载直播间信息
-  void loadData() async {
-    await beforePlayerMutationForRecording();
+  void loadData({bool resumeRecording = false}) async {
+    try {
+      await beforePlayerMutationForRecording(
+        resumeRecordingAfterMutation: resumeRecording,
+      );
+    } catch (error, stack) {
+      Log.e('刷新前录制资源清理失败: $error', stack);
+      if (!_roomDisposed) SmartDialog.showToast('请重试停止录制后再刷新');
+      return;
+    }
     final loadGeneration = ++_loadGeneration;
     _resetOhosAutoLineSelectionSession();
     final loadStopwatch = Stopwatch()..start();
@@ -4396,7 +4415,7 @@ class LiveRoomController extends PlayerController
       audioOutputFailed.value = false;
       // Warmup 必须覆盖 player.open() 期间产生的起播 buffering 事件。
       markStreamOpening();
-      await beforePlayerMutationForRecording();
+      await beforePlayerMutationForRecording(resumeRecordingAfterMutation: true);
       if (!_isCurrentPlaybackRequest(requestRevision, loadGeneration)) {
         return;
       }
@@ -4533,7 +4552,7 @@ class LiveRoomController extends PlayerController
       return;
     }
     try {
-      await beforePlayerMutationForRecording();
+      await beforePlayerMutationForRecording(resumeRecordingAfterMutation: true);
       await player.stop();
       await Future.delayed(const Duration(milliseconds: 120));
     } catch (e, stackTrace) {
@@ -4548,9 +4567,12 @@ class LiveRoomController extends PlayerController
     bool? reconnectHostChanged,
     bool suppressOhosAutoLineSelection = false,
   }) async {
-    await beforePlayerMutationForRecording(
-      resumeRecordingAfterMutation: true,
-    );
+    try {
+      await beforePlayerMutationForRecording(resumeRecordingAfterMutation: true);
+    } catch (error, stack) {
+      Log.e('开流前录制资源清理失败: $error', stack);
+      return false;
+    }
     if (!_holdPreviewPromotingMain &&
         _holdPreviewPhase != LiveRoomHoldPreviewPhase.closed) {
       await closeFollowHoldPreview();
@@ -7108,6 +7130,13 @@ ${errorStackTrace ?? ""}''');
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!Utils.isOhos && (Platform.isAndroid || Platform.isIOS) &&
+        (state == AppLifecycleState.paused || state == AppLifecycleState.hidden)) {
+      // Invalidate a resume even when there is no active segment to stop.
+      unawaited(recording.stop(reason: '进入后台').catchError((Object error) {
+        Log.logPrint('后台停止录制失败: $error');
+      }));
+    }
     super.didChangeAppLifecycleState(state);
 
     if (state == AppLifecycleState.paused ||

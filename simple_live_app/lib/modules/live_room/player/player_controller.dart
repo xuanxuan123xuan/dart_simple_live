@@ -216,27 +216,37 @@ mixin PlayerMixin {
   /// suppressed. Some libmpv builds emit a transient completed/paused signal
   /// while stream-record is being attached or detached.
   int _recordingNativeMutationDepth = 0;
-  DateTime? _recordingNativeMutationQuietUntil;
+  Timer? _recordingRecheckTimer;
+  String? _recordingDeferredError;
 
-  bool get recordingNativeMutationQuiet {
-    final until = _recordingNativeMutationQuietUntil;
-    return _recordingNativeMutationDepth > 0 ||
-        (until != null && DateTime.now().isBefore(until));
-  }
+  bool get recordingNativeMutationQuiet =>
+      _recordingNativeMutationDepth > 0 || (_recordingRecheckTimer?.isActive ?? false);
 
   Future<void> runRecordingNativeMutation(
       Future<void> Function() operation) async {
+    _recordingRecheckTimer?.cancel();
+    _recordingRecheckTimer = null;
     _recordingNativeMutationDepth++;
     try {
       await operation();
     } finally {
-      if (_recordingNativeMutationDepth > 0) {
-        _recordingNativeMutationDepth--;
+      _recordingNativeMutationDepth--;
+      if (_recordingNativeMutationDepth == 0 && !recordingPlayerClosing) {
+        _recordingRecheckTimer?.cancel();
+        _recordingRecheckTimer = Timer(const Duration(milliseconds: 150), () {
+          _recordingRecheckTimer = null;
+          if (recordingPlayerClosing) return;
+          final deferredError = _recordingDeferredError;
+          _recordingDeferredError = null;
+          onRecordingNativeMutationSettled(deferredError);
+        });
       }
-      _recordingNativeMutationQuietUntil =
-          DateTime.now().add(const Duration(seconds: 2));
     }
   }
+
+  bool get recordingPlayerClosing => false;
+  void onRecordingNativeMutationSettled(String? deferredError) {}
+
   bool _playerInitialized = false;
   StreamSubscription? _androidTrackSubscription;
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
@@ -3016,6 +3026,21 @@ class PlayerController extends BaseController
         PlayerSystemMixin,
         PlayerGestureControlMixin {
   @override
+  bool get recordingPlayerClosing => isPlayerClosing;
+
+  @override
+  void onRecordingNativeMutationSettled(String? deferredError) {
+    if (isPlayerClosing) return;
+    if (deferredError != null) _onPlayerError(deferredError);
+    if (player.state.completed && !player.state.playing) {
+      mediaEnd();
+    } else if (player.state.playing) {
+      refreshIosVideoOutputLimit(force: true);
+      unawaited(resumeLiveLatencyChase());
+    }
+  }
+
+  @override
   bool get listeningPlaybackAvailable =>
       !isPlayerClosing && super.listeningPlaybackAvailable;
 
@@ -3447,6 +3472,53 @@ class PlayerController extends BaseController
     }
   }
 
+  void _onPlayerError(String event) {
+    Log.d("播放器错误：$event");
+    if (recordingNativeMutationQuiet) {
+      _recordingDeferredError = event;
+      return;
+    }
+    // 无音频输出不走换线重试（画面是好的），但要留痕给播放信息，
+    // 否则这类永久性故障对用户完全不可见。
+    // Could not open/initialize audio device -> no sound.
+    if (event.contains('no sound.')) {
+      audioOutputFailed.value = true;
+      return;
+    }
+
+    // Fix Issue #57: 流错误默认由播放器内重试；需要房间级刷新 URL 的平台
+    // 可覆写 shouldDelegateStreamErrorsToRoomController 交回 mediaError。
+    if (_isStreamError(event)) {
+      if (shouldDelegateStreamErrorsToRoomController) {
+        final now = DateTime.now();
+        if (_lastStreamErrorTime != null &&
+            now.difference(_lastStreamErrorTime!) <
+                const Duration(seconds: 2)) {
+          return;
+        }
+        _lastStreamErrorTime = now;
+        Log.d("[player] delegating stream error to room controller");
+        unawaited(
+          suspendLiveLatencyChase(
+            MpvLiveLatencyProtectionReason.sourceChanged,
+          ),
+        );
+        mediaError(event);
+      } else {
+        _handleStreamError(event);
+      }
+      return;
+    }
+
+    //SmartDialog.showToast(event);
+    unawaited(
+      suspendLiveLatencyChase(
+        MpvLiveLatencyProtectionReason.sourceChanged,
+      ),
+    );
+    mediaError(event);
+  }
+
   void initStream() {
     if (Platform.isIOS) {
       _iosOriginalQualityPowerSavingWorker = ever<bool>(
@@ -3454,52 +3526,7 @@ class PlayerController extends BaseController
         (_) => refreshIosVideoOutputLimit(),
       );
     }
-    _errorSubscription = player.stream.error.listen((event) {
-      Log.d("播放器错误：$event");
-      if (recordingNativeMutationQuiet) {
-        Log.d('忽略录制原生操作期间的播放器瞬时错误：$event');
-        return;
-      }
-      // 无音频输出不走换线重试（画面是好的），但要留痕给播放信息，
-      // 否则这类永久性故障对用户完全不可见。
-      // Could not open/initialize audio device -> no sound.
-      if (event.contains('no sound.')) {
-        audioOutputFailed.value = true;
-        return;
-      }
-
-      // Fix Issue #57: 流错误默认由播放器内重试；需要房间级刷新 URL 的平台
-      // 可覆写 shouldDelegateStreamErrorsToRoomController 交回 mediaError。
-      if (_isStreamError(event)) {
-        if (shouldDelegateStreamErrorsToRoomController) {
-          final now = DateTime.now();
-          if (_lastStreamErrorTime != null &&
-              now.difference(_lastStreamErrorTime!) <
-                  const Duration(seconds: 2)) {
-            return;
-          }
-          _lastStreamErrorTime = now;
-          Log.d("[player] delegating stream error to room controller");
-          unawaited(
-            suspendLiveLatencyChase(
-              MpvLiveLatencyProtectionReason.sourceChanged,
-            ),
-          );
-          mediaError(event);
-        } else {
-          _handleStreamError(event);
-        }
-        return;
-      }
-
-      //SmartDialog.showToast(event);
-      unawaited(
-        suspendLiveLatencyChase(
-          MpvLiveLatencyProtectionReason.sourceChanged,
-        ),
-      );
-      mediaError(event);
-    });
+    _errorSubscription = player.stream.error.listen(_onPlayerError);
 
     _playingSubscription = player.stream.playing.listen((event) {
       _setKeepScreenAwake(!isPlayerClosing && event);
@@ -3834,7 +3861,7 @@ class PlayerController extends BaseController
           return;
         }
         Log.i("正在重启解码器...");
-        await beforePlayerMutationForRecording();
+        await beforePlayerMutationForRecording(resumeRecordingAfterMutation: true);
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
         }
@@ -3849,7 +3876,7 @@ class PlayerController extends BaseController
           return;
         }
         _lastPlayerOpenAt = now;
-        await beforePlayerMutationForRecording();
+        await beforePlayerMutationForRecording(resumeRecordingAfterMutation: true);
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
         }
@@ -3864,6 +3891,7 @@ class PlayerController extends BaseController
         if (_playerClosing || expectedGeneration != _livePlaybackGeneration) {
           return;
         }
+        await afterPlayerMutationForRecording();
         await resetLiveLatencyChase();
         final recoveryGeneration = _livePlaybackGeneration;
         await startLivePlaybackLightweightSampling(source: source);
@@ -4053,7 +4081,7 @@ class PlayerController extends BaseController
       await suspendLiveLatencyChase(
         MpvLiveLatencyProtectionReason.playbackStalled,
       );
-      await beforePlayerMutationForRecording();
+      await beforePlayerMutationForRecording(resumeRecordingAfterMutation: true);
       await player.pause();
       await Future.delayed(const Duration(milliseconds: 300));
       if (!_isCurrentSurfaceRecovery(
@@ -4073,6 +4101,7 @@ class PlayerController extends BaseController
         return;
       }
       if (!_hasInvalidVideoSize() || !player.state.playing) {
+        await afterPlayerMutationForRecording();
         await resumeLiveLatencyChase();
         return;
       }
@@ -4095,7 +4124,7 @@ class PlayerController extends BaseController
       if (_decodeFailureCount >= _maxDecodeFailuresBeforeFallback) {
         await _applySoftwareDecodeFallback();
       }
-      await beforePlayerMutationForRecording();
+      await beforePlayerMutationForRecording(resumeRecordingAfterMutation: true);
       if (!_isCurrentSurfaceRecovery(
         token: recoveryToken, generation: generation,
         sourceIdentity: sourceIdentity,
@@ -4117,6 +4146,7 @@ class PlayerController extends BaseController
       )) {
         return;
       }
+      await afterPlayerMutationForRecording();
       await resetLiveLatencyChase();
       final recoveryGeneration = _livePlaybackGeneration;
       await startLivePlaybackLightweightSampling(source: mediaUri);
@@ -4439,6 +4469,9 @@ class PlayerController extends BaseController
       return;
     }
     _playerClosing = true;
+    _recordingRecheckTimer?.cancel();
+    _recordingRecheckTimer = null;
+    _recordingDeferredError = null;
     await closeListeningSession();
     _androidVideoDiagnosticLogWorker?.dispose();
     _androidVideoDiagnosticLogWorker = null;
@@ -4517,7 +4550,13 @@ class PlayerController extends BaseController
   @override
   void onClose() async {
     Log.w("播放器关闭");
-    await closePlayerResources();
+    try {
+      await closePlayerResources();
+    } catch (error, stack) {
+      // A failed recording barrier retains the source; never force native
+      // disposal merely because Get's void lifecycle cannot await this future.
+      Log.e('播放器资源关闭仍待重试: $error', stack);
+    }
     super.onClose();
   }
 }
