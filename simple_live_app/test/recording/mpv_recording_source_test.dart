@@ -84,6 +84,36 @@ void main() {
     });
   });
 
+  test('timeline errors identify fingerprint failures and only owned vf labels',
+      () {
+    expect(
+        isMpvRecordingTimelineFailureLog(
+            prefix: 'fingerprint',
+            text: 'unsupported video format',
+            level: 'error'),
+        isTrue);
+    expect(
+        isMpvRecordingTimelineFailureLog(
+            prefix: 'fingerprint',
+            text: 'Falling back to libswscale.',
+            level: 'warn'),
+        isFalse);
+    for (final label in ['simplelive_recording', 'simplelive_capture_pixels']) {
+      expect(
+          isMpvRecordingTimelineFailureLog(
+              prefix: 'vf',
+              text: 'Disabling filter $label because it has failed.',
+              level: 'error'),
+          isTrue);
+    }
+    expect(
+        isMpvRecordingTimelineFailureLog(
+            prefix: 'vf',
+            text: 'Disabling filter user_filter because it has failed.',
+            level: 'error'),
+        isFalse);
+  });
+
   group('matchRecordingTimeline', () {
     test('three independent frames establish media offset regardless of order',
         () {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -15,6 +16,7 @@ class _Bridge implements RecordingMpvBridge {
   final commands = <List<String>>[];
   final pending = <Future<void>>[];
   Future<void> Function(List<String>)? handler;
+  Future<String> Function(String)? propertyHandler;
   bool closed = false;
   int drainFailures = 0;
   int closeFailures = 0;
@@ -36,7 +38,8 @@ class _Bridge implements RecordingMpvBridge {
   }
 
   @override
-  Future<String> getProperty(String name) async => '';
+  Future<String> getProperty(String name) async =>
+      propertyHandler == null ? '' : await propertyHandler!(name);
   @override
   Future<void> drain() async {
     if (drainFailures > 0) {
@@ -79,6 +82,145 @@ void main() {
   tearDown(() async {
     await platform.dispose();
     await directory.delete(recursive: true);
+  });
+
+  String metadata() => jsonEncode({
+        'fp0.pts': '1.0',
+        'fp0.hex': List.filled(512, 'a').join(),
+      });
+
+  MpvRecordingSource timelineSource(
+          {void Function(Object, StackTrace)? onError}) =>
+      MpvRecordingSource(Player(platformPlayer: platform),
+          bridge: bridge, onError: onError);
+
+  test(
+      'timeline readiness waits for a real frame and cleans both owned filters',
+      () async {
+    final queried = Completer<void>();
+    final frames = Completer<String>();
+    bridge.propertyHandler = (name) {
+      if (!queried.isCompleted) queried.complete();
+      return frames.future;
+    };
+    source = timelineSource();
+    final starting = source.start('${directory.path}/raw.mkv');
+    await queried.future;
+    expect(source.state, MpvRecordingState.starting);
+    frames.complete(metadata());
+    await starting;
+    expect(source.state, MpvRecordingState.recording);
+    expect(bridge.commands.take(2), [
+      ['vf', 'add', '@simplelive_capture_pixels:format=fmt=yuv420p'],
+      ['vf', 'add', '@simplelive_recording:fingerprint=clear-on-query=no'],
+    ]);
+    await source.stop();
+    expect(bridge.commands.skip(bridge.commands.length - 2), [
+      ['vf', 'remove', '@simplelive_recording'],
+      ['vf', 'remove', '@simplelive_capture_pixels'],
+    ]);
+    await source.release();
+  });
+
+  test('a late first fingerprint cannot complete a cancelled start', () async {
+    final queried = Completer<void>();
+    final frames = Completer<String>();
+    bridge.propertyHandler = (_) {
+      if (!queried.isCompleted) queried.complete();
+      return frames.future;
+    };
+    source = timelineSource();
+    final starting = source.start('${directory.path}/raw.mkv');
+    await queried.future;
+    final stopping = source.stop();
+    final rejected = expectLater(starting, throwsStateError);
+    frames.complete(metadata());
+    await rejected;
+    await stopping;
+    expect(source.state, isNot(MpvRecordingState.recording));
+    await source.release();
+    expect(bridge.closed, isTrue);
+  });
+
+  test(
+      'asynchronous format rejection during add is observed before stream attach',
+      () async {
+    final errors = <Object>[];
+    source = timelineSource(onError: (error, _) => errors.add(error));
+    bridge.handler = (command) async {
+      if (command[1] == 'add' && command.last.contains('format=fmt=')) {
+        platform.emitLog(const PlayerLog(
+            prefix: 'vf',
+            level: 'error',
+            text:
+                'Disabling filter simplelive_capture_pixels because it has failed.'));
+        await Future<void>.delayed(Duration.zero);
+      }
+    };
+    await expectLater(
+        source.start('${directory.path}/raw.mkv'), throwsStateError);
+    expect(errors.single.toString(), contains('时间轴采样失败'));
+    expect(bridge.commands.where((command) => command[1] == 'stream-record'),
+        isEmpty);
+    expect(
+        bridge.commands.last, ['vf', 'remove', '@simplelive_capture_pixels']);
+    await source.release();
+  });
+
+  test(
+      'fingerprint format failure after command acceptance cannot report ready',
+      () async {
+    source = timelineSource();
+    bridge.handler = (command) async {
+      if (command[1] == 'add' && command.last.contains(':fingerprint=')) {
+        platform.emitLog(const PlayerLog(
+            prefix: 'fingerprint',
+            level: 'error',
+            text: 'unsupported video format'));
+        await Future<void>.delayed(Duration.zero);
+      }
+    };
+    await expectLater(
+        source.start('${directory.path}/raw.mkv'), throwsStateError);
+    expect(source.state, MpvRecordingState.failed);
+    expect(bridge.commands.where((command) => command[1] == 'stream-record'),
+        isEmpty);
+    expect(bridge.commands.skip(bridge.commands.length - 2), [
+      ['vf', 'remove', '@simplelive_recording'],
+      ['vf', 'remove', '@simplelive_capture_pixels'],
+    ]);
+    await source.release();
+  });
+
+  test(
+      'pixel adapter cleanup failure retains ownership until a successful retry',
+      () async {
+    bridge.propertyHandler =
+        (name) async => name == 'vf' ? 'simplelive_capture_pixels' : metadata();
+    source = timelineSource();
+    await source.start('${directory.path}/raw.mkv');
+    var reject = true;
+    bridge.handler = (command) async {
+      if (command[1] == 'remove' &&
+          command.last == '@simplelive_capture_pixels' &&
+          reject) {
+        throw const RecordingMpvError(-12, 'remove format');
+      }
+    };
+    await expectLater(source.stop(), throwsA(isA<RecordingMpvError>()));
+    expect(source.state, MpvRecordingState.failed);
+    expect(bridge.closed, isFalse);
+    reject = false;
+    await source.release();
+    expect(bridge.closed, isTrue);
+    expect(
+        bridge.commands
+            .where((command) => command.last == '@simplelive_recording'),
+        hasLength(1));
+    expect(
+        bridge.commands
+            .where((command) => command.last == '@simplelive_capture_pixels'),
+        hasLength(2));
   });
 
   const experimentalNotice = PlayerLog(

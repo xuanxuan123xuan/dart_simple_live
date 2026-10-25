@@ -118,6 +118,27 @@ bool isMpvRecordingFailureLog({
       (value.contains('disabling recording') && severe);
 }
 
+/// Decoder/filter errors are separate from packet-recorder failures. A vf
+/// command can succeed before the first hardware frame reaches the filter.
+bool isMpvRecordingTimelineFailureLog({
+  required String prefix,
+  required String text,
+  required String level,
+}) {
+  final normalizedLevel = level.toLowerCase();
+  final severe = normalizedLevel == 'error' || normalizedLevel == 'fatal';
+  final warning =
+      severe || normalizedLevel == 'warn' || normalizedLevel == 'warning';
+  final component = prefix.toLowerCase();
+  final message = text.toLowerCase();
+  return (component == 'fingerprint' && severe) ||
+      (component == 'vf' &&
+          warning &&
+          (message.contains('simplelive_recording') ||
+              message.contains('simplelive_capture_pixels')) &&
+          (message.contains('disabling') || message.contains('fail')));
+}
+
 /// Writes packets from the existing native player. It never resolves or opens
 /// another live URL. A headless worker verifies only the finalized local file.
 class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
@@ -161,6 +182,8 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
   }
 
   static const _label = 'simplelive_recording';
+  static const _formatLabel = 'simplelive_capture_pixels';
+  static const _formatFilter = '@$_formatLabel:format=fmt=yuv420p';
   final Duration _nativeOperationTimeout;
   // mpv_get_property_string may query a node twice while formatting JSON.
   // Clearing on query would consume it before the formatted result is read.
@@ -173,6 +196,7 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
   String? _path;
   bool _attached = false;
   bool _filterAttached = false;
+  bool _formatAttached = false;
   int _generation = 0;
   Duration? _sourceFirstPosition;
   final Stopwatch _stageClock = Stopwatch();
@@ -263,6 +287,32 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
     }
   }
 
+  void _rememberFingerprints(List<RecordingFingerprint> frames) {
+    _sourceFrames.addAll(frames
+        .where((frame) => _sourcePositions.add(frame.position.inMicroseconds)));
+    if (frames.isNotEmpty) _sourceFirstPosition ??= frames.first.position;
+  }
+
+  Future<void> _waitForFirstFingerprint(int generation) async {
+    final clock = Stopwatch()..start();
+    while (clock.elapsed < _nativeOperationTimeout) {
+      if (generation != _generation) throw StateError('录制已取消');
+      final error = _lastError;
+      if (error != null) throw error;
+      final frames =
+          parseRecordingFingerprints(await _fingerprints(await _transport));
+      if (generation != _generation) throw StateError('录制已取消');
+      if (_lastError != null) throw _lastError!;
+      if (frames.isNotEmpty) {
+        _rememberFingerprints(frames);
+        _stage('fingerprintReady');
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    throw StateError('录制时间轴采样未就绪；当前视频输出可能不支持弹幕合成');
+  }
+
   void _startFingerprintSampling(int generation) {
     if (!captureTimeline) return;
     // Fingerprints are useful for the optional danmaku timeline, but querying
@@ -274,9 +324,7 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
         final frames = parseRecordingFingerprints(
           await _fingerprints(await _transport),
         );
-        _sourceFrames.addAll(frames.where(
-            (frame) => _sourcePositions.add(frame.position.inMicroseconds)));
-        if (frames.isNotEmpty) _sourceFirstPosition ??= frames.first.position;
+        _rememberFingerprints(frames);
         if (_sourceFrames.length >= 2048 ||
             (frames.isNotEmpty &&
                 _sourceFirstPosition != null &&
@@ -342,28 +390,22 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
     // A small, bounded fingerprint history is sufficient to establish the
     // packet rebase offset without guessing at the demuxer cache tail.
     try {
-      if (captureTimeline) {
-        _filterAttached = true;
-        try {
-          await _nativeCommand(['vf', 'add', _filter], '添加指纹滤镜');
-        } on RecordingMpvError {
-          _filterAttached = false;
-          rethrow;
-        }
-        if (generation != _generation) throw StateError('录制已取消');
-        _stage('filterAttached');
-      }
       _logs = player.stream.log.listen((log) {
         if (_state != MpvRecordingState.starting &&
             _state != MpvRecordingState.recording &&
             _state != MpvRecordingState.stopping) {
           return;
         }
-        if (!isMpvRecordingFailureLog(
-          prefix: log.prefix,
-          text: log.text,
-          level: log.level,
-        )) {
+        final timelineFailure = captureTimeline &&
+            (_filterAttached || _formatAttached) &&
+            isMpvRecordingTimelineFailureLog(
+                prefix: log.prefix, text: log.text, level: log.level);
+        if (!timelineFailure &&
+            !isMpvRecordingFailureLog(
+              prefix: log.prefix,
+              text: log.text,
+              level: log.level,
+            )) {
           if (log.prefix.toLowerCase().contains('recorder') &&
               {'warn', 'warning'}.contains(log.level.toLowerCase())) {
             RecordingDiagnostics.instance.write('mpv.recorder.notice', data: {
@@ -375,19 +417,35 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
           }
           return;
         }
-        final error = StateError('录制器错误：${log.text}');
-        RecordingDiagnostics.instance.write('mpv.recorder.error', data: {
-          'rawPath': _path,
-          'prefix': log.prefix,
-          'level': log.level,
-          'message': log.text,
-        });
+        final error = StateError(
+            timelineFailure ? '录制时间轴采样失败：${log.text}' : '录制器错误：${log.text}');
+        RecordingDiagnostics.instance.write(
+            timelineFailure ? 'mpv.timeline.error' : 'mpv.recorder.error',
+            data: {
+              'rawPath': _path,
+              'prefix': log.prefix,
+              'level': log.level,
+              'message': log.text,
+            });
         _lastError = error;
         if (!_errorReported) {
           _errorReported = true;
           onError?.call(error, StackTrace.current);
         }
       });
+      if (captureTimeline) {
+        // format downloads transferable hardware frames before fingerprint's
+        // CPU scaler, and normalizes both live and verifier inputs to yuv420p.
+        _formatAttached = true;
+        await _nativeCommand(['vf', 'add', _formatFilter], '准备指纹像素格式');
+        if (generation != _generation) throw StateError('录制已取消');
+        if (_lastError != null) throw _lastError!;
+        _filterAttached = true;
+        await _nativeCommand(['vf', 'add', _filter], '添加指纹滤镜');
+        if (generation != _generation) throw StateError('录制已取消');
+        if (_lastError != null) throw _lastError!;
+        _stage('filterAttached');
+      }
       _attached = true;
       await _nativeCommand(['set', 'stream-record', path], '开始写入录制');
       if (generation != _generation) throw StateError('录制已取消');
@@ -402,6 +460,7 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
         if (error != null) throw error;
         final file = File(path);
         if (await file.exists()) {
+          if (captureTimeline) await _waitForFirstFingerprint(generation);
           _state = MpvRecordingState.recording;
           _stage('fileCreated');
           _startFingerprintSampling(generation);
@@ -417,6 +476,7 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
             'elapsedMs': _stageClock.elapsedMilliseconds,
             'attached': _attached,
             'filterAttached': _filterAttached,
+            'formatAttached': _formatAttached,
           },
           error: error,
           stackTrace: stackTrace);
@@ -426,19 +486,30 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
     }
   }
 
-  Future<void> _removeFilter() async {
-    if (!_filterAttached) return;
+  Future<void> _removeNamedFilter(String label, String stage) async {
     try {
-      await _nativeCommand(['vf', 'remove', '@$_label'], '移除指纹滤镜');
+      await _nativeCommand(['vf', 'remove', '@$label'], stage);
     } on RecordingMpvError {
-      // A previous timed-out remove may already have succeeded. Verify its
-      // absence through the asynchronous client before releasing ownership.
+      // A failed/timed-out add or remove may have left no filter. Confirm
+      // absence asynchronously before releasing that filter's ownership.
       final filters = await (await _transport)
           .getProperty('vf')
           .timeout(_nativeOperationTimeout);
-      if (filters.contains(_label)) rethrow;
+      if (filters.contains(label)) rethrow;
     }
-    _filterAttached = false;
+  }
+
+  Future<void> _removeFilter() async {
+    // Remove the consumer first so no hardware frame can reach fingerprint
+    // while its CPU-format adapter is being detached.
+    if (_filterAttached) {
+      await _removeNamedFilter(_label, '移除指纹滤镜');
+      _filterAttached = false;
+    }
+    if (_formatAttached) {
+      await _removeNamedFilter(_formatLabel, '移除指纹像素格式');
+      _formatAttached = false;
+    }
   }
 
   @override
@@ -447,7 +518,10 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
       });
 
   Future<void> _stop() async {
-    if (_state == MpvRecordingState.idle && !_attached && !_filterAttached) {
+    if (_state == MpvRecordingState.idle &&
+        !_attached &&
+        !_filterAttached &&
+        !_formatAttached) {
       return;
     }
     _state = MpvRecordingState.stopping;
@@ -468,6 +542,7 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
       if (_bridgeCreationFailed) {
         _attached = false;
         _filterAttached = false;
+        _formatAttached = false;
       }
       final bridge =
           _bridgeCreationFailed ? null : _bridge ?? await _bridgeCreation;
@@ -523,7 +598,7 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
     } on Object {
       // A recording failure may be reported after successful detach. It does
       // not prevent releasing a fully drained client; uncertain detach does.
-      if (_attached || _filterAttached) {
+      if (_attached || _filterAttached || _formatAttached) {
         rethrow;
       }
     }
@@ -583,7 +658,7 @@ class MpvRecordingSource implements RecordingSource, RecordingSourceLifetime {
         'vid': 'auto',
         'hwdec': 'no',
         'cache-on-disk': 'no',
-        'vf': _filter,
+        'vf': '$_formatFilter,$_filter',
         'pause': 'yes',
       }.entries) {
         if (_timelineCancelled) return null;
