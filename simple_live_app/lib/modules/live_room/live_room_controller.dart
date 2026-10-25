@@ -6,7 +6,6 @@ import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -1477,13 +1476,6 @@ class LiveRoomController extends PlayerController
       userScrollDirection: position.userScrollDirection,
       isNearBottom: position.extentAfter <= 24,
     );
-  }
-
-  bool _isChatNearBottom() {
-    if (!scrollController.hasClients) {
-      return true;
-    }
-    return scrollController.position.extentAfter <= 24;
   }
 
   bool _isKeywordShielded(LiveMessage msg) {
