@@ -178,6 +178,7 @@ class DanmakuCaptureController extends ChangeNotifier {
       placements.add(
         DanmakuCapturePlacement(
           spriteId: sprite.id,
+          instanceId: source.instanceId,
           x: source.x,
           y: source.y,
           width: source.width,
@@ -259,6 +260,7 @@ class DanmakuCaptureSource {
     required this.width,
     required this.height,
     this.opacity = 1,
+    this.instanceId,
     this.transform,
     this.transformOriginX = 0,
     this.transformOriginY = 0,
@@ -266,6 +268,9 @@ class DanmakuCaptureSource {
   });
 
   final String visualKey;
+
+  /// Identity of the moving item, independent of its shared PNG asset.
+  final String? instanceId;
   final Future<Uint8List> Function() renderPng;
 
   /// Releases temporary painter resources after synchronous snapshot recording,
@@ -302,12 +307,16 @@ class DanmakuCapturePlacement {
     required this.width,
     required this.height,
     required this.opacity,
+    this.instanceId,
     this.transform,
     this.transformOriginX = 0,
     this.transformOriginY = 0,
   });
 
   final String spriteId;
+
+  /// Identity of the moving item, independent of its shared PNG asset.
+  final String? instanceId;
   final double x;
   final double y;
   final double width;

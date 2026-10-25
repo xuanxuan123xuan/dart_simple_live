@@ -44,6 +44,10 @@ class DanmakuCapturePainter extends CustomPainter {
   final double opacity;
   final Map<String, ui.Image> emojiImageCache;
 
+  static final Expando<int> _instanceIds = Expando<int>('capture-instance');
+  static int _nextInstanceId = 0;
+  static String _instanceId(DanmakuItem item) =>
+      'item-${_instanceIds[item] ??= ++_nextInstanceId}';
   static const double _spritePadding = 4;
   static const _maxSpritePixels = 16 * 1024 * 1024;
   static const _maxInFlightBytes = 64 * 1024 * 1024;
@@ -94,7 +98,7 @@ class DanmakuCapturePainter extends CustomPainter {
         rendererTick - item.creationTime,
       );
       if (state == null) continue;
-      sources.add(_specialSource(special, state));
+      sources.add(_specialSource(item, special, state));
     }
 
     captureController.capture(
@@ -142,6 +146,7 @@ class DanmakuCapturePainter extends CustomPainter {
 
     return DanmakuCaptureSource(
       visualKey: visualKey,
+      instanceId: _instanceId(item),
       x: x - _spritePadding,
       y: y - _spritePadding,
       width: spriteWidth.toDouble(),
@@ -197,6 +202,7 @@ class DanmakuCapturePainter extends CustomPainter {
   }
 
   DanmakuCaptureSource _specialSource(
+    DanmakuItem renderedItem,
     SpecialDanmakuContentItem item,
     SpecialDanmakuPlacement state,
   ) {
@@ -234,6 +240,7 @@ class DanmakuCapturePainter extends CustomPainter {
 
     return DanmakuCaptureSource(
       visualKey: visualKey,
+      instanceId: _instanceId(renderedItem),
       x: state.offset.dx - _spritePadding,
       y: state.offset.dy - _spritePadding,
       width: spriteWidth.toDouble(),

@@ -11,6 +11,7 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path/path.dart' as p;
 
 import 'recording_models.dart';
+import 'recording_overlay_interpolation.dart';
 
 class RecordingNativeResult {
   const RecordingNativeResult({required this.success, this.output = ''});
@@ -561,8 +562,10 @@ class FFmpegRecordingBackend implements RecordingBackend {
             hasFrame = true;
             next = await frames.moveNext() ? frames.current : null;
           }
+          final sampled =
+              interpolateRecordingOverlayFrame(current, next, mediaMs);
           final png = await _paint(
-              current, info.width, info.height, session.directory, sprites);
+              sampled, info.width, info.height, session.directory, sprites);
           await File(p.join(directory.path,
                   'overlay${index.toString().padLeft(4, '0')}.png'))
               .writeAsBytes(png);
@@ -581,12 +584,12 @@ class FFmpegRecordingBackend implements RecordingBackend {
           '-i',
           p.join(directory.path, 'overlay%04d.png'),
           '-filter_complex',
-          '[0:v]setpts=PTS-STARTPTS[v];[v][1:v]overlay=0:0:shortest=1[out]',
+          '[0:v]setpts=PTS-STARTPTS,fps=$overlayFps[v];[v][1:v]overlay=0:0:shortest=1[out]',
           '-map',
           '[out]',
           '-an',
           '-r',
-          '${info.frameRate.clamp(1, 60)}',
+          '$overlayFps',
           '-t',
           '${length / 1000}',
           ..._encode,

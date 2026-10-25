@@ -332,6 +332,7 @@ class LiveRoomRecordingCoordinator extends ChangeNotifier {
           items: frame.placements
               .map((item) => RecordingOverlayItem(
                     spriteId: item.spriteId,
+                    instanceId: item.instanceId,
                     x: item.x,
                     y: item.y,
                     width: item.width,

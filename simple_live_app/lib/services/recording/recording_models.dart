@@ -151,16 +151,19 @@ class RecordingOverlayItem {
       required this.y,
       required this.width,
       required this.height,
+      this.instanceId,
       this.opacity = 1,
       this.transform,
       this.transformOriginX = 0,
       this.transformOriginY = 0});
   final String spriteId;
+  final String? instanceId;
   final double x, y, width, height, opacity;
   final List<double>? transform;
   final double transformOriginX, transformOriginY;
   Map<String, dynamic> toJson() => {
         'spriteId': spriteId,
+        if (instanceId != null) 'instanceId': instanceId,
         'x': x,
         'y': y,
         'width': width,

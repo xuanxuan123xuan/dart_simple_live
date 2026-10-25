@@ -10,6 +10,40 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('identical PNGs retain independent moving instance identities',
+      () async {
+    final frames = <DanmakuCaptureFrame>[];
+    var rasterCount = 0;
+    final controller = DanmakuCaptureController(onFrame: frames.add)
+      ..enabled = true;
+    DanmakuCaptureSource source(String id, double x) => DanmakuCaptureSource(
+        visualKey: 'same-text',
+        instanceId: id,
+        x: x,
+        y: 0,
+        width: 20,
+        height: 10,
+        renderPng: () async {
+          rasterCount++;
+          return Uint8List.fromList([1, 2, 3]);
+        });
+    controller.capture(
+        rendererTickMilliseconds: 0,
+        viewportSize: const Size(100, 60),
+        sources: [source('one', 80), source('two', 40)]);
+    controller.capture(
+        rendererTickMilliseconds: 16,
+        viewportSize: const Size(100, 60),
+        sources: [source('two', 38), source('one', 78)]);
+    await controller.flush();
+    expect(rasterCount, 1);
+    expect(
+        frames.first.placements.map((p) => p.spriteId).toSet(), hasLength(1));
+    expect(frames.first.placements.map((p) => p.instanceId), ['one', 'two']);
+    expect(frames.last.placements.map((p) => p.instanceId), ['two', 'one']);
+    controller.dispose();
+  });
+
   test('capture is opt-in and reuses a sprite across placement frames',
       () async {
     final frames = <DanmakuCaptureFrame>[];

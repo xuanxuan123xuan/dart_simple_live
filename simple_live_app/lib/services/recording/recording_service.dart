@@ -384,7 +384,9 @@ class RecordingService extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     for (final item in frame.items) {
-      if (!RegExp(r'^[a-zA-Z0-9_-]{1,100}$').hasMatch(item.spriteId) ||
+      if ((item.instanceId != null &&
+              (item.instanceId!.isEmpty || item.instanceId!.length > 100)) ||
+          !RegExp(r'^[a-zA-Z0-9_-]{1,100}$').hasMatch(item.spriteId) ||
           ![
             item.x,
             item.y,
