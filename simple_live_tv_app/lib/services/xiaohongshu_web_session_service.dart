@@ -13,7 +13,10 @@ import 'package:simple_live_tv_app/app/sites.dart';
 /// The hidden WebView signs JSON requests. Native video playback continues to
 /// use the HLS/FLV URLs parsed from SSR and never uses this WebView.
 class XiaohongshuWebSessionService extends GetxService
-    implements XiaohongshuRequestBridge, XiaohongshuSessionLifecycle {
+    implements
+        XiaohongshuRequestBridge,
+        XiaohongshuDiscoveryRequestBridge,
+        XiaohongshuSessionLifecycle {
   XiaohongshuWebSessionService({
     XiaohongshuSite? site,
     bool Function()? platformSupported,
@@ -80,7 +83,78 @@ class XiaohongshuWebSessionService extends GetxService
   @override
   void onInit() {
     _site.requestBridge = this;
+    _site.discoveryRequestBridge = this;
     super.onInit();
+  }
+
+  final discoveryPageUrl = RxnString();
+  final discoveryRevision = 0.obs;
+  Future<void> Function(String script)? evaluateDiscovery;
+  Completer<void>? _discoveryReady;
+  late final discoverySession = XiaohongshuDiscoverySession(
+    openPage: _openDiscoveryPage,
+    requestTimeout: requestTimeout,
+  );
+
+  @override
+  Future<dynamic> requestDiscovery({
+    required String path,
+    Map<String, dynamic> query = const {},
+  }) =>
+      discoverySession.requestDiscovery(path: path, query: query);
+
+  void receiveDiscovery(dynamic payload) => discoverySession.receive(payload);
+
+  void loadedDiscovery({required String url, required int sessionRevision}) {
+    if (url != discoveryPageUrl.value ||
+        sessionRevision != discoveryRevision.value) {
+      return;
+    }
+    if (_discoveryReady?.isCompleted == false) {
+      _discoveryReady!.complete();
+    }
+  }
+
+  void discoveryHostDetached(int sessionRevision) {
+    if (_closed ||
+        sessionRevision != discoveryRevision.value ||
+        discoveryPageUrl.value == null) {
+      return;
+    }
+    discoverySession.reset().ignore();
+  }
+
+  Future<XiaohongshuDiscoveryPage> _openDiscoveryPage(
+      void Function(dynamic) receive) async {
+    await _cookieChange;
+    if (_closed || !_platformSupported()) {
+      throw CoreError('此设备未提供小红书网页签名能力');
+    }
+
+    final ready = Completer<void>();
+    _discoveryReady = ready;
+    final currentRevision = ++discoveryRevision.value;
+    evaluateDiscovery = null;
+    discoveryPageUrl.value = XiaohongshuDiscoverySession.pageUrl;
+    return XiaohongshuDiscoveryPage(
+      evaluate: (script) async {
+        await ready.future;
+        if (_closed || currentRevision != discoveryRevision.value) {
+          throw CoreCancelledError();
+        }
+        final run = evaluateDiscovery;
+        if (run == null) throw CoreError('此设备无法建立小红书列表网页会话');
+        await run(script);
+      },
+      close: () async {
+        if (currentRevision != discoveryRevision.value) return;
+        discoveryRevision.value++;
+        evaluateDiscovery = null;
+        discoveryPageUrl.value = null;
+        _discoveryReady = null;
+        if (!ready.isCompleted) ready.complete();
+      },
+    );
   }
 
   static bool isAllowedNavigation(String url) {
@@ -145,6 +219,8 @@ class XiaohongshuWebSessionService extends GetxService
 
   /// Clears only Cookie names that belonged to the replaced account.
   Future<void> cookieChanged(String previousCookie) async {
+    await discoverySession.reset();
+    _site.discovery.resetPagination();
     _invalidateRequests();
     evaluate = null;
     pageUrl.value = null;
@@ -397,6 +473,10 @@ class XiaohongshuWebSessionService extends GetxService
   @override
   void onClose() {
     _closed = true;
+    discoverySession.close().ignore();
+    if (identical(_site.discoveryRequestBridge, this)) {
+      _site.discoveryRequestBridge = null;
+    }
     _invalidateRequests();
     pageUrl.value = null;
     evaluate = null;

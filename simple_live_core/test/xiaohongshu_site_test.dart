@@ -673,7 +673,7 @@ void main() {
       http.remove();
     }
   });
-  test('unverified directory returns unknown pagination without fake cards',
+  test('discovery remains unavailable without its optional page bridge',
       () async {
     final site = XiaohongshuSite();
     expect(site.discovery.isAvailable, isFalse);

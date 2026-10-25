@@ -22,6 +22,7 @@ import 'package:simple_live_core/simple_live_core.dart';
 class XiaohongshuWebSessionService extends GetxService
     implements
         XiaohongshuRequestBridge,
+        XiaohongshuDiscoveryRequestBridge,
         XiaohongshuHostRequestBridge,
         XiaohongshuSessionLifecycle {
   XiaohongshuWebSessionService({
@@ -65,6 +66,7 @@ class XiaohongshuWebSessionService extends GetxService
       (Sites.allSites[Constant.kXiaohongshu]!.liveSite as XiaohongshuSite)
           .cookie;
 
+  Future<void> _discoveryCookieChange = Future<void>.value();
   final pageUrl = RxnString();
   final revision = 0.obs;
   Future<void> Function(String script)? evaluate;
@@ -93,7 +95,91 @@ class XiaohongshuWebSessionService extends GetxService
   void onInit() {
     (Sites.allSites[Constant.kXiaohongshu]!.liveSite as XiaohongshuSite)
         .requestBridge = this;
+    (Sites.allSites[Constant.kXiaohongshu]!.liveSite as XiaohongshuSite)
+        .discoveryRequestBridge = this;
     super.onInit();
+  }
+
+  final discoveryPageUrl = RxnString();
+  final discoveryRevision = 0.obs;
+  Future<void> Function(String script)? evaluateDiscovery;
+  Completer<void>? _discoveryReady;
+  late final discoverySession = XiaohongshuDiscoverySession(
+    openPage: _openDiscoveryPage,
+    requestTimeout: requestTimeout,
+  );
+
+  @override
+  Future<dynamic> requestDiscovery({
+    required String path,
+    Map<String, dynamic> query = const {},
+  }) =>
+      discoverySession.requestDiscovery(path: path, query: query);
+
+  void receiveDiscovery(dynamic payload) => discoverySession.receive(payload);
+
+  void loadedDiscovery({required String url, required int sessionRevision}) {
+    if (url != discoveryPageUrl.value ||
+        sessionRevision != discoveryRevision.value) {
+      return;
+    }
+    if (_discoveryReady?.isCompleted == false) {
+      _discoveryReady!.complete();
+    }
+  }
+
+  void discoveryHostDetached(int sessionRevision) {
+    if (_closed ||
+        sessionRevision != discoveryRevision.value ||
+        discoveryPageUrl.value == null) {
+      return;
+    }
+    discoverySession.reset().ignore();
+  }
+
+  Future<XiaohongshuDiscoveryPage> _openDiscoveryPage(
+      void Function(dynamic) receive) async {
+    await _discoveryCookieChange;
+    if (_closed || !_platformSupported()) {
+      throw CoreError('此设备未提供小红书网页签名能力');
+    }
+    if (_desktopEnabled) {
+      final factory = _desktopFactory;
+      if (factory == null) {
+        throw CoreError('此设备未提供小红书桌面网页签名能力');
+      }
+      final page = await factory.create(
+          initialUrl: XiaohongshuDiscoverySession.pageUrl,
+          cookie: _cookieProvider(),
+          onMessage: receive);
+      return XiaohongshuDiscoveryPage(
+          evaluate: page.evaluateJavaScript, close: page.close);
+    }
+
+    final ready = Completer<void>();
+    _discoveryReady = ready;
+    final currentRevision = ++discoveryRevision.value;
+    evaluateDiscovery = null;
+    discoveryPageUrl.value = XiaohongshuDiscoverySession.pageUrl;
+    return XiaohongshuDiscoveryPage(
+      evaluate: (script) async {
+        await ready.future;
+        if (_closed || currentRevision != discoveryRevision.value) {
+          throw CoreCancelledError();
+        }
+        final run = evaluateDiscovery;
+        if (run == null) throw CoreError('此设备无法建立小红书列表网页会话');
+        await run(script);
+      },
+      close: () async {
+        if (currentRevision != discoveryRevision.value) return;
+        discoveryRevision.value++;
+        evaluateDiscovery = null;
+        discoveryPageUrl.value = null;
+        _discoveryReady = null;
+        if (!ready.isCompleted) ready.complete();
+      },
+    );
   }
 
   static bool isAllowedNavigation(String url) {
@@ -174,7 +260,19 @@ class XiaohongshuWebSessionService extends GetxService
     await _closeRoomSessionIfUnused();
   }
 
-  Future<void> cookieChanged(String previousCookie) async {
+  Future<void> cookieChanged(String previousCookie) {
+    final cleanup = _discoveryCookieChange.then((_) async {
+      await discoverySession.reset();
+      (Sites.allSites[Constant.kXiaohongshu]!.liveSite as XiaohongshuSite)
+          .discovery
+          .resetPagination();
+      await _changeCookie(previousCookie);
+    });
+    _discoveryCookieChange = cleanup;
+    return cleanup;
+  }
+
+  Future<void> _changeCookie(String previousCookie) async {
     if (!isSupported) return;
     if (_desktopEnabled && _desktopFactory != null) {
       // Desktop contexts have private per-window jars. Closing them removes
@@ -624,6 +722,14 @@ class XiaohongshuWebSessionService extends GetxService
   @override
   void onClose() {
     _closed = true;
+    discoverySession.close().ignore();
+    if (identical(
+        (Sites.allSites[Constant.kXiaohongshu]!.liveSite as XiaohongshuSite)
+            .discoveryRequestBridge,
+        this)) {
+      (Sites.allSites[Constant.kXiaohongshu]!.liveSite as XiaohongshuSite)
+          .discoveryRequestBridge = null;
+    }
     pageUrl.value = null;
     evaluate = null;
     _closeProfileContext();

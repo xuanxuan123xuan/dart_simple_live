@@ -112,7 +112,12 @@ class XiaohongshuRoomSnapshot {
 }
 
 class XiaohongshuSite implements LiveSite {
-  XiaohongshuSite({this.requestBridge});
+  XiaohongshuSite({this.requestBridge}) {
+    discovery = XiaohongshuDiscoveryClient(
+      request: _requestDiscovery,
+      isAvailable: () => discoveryRequestBridge != null,
+    );
+  }
 
   static const String webBaseUrl = 'https://www.xiaohongshu.com';
   static const String edithBaseUrl = 'https://edith.xiaohongshu.com';
@@ -134,9 +139,33 @@ class XiaohongshuSite implements LiveSite {
   static const stopInfoPath = '/api/sns/red/live/h5/v1/room/stop_info_2c';
 
   XiaohongshuRequestBridge? requestBridge;
-  final discovery = XiaohongshuDiscoveryClient();
+  XiaohongshuDiscoveryRequestBridge? _discoveryRequestBridge;
+
+  XiaohongshuDiscoveryRequestBridge? get discoveryRequestBridge =>
+      _discoveryRequestBridge;
+
+  set discoveryRequestBridge(XiaohongshuDiscoveryRequestBridge? value) {
+    if (identical(_discoveryRequestBridge, value)) return;
+    _discoveryRequestBridge = value;
+    discovery.resetPagination();
+  }
+
+  late final XiaohongshuDiscoveryClient discovery;
   bool _requiresSignature = false;
   String cookie = '';
+
+  Future<dynamic> _requestDiscovery(
+    String path,
+    Map<String, dynamic> query,
+  ) {
+    final bridge = discoveryRequestBridge;
+    if (bridge == null) {
+      throw CoreError('小红书直播发现会话不可用', kind: CoreErrorKind.response);
+    }
+    return bridge.requestDiscovery(path: path, query: query);
+  }
+
+  void resetDiscoveryPagination() => discovery.resetPagination();
 
   @override
   String id = 'xiaohongshu';
@@ -276,15 +305,15 @@ class XiaohongshuSite implements LiveSite {
   Future<List<LiveCategory>> getCategores() => discovery.getCategories();
 
   @override
-  Future<LiveCategoryResult> getRecommendRooms({int page = 1}) async =>
-      discovery.getRooms();
+  Future<LiveCategoryResult> getRecommendRooms({int page = 1}) =>
+      discovery.getRecommendRooms(page: page);
 
   @override
   Future<LiveCategoryResult> getCategoryRooms(
     LiveSubCategory category, {
     int page = 1,
   }) async =>
-      discovery.getRooms();
+      discovery.getRooms(categoryId: category.id, page: page);
 
   @override
   Future<LiveSearchRoomResult> searchRooms(

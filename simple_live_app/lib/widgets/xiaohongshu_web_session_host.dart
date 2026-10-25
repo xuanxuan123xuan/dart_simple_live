@@ -32,7 +32,9 @@ class XiaohongshuWebSessionHost extends StatelessWidget {
       final roomRevision = service.revision.value;
       final profileUrl = service.profilePageUrl.value;
       final profileRevision = service.profileRevision.value;
-      if (roomUrl == null && profileUrl == null) {
+      final discoveryUrl = service.discoveryPageUrl.value;
+      final discoveryRevision = service.discoveryRevision.value;
+      if (roomUrl == null && profileUrl == null && discoveryUrl == null) {
         return const SizedBox.shrink();
       }
       return ExcludeSemantics(
@@ -43,6 +45,15 @@ class XiaohongshuWebSessionHost extends StatelessWidget {
             width: 1,
             height: 1,
             child: Stack(children: [
+              if (discoveryUrl != null)
+                _SessionView(
+                  key: ValueKey('discovery:$discoveryUrl:$discoveryRevision'),
+                  url: discoveryUrl,
+                  revision: discoveryRevision,
+                  service: service,
+                  profile: false,
+                  discovery: true,
+                ),
               if (roomUrl != null)
                 _SessionView(
                   key: ValueKey('room:$roomUrl:$roomRevision'),
@@ -71,16 +82,68 @@ class _SessionView extends StatefulWidget {
       required this.url,
       required this.revision,
       required this.service,
-      required this.profile});
+      required this.profile,
+      this.discovery = false});
   final String url;
   final int revision;
   final XiaohongshuWebSessionService service;
   final bool profile;
+  final bool discovery;
   @override
   State<_SessionView> createState() => _SessionViewState();
 }
 
 class _SessionViewState extends State<_SessionView> {
+  bool get _current =>
+      mounted &&
+      widget.revision ==
+          (widget.discovery
+              ? widget.service.discoveryRevision.value
+              : widget.profile
+                  ? widget.service.profileRevision.value
+                  : widget.service.revision.value);
+
+  void _receive(dynamic payload) {
+    if (!_current) return;
+    if (widget.discovery) {
+      widget.service.receiveDiscovery(payload);
+    } else if (widget.profile) {
+      widget.service.receiveProfile(payload);
+    } else {
+      widget.service.receive(payload);
+    }
+  }
+
+  void _loaded() {
+    if (!_current) return;
+    if (widget.discovery) {
+      widget.service
+          .loadedDiscovery(url: widget.url, sessionRevision: widget.revision);
+    } else if (widget.profile) {
+      widget.service
+          .loadedProfile(url: widget.url, sessionRevision: widget.revision);
+    } else {
+      widget.service.loaded(url: widget.url, sessionRevision: widget.revision);
+    }
+  }
+
+  void _setEvaluate(Future<void> Function(String) evaluate) {
+    if (!_current) return;
+    if (widget.discovery) {
+      widget.service.evaluateDiscovery = evaluate;
+    } else if (widget.profile) {
+      widget.service.evaluateProfile = evaluate;
+    } else {
+      widget.service.evaluate = evaluate;
+    }
+  }
+
+  @override
+  void dispose() {
+    if (widget.discovery) widget.service.discoveryHostDetached(widget.revision);
+    super.dispose();
+  }
+
   ohos.WebViewController? _ohosController;
   static const _blockMedia = """
     HTMLMediaElement.prototype.play = function() { return Promise.resolve(); };
@@ -116,10 +179,10 @@ class _SessionViewState extends State<_SessionView> {
         if (!mounted) return;
         final controller = ohos.WebViewController();
         await controller.setJavaScriptMode(ohos.JavaScriptMode.unrestricted);
-        await controller.setUserAgent(XiaohongshuSite.defaultUserAgent);
+        await controller.setUserAgent(XiaohongshuWebSessionService.userAgentFor(
+            profile: widget.profile || widget.discovery));
         await controller.addJavaScriptChannel('XiaohongshuBridge',
-            onMessageReceived: (message) =>
-                widget.service.receive(message.message));
+            onMessageReceived: (message) => _receive(message.message));
         await controller.setNavigationDelegate(ohos.NavigationDelegate(
           onNavigationRequest: (request) =>
               XiaohongshuWebSessionService.isAllowedNavigation(request.url)
@@ -127,14 +190,11 @@ class _SessionViewState extends State<_SessionView> {
                   : ohos.NavigationDecision.prevent,
           onPageFinished: (_) async {
             await controller.runJavaScript(_blockMedia);
-            if (mounted && !widget.profile) {
-              widget.service
-                  .loaded(url: widget.url, sessionRevision: widget.revision);
-            }
+            _loaded();
           },
         ));
         if (!mounted) return;
-        if (!widget.profile) widget.service.evaluate = controller.runJavaScript;
+        _setEvaluate(controller.runJavaScript);
         setState(() => _ohosController = controller);
         await controller.loadRequest(Uri.parse(widget.url));
       } else {
@@ -175,7 +235,7 @@ class _SessionViewState extends State<_SessionView> {
             initialUrlRequest: URLRequest(url: WebUri(widget.url)),
             initialSettings: InAppWebViewSettings(
               userAgent: XiaohongshuWebSessionService.userAgentFor(
-                  profile: widget.profile),
+                  profile: widget.profile || widget.discovery),
               useShouldOverrideUrlLoading: true,
               mediaPlaybackRequiresUserGesture: true,
               needInitialFocus: false,
@@ -188,24 +248,14 @@ class _SessionViewState extends State<_SessionView> {
               controller.addJavaScriptHandler(
                   handlerName: 'XiaohongshuBridge',
                   callback: (args) {
-                    if (args.isNotEmpty) {
-                      if (widget.profile) {
-                        widget.service.receiveProfile(args.first);
-                      } else {
-                        widget.service.receive(args.first);
-                      }
-                    }
+                    if (args.isNotEmpty) _receive(args.first);
                     return null;
                   });
               Future<void> evaluate(String script) async {
                 await controller.evaluateJavascript(source: script);
               }
 
-              if (widget.profile) {
-                widget.service.evaluateProfile = evaluate;
-              } else {
-                widget.service.evaluate = evaluate;
-              }
+              _setEvaluate(evaluate);
             },
             shouldOverrideUrlLoading: (controller, action) async =>
                 XiaohongshuWebSessionService.isAllowedNavigation(
@@ -216,13 +266,7 @@ class _SessionViewState extends State<_SessionView> {
               await controller.evaluateJavascript(source: _blockMedia);
               if (mounted &&
                   XiaohongshuWebSessionService.isAllowedNavigation('$url')) {
-                if (widget.profile) {
-                  widget.service.loadedProfile(
-                      url: widget.url, sessionRevision: widget.revision);
-                } else {
-                  widget.service.loaded(
-                      url: widget.url, sessionRevision: widget.revision);
-                }
+                _loaded();
               }
             },
           );

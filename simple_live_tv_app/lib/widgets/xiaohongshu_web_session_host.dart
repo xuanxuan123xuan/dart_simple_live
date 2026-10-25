@@ -25,7 +25,9 @@ class XiaohongshuWebSessionHost extends StatelessWidget {
     return Obx(() {
       final url = service.pageUrl.value;
       final revision = service.revision.value;
-      if (url == null) return const SizedBox.shrink();
+      final discoveryUrl = service.discoveryPageUrl.value;
+      final discoveryRevision = service.discoveryRevision.value;
+      if (url == null && discoveryUrl == null) return const SizedBox.shrink();
       return ExcludeSemantics(
         child: IgnorePointer(
           child: Opacity(
@@ -33,12 +35,23 @@ class XiaohongshuWebSessionHost extends StatelessWidget {
             child: SizedBox(
               width: 1,
               height: 1,
-              child: _SessionView(
-                key: ValueKey('$url:$revision'),
-                url: url,
-                revision: revision,
-                service: service,
-              ),
+              child: Stack(children: [
+                if (url != null)
+                  _SessionView(
+                    key: ValueKey('$url:$revision'),
+                    url: url,
+                    revision: revision,
+                    service: service,
+                  ),
+                if (discoveryUrl != null)
+                  _SessionView(
+                    key: ValueKey('discovery:$discoveryUrl:$discoveryRevision'),
+                    url: discoveryUrl,
+                    revision: discoveryRevision,
+                    service: service,
+                    discovery: true,
+                  ),
+              ]),
             ),
           ),
         ),
@@ -53,17 +66,24 @@ class _SessionView extends StatefulWidget {
     required this.url,
     required this.revision,
     required this.service,
+    this.discovery = false,
   });
 
   final String url;
   final int revision;
   final XiaohongshuWebSessionService service;
+  final bool discovery;
 
   @override
   State<_SessionView> createState() => _SessionViewState();
 }
 
 class _SessionViewState extends State<_SessionView> {
+  int get _revision => widget.discovery
+      ? widget.service.discoveryRevision.value
+      : widget.service.revision.value;
+  bool get _current => mounted && widget.revision == _revision;
+
   static const _blockMedia = '''
     HTMLMediaElement.prototype.play = function() { return Promise.resolve(); };
     new MutationObserver(() => document.querySelectorAll('video,audio').forEach(element => {
@@ -88,7 +108,7 @@ class _SessionViewState extends State<_SessionView> {
           Sites.allSites[Constant.kXiaohongshu]!.liveSite as XiaohongshuSite;
       final cookie = site.cookie;
       for (final part in cookie.split(';')) {
-        if (!mounted || widget.revision != widget.service.revision.value) {
+        if (!mounted || widget.revision != _revision) {
           return;
         }
         final separator = part.indexOf('=');
@@ -111,7 +131,11 @@ class _SessionViewState extends State<_SessionView> {
 
   @override
   void dispose() {
-    widget.service.hostDetached(widget.revision);
+    if (widget.discovery) {
+      widget.service.discoveryHostDetached(widget.revision);
+    } else {
+      widget.service.hostDetached(widget.revision);
+    }
     super.dispose();
   }
 
@@ -130,7 +154,9 @@ class _SessionViewState extends State<_SessionView> {
             ]),
             initialUrlRequest: URLRequest(url: WebUri(widget.url)),
             initialSettings: InAppWebViewSettings(
-              userAgent: XiaohongshuSite.defaultUserAgent,
+              userAgent: widget.discovery
+                  ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
+                  : XiaohongshuSite.defaultUserAgent,
               useShouldOverrideUrlLoading: true,
               mediaPlaybackRequiresUserGesture: true,
               needInitialFocus: false,
@@ -140,20 +166,31 @@ class _SessionViewState extends State<_SessionView> {
               allowContentAccess: false,
             ),
             onWebViewCreated: (controller) {
-              if (!mounted ||
-                  widget.revision != widget.service.revision.value) {
+              if (!mounted || widget.revision != _revision) {
                 return;
               }
               controller.addJavaScriptHandler(
                 handlerName: XiaohongshuWebSessionService.javascriptChannelName,
                 callback: (args) {
-                  if (args.isNotEmpty) widget.service.receive(args.first);
+                  if (_current && args.isNotEmpty) {
+                    if (widget.discovery) {
+                      widget.service.receiveDiscovery(args.first);
+                    } else {
+                      widget.service.receive(args.first);
+                    }
+                  }
                   return null;
                 },
               );
-              widget.service.evaluate = (script) async {
+              Future<void> evaluate(String script) async {
                 await controller.evaluateJavascript(source: script);
-              };
+              }
+
+              if (widget.discovery) {
+                widget.service.evaluateDiscovery = evaluate;
+              } else {
+                widget.service.evaluate = evaluate;
+              }
             },
             shouldOverrideUrlLoading: (controller, action) async =>
                 XiaohongshuWebSessionService.isAllowedNavigation(
@@ -164,10 +201,14 @@ class _SessionViewState extends State<_SessionView> {
               await controller.evaluateJavascript(source: _blockMedia);
               if (mounted &&
                   XiaohongshuWebSessionService.isAllowedNavigation('$url')) {
-                widget.service.loaded(
-                  url: widget.url,
-                  sessionRevision: widget.revision,
-                );
+                if (!_current) return;
+                if (widget.discovery) {
+                  widget.service.loadedDiscovery(
+                      url: widget.url, sessionRevision: widget.revision);
+                } else {
+                  widget.service.loaded(
+                      url: widget.url, sessionRevision: widget.revision);
+                }
               }
             },
           );
