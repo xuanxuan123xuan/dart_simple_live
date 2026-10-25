@@ -58,7 +58,15 @@ class XiaohongshuDiscoverySession implements XiaohongshuDiscoveryRequestBridge {
         (query['cursorScore'] as String).isEmpty) {
       return false;
     }
-    return query.values.every((value) => value is String || value is num);
+    final topRoomIds = query['topRoomIds'];
+    if (query.containsKey('topRoomIds') &&
+        (topRoomIds is! List || topRoomIds.isNotEmpty)) {
+      return false;
+    }
+    return query.entries.every((entry) =>
+        entry.key == 'topRoomIds' ||
+        entry.value is String ||
+        entry.value is num);
   }
 
   @override

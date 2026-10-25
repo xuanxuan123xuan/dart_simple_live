@@ -120,6 +120,10 @@ class _SiteSection extends StatelessWidget {
             icon: Icons.hourglass_empty,
             message: "正在加载",
           )
+        else if (state.hasError && state.site.id == "xiaohongshu")
+          XiaohongshuLinkOnlyNotice(
+            errorMessage: SearchAggregateErrorPresentation.message(state.error),
+          )
         else if (state.hasError)
           _SectionStatus(
             icon: Icons.error_outline,

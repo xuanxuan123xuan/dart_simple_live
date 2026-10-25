@@ -12,6 +12,8 @@ import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/modules/category/category_controller.dart';
 import 'package:simple_live_tv_app/widgets/app_scaffold.dart';
 import 'package:simple_live_tv_app/widgets/button/highlight_button.dart';
+import 'package:simple_live_tv_app/widgets/status/app_empty_widget.dart';
+import 'package:simple_live_tv_app/widgets/status/app_error_widget.dart';
 
 class CategoryPage extends GetView<CategoryController> {
   const CategoryPage({super.key});
@@ -97,50 +99,70 @@ class CategoryPage extends GetView<CategoryController> {
           AppStyle.vGap24,
           Expanded(
             child: Obx(
-              () => controller.siteId.value == Constant.kXiaohongshu
-                  ? const TvXiaohongshuLinkNotice()
-                  : ListView.builder(
-                      padding: AppStyle.edgeInsetsH48,
-                      itemCount: controller.list.length,
-                      controller: controller.scrollController,
-                      itemBuilder: (_, i) {
-                        var item = controller.list[i];
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Padding(
-                              padding: AppStyle.edgeInsetsV32,
-                              child: Text(
-                                item.name,
-                                style: AppStyle.titleStyleWhite,
-                              ),
-                            ),
-                            Obx(
-                              () => GridView.count(
-                                shrinkWrap: true,
-                                padding: AppStyle.edgeInsetsV8,
-                                physics: const NeverScrollableScrollPhysics(),
-                                crossAxisCount: 8,
-                                crossAxisSpacing: 36.w,
-                                mainAxisSpacing: 36.w,
-                                children: item.showAll.value
-                                    ? (item.childrenExt
-                                        .map(
-                                          (e) => buildSubCategory(e),
-                                        )
-                                        .toList())
-                                    : (item.take15
-                                        .map(
-                                          (e) => buildSubCategory(e),
-                                        )
-                                        .toList()
-                                      ..add(buildShowMore(item))),
-                              ),
-                            ),
-                          ],
+              () {
+                if (controller.pageError.value) {
+                  return controller.siteId.value == Constant.kXiaohongshu
+                      ? TvXiaohongshuLinkNotice(
+                          title: "小红书分类加载失败",
+                          errorMessage: controller.errorMsg.value,
+                          onRetry: controller.loadData,
+                        )
+                      : AppErrorWidget(
+                          errorMsg: controller.errorMsg.value,
+                          onRefresh: controller.loadData,
                         );
-                      },
-                    ),
+                }
+                if (controller.pageEmpty.value) {
+                  return AppEmptyWidget(
+                    text: controller.siteId.value == Constant.kXiaohongshu
+                        ? "暂无小红书直播分类"
+                        : null,
+                    onRefresh: controller.refreshData,
+                  );
+                }
+                return ListView.builder(
+                  padding: AppStyle.edgeInsetsH48,
+                  itemCount: controller.list.length,
+                  controller: controller.scrollController,
+                  itemBuilder: (_, i) {
+                    var item = controller.list[i];
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: AppStyle.edgeInsetsV32,
+                          child: Text(
+                            item.name,
+                            style: AppStyle.titleStyleWhite,
+                          ),
+                        ),
+                        Obx(
+                          () => GridView.count(
+                            shrinkWrap: true,
+                            padding: AppStyle.edgeInsetsV8,
+                            physics: const NeverScrollableScrollPhysics(),
+                            crossAxisCount: 8,
+                            crossAxisSpacing: 36.w,
+                            mainAxisSpacing: 36.w,
+                            children: item.showAll.value
+                                ? (item.childrenExt
+                                    .map(
+                                      (e) => buildSubCategory(e),
+                                    )
+                                    .toList())
+                                : (item.take15
+                                    .map(
+                                      (e) => buildSubCategory(e),
+                                    )
+                                    .toList()
+                                  ..add(buildShowMore(item))),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
             ),
           ),
         ],

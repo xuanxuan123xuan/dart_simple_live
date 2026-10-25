@@ -8,6 +8,7 @@ import 'package:simple_live_app/modules/category/detail/category_detail_controll
 import 'package:simple_live_app/modules/indexed/indexed_controller.dart';
 import 'package:simple_live_app/modules/indexed/indexed_page.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
+import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/live_room_card.dart';
 import 'package:simple_live_app/widgets/live_room_grid_layout.dart';
@@ -48,6 +49,12 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
           mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
           crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
           crossAxisCount: layout.crossAxisCount,
+          errorActionLabel: controller.site.id == Constant.kXiaohongshu
+              ? "粘贴直播链接"
+              : null,
+          onErrorAction: controller.site.id == Constant.kXiaohongshu
+              ? _openXiaohongshuSearch
+              : null,
           itemBuilder: (_, i) {
             var item = controller.list[i];
             return LiveRoomCard(
@@ -67,6 +74,13 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
         ),
       ),
       bottomNavigationBar: _buildPersistentNavigation(context),
+    );
+  }
+
+  void _openXiaohongshuSearch() {
+    Get.toNamed(
+      RoutePath.kSearch,
+      arguments: const {'siteId': Constant.kXiaohongshu},
     );
   }
 

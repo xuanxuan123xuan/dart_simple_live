@@ -1,12 +1,15 @@
-import 'package:simple_live_app/widgets/xiaohongshu_link_only_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_easyrefresh/easy_refresh.dart';
 
 import 'package:get/get.dart';
-import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/modules/category/category_list_controller.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
+import 'package:simple_live_app/routes/route_path.dart';
+import 'package:simple_live_app/widgets/status/app_empty_widget.dart';
+import 'package:simple_live_app/widgets/status/app_error_widget.dart';
+import 'package:simple_live_app/widgets/xiaohongshu_link_only_notice.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/shadow_card.dart';
@@ -19,11 +22,6 @@ class CategoryListView extends StatelessWidget {
       Get.find<CategoryListController>(tag: tag);
   @override
   Widget build(BuildContext context) {
-    // The body scrolls behind the transparent app bar; only keep the
-    // status-bar inset and a small gap below the floating selector.
-    if (controller.site.id == Constant.kXiaohongshu) {
-      return const Center(child: XiaohongshuLinkOnlyNotice());
-    }
     final topClearance = MediaQuery.paddingOf(context).top + 8;
     return KeepAliveWrapper(
       child: Obx(
@@ -44,64 +42,92 @@ class CategoryListView extends StatelessWidget {
             SliverToBoxAdapter(
               child: SizedBox(height: topClearance),
             ),
-            SliverPadding(
-              padding: AppStyle.edgeInsetsA12.copyWith(
-                top: 0,
-                bottom: 96,
-              ),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (_, i) {
-                    var item = controller.list[i];
-                    return Column(
-                      children: [
-                        Container(
-                          padding: AppStyle.edgeInsetsV8.copyWith(left: 4),
-                          color: Colors.transparent,
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            item.name,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
+            if (controller.pageError.value)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: controller.site.id == Constant.kXiaohongshu
+                    ? XiaohongshuLinkOnlyNotice(
+                        title: '小红书分类加载失败',
+                        errorMessage: controller.errorMsg.value,
+                        onRetry: controller.refreshData,
+                        onOpenSearch: _openXiaohongshuSearch,
+                      )
+                    : AppErrorWidget(
+                        errorMsg: controller.errorMsg.value,
+                        onRefresh: controller.refreshData,
+                      ),
+              )
+            else if (controller.pageEmpty.value)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: AppEmptyWidget(onRefresh: controller.refreshData),
+              )
+            else
+              SliverPadding(
+                padding: AppStyle.edgeInsetsA12.copyWith(
+                  top: 0,
+                  bottom: 96,
+                ),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (_, i) {
+                      var item = controller.list[i];
+                      return Column(
+                        children: [
+                          Container(
+                            padding: AppStyle.edgeInsetsV8.copyWith(left: 4),
+                            color: Colors.transparent,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              item.name,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
-                        ),
-                        Obx(
-                          () => GridView.count(
-                            shrinkWrap: true,
-                            padding: AppStyle.edgeInsetsV8,
-                            physics: const NeverScrollableScrollPhysics(),
-                            crossAxisCount:
-                                (MediaQuery.of(context).size.width ~/ 80)
-                                    .clamp(1, 12)
-                                    .toInt(),
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
-                            children: item.showAll.value
-                                ? (item.children
-                                    .map(
-                                      (e) => buildSubCategory(context, e),
-                                    )
-                                    .toList())
-                                : (item.take15
-                                    .map(
-                                      (e) => buildSubCategory(context, e),
-                                    )
-                                    .toList()
-                                  ..add(buildShowMore(item))),
+                          Obx(
+                            () => GridView.count(
+                              shrinkWrap: true,
+                              padding: AppStyle.edgeInsetsV8,
+                              physics: const NeverScrollableScrollPhysics(),
+                              crossAxisCount:
+                                  (MediaQuery.of(context).size.width ~/ 80)
+                                      .clamp(1, 12)
+                                      .toInt(),
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
+                              children: item.showAll.value
+                                  ? (item.children
+                                      .map(
+                                        (e) => buildSubCategory(context, e),
+                                      )
+                                      .toList())
+                                  : (item.take15
+                                      .map(
+                                        (e) => buildSubCategory(context, e),
+                                      )
+                                      .toList()
+                                    ..add(buildShowMore(item))),
+                            ),
                           ),
-                        ),
-                      ],
-                    );
-                  },
-                  childCount: controller.list.length,
+                        ],
+                      );
+                    },
+                    childCount: controller.list.length,
+                  ),
                 ),
               ),
-            ),
           ],
         ),
       ),
+    );
+  }
+
+  void _openXiaohongshuSearch() {
+    Get.toNamed(
+      RoutePath.kSearch,
+      arguments: const {'siteId': Constant.kXiaohongshu},
     );
   }
 

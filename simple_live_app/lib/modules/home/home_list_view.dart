@@ -8,6 +8,8 @@ import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/live_room_card.dart';
 import 'package:simple_live_app/widgets/live_room_grid_layout.dart';
 import 'package:simple_live_app/widgets/page_grid_view.dart';
+import 'package:simple_live_app/routes/route_path.dart';
+import 'package:simple_live_app/app/constant.dart';
 
 class HomeListView extends StatelessWidget {
   final String tag;
@@ -31,7 +33,12 @@ class HomeListView extends StatelessWidget {
     return KeepAliveWrapper(
       child: PageGridView(
         pageController: controller,
-        emptyWidget: controller.site.id == "xiaohongshu" ? const XiaohongshuLinkOnlyNotice() : null,
+        emptyWidget: controller.site.id == Constant.kXiaohongshu
+            ? XiaohongshuLinkOnlyNotice(
+                title: "暂无小红书推荐直播",
+                onOpenSearch: _openXiaohongshuSearch,
+              )
+            : null,
         padding: AppStyle.edgeInsetsH8.copyWith(
           top: 0,
           bottom: 96,
@@ -41,6 +48,11 @@ class HomeListView extends StatelessWidget {
         ],
         refreshHeaderIndex: 1,
         firstRefresh: true,
+        errorActionLabel:
+            controller.site.id == Constant.kXiaohongshu ? "粘贴直播链接" : null,
+        onErrorAction: controller.site.id == Constant.kXiaohongshu
+            ? _openXiaohongshuSearch
+            : null,
         mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
         crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
         crossAxisCount: layout.crossAxisCount,
@@ -49,6 +61,13 @@ class HomeListView extends StatelessWidget {
           return LiveRoomCard(controller.site, item);
         },
       ),
+    );
+  }
+
+  void _openXiaohongshuSearch() {
+    Get.toNamed(
+      RoutePath.kSearch,
+      arguments: const {'siteId': Constant.kXiaohongshu},
     );
   }
 }

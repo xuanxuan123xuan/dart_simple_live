@@ -130,7 +130,7 @@ class XiaohongshuDiscoveryClient {
       'cursorScore': cursor ?? '0',
       'source': 13,
       'category': categoryId,
-      'topRoomIds': '',
+      'topRoomIds': <String>[],
       'preSource': '',
       'extraInfo': '',
       'size': 27,

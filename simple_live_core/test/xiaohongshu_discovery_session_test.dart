@@ -11,7 +11,13 @@ Map<String, dynamic> args(String script) =>
 void main() {
   const path = XiaohongshuDiscoveryClient.categoryPath;
   const feeds = XiaohongshuDiscoveryClient.squareFeedPath;
-  const query = {'category': '0', 'cursorScore': '0', 'source': 13, 'size': 27};
+  const query = {
+    'category': '0',
+    'cursorScore': '0',
+    'source': 13,
+    'size': 27,
+    'topRoomIds': <String>[]
+  };
 
   test('rejects arbitrary paths and unexpected directory parameters', () async {
     var opened = false;
@@ -24,6 +30,13 @@ void main() {
       (path, <String, dynamic>{'roomId': '123'}),
       (feeds, <String, dynamic>{...query, 'url': 'https://example.com'}),
       (feeds, <String, dynamic>{...query, 'category': '../'}),
+      (
+        feeds,
+        <String, dynamic>{
+          ...query,
+          'topRoomIds': ['unexpected']
+        }
+      ),
       (feeds, <String, dynamic>{...query, 'cursorScore': <String>[]}),
     ]) {
       await expectLater(
@@ -237,8 +250,9 @@ void main() {
             chrome: {webview: {postMessage: message => process.stdout.write(message)}}
           };
         ''';
-            final result =
-                await Process.run('node', ['-e', '$harness\n$script'], stdoutEncoding: utf8, stderrEncoding: utf8);
+            final result = await Process.run(
+                'node', ['-e', '$harness\n$script'],
+                stdoutEncoding: utf8, stderrEncoding: utf8);
             expect(result.exitCode, 0, reason: '${result.stderr}');
             receive('${result.stdout}');
           },

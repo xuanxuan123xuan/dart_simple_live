@@ -23,11 +23,14 @@ class CategoryController extends BasePageController<AppLiveCategory> {
 
   void _listenToKuaishouUpdates() {
     _kuaishouUpdates?.cancel();
-    final liveSite = site.liveSite;
+    final subscribedSite = site;
+    final liveSite = subscribedSite.liveSite;
     if (liveSite is! KuaishouSite) return;
     _kuaishouUpdates = liveSite.categoryUpdates.listen((categories) {
+      if (isClosed || !identical(site, subscribedSite)) return;
       list.assignAll(
-        categories.map((item) => AppLiveCategory.fromLiveCategory(item, site)),
+        categories.map(
+            (item) => AppLiveCategory.fromLiveCategory(item, subscribedSite)),
       );
     });
   }
@@ -36,37 +39,47 @@ class CategoryController extends BasePageController<AppLiveCategory> {
     if (siteId.value == id) return;
 
     final nextSite = Sites.allSites[id]!;
+    site = nextSite;
+    siteId.value = id;
+    _listenToKuaishouUpdates();
+    currentPage = 1;
+    canLoadMore.value = false;
+    list.clear();
+    pageError.value = false;
+    errorMsg.value = "";
+    pageEmpty.value = false;
+    notLogin.value = false;
+    await _loadCategories();
+  }
+
+  Future<void> _loadCategories({bool refreshKuaishou = false}) async {
     final generation = ++_siteSwitchGeneration;
+    final requestedSite = site;
+    loadding.value = true;
+    pageLoadding.value = list.isEmpty;
+    pageError.value = false;
+    errorMsg.value = '';
+    pageEmpty.value = false;
+    notLogin.value = false;
     try {
-      loadding.value = true;
-      pageError.value = false;
-      pageEmpty.value = false;
-      notLogin.value = false;
-      pageLoadding.value = true;
-
-      final result = await nextSite.liveSite.getCategores();
-      if (generation != _siteSwitchGeneration) {
-        return;
-      }
+      final provider = requestedSite.liveSite;
+      final result = refreshKuaishou && provider is KuaishouSite
+          ? await provider.refreshCategories()
+          : await provider.getCategores();
+      if (generation != _siteSwitchGeneration || isClosed) return;
+      _hasLoadedOnce = true;
       final categories = result
-          .map((e) => AppLiveCategory.fromLiveCategory(e, nextSite))
+          .map((item) => AppLiveCategory.fromLiveCategory(item, requestedSite))
           .toList();
-
-      site = nextSite;
-      siteId.value = id;
-      _listenToKuaishouUpdates();
       currentPage = 2;
       canLoadMore.value = false;
       pageEmpty.value = categories.isEmpty;
-      list.value = categories;
-      if (scrollController.hasClients) {
-        scrollController.jumpTo(0);
-      }
-    } catch (e) {
-      if (generation != _siteSwitchGeneration) {
-        return;
-      }
-      handleError(e);
+      list.assignAll(categories);
+      if (scrollController.hasClients) scrollController.jumpTo(0);
+    } catch (error) {
+      if (generation != _siteSwitchGeneration || isClosed) return;
+      currentPage = 1;
+      handleError(error, showPageError: list.isEmpty);
     } finally {
       if (generation == _siteSwitchGeneration) {
         loadding.value = false;
@@ -76,36 +89,17 @@ class CategoryController extends BasePageController<AppLiveCategory> {
   }
 
   @override
-  Future<List<AppLiveCategory>> getData(int page, int pageSize) async {
-    var result = await site.liveSite.getCategores();
-    _hasLoadedOnce = true;
-    return result
-        .map((e) => AppLiveCategory.fromLiveCategory(e, site))
-        .toList();
-  }
+  Future<void> loadData() => _loadCategories();
 
   @override
-  Future refreshData() async {
-    if (!_hasLoadedOnce || site.liveSite is! KuaishouSite) {
-      return super.refreshData();
-    }
+  Future<void> refreshData() async {
     if (!tryBeginRefresh()) return;
-    try {
-      loadding.value = true;
-      final result = await (site.liveSite as KuaishouSite).refreshCategories();
-      list.assignAll(
-        result.map((item) => AppLiveCategory.fromLiveCategory(item, site)),
-      );
-    } catch (error) {
-      handleError(error, showPageError: list.isEmpty);
-    } finally {
-      loadding.value = false;
-      pageLoadding.value = false;
-    }
+    await _loadCategories(refreshKuaishou: _hasLoadedOnce);
   }
 
   @override
   void onClose() {
+    _siteSwitchGeneration++;
     _kuaishouUpdates?.cancel();
     super.onClose();
   }

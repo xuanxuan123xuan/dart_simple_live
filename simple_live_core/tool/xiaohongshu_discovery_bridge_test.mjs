@@ -11,7 +11,7 @@ const feedPath = '/api/sns/red/live/web/feed/v1/squarefeed';
 let count = 0;
 for (const path of [categoryPath, feedPath]) {
   for (const mode of ['ok', 'business-error', 'http406', 'offline', 'missing-runtime', 'delayed-runtime']) {
-    const args = {id: 'discovery:1', path, query: path === categoryPath ? {} : {category: '0', cursorScore: '0', size: 27}};
+    const args = {id: 'discovery:1', path, query: path === categoryPath ? {} : {category: '0', cursorScore: '0', size: 27, topRoomIds: []}};
     const messages = [];
     const calls = [];
     let waits = 0;

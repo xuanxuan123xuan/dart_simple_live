@@ -202,7 +202,7 @@ void main() {
       'cursorScore': '0',
       'source': 13,
       'category': '0',
-      'topRoomIds': '',
+      'topRoomIds': <String>[],
       'preSource': '',
       'extraInfo': '',
       'size': 27,

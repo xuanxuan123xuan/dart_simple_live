@@ -5,6 +5,7 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_tv_app/app/app_focus_node.dart';
 import 'package:simple_live_tv_app/app/app_style.dart';
+import 'package:simple_live_tv_app/app/constant.dart';
 import 'package:simple_live_tv_app/modules/category/detail/category_detail_controller.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
@@ -15,6 +16,7 @@ import 'package:simple_live_tv_app/widgets/net_image.dart';
 import 'package:simple_live_tv_app/widgets/status/app_empty_widget.dart';
 import 'package:simple_live_tv_app/widgets/status/app_error_widget.dart';
 import 'package:simple_live_tv_app/widgets/highlight_widget.dart';
+import 'package:simple_live_tv_app/widgets/tv_xiaohongshu_link_notice.dart';
 
 class CategoryDetailPage extends GetView<CategoryDetailController> {
   const CategoryDetailPage({Key? key}) : super(key: key);
@@ -95,10 +97,16 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
                 return _buildChildCategories();
               }
               if (controller.pageError.value) {
-                return AppErrorWidget(
-                  errorMsg: controller.errorMsg.value,
-                  onRefresh: controller.refreshData,
-                );
+                return controller.site.id == Constant.kXiaohongshu
+                    ? TvXiaohongshuLinkNotice(
+                        title: '小红书分类房间加载失败',
+                        errorMessage: controller.errorMsg.value,
+                        onRetry: controller.refreshData,
+                      )
+                    : AppErrorWidget(
+                        errorMsg: controller.errorMsg.value,
+                        onRefresh: controller.refreshData,
+                      );
               }
               if (controller.pageEmpty.value && !controller.loadding.value) {
                 return AppEmptyWidget(

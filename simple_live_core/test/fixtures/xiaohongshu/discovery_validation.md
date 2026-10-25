@@ -4,7 +4,7 @@
 
 ## 协议来源
 
-- 官网 `index.a9f61821.js` 的 liveList store 使用 `category` 选择频道，初始 `cursorScore` 为字符串 `0`，`source` 为 13，`size` 为 27；下一页取最后一条 `feeds` 的 `cursorScore`。
+- 官网 `index.a9f61821.js` 的 liveList store 使用 `category` 选择频道，初始 `cursorScore` 为字符串 `0`，`source` 为 13，`size` 为 27，`topRoomIds` 保留为空数组交给官网客户端序列化；下一页取最后一条 `feeds` 的 `cursorScore`。
 - 官网 `vendor-dynamic.6e584070.js` 中两个 GET 封装分别访问 `/api/sns/red/live/web/feed/category` 和 `/api/sns/red/live/web/feed/v1/squarefeed`。
 - PC 网页客户端负责完整的签名、设备头和请求序列化。列表桥接调用这两个官网封装，不使用直播间的 H5 签名函数。
 - 官网 `LiveRoom.bb2c4fda.js` 的直播卡片读取 `live.tRoomInfo` 和 `live.tLiveHostInfo`，封面位于 `tRoomInfo.coverInfo`，房间号使用 `roomIdStr`，标题读取 `tRoomInfo.name`，人气读取 `tRoomInfo.displayCount`，主播名读取 `tLiveHostInfo.nickname`。分区渲染将 `categories[].id` 和 `categories[].desc` 转为 ID 和显示名称。
