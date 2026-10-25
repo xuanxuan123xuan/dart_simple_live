@@ -14,6 +14,7 @@ import 'package:simple_live_core/src/common/kuaishou_live_link.dart';
 import 'package:simple_live_core/src/common/kuaishou_request_coordinator.dart';
 import 'package:simple_live_core/src/danmaku/kuaishou_danmaku.dart';
 import 'package:simple_live_core/src/interface/live_danmaku.dart';
+import 'package:simple_live_core/src/interface/live_room_category_resolver.dart';
 import 'package:simple_live_core/src/interface/live_site.dart';
 import 'package:simple_live_core/src/model/live_anchor_item.dart';
 import 'package:simple_live_core/src/model/live_category.dart';
@@ -160,7 +161,7 @@ class KuaishouRequestTrace {
   }
 }
 
-class KuaishouSite extends LiveSite {
+class KuaishouSite extends LiveSite implements LiveRoomCategoryResolver {
   static const int _liveSearchPageSize = 20;
   static const String userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -250,6 +251,7 @@ class KuaishouSite extends LiveSite {
       {};
   final StreamController<List<LiveCategory>> _categoryUpdates =
       StreamController<List<LiveCategory>>.broadcast();
+  Future<List<LiveCategory>>? _categoryRefreshInFlight;
   Stream<List<LiveCategory>> get categoryUpdates => _categoryUpdates.stream;
 
   void cancelScope(String scopeId) {
@@ -902,7 +904,7 @@ class KuaishouSite extends LiveSite {
   Future<List<LiveCategory>> getCategores() async {
     final cached = await _readCategorySnapshot();
     if (cached != null) {
-      if (DateTime.now().difference(cached.savedAt) > _categorySnapshotTtl) {
+      if (_now().difference(cached.savedAt) > _categorySnapshotTtl) {
         unawaited(refreshCategories().catchError((Object error) {
           CoreLog.i('[ks-category] background refresh failed: $error');
           return cached.categories;
@@ -914,6 +916,20 @@ class KuaishouSite extends LiveSite {
   }
 
   Future<List<LiveCategory>> refreshCategories() async {
+    final pending = _categoryRefreshInFlight;
+    if (pending != null) return pending;
+
+    late final Future<List<LiveCategory>> refresh;
+    refresh = _refreshCategories().whenComplete(() {
+      if (identical(_categoryRefreshInFlight, refresh)) {
+        _categoryRefreshInFlight = null;
+      }
+    });
+    _categoryRefreshInFlight = refresh;
+    return refresh;
+  }
+
+  Future<List<LiveCategory>> _refreshCategories() async {
     final categories = _emptyCategoryRoots();
     for (final category in categories) {
       category.children.addAll(await _getAllSubCategories(category));
@@ -929,12 +945,69 @@ class KuaishouSite extends LiveSite {
     if (store != null) {
       await store.write({
         'version': _categorySnapshotVersion,
-        'savedAt': DateTime.now().toUtc().toIso8601String(),
+        'savedAt': _now().toUtc().toIso8601String(),
         'categories': categories.map((item) => item.toJson()).toList(),
       });
     }
     _categoryUpdates.add(categories);
     return categories;
+  }
+
+  @override
+  Future<LiveSubCategory?> resolveRoomCategory(LiveRoomDetail detail) async {
+    final categoryId = detail.categoryId?.trim();
+    if (categoryId == null || categoryId.isEmpty) return null;
+
+    late final List<LiveCategory> categories;
+    try {
+      categories = await getCategores();
+    } on CoreError {
+      rethrow;
+    } catch (error) {
+      throw CoreError(
+        '快手分区目录获取失败',
+        kind: CoreErrorKind.network,
+        cause: error,
+      );
+    }
+
+    final candidatesByParent = <String, List<LiveSubCategory>>{};
+    for (final root in categories) {
+      final parentId = int.tryParse(root.id);
+      if (parentId == null || parentId < 1 || parentId > 8) continue;
+      for (final subcategory in root.children) {
+        if (subcategory.id != categoryId) continue;
+        final candidate = subcategory.parentId == root.id
+            ? subcategory
+            : LiveSubCategory(
+                id: subcategory.id,
+                name: subcategory.name,
+                parentId: root.id,
+                pic: subcategory.pic,
+                children: subcategory.children,
+              );
+        candidatesByParent.putIfAbsent(root.id, () => []).add(candidate);
+      }
+    }
+    if (candidatesByParent.isEmpty) return null;
+
+    final formalParents = candidatesByParent.keys
+        .where((parentId) => parentId != '1')
+        .toList(growable: false);
+    if (formalParents.length == 1) {
+      return candidatesByParent[formalParents.single]!.first;
+    }
+
+    if (formalParents.length > 1) {
+      final reportedParentId = detail.categoryParentId?.trim();
+      if (reportedParentId != null &&
+          formalParents.contains(reportedParentId)) {
+        return candidatesByParent[reportedParentId]!.first;
+      }
+      return null;
+    }
+
+    return candidatesByParent['1']?.first;
   }
 
   Future<_KuaishouCategorySnapshot?> _readCategorySnapshot() async {
@@ -1051,7 +1124,7 @@ class KuaishouSite extends LiveSite {
     final publicResponse =
         await coordinator.schedule<_KuaishouPublicJsonResponse>(
       priority: KuaishouRequestPriority.interactivePublic,
-      key: 'http:category_rooms:${category.id}:$page',
+      key: 'http:category_rooms:$parentId:${category.id}:$page',
       traffic: KuaishouRequestTraffic.publicApi,
       scopeId: KuaishouRequestTrace.scopeId,
       timeout: const Duration(seconds: 8),
