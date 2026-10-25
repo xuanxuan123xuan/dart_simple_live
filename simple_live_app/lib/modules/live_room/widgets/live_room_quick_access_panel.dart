@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:get/get.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/services/live_link_health_presentation.dart';
@@ -37,14 +38,73 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
   LiveLinkHealthPresentation? _healthPresentation;
   List<MapEntry<String, String>> _playbackRows = const [];
   String _summary = "";
+  final List<StreamSubscription<dynamic>> _recommendationSubscriptions = [];
+  bool _recommendationPreparationScheduled = false;
 
   @override
   void initState() {
     super.initState();
     _showDiagnostics = widget.initialDiagnostics;
+    _watchRecommendationDetail();
+    if (_shouldPrepareRecommendation) {
+      unawaited(widget.controller.prepareCategoryRecommendation());
+    }
     if (_showDiagnostics) {
       unawaited(_runDiagnostics());
     }
+  }
+
+  @override
+  void didUpdateWidget(covariant LiveRoomQuickAccessPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      _cancelRecommendationSubscriptions();
+      _watchRecommendationDetail();
+      if (_shouldPrepareRecommendation) {
+        unawaited(widget.controller.prepareCategoryRecommendation());
+      }
+    }
+  }
+
+  bool get _shouldPrepareRecommendation =>
+      !widget.initialDiagnostics &&
+      widget.controller.enabledQuickAccessKeys.contains("recommendation");
+
+  void _watchRecommendationDetail() {
+    final controller = widget.controller;
+    _recommendationSubscriptions.addAll([
+      controller.detail.listen((_) => _scheduleRecommendationPreparation()),
+      controller.rxSite.listen((_) => _scheduleRecommendationPreparation()),
+      controller.rxRoomId.listen((_) => _scheduleRecommendationPreparation()),
+    ]);
+  }
+
+  void _scheduleRecommendationPreparation() {
+    if (_recommendationPreparationScheduled) return;
+    _recommendationPreparationScheduled = true;
+    // Detail and canonical room identity are committed in the same synchronous
+    // turn. Let that commit finish before selecting a resolution request key.
+    scheduleMicrotask(() {
+      _recommendationPreparationScheduled = false;
+      if (mounted &&
+          _shouldPrepareRecommendation &&
+          widget.controller.shouldPrepareCategoryRecommendation()) {
+        unawaited(widget.controller.prepareCategoryRecommendation());
+      }
+    });
+  }
+
+  void _cancelRecommendationSubscriptions() {
+    for (final subscription in _recommendationSubscriptions) {
+      unawaited(subscription.cancel());
+    }
+    _recommendationSubscriptions.clear();
+  }
+
+  @override
+  void dispose() {
+    _cancelRecommendationSubscriptions();
+    super.dispose();
   }
 
   /// 诊断页是否由快捷入口列表进入。直接以诊断页作为入口时（设置里的
@@ -59,9 +119,8 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
     // 这一个显式入口，pop 一律直接关闭整个面板。
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 180),
-      child: _showDiagnostics
-          ? _buildDiagnosticsPage()
-          : _buildQuickAccessPage(),
+      child:
+          _showDiagnostics ? _buildDiagnosticsPage() : _buildQuickAccessPage(),
     );
   }
 
@@ -90,6 +149,13 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
   }
 
   Widget _buildQuickAccessTile(String key) {
+    if (key == "recommendation") {
+      return Obx(() => _buildQuickAccessTileContent(key));
+    }
+    return _buildQuickAccessTileContent(key);
+  }
+
+  Widget _buildQuickAccessTileContent(String key) {
     final item = Constant.allLiveRoomQuickAccess[key]!;
     final enabled =
         key != "recommendation" || widget.controller.hasCategoryRecommendation;

@@ -78,6 +78,7 @@ export 'ohos_reconnect_confirmation.dart'
     show OhosReconnectConfirmation, OhosReconnectOutcome;
 
 import 'live_room_auto_quality_buffer_tracker.dart';
+import 'live_room_category_recommendation.dart';
 import 'live_room_detail_loader.dart';
 import 'ohos_playback_degrade_evidence.dart';
 import 'ohos_reconnect_confirmation.dart';
@@ -665,6 +666,12 @@ class LiveRoomController extends PlayerController
   String get roomId => rxRoomId.value;
 
   Rx<LiveRoomDetail?> detail = Rx<LiveRoomDetail?>(null);
+  final RxInt _categoryRecommendationRevision = 0.obs;
+  late final LiveRoomCategoryRecommendationState _categoryRecommendationState =
+      LiveRoomCategoryRecommendationState(
+    onChanged: () => _categoryRecommendationRevision.value++,
+  );
+  int? _roomDetailLoadingGeneration;
   var online = 0.obs;
   var followed = false.obs;
   var liveStatus = false.obs;
@@ -2267,6 +2274,7 @@ class LiveRoomController extends PlayerController
               )
             : roomDetail;
         detail.value = committedDetail;
+        _syncCategoryRecommendationContext(hasDetail: true);
         applyXiaohongshuRoomIdentity(committedDetail, persistHistory: true);
         if (site.id == Constant.kXiaohongshu) {
           unawaited(FollowService.instance.syncFollowStatusFromRoomDetail(
@@ -3357,6 +3365,8 @@ class LiveRoomController extends PlayerController
     _hasActivePlaybackSession = false;
     waitingForPlaybackUrl.value = false;
     _loadGeneration += 1;
+    _roomDetailLoadingGeneration = null;
+    _categoryRecommendationState.invalidate();
     _resetQualityPresentation();
     WidgetsBinding.instance.removeObserver(this);
     if (Platform.isWindows) {
@@ -3523,6 +3533,8 @@ class LiveRoomController extends PlayerController
       return;
     }
     final loadGeneration = ++_loadGeneration;
+    _roomDetailLoadingGeneration = loadGeneration;
+    _syncCategoryRecommendationContext(hasDetail: false);
     _resetOhosAutoLineSelectionSession();
     final loadStopwatch = Stopwatch()..start();
     _dismissLiveRoomLoadingOverlay();
@@ -3566,7 +3578,11 @@ class LiveRoomController extends PlayerController
       if (!_isCurrentLoad(loadGeneration)) {
         return;
       }
+      if (_roomDetailLoadingGeneration == loadGeneration) {
+        _roomDetailLoadingGeneration = null;
+      }
       detail.value = roomDetail;
+      _syncCategoryRecommendationContext(hasDetail: true);
       setDouyinLayoutHint(
         enabled:
             site.id == Constant.kDouyin || site.id == Constant.kXiaohongshu,
@@ -3974,6 +3990,7 @@ class LiveRoomController extends PlayerController
 
     void restorePreviousSnapshot() {
       detail.value = previousDetail;
+      _syncCategoryRecommendationContext(hasDetail: true);
       online.value = previousOnline;
       qualites.value = previousQualities;
       currentQuality = previousQuality;
@@ -4015,6 +4032,7 @@ class LiveRoomController extends PlayerController
       // No await occurs in this block: observers see either the old snapshot
       // or a complete fresh detail/quality pair.
       detail.value = freshDetail;
+      _syncCategoryRecommendationContext(hasDetail: true);
       online.value = freshDetail.online;
       qualites.value = freshQualities;
       currentQuality = nextQuality;
@@ -5381,6 +5399,13 @@ class LiveRoomController extends PlayerController
 
   LiveSubCategory? _buildRecommendationCategory() {
     final roomDetail = detail.value;
+    final categoryResolver = site.liveSite;
+    if (categoryResolver is LiveRoomCategoryResolver) {
+      return _roomDetailLoadingGeneration == _loadGeneration
+          ? null
+          : _categoryRecommendationState.categoryFor(
+              _categoryRecommendationKey(roomDetail));
+    }
     if (roomDetail == null) {
       return null;
     }
@@ -5410,10 +5435,107 @@ class LiveRoomController extends PlayerController
     );
   }
 
-  bool get hasCategoryRecommendation => _buildRecommendationCategory() != null;
+  LiveRoomCategoryRequestKey _categoryRecommendationKey(
+    LiveRoomDetail? roomDetail,
+  ) =>
+      LiveRoomCategoryRequestKey.forRoom(
+        loadGeneration: _loadGeneration,
+        platformId: site.id,
+        roomId: roomId,
+        detail: roomDetail,
+      );
+
+  void _syncCategoryRecommendationContext({bool? hasDetail}) {
+    if (_roomDisposed || site.liveSite is! LiveRoomCategoryResolver) return;
+    _categoryRecommendationState.syncContext(
+      _categoryRecommendationKey(detail.value),
+      hasDetail: hasDetail ??
+          (detail.value != null &&
+              _roomDetailLoadingGeneration != _loadGeneration),
+    );
+  }
+
+  bool shouldPrepareCategoryRecommendation() {
+    if (site.liveSite is! LiveRoomCategoryResolver) return false;
+    final status = _currentCategoryRecommendationStatus;
+    return status == LiveRoomCategoryResolutionStatus.waitingForDetail ||
+        status == LiveRoomCategoryResolutionStatus.idle;
+  }
+
+  Future<LiveSubCategory?> prepareCategoryRecommendation() async {
+    if (_roomDisposed) return null;
+    final liveSite = site.liveSite;
+    if (liveSite is! LiveRoomCategoryResolver) {
+      return _buildRecommendationCategory();
+    }
+
+    final roomDetail = detail.value;
+    final key = _categoryRecommendationKey(roomDetail);
+    final isDetailLoading = _roomDetailLoadingGeneration == _loadGeneration;
+    _categoryRecommendationState.syncContext(
+      key,
+      hasDetail: roomDetail != null && !isDetailLoading,
+    );
+    if (isDetailLoading) return null;
+    return _categoryRecommendationState.prepare(
+      key: key,
+      detail: roomDetail,
+      resolver: liveSite as LiveRoomCategoryResolver,
+      isCurrent: (requestKey) =>
+          !_roomDisposed &&
+          _roomDetailLoadingGeneration != _loadGeneration &&
+          _categoryRecommendationKey(detail.value) == requestKey,
+    );
+  }
+
+  LiveRoomCategoryResolutionStatus get _currentCategoryRecommendationStatus =>
+      _categoryRecommendationState.statusFor(
+        _categoryRecommendationKey(detail.value),
+        hasDetail: detail.value != null &&
+            _roomDetailLoadingGeneration != _loadGeneration,
+      );
+
+  bool get hasCategoryRecommendation {
+    if (site.liveSite is LiveRoomCategoryResolver) {
+      _categoryRecommendationRevision.value;
+      return _currentCategoryRecommendationStatus ==
+              LiveRoomCategoryResolutionStatus.available &&
+          _categoryRecommendationState.categoryFor(
+                  _categoryRecommendationKey(detail.value)) !=
+              null;
+    }
+    return _buildRecommendationCategory() != null;
+  }
 
   String get currentRecommendationSubtitle {
     final roomDetail = detail.value;
+    final liveSite = site.liveSite;
+    if (liveSite is LiveRoomCategoryResolver) {
+      _categoryRecommendationRevision.value;
+      final state = _categoryRecommendationState;
+      switch (_currentCategoryRecommendationStatus) {
+        case LiveRoomCategoryResolutionStatus.waitingForDetail:
+          return "正在读取直播间分区标签";
+        case LiveRoomCategoryResolutionStatus.idle:
+          return "尚未识别直播间分区";
+        case LiveRoomCategoryResolutionStatus.resolving:
+          return "正在识别直播间分区…";
+        case LiveRoomCategoryResolutionStatus.missingTags:
+          return "当前直播间缺少分区标签";
+        case LiveRoomCategoryResolutionStatus.unmatched:
+          return "无法匹配当前分区，暂不提供同类推荐";
+        case LiveRoomCategoryResolutionStatus.failed:
+          return "分区识别失败，重新打开快捷入口可重试";
+        case LiveRoomCategoryResolutionStatus.available:
+          final category = state.categoryFor(_categoryRecommendationKey(roomDetail));
+          if (category == null) return "当前直播间暂无可用分区标签";
+          final parentName = (roomDetail?.categoryParentName ?? "").trim();
+          if (parentName.isNotEmpty && parentName != category.name) {
+            return "${site.name} / $parentName / ${category.name}";
+          }
+          return "${site.name} / ${category.name}";
+      }
+    }
     final category = _buildRecommendationCategory();
     if (roomDetail == null || category == null) {
       return "当前直播间暂时还没有可用的分区标签";
@@ -5602,7 +5724,7 @@ class LiveRoomController extends PlayerController
     ScrollController? scrollController,
   }) {
     final currentSite = site;
-    final currentRoomId = roomId;
+    final currentRoomId = roomId.trim();
     final category = _buildRecommendationCategory();
     if (category == null) {
       return const AppEmptyWidget(
@@ -5610,53 +5732,63 @@ class LiveRoomController extends PlayerController
       );
     }
 
-    final rooms = <LiveRoomItem>[].obs;
-    final loading = true.obs;
-    final page = 1.obs;
-    final hasMore = true.obs;
+    final recommendationSubtitle = currentRecommendationSubtitle;
+    final revision = 0.obs;
+    final pager = LiveRoomCategoryRecommendationPager<LiveRoomItem>(
+      onChanged: () => revision.value++,
+    );
 
     Future<void> loadRecommendations({bool refresh = false}) async {
-      if (loading.value && !refresh) {
-        return;
-      }
-      loading.value = true;
       try {
-        final targetPage = refresh ? 1 : page.value;
-        final result = await site.liveSite.getCategoryRooms(
-          category,
-          page: targetPage,
-        );
-        final fetched =
-            result.items.where((item) => item.roomId != roomId).toList();
         if (refresh) {
-          rooms.assignAll(fetched);
-          page.value = 2;
-        } else {
-          final existingRoomIds = rooms.map((item) => item.roomId).toSet();
-          rooms.addAll(
-            fetched.where((item) => !existingRoomIds.contains(item.roomId)),
+          await pager.refresh(
+            currentRoomId: currentRoomId,
+            fetchPage: (page) async {
+              final result = await currentSite.liveSite.getCategoryRooms(
+                category,
+                page: page,
+              );
+              return LiveRoomCategoryRecommendationPage(
+                items: result.items,
+                hasMore: result.hasMore,
+              );
+            },
+            roomIdOf: (item) => item.roomId,
           );
-          page.value = targetPage + 1;
+        } else {
+          await pager.loadMore(
+            currentRoomId: currentRoomId,
+            fetchPage: (page) async {
+              final result = await currentSite.liveSite.getCategoryRooms(
+                category,
+                page: page,
+              );
+              return LiveRoomCategoryRecommendationPage(
+                items: result.items,
+                hasMore: result.hasMore,
+              );
+            },
+            roomIdOf: (item) => item.roomId,
+          );
         }
-        hasMore.value = fetched.isNotEmpty;
       } catch (e) {
-        if (rooms.isEmpty) {
+        if (pager.items.isEmpty) {
           SmartDialog.showToast("加载同类推荐失败: ${exceptionToString(e)}");
         } else {
           handleError(e);
         }
-      } finally {
-        loading.value = false;
       }
     }
 
     unawaited(loadRecommendations(refresh: true));
 
     return Obx(() {
-      if (loading.value && rooms.isEmpty) {
+      revision.value;
+      final rooms = pager.items;
+      if (pager.isLoading && rooms.isEmpty) {
         return const Center(child: CircularProgressIndicator());
       }
-      if (rooms.isEmpty) {
+      if (rooms.isEmpty && !pager.hasMore && pager.lastError == null) {
         return AppEmptyWidget(
           message: "当前分区暂无可用推荐",
           onRefresh: () => loadRecommendations(refresh: true),
@@ -5677,7 +5809,7 @@ class LiveRoomController extends PlayerController
               return Padding(
                 padding: AppStyle.edgeInsetsB12,
                 child: Text(
-                  currentRecommendationSubtitle,
+                  recommendationSubtitle,
                   style: const TextStyle(
                     fontSize: 12,
                     color: Colors.grey,
@@ -5686,13 +5818,13 @@ class LiveRoomController extends PlayerController
               );
             }
             if (i == rooms.length + 1) {
-              if (loading.value) {
+              if (pager.isLoading) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: 16),
                   child: Center(child: CircularProgressIndicator()),
                 );
               }
-              if (!hasMore.value) {
+              if (!pager.hasMore) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: 16),
                   child: Center(
@@ -5708,14 +5840,21 @@ class LiveRoomController extends PlayerController
                 child: TextButton.icon(
                   onPressed: () => loadRecommendations(),
                   icon: const Icon(Icons.expand_more),
-                  label: const Text("加载更多"),
+                  label: Text(
+                    pager.lastError == null
+                        ? rooms.isEmpty
+                            ? "没有可展示内容，加载下一页"
+                            : "加载更多"
+                        : "加载失败，点击重试",
+                  ),
                 ),
               );
             }
 
             final item = rooms[i - 1];
             final isCurrent =
-                currentSite.id == site.id && currentRoomId == item.roomId;
+                LiveRoomCategoryRequestKey.normalizeRoomId(currentRoomId) ==
+                    LiveRoomCategoryRequestKey.normalizeRoomId(item.roomId);
             return Padding(
               padding: EdgeInsets.only(bottom: i == rooms.length ? 0 : 8),
               child: Material(
@@ -5724,7 +5863,7 @@ class LiveRoomController extends PlayerController
                   borderRadius: BorderRadius.circular(12),
                   onTap: () {
                     onClose();
-                    resetRoom(site, item.roomId);
+                    resetRoom(currentSite, item.roomId);
                   },
                   child: Ink(
                     padding: AppStyle.edgeInsetsA8,
@@ -5814,10 +5953,20 @@ class LiveRoomController extends PlayerController
     );
   }
 
-  void openCategoryRecommendation() {
-    final category = _buildRecommendationCategory();
+  Future<void> openCategoryRecommendation() async {
+    final currentSite = site;
+    final currentRoomId = roomId;
+    final requestKey = _categoryRecommendationKey(detail.value);
+    final category = await prepareCategoryRecommendation();
+    if (_roomDisposed ||
+        _categoryRecommendationKey(detail.value) != requestKey ||
+        currentSite.id != site.id ||
+        LiveRoomCategoryRequestKey.normalizeRoomId(currentRoomId) !=
+            LiveRoomCategoryRequestKey.normalizeRoomId(roomId)) {
+      return;
+    }
     if (category == null) {
-      SmartDialog.showToast("当前直播间还没有可用的分区标签");
+      SmartDialog.showToast(currentRecommendationSubtitle);
       return;
     }
     if (useFullscreenSidePanelMenus) {
@@ -5833,9 +5982,9 @@ class LiveRoomController extends PlayerController
       return;
     }
     AppNavigator.toCategoryDetail(
-      site: site,
+      site: currentSite,
       category: category,
-      excludedRoomId: roomId,
+      excludedRoomId: currentRoomId,
       onRoomSelected: (selectedSite, selectedRoomId) {
         resetRoom(selectedSite, selectedRoomId);
       },
@@ -7049,6 +7198,8 @@ class LiveRoomController extends PlayerController
         CurrentRoomService.instance.setRoom(currentSite, currentRoomId);
         _roomDisposed = false;
         _loadGeneration += 1;
+        _roomDetailLoadingGeneration = _loadGeneration;
+        _syncCategoryRecommendationContext(hasDetail: false);
         _resetQualityPresentation();
         await resetLiveLatencyChase();
         _onlineRefreshFailures = 0;

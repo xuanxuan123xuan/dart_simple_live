@@ -46,7 +46,7 @@ class DouyinSearchAuthError extends CoreError {
   }
 }
 
-class DouyinSite implements LiveSite {
+class DouyinSite implements LiveSite, LiveRoomCategoryResolver {
   static const _roomDataRetryDelay = Duration(milliseconds: 300);
   static const _emptyRoomDataMessage = "抖音暂未返回直播间数据，请稍后重试，或通过主播固定直播间链接重新进入";
 
@@ -55,6 +55,9 @@ class DouyinSite implements LiveSite {
 
   final DouyinAbogusSigner _abogusSigner;
   Future<Map<String, String>>? _partitionImagesFuture;
+  List<dynamic>? _roomCategoryData;
+  DateTime? _roomCategorySavedAt;
+  Future<List<dynamic>>? _roomCategoryRequest;
 
   /// Resolves the aspect ratio advertised by a Douyin live stream.
   ///
@@ -369,16 +372,16 @@ class DouyinSite implements LiveSite {
 
   @override
   Future<List<LiveCategory>> getCategores() async {
-    List<LiveCategory> categories = [];
-    var result = await HttpClient.instance.getText(
-      "https://live.douyin.com/",
-      queryParameters: {},
-      header: await getRequestHeaders(),
-    );
-
-    final renderDataJson = _extractCategoryRenderData(result);
-    final categoryData = (renderDataJson["categoryData"] as List?) ?? const [];
+    final categoryData = await _loadRoomCategoryData();
     final externalImages = await _loadExternalPartitionImages();
+    return _parseCategories(categoryData, externalImages);
+  }
+
+  List<LiveCategory> _parseCategories(
+    List<dynamic> categoryData,
+    Map<String, String> externalImages,
+  ) {
+    final categories = <LiveCategory>[];
 
     for (final rawItem in categoryData) {
       if (rawItem is! Map) {
@@ -396,6 +399,7 @@ class DouyinSite implements LiveSite {
       }
       List<LiveSubCategory> subs = [];
       final id = '$idStr,$type';
+      if (!_isPartitionKey(id)) continue;
       final pic = _pickPartitionImageUrl(partition) ??
           _partitionImageFallback('$idStr', name, externalImages);
 
@@ -434,6 +438,100 @@ class DouyinSite implements LiveSite {
     return categories;
   }
 
+  Future<List<dynamic>> _loadRoomCategoryData() async {
+    final cached = _roomCategoryData;
+    final savedAt = _roomCategorySavedAt;
+    if (cached != null &&
+        savedAt != null &&
+        DateTime.now().difference(savedAt) < const Duration(hours: 12)) {
+      return cached;
+    }
+    final pending = _roomCategoryRequest;
+    if (pending != null) return pending;
+    final request = _fetchRoomCategoryData();
+    _roomCategoryRequest = request;
+    try {
+      return await request;
+    } finally {
+      if (identical(_roomCategoryRequest, request)) _roomCategoryRequest = null;
+    }
+  }
+
+  Future<List<dynamic>> _fetchRoomCategoryData() async {
+    try {
+      final html = await HttpClient.instance.getText(
+        'https://live.douyin.com/',
+        queryParameters: {},
+        header: await getRequestHeaders(),
+      );
+      final data = _extractCategoryRenderData(html)['categoryData'];
+      if (data is! List || _parseCategories(data, const {}).isEmpty) {
+        throw CoreError('抖音分区目录暂不可用', kind: CoreErrorKind.response);
+      }
+      _roomCategoryData = data;
+      _roomCategorySavedAt = DateTime.now();
+      return data;
+    } on CoreError {
+      rethrow;
+    } catch (error) {
+      throw CoreError('读取抖音分区目录失败', kind: CoreErrorKind.response, cause: error);
+    }
+  }
+
+  static bool _isPartitionKey(String value) =>
+      RegExp(r'^[1-9]\d*,[1-9]\d*$').hasMatch(value);
+
+  @override
+  Future<LiveSubCategory?> resolveRoomCategory(LiveRoomDetail detail) async {
+    final childId = detail.categoryId?.trim() ?? '';
+    final id =
+        childId.isNotEmpty ? childId : detail.categoryParentId?.trim() ?? '';
+    if (id.isEmpty) return null;
+    final name =
+        (childId.isNotEmpty ? detail.categoryName : detail.categoryParentName)
+            ?.trim();
+    if (_isPartitionKey(id) && name != null && name.isNotEmpty) {
+      final parentId = detail.categoryParentId?.trim() ?? '';
+      return LiveSubCategory(
+        id: id,
+        name: name,
+        parentId: _isPartitionKey(parentId) ? parentId : id,
+        pic: detail.categoryPic,
+      );
+    }
+    // A malformed composite key must never become an unrelated raw-ID match.
+    if (id.contains(',') && !_isPartitionKey(id)) return null;
+    final categories =
+        _parseCategories(await _loadRoomCategoryData(), const {});
+    final matches = <String, LiveSubCategory>{};
+    void visit(LiveSubCategory node) {
+      if (_isPartitionKey(node.id) &&
+          (node.id == id ||
+              (!id.contains(',') && node.id.split(',')[0] == id))) {
+        matches['${node.id}:${node.parentId}'] = node;
+      }
+      for (final child in node.children) {
+        visit(child);
+      }
+    }
+
+    for (final root in categories) {
+      for (final child in root.children) {
+        visit(child);
+      }
+    }
+    if (matches.length == 1) return matches.values.single;
+    // The room may disambiguate repeated IDs by its explicit parent tag.
+    final parent = detail.categoryParentId?.trim() ?? '';
+    if (parent.isNotEmpty) {
+      final filtered = matches.values.where((node) =>
+          node.parentId == parent ||
+          (!parent.contains(',') && node.parentId.split(',')[0] == parent));
+      if (filtered.length == 1) return filtered.single;
+    }
+    return null;
+  }
+
   /// 递归解析分区；任意层级数据异常时返回 null，由调用方跳过该节点。
   LiveSubCategory? _parseSubCategory(
     dynamic item,
@@ -451,7 +549,7 @@ class DouyinSite implements LiveSite {
     final type = partition["type"];
     final id = '$idStr,$type';
     final name = _partitionTitle(partition);
-    if (idStr == null || type == null || name == null) {
+    if (idStr == null || type == null || name == null || !_isPartitionKey(id)) {
       return null;
     }
 
@@ -706,24 +804,24 @@ class DouyinSite implements LiveSite {
             : null) ??
         room["partitionInfo"];
 
+    final partitionId = _roomPartitionKey(partition);
+    final gameData = room['game_data'];
+    final gameTag = gameData is Map ? gameData['game_tag_info'] : null;
+    final gameId = gameTag is Map && gameTag['is_game']?.toString() == '1'
+        ? gameTag['game_tag_id']?.toString().trim()
+        : null;
+    final hasGameTag = gameId != null && (int.tryParse(gameId) ?? 0) > 0;
     return {
-      "categoryId": _resolveCategoryValue(partition, const [
-        "id_str",
-        "id",
-        "partition_id",
-        "partition",
-      ]),
+      "categoryId": partitionId ?? (hasGameTag ? gameId : null),
       "categoryName": _resolveCategoryValue(partition, const [
-        "title",
-        "name",
-        "partition_title",
-      ]),
-      "categoryParentId": _resolveCategoryValue(parentPartition, const [
-        "id_str",
-        "id",
-        "partition_id",
-        "partition",
-      ]),
+            "title",
+            "name",
+            "partition_title",
+          ]) ??
+          (partitionId == null && hasGameTag
+              ? (gameTag as Map)['game_tag_name']?.toString().trim()
+              : null),
+      "categoryParentId": _roomPartitionKey(parentPartition),
       "categoryParentName": _resolveCategoryValue(parentPartition, const [
         "title",
         "name",
@@ -732,6 +830,26 @@ class DouyinSite implements LiveSite {
       "categoryPic": _pickPartitionImageUrl(partition) ??
           _pickPartitionImageUrl(parentPartition),
     };
+  }
+
+  String? _roomPartitionKey(dynamic partition) {
+    if (partition is! Map) return null;
+    // ID and type must belong to the same node, never to separate descendants.
+    final rawId = partition['id_str'] ??
+        partition['id'] ??
+        partition['partition_id'] ??
+        partition['partition'];
+    final id = rawId is String || rawId is num ? rawId.toString().trim() : null;
+    if (id != null && id.isNotEmpty) {
+      final type =
+          (partition['type'] ?? partition['partition_type'])?.toString().trim();
+      return type == null || type.isEmpty ? id : '$id,$type';
+    }
+    for (final key in ['partition', 'partition_info', 'partitionInfo']) {
+      final nested = _roomPartitionKey(partition[key]);
+      if (nested != null) return nested;
+    }
+    return null;
   }
 
   Map<String, dynamic> _extractCategoryRenderData(String html) {
@@ -811,6 +929,9 @@ class DouyinSite implements LiveSite {
     LiveSubCategory category, {
     int page = 1,
   }) async {
+    if (!_isPartitionKey(category.id)) {
+      throw CoreError('抖音分区参数无效，缺少有效的分区 ID 或类型', kind: CoreErrorKind.response);
+    }
     var ids = category.id.split(',');
     var partitionId = ids[0];
     var partitionType = ids[1];
@@ -842,7 +963,7 @@ class DouyinSite implements LiveSite {
         "req_from": '2',
       },
     );
-    var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
+    var requestUrl = _abogusSigner(uri.toString(), kDefaultUserAgent);
 
     var result = await HttpClient.instance.getJson(
       requestUrl,

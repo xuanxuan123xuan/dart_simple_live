@@ -1,6 +1,7 @@
 library simple_live_core;
 
 export 'src/interface/live_site.dart';
+export 'src/interface/live_room_category_resolver.dart';
 export 'src/interface/live_danmaku.dart';
 export 'src/huya_site.dart';
 export 'src/bilibili_site.dart';
