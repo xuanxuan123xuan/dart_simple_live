@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:test/test.dart';
 
@@ -145,4 +147,83 @@ void main() {
       contains('完整登录 Cookie'),
     );
   });
+
+  group('DouyuCookieHelper authentication', () {
+    test('requires LTP0 and a device ID to advertise refresh credentials', () {
+      expect(
+        DouyuCookieHelper.hasRefreshCredentials('LTP0=token; dy_did=device'),
+        isTrue,
+      );
+      expect(
+        DouyuCookieHelper.hasRefreshCredentials('LTP0=token; acf_did=device'),
+        isTrue,
+      );
+      expect(DouyuCookieHelper.hasRefreshCredentials('LTP0=token'), isFalse);
+      expect(DouyuCookieHelper.hasRefreshCredentials('dy_did=device'), isFalse);
+      expect(
+        DouyuCookieHelper.hasRefreshCredentials('LTP0=; acf_did=device'),
+        isFalse,
+      );
+    });
+
+    test('accepts future JWT or authenticated acf fields only', () {
+      final token = _jwtWithExpiry(2000000000);
+      expect(
+        DouyuCookieHelper.hasAuthenticatedSession(
+          'acf_jwt_token=$token',
+          now: DateTime.utc(2030),
+        ),
+        isTrue,
+      );
+      expect(
+        DouyuCookieHelper.hasAuthenticatedSession(
+          'acf_jwt_token=${_jwtWithExpiry(1700000000)}',
+          now: DateTime.utc(2030),
+        ),
+        isFalse,
+      );
+      expect(
+        DouyuCookieHelper.hasAuthenticatedSession(
+          'acf_auth=auth-token; acf_uid=42',
+        ),
+        isTrue,
+      );
+      for (final cookie in const [
+        'ttwid=anonymous; dy_did=device',
+        'LTP0=refresh-only; dy_did=device',
+        'acf_auth=auth-token; acf_uid=0',
+        'acf_auth=auth-token; acf_uid=not-a-number',
+        'acf_auth=; acf_uid=42',
+      ]) {
+        expect(
+          DouyuCookieHelper.hasAuthenticatedSession(cookie),
+          isFalse,
+          reason: cookie,
+        );
+      }
+    });
+
+    test('merges domain cookies with www auth and passport LTP0 precedence', () {
+      final merged = DouyuCookieHelper.mergeBrowserCookies(
+        rootCookie: 'acf_auth=root-auth; acf_uid=1; dy_did=root-device',
+        passportCookie:
+            'LTP0=passport-refresh; acf_auth=passport-auth; dy_did=passport-device',
+        wwwCookie:
+            'LTP0=www-refresh; acf_auth=www-auth; acf_uid=55; dy_did=www-device; acf_did=other-device; ttwid=browser-id',
+      );
+      final fields = DouyuCookieHelper.parse(merged);
+
+      expect(fields['LTP0'], 'passport-refresh');
+      expect(fields['acf_auth'], 'www-auth');
+      expect(fields['acf_uid'], '55');
+      expect(fields['dy_did'], 'www-device');
+      expect(fields['acf_did'], 'other-device');
+      expect(fields['ttwid'], 'browser-id');
+    });
+  });
+}
+
+String _jwtWithExpiry(int expiry) {
+  final payload = base64Url.encode(utf8.encode(jsonEncode({'exp': expiry})));
+  return 'header.$payload.signature';
 }
