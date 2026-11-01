@@ -59,6 +59,14 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     return safeInset.clamp(0.0, 16.0).toDouble();
   }
 
+  Rect? _sharePositionOrigin(BuildContext context) {
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) {
+      return null;
+    }
+    return renderObject.localToGlobal(Offset.zero) & renderObject.size;
+  }
+
   bool get _isDesktop {
     return Platform.isWindows || Platform.isMacOS || Platform.isLinux;
   }
@@ -579,17 +587,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
                               ),
                       ),
                       const Expanded(child: Center()),
-                      _buildGlassActionButton(
-                        context,
-                        label: "分享",
-                        icon: Remix.share_line,
-                        onPressed: controller.share,
-                      ),
-                      _buildGlassActionButton(
-                        context,
-                        label: "复制链接",
-                        icon: Remix.file_copy_line,
-                        onPressed: controller.copyUrl,
+                      Builder(
+                        builder: (buttonContext) => _buildGlassActionButton(
+                          context,
+                          label: "分享",
+                          icon: Remix.share_line,
+                          onPressed: () => controller.share(
+                            sharePositionOrigin:
+                                _sharePositionOrigin(buttonContext),
+                          ),
+                        ),
                       ),
                       Obx(
                         () => AppSettingsController
@@ -1439,11 +1446,16 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               ),
             ),
             action(
-              _buildGlassActionButton(
-                context,
-                label: "分享",
-                icon: Remix.share_line,
-                onPressed: controller.share,
+              Builder(
+                builder: (buttonContext) => _buildGlassActionButton(
+                  context,
+                  label: "分享",
+                  icon: Remix.share_line,
+                  onPressed: () => controller.share(
+                    sharePositionOrigin:
+                        _sharePositionOrigin(buttonContext),
+                  ),
+                ),
               ),
             ),
           ],
@@ -1996,8 +2008,9 @@ class LiveRoomPage extends GetView<LiveRoomController> {
               title: const Text("分享与链接"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
+                final shareOrigin = _sharePositionOrigin(context);
                 Get.back();
-                _showShareActions();
+                _showShareActions(sharePositionOrigin: shareOrigin);
               },
             ),
             ListTile(
@@ -2053,7 +2066,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
     );
   }
 
-  void _showShareActions() {
+  void _showShareActions({Rect? sharePositionOrigin}) {
     Utils.showBottomSheet(
       title: "分享与链接",
       child: ListView(
@@ -2064,7 +2077,7 @@ class LiveRoomPage extends GetView<LiveRoomController> {
             title: const Text("分享直播间"),
             onTap: () {
               Get.back();
-              controller.share();
+              controller.share(sharePositionOrigin: sharePositionOrigin);
             },
           ),
           ListTile(

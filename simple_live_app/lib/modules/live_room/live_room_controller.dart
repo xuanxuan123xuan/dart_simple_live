@@ -5065,7 +5065,7 @@ class LiveRoomController extends PlayerController
     EventBus.instance.emit(Constant.kUpdateFollow, id);
   }
 
-  void share() async {
+  Future<void> share({Rect? sharePositionOrigin}) async {
     if (detail.value == null) {
       return;
     }
@@ -5082,7 +5082,16 @@ class LiveRoomController extends PlayerController
       }
       return;
     }
-    Share.shareUri(Uri.parse(detail.value!.url));
+    try {
+      await Share.share(
+        detail.value!.url,
+        subject: detail.value!.title,
+        sharePositionOrigin: sharePositionOrigin,
+      );
+    } catch (e) {
+      Log.logPrint(e);
+      SmartDialog.showToast("分享失败：$e");
+    }
   }
 
   void copyUrl() {
