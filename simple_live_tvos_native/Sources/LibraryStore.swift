@@ -18,11 +18,13 @@ struct HistoryEntry: Codable, Equatable, Identifiable {
 final class LibraryStore: ObservableObject {
     @Published private(set) var favoriteEntries: [FavoriteEntry]
     @Published private(set) var historyEntries: [HistoryEntry]
+    @Published private(set) var rotationRooms: [RoomDescriptor]
 
     var favorites: [RoomDescriptor] { favoriteEntries.map(\.room) }
     var recent: [RoomDescriptor] { historyEntries.map(\.room) }
 
     private let defaults: UserDefaults
+    private static let rotationKey = "simple_live_tvos.rotation.rooms.v1"
     private static let favoritesKey = "simple_live_tvos.favorites.v2"
     private static let recentKey = "simple_live_tvos.recent.v2"
     private static let legacyFavoritesKey = "simple_live_tvos.favorites.v1"
@@ -30,6 +32,7 @@ final class LibraryStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        rotationRooms = Self.unique(Self.load(Self.rotationKey, from: defaults) ?? [])
         let savedFavorites: [FavoriteEntry]? = Self.load(Self.favoritesKey, from: defaults)
         let savedHistory: [HistoryEntry]? = Self.load(Self.recentKey, from: defaults)
         let legacyFavorites: [RoomDescriptor] = savedFavorites == nil ? Self.load(Self.legacyFavoritesKey, from: defaults) ?? [] : []
@@ -58,6 +61,28 @@ final class LibraryStore: ObservableObject {
               favoriteEntries[index].isPriority != value else { return }
         favoriteEntries[index].isPriority = value
         saveFavorites()
+    }
+
+    func hasRotationRoom(_ room: RoomDescriptor) -> Bool {
+        rotationRooms.contains { $0.key == room.key }
+    }
+
+    func toggleRotationRoom(_ room: RoomDescriptor) {
+        if let index = rotationRooms.firstIndex(where: { $0.key == room.key }) {
+            rotationRooms.remove(at: index)
+        } else {
+            rotationRooms.append(room)
+        }
+        save(rotationRooms, key: Self.rotationKey)
+    }
+
+    func moveRotationRoom(_ room: RoomDescriptor, by delta: Int) {
+        guard let index = rotationRooms.firstIndex(where: { $0.key == room.key }) else { return }
+        let (next, overflow) = index.addingReportingOverflow(delta)
+        guard !overflow, next != index, rotationRooms.indices.contains(next) else { return }
+        let moved = rotationRooms.remove(at: index)
+        rotationRooms.insert(moved, at: next)
+        save(rotationRooms, key: Self.rotationKey)
     }
 
     func visit(_ room: RoomDescriptor, at date: Date = Date()) {

@@ -14,6 +14,8 @@ struct PlayerView: View {
     let room: RoomDescriptor
     let queue: ChannelQueue
     @Binding var sleepDeadline: Date?
+    let onPlaybackIssue: (PlaybackIssue?, String) -> Void
+    let onStablePlayback: () -> Void
     let openChannel: (RoomDescriptor) -> Void
 
     @StateObject private var engine = PlaybackEngine()
@@ -105,7 +107,7 @@ struct PlayerView: View {
             case .favorites:
                 PlayerChannelList(current: room, rooms: library.favorites, title: "收藏列表", select: openChannel)
             case .settings:
-                PlayerRoomSettingsView(engine: engine, danmakuEnabled: $danmakuEnabled,
+                PlayerRoomSettingsView(room: room, engine: engine, danmakuEnabled: $danmakuEnabled,
                                        sleepDeadline: $sleepDeadline)
             }
         }
@@ -113,9 +115,18 @@ struct PlayerView: View {
         .onChange(of: autoQuality) { _, _ in qualityRecovery = AutoQualityRecovery() }
         .onChange(of: focusedControl) { _, _ in controlsActivity += 1 }
         .onChange(of: playbackIssue) { _, issue in
+            onPlaybackIssue(engine.pausedByUser ? nil : issue, room.key)
             if sleepExpired { focusedControl = .sleepExit }
             else if issue != nil { focusedControl = .retry }
             else if focusedControl == .retry { focusedControl = preferredFocus }
+        }
+        .task(id: engine.state == .playing) {
+            guard engine.state == .playing else { return }
+            do {
+                try await Task.sleep(for: .seconds(20))
+                try Task.checkCancellation()
+                if engine.state == .playing { onStablePlayback() }
+            } catch { return }
         }
         .task(id: sleepDeadline) {
             guard let deadline = sleepDeadline else { return }
@@ -296,6 +307,7 @@ struct PlayerView: View {
 
     private func refreshPlayback() {
         qualityRecoveryMessage = nil
+        onPlaybackIssue(nil, room.key)
         playbackResources = []
         controlsActivity += 1
         retry += 1

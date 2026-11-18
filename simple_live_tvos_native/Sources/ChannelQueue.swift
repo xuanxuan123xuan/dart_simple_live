@@ -18,9 +18,18 @@ struct ChannelQueue {
 
 /// Recreate playback and danmaku state when changing the active room; the navigation stack stays put.
 struct ChannelPlayerView: View {
+    @EnvironmentObject private var core: NativeCoreClient
+    @EnvironmentObject private var library: LibraryStore
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(ChannelRotationPreferences.onLiveEnd) private var onLiveEnd = false
+    @AppStorage(ChannelRotationPreferences.onFailure) private var onFailure = false
+    @AppStorage(ChannelRotationPreferences.playlistOnly) private var playlistOnly = false
+    @AppStorage(ChannelRotationPreferences.random) private var random = false
     @State private var room: RoomDescriptor
     @State private var queue: ChannelQueue
     @State private var sleepDeadline: Date?
+    @State private var rotation = ChannelRotation()
+    @State private var pendingSwitch: UUID?
 
     init(room: RoomDescriptor, rooms: [RoomDescriptor]) {
         _room = State(initialValue: room)
@@ -28,13 +37,65 @@ struct ChannelPlayerView: View {
     }
 
     var body: some View {
-        PlayerView(room: room, queue: queue, sleepDeadline: $sleepDeadline) { next in
-            if !queue.rooms.contains(where: { $0.key == next.key }) {
-                queue = ChannelQueue(rooms: queue.rooms + [next], current: next)
-            }
-            room = next
+        PlayerView(room: room, queue: queue, sleepDeadline: $sleepDeadline,
+                   onPlaybackIssue: handlePlaybackIssue, onStablePlayback: { rotation.reset() }) { next in
+            pendingSwitch = nil
+            rotation.reset()
+            tune(next)
         }
         .id(room.key)
+        .task(id: pendingSwitch) {
+            guard let request = pendingSwitch else { return }
+            await rotate(request)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { pendingSwitch = nil }
+        }
+    }
+
+    private func handlePlaybackIssue(_ issue: PlaybackIssue?, roomKey: String) {
+        guard room.key == roomKey else { return }
+        guard let issue, scenePhase == .active, issue == .offline ? onLiveEnd : onFailure else {
+            pendingSwitch = nil
+            return
+        }
+        pendingSwitch = UUID()
+    }
+
+    private func rotate(_ request: UUID) async {
+        let source = playlistOnly ? library.rotationRooms : library.favorites
+        let targets = rotation.candidates(after: room, in: source, random: playlistOnly && random)
+        let original = room.key
+        for target in targets {
+            guard canRotate(request, from: original) else { return }
+            do {
+                let resolved = try await core.service(target.provider).resolveRoom(target.roomId)
+                guard canRotate(request, from: original) else { return }
+                let alreadyAttempted = rotation.hasAttempted(resolved)
+                rotation.markAttempted(target)
+                guard resolved.isLive == true, !alreadyAttempted else { continue }
+                rotation.markAttempted(resolved)
+                pendingSwitch = nil
+                tune(resolved)
+                return
+            } catch {
+                guard canRotate(request, from: original) else { return }
+                rotation.markAttempted(target)
+            }
+        }
+        if pendingSwitch == request { pendingSwitch = nil }
+    }
+
+    private func canRotate(_ request: UUID, from original: String) -> Bool {
+        !Task.isCancelled && pendingSwitch == request && room.key == original && scenePhase == .active
+            && (sleepDeadline.map { $0 > .now } ?? true)
+    }
+
+    private func tune(_ next: RoomDescriptor) {
+        if !queue.rooms.contains(where: { $0.key == next.key }) {
+            queue = ChannelQueue(rooms: queue.rooms + [next], current: next)
+        }
+        room = next
     }
 }
 

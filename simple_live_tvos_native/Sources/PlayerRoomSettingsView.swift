@@ -2,6 +2,8 @@ import SwiftUI
 
 struct PlayerRoomSettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var library: LibraryStore
+    let room: RoomDescriptor
     @ObservedObject var engine: PlaybackEngine
     @Binding var danmakuEnabled: Bool
     @Binding var sleepDeadline: Date?
@@ -26,6 +28,8 @@ struct PlayerRoomSettingsView: View {
                 Toggle("显示弹幕", isOn: $danmakuEnabled)
                 Toggle("网络波动时自动降低清晰度", isOn: $autoQuality)
             }
+            Button(library.hasRotationRoom(room) ? "从轮播移除本房间" : "加入轮播列表",
+                   systemImage: "list.bullet.rectangle") { library.toggleRotationRoom(room) }
             Text("定时关闭").font(.headline)
             HStack(spacing: 22) {
                 ForEach([15, 30, 60, 90, 120], id: \.self) { minutes in

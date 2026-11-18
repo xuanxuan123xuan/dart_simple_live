@@ -12,6 +12,7 @@ struct SettingsView: View {
                 Toggle("显示直播弹幕", isOn: $danmakuEnabled)
             }
             NavigationLink("关注设置") { FavoriteSettingsView() }
+            NavigationLink("频道轮播") { ChannelRotationSettingsView() }
             ForEach(core.loginProviders) { provider in
                 Section(provider.title) {
                     if core.authenticated.contains(provider.id) {
