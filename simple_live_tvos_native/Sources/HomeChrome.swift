@@ -1,15 +1,16 @@
 import SwiftUI
 
 enum HomeSection: String, CaseIterable, Identifiable {
-    case live, search, favorites, history, settings
+    case home, live, search, favorites, history, settings
 
     var id: Self { self }
 
     var title: LocalizedStringKey {
         switch self {
-        case .live: "直播"
+        case .home: "首页"
+        case .live: "热门"
         case .search: "搜索"
-        case .favorites: "收藏"
+        case .favorites: "关注"
         case .history: "历史"
         case .settings: "设置"
         }
@@ -17,6 +18,7 @@ enum HomeSection: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .home: "house"
         case .live: "tv"
         case .search: "magnifyingglass"
         case .favorites: "star"

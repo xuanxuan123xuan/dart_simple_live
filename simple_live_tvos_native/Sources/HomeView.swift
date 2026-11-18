@@ -4,7 +4,7 @@ struct HomeView: View {
     @EnvironmentObject private var core: NativeCoreClient
     @StateObject private var library = LibraryStore()
     @StateObject private var favoriteStatus = FavoriteStatusStore()
-    @State private var section: HomeSection = .live
+    @State private var section: HomeSection = .home
     @State private var provider = "bilibili"
     @State private var searchQuery = ""
     @State private var searchMode: SearchMode = .rooms
@@ -14,7 +14,7 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 16) {
-                HomePlatformBar(providers: section == .settings ? [] : core.providers, selection: provider) { id in
+                HomePlatformBar(providers: section == .live || section == .search ? core.providers : [], selection: provider) { id in
                     provider = id
                     if section != .search { section = .live }
                 }
@@ -53,6 +53,8 @@ struct HomeView: View {
     @ViewBuilder
     private var sectionContent: some View {
         switch section {
+        case .home:
+            dashboard
         case .live:
             browse
         case .search:
@@ -67,6 +69,33 @@ struct HomeView: View {
                 SettingsView()
             }
         }
+    }
+
+    private var dashboard: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(spacing: 16) {
+                dashboardShortcut("热门直播", icon: "flame") { section = .live }
+                NavigationLink(value: HomeRoute.categories(provider == "xiaohongshu" ? "bilibili" : provider)) {
+                    HomePill(quiet: false) { Label("直播类目", systemImage: "square.grid.2x2") }
+                }
+                .buttonStyle(HomeButtonStyle())
+                .focusEffectDisabled()
+                .accessibilityIdentifier("live-categories")
+                dashboardShortcut("搜索直播", icon: "magnifyingglass") { section = .search }
+                dashboardShortcut("观看历史", icon: "clock") { section = .history }
+                Spacer()
+                openRoomLink
+            }
+            .focusSection()
+            FavoritesView(preview: true) { section = .favorites }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    private func dashboardShortcut(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { HomePill(quiet: false) { Label(title, systemImage: icon) } }
+            .buttonStyle(HomeButtonStyle())
+            .focusEffectDisabled()
     }
 
     private var browse: some View {
@@ -402,6 +431,8 @@ private struct OpenRoomView: View {
 
 private struct RoomGrid<Footer: View>: View {
     @EnvironmentObject private var library: LibraryStore
+    @FocusState private var focusedRoom: String?
+    @State private var lastFocusedRoom: String?
     let rooms: [RoomDescriptor]
     @ViewBuilder let footer: () -> Footer
 
@@ -417,6 +448,7 @@ private struct RoomGrid<Footer: View>: View {
                         }
                         .buttonStyle(HomeButtonStyle())
                         .focusEffectDisabled()
+                        .focused($focusedRoom, equals: room.key)
                         .contextMenu {
                             Button(library.isFavorite(room) ? "取消收藏" : "收藏") { library.toggleFavorite(room) }
                         }
@@ -433,6 +465,10 @@ private struct RoomGrid<Footer: View>: View {
                     LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
                         .frame(height: 22)
                 }
+            }
+            .defaultFocus($focusedRoom, rooms.contains(where: { $0.key == lastFocusedRoom }) ? lastFocusedRoom : rooms.first?.key)
+            .onChange(of: focusedRoom) { _, value in
+                if let value { lastFocusedRoom = value }
             }
             .focusSection()
         }
