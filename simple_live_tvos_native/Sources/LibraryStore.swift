@@ -19,11 +19,13 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var favoriteEntries: [FavoriteEntry]
     @Published private(set) var historyEntries: [HistoryEntry]
     @Published private(set) var rotationRooms: [RoomDescriptor]
+    @Published private(set) var blockedWords: [String]
 
     var favorites: [RoomDescriptor] { favoriteEntries.map(\.room) }
     var recent: [RoomDescriptor] { historyEntries.map(\.room) }
 
     private let defaults: UserDefaults
+    private static let blockedWordsKey = "simple_live_tvos.danmaku.blockedWords.v1"
     private static let rotationKey = "simple_live_tvos.rotation.rooms.v1"
     private static let favoritesKey = "simple_live_tvos.favorites.v2"
     private static let recentKey = "simple_live_tvos.recent.v2"
@@ -32,6 +34,7 @@ final class LibraryStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        blockedWords = Self.cleanedWords(defaults.stringArray(forKey: Self.blockedWordsKey) ?? [])
         rotationRooms = Self.unique(Self.load(Self.rotationKey, from: defaults) ?? [])
         let savedFavorites: [FavoriteEntry]? = Self.load(Self.favoritesKey, from: defaults)
         let savedHistory: [HistoryEntry]? = Self.load(Self.recentKey, from: defaults)
@@ -61,6 +64,22 @@ final class LibraryStore: ObservableObject {
               favoriteEntries[index].isPriority != value else { return }
         favoriteEntries[index].isPriority = value
         saveFavorites()
+    }
+
+    func importBlockedWords(_ words: [String], replacing: Bool = false) {
+        blockedWords = Self.cleanedWords(replacing ? words : blockedWords + words)
+        defaults.set(blockedWords, forKey: Self.blockedWordsKey)
+    }
+
+    func removeBlockedWord(_ word: String) {
+        blockedWords.removeAll { $0 == word }
+        defaults.set(blockedWords, forKey: Self.blockedWordsKey)
+    }
+
+    private static func cleanedWords(_ words: [String]) -> [String] {
+        var seen = Set<String>()
+        return words.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     func hasRotationRoom(_ room: RoomDescriptor) -> Bool {

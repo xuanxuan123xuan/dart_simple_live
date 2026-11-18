@@ -6,7 +6,9 @@ import UIKit
 
 struct DanmakuOverlay: UIViewRepresentable {
     let events: PassthroughSubject<DanmakuEvent, Never>
+    @EnvironmentObject private var library: LibraryStore
     private var storage = DanmakuStyleStorage()
+    private var filtering = DanmakuFilterStorage()
 
     init(events: PassthroughSubject<DanmakuEvent, Never>) { self.events = events }
 
@@ -18,7 +20,10 @@ struct DanmakuOverlay: UIViewRepresentable {
         return surface
     }
 
-    func updateUIView(_ uiView: DanmakuSurface, context: Context) { uiView.configure(storage.style) }
+    func updateUIView(_ uiView: DanmakuSurface, context: Context) {
+        uiView.configure(storage.style)
+        uiView.configureFilter(filtering.configuration(blockedWords: library.blockedWords))
+    }
 
     static func dismantleUIView(_ uiView: DanmakuSurface, coordinator: Void) {
         uiView.subscription = nil
@@ -28,6 +33,8 @@ struct DanmakuOverlay: UIViewRepresentable {
 
 final class DanmakuSurface: UIView {
     private var style = DanmakuStyle()
+    private var filterConfiguration = DanmakuFilterConfiguration()
+    private var filter = DanmakuFilter()
     private var font = UIFont.systemFont(ofSize: 36, weight: .semibold)
     private let horizontalGap: CGFloat = 40
     private let topInset: CGFloat = 12
@@ -67,12 +74,16 @@ final class DanmakuSurface: UIView {
         laneReadyTimes = Array(repeating: 0, count: count)
     }
 
+    func configureFilter(_ configuration: DanmakuFilterConfiguration) {
+        guard filterConfiguration != configuration else { return }
+        filterConfiguration = configuration
+        filter = DanmakuFilter(configuration)
+    }
+
     func display(_ event: DanmakuEvent, now: CFTimeInterval = CACurrentMediaTime()) {
-        guard bounds.width > 0,
+        guard filter.allows(event), bounds.width > 0,
               let lane = laneReadyTimes.firstIndex(where: { $0 <= now }) else { return }
-        let message = event.message.components(separatedBy: .newlines).joined(separator: " ")
-            .trimmingCharacters(in: .whitespaces)
-        guard !message.isEmpty else { return }
+        let message = DanmakuFilter.message(event)
 
         let color = event.color
         let foreground = UIColor(red: CGFloat(color.red) / 255, green: CGFloat(color.green) / 255,

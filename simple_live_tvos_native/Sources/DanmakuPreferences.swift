@@ -52,6 +52,7 @@ struct DanmakuStyleStorage: DynamicProperty {
 struct DanmakuSettingsView: View {
     @AppStorage("simple_live_tvos.danmaku") private var enabled = true
     private var storage = DanmakuStyleStorage()
+    private var filtering = DanmakuFilterStorage()
 
     var body: some View {
         List {
@@ -87,6 +88,27 @@ struct DanmakuSettingsView: View {
                     }
                 }
             }
+            Section("过滤") {
+                NavigationLink("屏蔽词") { BlockedDanmakuWordsView() }
+                Picker("重复过滤模式", selection: filtering.$mode) {
+                    ForEach(DanmakuDedupeMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                if filtering.mode != .off {
+                    Picker("过滤窗口", selection: filtering.$window) {
+                        ForEach(filtering.mode == .allSenders ? [5, 10, 20, 30, 50, 100] : [1, 5, 10, 20, 30, 50, 100], id: \.self) {
+                            Text("\($0) 条").tag($0)
+                        }
+                    }
+                    if filtering.mode == .sameSender {
+                        Picker("过滤步长", selection: filtering.$step) {
+                            ForEach([1, 2, 3, 5], id: \.self) { Text("\($0)").tag($0) }
+                        }
+                    }
+                }
+            }
+        }
+        .onChange(of: filtering.mode) { _, mode in
+            if mode == .allSenders { filtering.window = max(5, filtering.window) }
         }
         .navigationTitle("弹幕设置")
     }
