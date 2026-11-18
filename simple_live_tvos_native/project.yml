@@ -1,0 +1,34 @@
+name: SimpleLiveTVOS
+options:
+  deploymentTarget:
+    tvOS: "17.0"
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: com.xuanxuan.simplelive.tvos
+    SWIFT_VERSION: 5.9
+    TARGETED_DEVICE_FAMILY: 3
+    TVOS_DEPLOYMENT_TARGET: 17.0
+targets:
+  SimpleLiveTVOS:
+    type: application
+    platform: tvOS
+    sources:
+      - path: Sources
+    settings:
+      INFOPLIST_FILE: Resources/Info.plist
+    dependencies:
+      - package: KSPlayer
+        product: KSPlayerUI
+      - framework: Vendor/Flutter.xcframework
+        embed: true
+  SimpleLiveTVOSTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: SimpleLiveTVOS
+packages:
+  KSPlayer:
+    url: https://github.com/kingslay/KSPlayer.git
+    branch: main

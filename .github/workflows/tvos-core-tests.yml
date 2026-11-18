@@ -1,0 +1,39 @@
+name: SimpleLive tvOS core tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'simple_live_tvos_core/**'
+      - 'tool/run_tvos_core_tests.sh'
+      - '.github/workflows/tvos-core-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  swift-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "5.10"
+
+      - name: Install xtool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/xtool-org/xtool/main/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          xtool --help | head -n 3
+
+      - name: Test platform-neutral Swift core
+        shell: bash
+        run: ./tool/run_tvos_core_tests.sh
