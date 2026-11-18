@@ -275,7 +275,7 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
         var query = ["room_id": roomId, "platform": "web", "protocol": "0,1", "format": "0,1,2", "codec": "0,1"]
         query["qn"] = qn
         let data = try Self.payload(await request(Self.live + "/xlive/web-room/v2/index/getRoomPlayInfo", query))
-        if let status = data.integer("live_status"), status != 1 { throw LiveProviderError.offline }
+        if let status = data.integer("live_status"), status == 0 || status == 2 { throw LiveProviderError.offline }
         let play = data["playurl_info"]["playurl"]
         guard !play.fields.isEmpty else { throw LiveProviderError.noPlayback }
         return play

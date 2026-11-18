@@ -20,6 +20,7 @@ struct ChannelQueue {
 struct ChannelPlayerView: View {
     @State private var room: RoomDescriptor
     @State private var queue: ChannelQueue
+    @State private var sleepDeadline: Date?
 
     init(room: RoomDescriptor, rooms: [RoomDescriptor]) {
         _room = State(initialValue: room)
@@ -27,7 +28,7 @@ struct ChannelPlayerView: View {
     }
 
     var body: some View {
-        PlayerView(room: room, queue: queue) { next in
+        PlayerView(room: room, queue: queue, sleepDeadline: $sleepDeadline) { next in
             if !queue.rooms.contains(where: { $0.key == next.key }) {
                 queue = ChannelQueue(rooms: queue.rooms + [next], current: next)
             }

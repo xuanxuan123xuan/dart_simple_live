@@ -111,7 +111,11 @@ actor HuyaService: LiveProviderService, DanmakuService {
 
     private func liveDetail(_ id: String) async throws -> JSONObject {
         let room = try await detail(id)["roomInfo"]
-        guard room.integer("eLiveStatus") == 2 else { throw LiveProviderError.offline }
+        switch room.integer("eLiveStatus") {
+        case 2: break
+        case 0, 1: throw LiveProviderError.offline
+        default: throw LiveProviderError.invalidResponse
+        }
         return room["tLiveInfo"]
     }
 

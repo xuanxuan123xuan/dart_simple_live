@@ -7,14 +7,17 @@ struct PlayerView: View {
     @EnvironmentObject private var core: NativeCoreClient
     @EnvironmentObject private var library: LibraryStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
     @AppStorage("simple_live_tvos.danmaku") private var danmakuEnabled = true
 
     let room: RoomDescriptor
     let queue: ChannelQueue
+    @Binding var sleepDeadline: Date?
     let openChannel: (RoomDescriptor) -> Void
 
     @StateObject private var engine = PlaybackEngine()
-    @State private var errorMessage: String?
+    @State private var playbackIssue: PlaybackIssue?
+    @State private var sleepExpired = false
     @State private var danmakuError: String?
     @State private var qualities: [LiveQuality] = []
     @State private var selectedQuality: LiveQuality?
@@ -36,7 +39,7 @@ struct PlayerView: View {
             } else if let view = engine.nativeView {
                 NativeVideoView(view: view).id(ObjectIdentifier(view)).ignoresSafeArea()
             }
-            if !controlsVisible && errorMessage == nil {
+            if !controlsVisible && playbackIssue == nil && !sleepExpired {
                 Button(action: showControls) {
                     Color.clear
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -56,9 +59,18 @@ struct PlayerView: View {
                 .accessibilityLabel("显示播放控制")
                 .accessibilityIdentifier("player-video-controls")
             }
-            if let errorMessage {
+            if sleepExpired {
                 ContentUnavailableView {
-                    Label(errorMessage, systemImage: "play.slash")
+                    Label("定时关闭已停止播放", systemImage: "moon.zzz")
+                } actions: {
+                    Button("返回") { dismiss() }
+                        .focused($focusedControl, equals: .sleepExit)
+                }
+            } else if let playbackIssue {
+                ContentUnavailableView {
+                    Label(playbackIssue.title, systemImage: playbackIssue == .offline ? "dot.radiowaves.left.and.right" : "play.slash")
+                } description: {
+                    if case let .failed(message) = playbackIssue { Text(message) }
                 } actions: {
                     Button("重试", action: refreshPlayback)
                         .focused($focusedControl, equals: .retry)
@@ -67,7 +79,7 @@ struct PlayerView: View {
             } else if engine.state != .playing && engine.state != .paused {
                 ProgressView()
             }
-            if danmakuEnabled, scenePhase == .active, errorMessage == nil {
+            if danmakuEnabled, scenePhase == .active, playbackIssue == nil, !sleepExpired {
                 DanmakuOverlay(events: danmakuEvents)
                     .ignoresSafeArea(.container, edges: .horizontal)
                     .allowsHitTesting(false)
@@ -75,7 +87,7 @@ struct PlayerView: View {
             }
         }
         .overlay(alignment: .top) {
-            if controlsVisible {
+            if controlsVisible && !sleepExpired {
                 playerControls
                     .transition(.opacity)
             }
@@ -90,13 +102,23 @@ struct PlayerView: View {
             case .favorites:
                 PlayerChannelList(current: room, rooms: library.favorites, title: "收藏列表", select: openChannel)
             case .settings:
-                PlayerRoomSettingsView(engine: engine, danmakuEnabled: $danmakuEnabled)
+                PlayerRoomSettingsView(engine: engine, danmakuEnabled: $danmakuEnabled,
+                                       sleepDeadline: $sleepDeadline)
             }
         }
         .onChange(of: focusedControl) { _, _ in controlsActivity += 1 }
-        .onChange(of: errorMessage) { _, message in
-            if message != nil { focusedControl = .retry }
-            else if focusedControl == .retry { focusedControl = .video }
+        .onChange(of: playbackIssue) { _, issue in
+            if sleepExpired { focusedControl = .sleepExit }
+            else if issue != nil { focusedControl = .retry }
+            else if focusedControl == .retry { focusedControl = preferredFocus }
+        }
+        .task(id: sleepDeadline) {
+            guard let deadline = sleepDeadline else { return }
+            do {
+                try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+                try Task.checkCancellation()
+                if sleepDeadline == deadline { stopForSleepTimer() }
+            } catch { return }
         }
         .task(id: autoHideActivity) {
             guard let activity = autoHideActivity else { return }
@@ -108,17 +130,21 @@ struct PlayerView: View {
                 if !controlsVisible { focusedControl = preferredFocus }
             }
         }
-        .task(id: PlaybackRequest(quality: selectedQuality, retry: retry, active: scenePhase == .active)) {
-            guard scenePhase == .active else {
+        .task(id: PlaybackRequest(quality: selectedQuality, retry: retry, active: scenePhase == .active && !sleepExpired)) {
+            if let deadline = sleepDeadline, deadline <= .now {
+                stopForSleepTimer()
+                return
+            }
+            guard scenePhase == .active, !sleepExpired else {
                 engine.stop()
                 playbackResources = []
                 return
             }
             await startPlayback()
         }
-        .task(id: danmakuEnabled && scenePhase == .active) {
+        .task(id: danmakuEnabled && scenePhase == .active && !sleepExpired) {
             danmakuError = nil
-            guard danmakuEnabled, scenePhase == .active else { return }
+            guard danmakuEnabled, scenePhase == .active, !sleepExpired else { return }
             do {
                 for try await event in try core.danmaku(for: room) {
                     try Task.checkCancellation()
@@ -132,7 +158,7 @@ struct PlayerView: View {
     }
 
     private var autoHideActivity: Int? {
-        controlsVisible && selectionMenu == nil && activeSheet == nil && scenePhase == .active ? controlsActivity : nil
+        controlsVisible && !sleepExpired && selectionMenu == nil && activeSheet == nil && scenePhase == .active ? controlsActivity : nil
     }
 
     private var firstControl: PlayerFocus { .playPause }
@@ -142,7 +168,8 @@ struct PlayerView: View {
     }
 
     private var preferredFocus: PlayerFocus {
-        if errorMessage != nil { return .retry }
+        if sleepExpired { return .sleepExit }
+        if playbackIssue != nil { return .retry }
         return controlsVisible ? firstControl : .video
     }
 
@@ -152,6 +179,12 @@ struct PlayerView: View {
                 Text(room.title).font(.headline).lineLimit(1)
                 Text(playbackStatus).font(.caption).foregroundStyle(.secondary)
                     .accessibilityIdentifier("player-status")
+                if let sleepDeadline {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text("定时关闭 \(SleepTimerDisplay.remaining(until: sleepDeadline, now: context.date))")
+                            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
                 if let danmakuError { Text(danmakuError).font(.caption).foregroundStyle(.secondary) }
                 Spacer()
             }
@@ -172,7 +205,7 @@ struct PlayerView: View {
     private var playbackActions: some View {
         HStack(spacing: 16) {
             Button(engine.pausedByUser ? "继续" : "暂停", action: togglePlayback)
-                .disabled(errorMessage != nil)
+                .disabled(playbackIssue != nil)
                 .focused($focusedControl, equals: .playPause)
                 .accessibilityIdentifier("player-play-pause")
             Button("刷新", action: refreshPlayback)
@@ -244,7 +277,7 @@ struct PlayerView: View {
     }
 
     private var playbackStatus: String {
-        if errorMessage != nil { return "播放失败" }
+        if let playbackIssue { return playbackIssue.title }
         switch engine.state {
         case .idle, .preparing: return "连接中"
         case .buffering: return "缓冲中"
@@ -262,9 +295,18 @@ struct PlayerView: View {
     }
 
     private func togglePlayback() {
-        guard errorMessage == nil else { return }
+        guard playbackIssue == nil, !sleepExpired else { return }
         engine.togglePlayback()
         controlsActivity += 1
+    }
+
+    private func stopForSleepTimer() {
+        guard !sleepExpired else { return }
+        sleepExpired = true
+        activeSheet = nil
+        selectionMenu = nil
+        focusedControl = .sleepExit
+        engine.stop()
     }
 
     private func switchChannel(_ offset: Int) {
@@ -296,7 +338,7 @@ struct PlayerView: View {
     }
 
     private func startPlayback() async {
-        errorMessage = nil
+        playbackIssue = nil
         let requestedLine = preferredLine
         do {
             let service = try core.service(room.provider)
@@ -333,7 +375,11 @@ struct PlayerView: View {
                 try await play(fresh, preferredLine: requestedLine)
             }
         } catch {
-            if !Task.isCancelled { errorMessage = error.localizedDescription }
+            guard !Task.isCancelled, !sleepExpired else { return }
+            let issue = await PlaybackIssue.classify(error) {
+                try await core.service(room.provider).resolveRoom(room.roomId).isLive
+            }
+            if !Task.isCancelled, !sleepExpired { playbackIssue = issue }
         }
     }
 
@@ -345,7 +391,7 @@ struct PlayerView: View {
 }
 
 private enum PlayerFocus: Hashable {
-    case video, playPause, refresh, channels, quality, line, danmaku, favorite, favoriteList, settings, retry
+    case video, playPause, refresh, channels, quality, line, danmaku, favorite, favoriteList, settings, retry, sleepExit
 }
 
 private enum PlayerSheet: String, Identifiable {
