@@ -69,8 +69,20 @@ struct HomeView: View {
     private var browse: some View {
         VStack(alignment: .leading, spacing: 10) {
             browseTools
-            HomeRoomResults(provider: provider, listing: .recommended)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Group {
+                if provider == "xiaohongshu" {
+                    ContentUnavailableView {
+                        Label("小红书直播发现暂不可用", systemImage: "link")
+                    } description: {
+                        Text("仍可通过直播链接或房间号进入。")
+                    } actions: {
+                        openRoomLink
+                    }
+                } else {
+                    HomeRoomResults(provider: provider, listing: .recommended)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -89,9 +101,9 @@ struct HomeView: View {
                 .buttonStyle(HomeButtonStyle())
                 .focusEffectDisabled()
                 .accessibilityIdentifier("live-categories")
-            }
 
-            openRoomLink
+                openRoomLink
+            }
         }
         .focusSection()
     }
@@ -340,16 +352,33 @@ private struct OpenRoomView: View {
     @State private var input = ""
     @State private var error: String?
     @State private var submission: String?
+    @State private var selectedProvider: String?
     let provider: String
     let open: (RoomDescriptor) -> Void
 
     var body: some View {
         VStack(spacing: 24) {
+            Text("分享链接会自动识别平台。输入房间号时，请先选择所属平台。")
+                .foregroundStyle(.secondary)
+            HStack(spacing: 18) {
+                ForEach(core.providers) { platform in
+                    Button { selectedProvider = platform.id } label: {
+                        HomePill(selected: activeProvider == platform.id, quiet: false) { Text(platform.title) }
+                    }
+                    .buttonStyle(HomeButtonStyle())
+                    .focusEffectDisabled()
+                    .accessibilityAddTraits(activeProvider == platform.id ? .isSelected : [])
+                }
+            }
+            .focusSection()
+            .disabled(submission != nil)
             TextField("房间号或直播链接", text: $input)
                 .autocorrectionDisabled()
-                .onSubmit { submission = input }
-            Button("进入直播间") { submission = input }
-                .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .onSubmit { submit() }
+                .frame(maxWidth: 850)
+                .accessibilityIdentifier("open-room-input")
+            Button("进入直播间", action: submit)
+                .disabled(submission != nil || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             if submission != nil { ProgressView() }
             if let error { Text(error) }
         }
@@ -359,13 +388,20 @@ private struct OpenRoomView: View {
             error = nil
             defer { if !Task.isCancelled { self.submission = nil } }
             do {
-                let room = try await core.service(provider).resolveRoom(submission)
+                let room = try await core.resolveRoomInput(submission, provider: activeProvider)
                 try Task.checkCancellation()
                 open(room)
             } catch {
                 if !Task.isCancelled { self.error = error.localizedDescription }
             }
         }
+    }
+
+    private var activeProvider: String { selectedProvider ?? provider }
+
+    private func submit() {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if submission == nil, !value.isEmpty { submission = value }
     }
 }
 

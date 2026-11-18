@@ -59,6 +59,15 @@ final class NativeCoreClient: ObservableObject {
         }
     }
 
+    func resolveRoomInput(_ input: String, provider: String) async throws -> RoomDescriptor {
+        let target = try await LiveRoomInput { try await ProviderHTTP.publicShare.shareLocation($0) }
+            .resolve(input, defaultProvider: provider)
+        if target.isDouyinReflow {
+            return try await douyin.resolveReflow(target.roomID, secUserID: target.douyinUserID)
+        }
+        return try await service(target.provider).resolveRoom(target.roomID)
+    }
+
     func danmaku(for room: RoomDescriptor) throws -> AsyncThrowingStream<DanmakuEvent, Error> {
         guard let source = try service(room.provider) as? any DanmakuService else {
             throw LiveProviderError.unsupported

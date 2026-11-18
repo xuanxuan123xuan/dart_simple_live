@@ -42,6 +42,62 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertTrue(state["body"].fields["missing"] is NSNull)
     }
 
+    func testLiveRoomInputRoutesShareTextAndBareRoomNumbers() async throws {
+        let parser = LiveRoomInput { _ in throw LiveProviderError.invalidRoom }
+        let fixtures = [
+            ("看看这个直播 https://live.bilibili.com/52？", "douyu", "bilibili", "52"),
+            ("https://www.douyin.com/follow/live/987", "bilibili", "douyin", "987"),
+            ("https://www.douyu.com/topic/game?rid=63", "huya", "douyu", "63"),
+            ("https://live.kuaishou.com/u/aB_9", "huya", "kuaishou", "aB_9"),
+            ("https://live-room.xiaohongshu.com/hina/livestream/123456789/0", "huya", "xiaohongshu", "123456789"),
+            ("  76  ", "huya", "huya", "76"),
+        ]
+        for (input, fallback, provider, id) in fixtures {
+            let target = try await parser.resolve(input, defaultProvider: fallback)
+            XCTAssertEqual(target, LiveRoomTarget(provider: provider, roomID: id))
+        }
+        let reflow = try await parser.resolve("https://webcast.amemv.com/reflow/12345?sec_user_id=abc", defaultProvider: "huya")
+        XCTAssertTrue(reflow.isDouyinReflow)
+        XCTAssertEqual(reflow.douyinUserID, "abc")
+    }
+
+    func testLiveRoomInputRestrictsRedirectsAndRejectsUntrustedLinks() async throws {
+        let short = URL(string: "https://v.kuaishou.com/demo")!
+        var redirects: [URL] = []
+        let parser = LiveRoomInput { url in
+            redirects.append(url)
+            return URL(string: "https://m.chenzhongtech.com/fw/live/host9")!
+        }
+        let result = try await parser.resolve(short.absoluteString, defaultProvider: "bilibili")
+        XCTAssertEqual(result, LiveRoomTarget(provider: "kuaishou", roomID: "host9"))
+        XCTAssertEqual(redirects, [short])
+
+        let invalid = ["https://live.bilibili.com.example/123", "https://user@live.bilibili.com/123",
+                       "https://live.bilibili.com:8000/123", "https://www.douyin.com/video/123",
+                       "https://live.kuaishou.com/u/ab%2Fcd"]
+        for link in invalid {
+            do {
+                _ = try await parser.resolve(link, defaultProvider: "bilibili")
+                XCTFail("Accepted invalid link: \(link)")
+            } catch LiveProviderError.invalidRoom {}
+        }
+        XCTAssertEqual(redirects.count, 1)
+
+        let crossPlatform = LiveRoomInput { _ in URL(string: "https://b23.tv/another")! }
+        do {
+            _ = try await crossPlatform.resolve(short.absoluteString, defaultProvider: "bilibili")
+            XCTFail("Short link redirected to an unrelated platform")
+        } catch LiveProviderError.invalidRoom {}
+
+        var hops = 0
+        let looping = LiveRoomInput { url in hops += 1; return url }
+        do {
+            _ = try await looping.resolve(short.absoluteString, defaultProvider: "bilibili")
+            XCTFail("Short link exceeded redirect limit")
+        } catch LiveProviderError.invalidRoom {}
+        XCTAssertEqual(hops, 5)
+    }
+
     func testRoomLinksRejectUntrustedHostsAndPathTraversal() throws {
         XCTAssertEqual(try normalizedRoomID("https://live.bilibili.com/123?from=share", hosts: ["live.bilibili.com"]), "123")
         XCTAssertThrowsError(try normalizedRoomID("https://live.bilibili.com.example/123", hosts: ["live.bilibili.com"]))

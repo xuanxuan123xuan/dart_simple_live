@@ -82,6 +82,20 @@ actor DouyinService: LiveProviderService, DanmakuService {
         return room
     }
 
+    func resolveReflow(_ roomID: String, secUserID: String?) async throws -> RoomDescriptor {
+        guard roomID.range(of: #"^[0-9]{1,32}$"#, options: .regularExpression) != nil else {
+            throw LiveProviderError.invalidRoom
+        }
+        let response = try await http.json("https://webcast.amemv.com/webcast/room/reflow/info/", query: [
+            "type_id": "0", "live_id": "1", "room_id": roomID, "sec_user_id": secUserID ?? "",
+            "version_code": "99.99.99", "app_id": "6383",
+        ], headers: ["User-Agent": Self.userAgent, "Referer": Self.live + "/"])
+        guard (response.integer("status_code") ?? 0) == 0 else { throw LiveProviderError.serviceUnavailable }
+        let webID = response["data"]["room"]["owner"].text("web_rid")
+        guard !webID.isEmpty else { throw LiveProviderError.invalidRoom }
+        return try await resolveRoom(webID)
+    }
+
     func qualities(roomId: String) async throws -> [LiveQuality] {
         try await variants(roomId).map(\.quality)
     }

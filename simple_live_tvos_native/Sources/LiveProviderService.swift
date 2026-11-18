@@ -134,8 +134,11 @@ protocol DanmakuService: Sendable {
 final class ProviderHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let session: URLSession
     private let redirectHosts: Set<String>
+    private let followsRedirects: Bool
+    static let publicShare = ProviderHTTP(followsRedirects: false)
 
-    init(redirectHosts: Set<String> = []) {
+    init(redirectHosts: Set<String> = [], followsRedirects: Bool = true) {
+        self.followsRedirects = followsRedirects
         self.redirectHosts = redirectHosts
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
@@ -180,10 +183,19 @@ final class ProviderHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
         guard let response = result.1 as? HTTPURLResponse else { throw LiveProviderError.invalidResponse }
         switch response.statusCode {
         case 200..<300: return (result.0, response)
+        case 300..<400 where !followsRedirects: return (result.0, response)
         case 401, 403, 406: throw LiveProviderError.authenticationRequired
         case 412, 429: throw LiveProviderError.rateLimited
         default: throw LiveProviderError.serviceUnavailable
         }
+    }
+
+    func shareLocation(_ url: URL) async throws -> URL {
+        let (_, response) = try await self.response(url.absoluteString)
+        guard (300..<400).contains(response.statusCode),
+              let header = response.value(forHTTPHeaderField: "Location"),
+              let destination = URL(string: header, relativeTo: url)?.absoluteURL else { throw LiveProviderError.invalidRoom }
+        return destination
     }
 
     func json(_ endpoint: String, query: [String: String] = [:], headers: [String: String] = [:],
@@ -194,7 +206,7 @@ final class ProviderHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        guard let destination = request.url, destination.scheme == "https",
+        guard followsRedirects, let destination = request.url, destination.scheme == "https",
               destination.user == nil, destination.password == nil,
               let host = destination.host?.lowercased() else {
             completionHandler(nil)
