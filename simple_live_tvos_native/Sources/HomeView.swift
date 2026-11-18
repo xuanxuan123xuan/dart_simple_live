@@ -13,7 +13,7 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 16) {
-                HomePlatformBar(providers: core.providers, selection: provider) { id in
+                HomePlatformBar(providers: section == .settings ? [] : core.providers, selection: provider) { id in
                     if provider != id {
                         category = nil
                         provider = id
