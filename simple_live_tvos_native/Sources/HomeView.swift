@@ -6,6 +6,7 @@ struct HomeView: View {
     @State private var section: HomeSection = .live
     @State private var provider = "bilibili"
     @State private var searchQuery = ""
+    @State private var searchMode: SearchMode = .rooms
     @State private var path: [HomeRoute] = []
     @FocusState private var focusedSection: HomeSection?
 
@@ -106,8 +107,16 @@ struct HomeView: View {
                 if provider == "xiaohongshu" {
                     openRoomLink
                 } else {
-                    TextField("搜索直播间", text: $searchQuery,
-                              prompt: Text("搜索\(platform)直播间").foregroundStyle(.white.opacity(0.68)))
+                    ForEach(SearchMode.allCases, id: \.self) { mode in
+                        Button { searchMode = mode } label: {
+                            HomePill(selected: searchMode == mode, quiet: false) { Text(mode.title) }
+                        }
+                        .buttonStyle(HomeButtonStyle())
+                        .focusEffectDisabled()
+                        .accessibilityAddTraits(searchMode == mode ? .isSelected : [])
+                    }
+                    TextField("搜索\(searchMode.title)", text: $searchQuery,
+                              prompt: Text("搜索\(platform)\(searchMode.title)").foregroundStyle(.white.opacity(0.68)))
                         .autocorrectionDisabled()
                         .frame(width: 620)
                         .accessibilityIdentifier("search-query")
@@ -121,7 +130,7 @@ struct HomeView: View {
                 } else if term.isEmpty {
                     ContentUnavailableView("输入主播名或关键词", systemImage: "magnifyingglass")
                 } else {
-                    HomeRoomResults(provider: provider, listing: .search(term))
+                    HomeRoomResults(provider: provider, listing: .search(term, searchMode))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -316,7 +325,7 @@ private struct HomeRoomResults: View {
     }
 
     private var emptyTitle: LocalizedStringKey {
-        if case .search = listing { return "未找到相关直播间" }
+        if case let .search(_, mode) = listing { return mode == .anchors ? "未找到相关主播" : "未找到相关直播间" }
         return "暂无直播间"
     }
 
@@ -429,10 +438,16 @@ private struct RoomTile: View {
                 Text(room.title)
                     .font(.system(size: 24, weight: .semibold))
                     .lineLimit(1)
-                Text(room.userName)
-                    .font(.system(size: 20))
-                    .foregroundStyle(.white.opacity(0.64))
-                    .lineLimit(1)
+                if let isLive = room.isLive {
+                    Label(isLive ? "直播中" : "未开播", systemImage: isLive ? "dot.radiowaves.left.and.right" : "moon")
+                        .font(.system(size: 20))
+                        .foregroundStyle(isLive ? Color.green : Color.white.opacity(0.64))
+                } else {
+                    Text(room.userName.isEmpty || room.userName == room.title ? room.roomId : room.userName)
+                        .font(.system(size: 20))
+                        .foregroundStyle(.white.opacity(0.64))
+                        .lineLimit(1)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)

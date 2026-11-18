@@ -32,7 +32,7 @@ actor DouyinService: LiveProviderService, DanmakuService {
 
     func rooms(in listing: RoomListing, page: Int) async throws -> RoomPage {
         switch listing {
-        case let .search(keyword):
+        case let .search(keyword, mode):
             let result = try await signedRequest(Self.web + "/aweme/v1/web/live/search/", query: [
                 "device_platform": "webapp", "channel": "channel_pc_web", "search_channel": "aweme_live",
                 "search_source": "switch_tab", "query_correct_type": "1", "is_filter_search": "0",
@@ -46,7 +46,17 @@ actor DouyinService: LiveProviderService, DanmakuService {
                 guard let raw = try? JSONObject.decode(Data(item["lives"].text("rawdata").utf8)) else { return nil }
                 return Self.room(raw, author: raw["owner"], id: raw["owner"].text("web_rid"))
             }
-            return RoomPage(rooms: rooms, hasMore: result.integer("has_more").map { $0 > 0 } ?? (items.count >= 10))
+            let results: [RoomDescriptor]
+            if mode == .anchors {
+                let matching = rooms.filter { $0.userName.localizedCaseInsensitiveContains(keyword) }
+                let other = rooms.filter { !$0.userName.localizedCaseInsensitiveContains(keyword) }
+                results = (matching + other).compactMap {
+                    RoomDescriptor.anchor(provider: $0.provider, id: $0.roomId, name: $0.userName, avatar: "", isLive: true)
+                }
+            } else {
+                results = rooms
+            }
+            return RoomPage(rooms: results, hasMore: result.integer("has_more").map { $0 > 0 } ?? (items.count >= 10))
         default:
             var partition = ["720", "1"]
             if case let .category(category) = listing { partition = category.categoryId.components(separatedBy: ",") }

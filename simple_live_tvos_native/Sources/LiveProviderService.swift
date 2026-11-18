@@ -35,9 +35,18 @@ struct RoomDescriptor: Identifiable, Hashable, Codable {
     let title: String
     let cover: String
     let userName: String
+    var isLive: Bool? = nil
 
     var id: String { key }
     var key: String { "\(provider):\(roomId)" }
+
+    static func anchor(provider: String, id: String, name: String, avatar: String, isLive: Bool?) -> Self? {
+        let id = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, id != "null" else { return nil }
+        let cleanName = name.replacingOccurrences(of: "</?em[^>]*>", with: "", options: .regularExpression)
+        return Self(provider: provider, roomId: id, title: cleanName.isEmpty ? id : cleanName,
+                    cover: normalizedImage(avatar), userName: cleanName, isLive: isLive)
+    }
 }
 
 struct RoomPage {
@@ -78,10 +87,16 @@ enum LiveProviderError: LocalizedError {
     }
 }
 
+enum SearchMode: String, CaseIterable, Hashable {
+    case rooms, anchors
+
+    var title: String { self == .rooms ? "直播间" : "主播" }
+}
+
 enum RoomListing: Hashable {
     case recommended
     case category(CategoryDescriptor)
-    case search(String)
+    case search(String, SearchMode = .rooms)
 }
 
 protocol LiveProviderService: Sendable {
@@ -235,6 +250,13 @@ struct JSONObject {
         return (fields[key] as? NSNumber)?.stringValue ?? ""
     }
     func integer(_ key: String) -> Int? { Int(text(key)) }
+    func bool(_ key: String) -> Bool? {
+        switch text(key).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true": true
+        case "0", "false": false
+        default: nil
+        }
+    }
     func values(_ key: String) -> [Any] { fields[key] as? [Any] ?? [] }
 }
 

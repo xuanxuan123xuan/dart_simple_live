@@ -23,6 +23,18 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertEqual(branch.children.first?.parentId, "2,2")
     }
 
+    func testAnchorResultPreservesProviderRoomIdentityAndLiveStatus() throws {
+        let payload = try JSONObject.decode(Data(#"{"roomid":25,"uname":"<em>直播</em>昵称","uface":"//images.example/host.png","is_live":false}"#.utf8))
+        let anchor = try XCTUnwrap(RoomDescriptor.anchor(provider: "bilibili", id: payload.text("roomid"),
+            name: payload.text("uname"), avatar: payload.text("uface"), isLive: payload.bool("is_live")))
+        XCTAssertEqual(anchor.key, "bilibili:25")
+        XCTAssertEqual(anchor.title, "直播昵称")
+        XCTAssertEqual(anchor.cover, "https://images.example/host.png")
+        XCTAssertEqual(anchor.isLive, false)
+        XCTAssertNil(payload.bool("unknown"))
+        XCTAssertNil(RoomDescriptor.anchor(provider: "bilibili", id: "null", name: "主播", avatar: "", isLive: true))
+    }
+
     func testSSRDataPreservesQuotedUndefinedAndBalancesNestedObjects() throws {
         let page = #"<script>window.__INITIAL_STATE__ = {"title":"undefined and }","body":{"missing":undefined}}</script>"#
         let state = try EmbeddedPageData.initialState(in: page)

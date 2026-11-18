@@ -31,15 +31,19 @@ actor HuyaService: LiveProviderService, DanmakuService {
 
     func rooms(in listing: RoomListing, page: Int) async throws -> RoomPage {
         switch listing {
-        case let .search(keyword):
+        case let .search(keyword, mode):
             let offset = (page - 1) * 20
             let json = try await http.json("https://search.cdn.huya.com/", query: [
-                "m": "Search", "do": "getSearchContent", "q": keyword, "uid": "0", "v": "4", "typ": "-5",
+                "m": "Search", "do": "getSearchContent", "q": keyword, "uid": "0", "v": mode == .anchors ? "1" : "4", "typ": "-5",
                 "livestate": "0", "rows": "20", "start": String(offset),
-            ], headers: Self.headers)["response"]["3"]
+            ], headers: Self.headers)["response"][mode == .anchors ? "1" : "3"]
             guard let count = json.integer("numFound") else { throw LiveProviderError.invalidResponse }
-            let rooms = json.objects("docs").compactMap {
-                Self.room($0, idKey: "room_id", titleKeys: ["game_introduction", "game_roomName"],
+            let rooms = json.objects("docs").compactMap { item in
+                if mode == .anchors {
+                    return RoomDescriptor.anchor(provider: "huya", id: item.text("room_id"), name: item.text("game_nick"),
+                                                 avatar: item.text("game_avatarUrl180"), isLive: item.bool("gameLiveOn"))
+                }
+                return Self.room(item, idKey: "room_id", titleKeys: ["game_introduction", "game_roomName"],
                           coverKey: "game_screenshot", nameKey: "game_nick")
             }
             return RoomPage(rooms: rooms, hasMore: count > offset + 20)

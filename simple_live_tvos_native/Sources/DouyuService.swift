@@ -34,7 +34,20 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
     }
 
     func rooms(in listing: RoomListing, page: Int) async throws -> RoomPage {
-        if case let .search(keyword) = listing {
+        if case let .search(keyword, mode) = listing {
+            if mode == .anchors {
+                let data = try Self.payload(await http.json(Self.web + "/japi/search/api/searchUser", query: [
+                    "kw": keyword, "page": String(page), "pageSize": "20", "filterType": "1",
+                ], headers: headers(path: "/search/")))
+                guard data.fields["relateUser"] is [Any] else { throw LiveProviderError.invalidResponse }
+                let items = data.objects("relateUser")
+                let rooms = items.compactMap { item in
+                    let anchor = item["anchorInfo"]
+                    return RoomDescriptor.anchor(provider: "douyu", id: anchor.text("rid"), name: anchor.text("nickName"),
+                                                 avatar: anchor.text("avatar"), isLive: anchor.bool("isLive").map { $0 && anchor.integer("roomType") == 0 })
+                }
+                return RoomPage(rooms: rooms, hasMore: items.count >= 20)
+            }
             let data = try Self.payload(await http.json(Self.web + "/japi/search/api/searchShow", query: [
                 "kw": keyword, "page": String(page), "pageSize": "20",
             ], headers: headers(path: "/search/")))

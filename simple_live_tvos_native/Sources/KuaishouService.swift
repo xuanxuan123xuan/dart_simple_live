@@ -51,7 +51,8 @@ actor KuaishouService: LiveProviderService, DanmakuService {
             ])
             items = data.objects("list")
             more = data.integer("hasMore") == 1
-        case let .search(keyword):
+        case let .search(keyword, mode):
+            if mode == .anchors { return try await searchAnchors(keyword, page: page) }
             let data = try await request("/live_api/search/liveStream", [
                 "keyword": keyword, "page": String(page), "count": "20", "ussid": "",
             ])
@@ -60,6 +61,36 @@ actor KuaishouService: LiveProviderService, DanmakuService {
             more = data.integer("hasMore").map { $0 == 1 } ?? (items.count >= 20)
         }
         return RoomPage(rooms: items.compactMap(Self.room), hasMore: more)
+    }
+
+    private func searchAnchors(_ keyword: String, page: Int) async throws -> RoomPage {
+        let items: [JSONObject]
+        let more: Bool
+        do {
+            let data = try await request("/live_api/search/author", [
+                "key": keyword, "keyword": keyword, "page": String(page), "count": "15", "ussid": "", "lssid": "",
+            ])
+            guard data.integer("result") == 1, data.fields["list"] is [Any] else { throw LiveProviderError.invalidResponse }
+            items = data.objects("list")
+            let flags = ["hasMore", "hasNext", "hasNextPage"].compactMap { data.bool($0) }
+            let totals = ["totalPage", "pageCount", "totalPages"].compactMap { data.integer($0) }
+            let counts = ["total", "totalCount", "totalSize"].compactMap { data.integer($0) }
+            more = flags.first ?? data.integer("nextPage").map { $0 > page }
+                ?? totals.first.map { page < $0 } ?? counts.first.map { page * 15 < $0 } ?? false
+        } catch {
+            try Task.checkCancellation()
+            guard page == 1 else { throw error }
+            let overview = try await request("/live_api/search/overview", ["keyword": keyword, "ussid": ""])
+            guard overview.fields["list"] is [Any] else { throw LiveProviderError.invalidResponse }
+            let section = overview.objects("list").first { $0.text("type") == "authors" }
+            if let section, !(section.fields["list"] is [Any]) { throw LiveProviderError.invalidResponse }
+            items = section?.objects("list") ?? []
+            more = false
+        }
+        return RoomPage(rooms: items.compactMap {
+            RoomDescriptor.anchor(provider: "kuaishou", id: $0.text("id"), name: $0.text("name"),
+                                  avatar: $0.text("avatar"), isLive: $0.bool("living"))
+        }, hasMore: more)
     }
 
     func resolveRoom(_ input: String) async throws -> RoomDescriptor {

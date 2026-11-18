@@ -105,7 +105,19 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
             _ = try Self.payload(result)
             items = result.objects("data")
             limit = 30
-        case let .search(keyword):
+        case let .search(keyword, mode):
+            if mode == .anchors {
+                let data = try Self.payload(await request(Self.web + "/x/web-interface/search/type", [
+                    "search_type": "live_user", "cover_type": "user_cover", "keyword": keyword,
+                    "page": String(page), "highlight": "0",
+                ]))
+                let items = data.objects("result")
+                let rooms = items.compactMap {
+                    RoomDescriptor.anchor(provider: "bilibili", id: $0.text("roomid"), name: $0.text("uname"),
+                                          avatar: $0.text("uface"), isLive: $0.bool("is_live"))
+                }
+                return RoomPage(rooms: rooms, hasMore: data.integer("numPages").map { page < $0 } ?? (items.count >= 40))
+            }
             let result = try Self.payload(await request(Self.web + "/x/web-interface/search/type", [
                 "search_type": "live", "cover_type": "user_cover", "keyword": keyword,
                 "page": String(page), "highlight": "0",
