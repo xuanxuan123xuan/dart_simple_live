@@ -1,0 +1,183 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:simple_live_app/models/app_update_model.dart';
+import 'package:simple_live_app/services/app_update_service.dart';
+
+void main() {
+  group('AppUpdateService release parsing', () {
+    test('mixed release directory retains only ordinary stable and dev', () {
+      final tags = [
+        'tv_v1.7.9',
+        'tv_v26.3.20',
+        'tv_v26.3.20-dev',
+        'v26.3.20',
+        'v26.3.20-dev',
+        'v26.3.20-pre',
+        'ios-dev'
+      ];
+      final releases = tags
+          .map((tag) => AppUpdateService.parseRelease({'tag_name': tag}))
+          .whereType<AppUpdateRelease>()
+          .toList();
+      expect(releases.map((r) => r.tag), ['v26.3.20', 'v26.3.20-dev']);
+      expect(releases.map((r) => r.channel),
+          [AppUpdateChannel.stable, AppUpdateChannel.dev]);
+    });
+    test('detects stable and dev tags', () {
+      expect(
+        AppUpdateService.channelFromTag('v26.3.20'),
+        AppUpdateChannel.stable,
+      );
+      expect(
+        AppUpdateService.channelFromTag('v26.3.20-dev'),
+        AppUpdateChannel.dev,
+      );
+      expect(AppUpdateService.channelFromTag('v26.3.20-pre'), isNull);
+      expect(AppUpdateService.channelFromTag('tv_v1.7.9'), isNull);
+      expect(AppUpdateService.channelFromTag('tv_v26.3.20'), isNull);
+    });
+
+    test('extracts version and build number from release tags', () {
+      expect(AppUpdateService.versionFromTag('v26.3.20-dev'), '26.3.20');
+      expect(AppUpdateService.versionFromTag('v26.3.20'), '26.3.20');
+      expect(AppUpdateService.buildNumberFromVersion('26.3.20'), 26320);
+      expect(AppUpdateService.buildNumberFromVersion('26.3.1'), 26301);
+      expect(AppUpdateService.buildNumberFromVersion('bad.version'), 0);
+    });
+
+    test('detects newer releases against current build', () {
+      final service = AppUpdateService();
+      final currentBuild = service.currentBuildNumber;
+      final nextRelease = _release(
+        'v99.4.99',
+        buildNumber: currentBuild + 1,
+      );
+      final currentRelease = _release(
+        'v26.3.1',
+        buildNumber: currentBuild,
+      );
+
+      expect(service.isNewerThanCurrent(nextRelease), isTrue);
+      expect(service.isNewerThanCurrent(currentRelease), isFalse);
+    });
+
+    test('parses SHA-256 lines from release body', () {
+      const hash =
+          '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      final values = AppUpdateService.parseSha256(
+        '### SHA-256\n```\n$hash  simple-live-26.3.20-windows.exe\n```',
+      );
+
+      expect(values['simple-live-26.3.20-windows.exe'], hash);
+    });
+
+    test('parses platform, package kind and ABI from asset names', () {
+      final android = _asset('simple-live-26.3.20-android-arm64-v8a.apk');
+      final windows = _asset('simple-live-26.3.20-windows.exe');
+      final linux = _asset('simple-live-26.3.20-linux.AppImage');
+      final macos = _asset('simple-live-26.3.20-macos.dmg');
+      final ohos = _asset('simple-live-26.3.20-ohos-arm64-signed.hap');
+
+      expect(android?.platform, AppUpdatePlatform.android);
+      expect(android?.kind, AppUpdatePackageKind.apk);
+      expect(android?.abi, 'arm64-v8a');
+      expect(windows?.platform, AppUpdatePlatform.windows);
+      expect(windows?.kind, AppUpdatePackageKind.exe);
+      expect(linux?.kind, AppUpdatePackageKind.appImage);
+      expect(macos?.platform, AppUpdatePlatform.macos);
+      expect(ohos?.platform, AppUpdatePlatform.ohos);
+      expect(ohos?.kind, AppUpdatePackageKind.hap);
+      expect(ohos?.abi, 'arm64');
+    });
+
+    test('keeps desktop assets and filters Android TV assets from releases',
+        () {
+      final release = AppUpdateService.parseRelease({
+        'tag_name': 'v26.3.20',
+        'published_at': '2026-08-19T00:00:00Z',
+        'html_url': 'https://github.com/example/releases/tag/v26.3.20',
+        'body': '',
+        'assets': [
+          _assetJson('simple-live-26.3.20-windows.exe'),
+          _assetJson('simple-live-26.3.20-windows.zip'),
+          _assetJson('simple-live-tv-26.3.20-android-universal.apk'),
+        ],
+      });
+
+      expect(release, isNotNull);
+      expect(release!.channel, AppUpdateChannel.stable);
+      expect(
+        release.assets.map((asset) => asset.name),
+        containsAll([
+          'simple-live-26.3.20-windows.exe',
+          'simple-live-26.3.20-windows.zip',
+        ]),
+      );
+      expect(
+        release.assets.any((asset) => asset.platform == AppUpdatePlatform.tv),
+        isFalse,
+      );
+    });
+
+    test('rejects TV releases from the normal app catalog', () {
+      for (final tag in ['tv_v1.7.9', 'tv_v26.3.20']) {
+        expect(
+          AppUpdateService.parseRelease({
+            'tag_name': tag,
+            'assets': [
+              _assetJson('simple-live-tv-1.7.9-android-universal.apk'),
+            ],
+          }),
+          isNull,
+        );
+      }
+    });
+
+    test('filters TV assets when an ordinary release contains mixed assets',
+        () {
+      final release = AppUpdateService.parseRelease({
+        'tag_name': 'v26.3.20',
+        'assets': [
+          _assetJson('simple-live-26.3.20-android-universal.apk'),
+          _assetJson('simple-live-tv-26.3.20-android-universal.apk'),
+          _assetJson('simple-live-tv-26.3.20-windows.exe'),
+        ],
+      });
+
+      expect(
+        release!.assets.map((asset) => asset.name),
+        contains('simple-live-26.3.20-android-universal.apk'),
+      );
+      expect(
+        release.assets.map((asset) => asset.name),
+        isNot(contains('simple-live-tv-26.3.20-android-universal.apk')),
+      );
+      expect(
+        release.assets.map((asset) => asset.name),
+        isNot(contains('simple-live-tv-26.3.20-windows.exe')),
+      );
+    });
+  });
+}
+
+AppUpdateAsset? _asset(String name) {
+  return AppUpdateService.parseAsset(_assetJson(name));
+}
+
+Map<String, dynamic> _assetJson(String name) => {
+      'name': name,
+      'browser_download_url': 'https://example.com/$name',
+      'size': 1024,
+    };
+
+AppUpdateRelease _release(String tag, {required int buildNumber}) {
+  return AppUpdateRelease(
+    channel: AppUpdateChannel.stable,
+    tag: tag,
+    version: tag.substring(1),
+    buildNumber: buildNumber,
+    publishedAt: null,
+    assets: const [],
+    body: '',
+    releaseUrl: 'https://example.com/$tag',
+  );
+}
