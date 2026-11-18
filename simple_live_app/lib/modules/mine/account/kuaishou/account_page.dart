@@ -10,6 +10,7 @@ class KuaishouAccountPage extends GetView<AccountController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: const Text('快手账号')),
       body: ListView(
         padding: AppStyle.pagePadding(top: 0),

@@ -13,9 +13,11 @@ class GlassSurface extends StatelessWidget {
     this.circular = false,
     this.padding,
     this.onTap,
+    this.onLongPress,
     this.clipBehavior = Clip.antiAlias,
     this.liveBackdrop = false,
     this.disablePlatformViewBackdrop = false,
+    this.fallbackColor,
     this.fallbackBorder = false,
     this.showEdgeHighlight = true,
     super.key,
@@ -31,6 +33,7 @@ class GlassSurface extends StatelessWidget {
   final bool circular;
   final EdgeInsetsGeometry? padding;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
   final Clip clipBehavior;
 
   /// Forces the live BackdropFilter path so content moving behind a pinned
@@ -43,6 +46,11 @@ class GlassSurface extends StatelessWidget {
   /// chrome that should follow the app glass setting without mirroring video
   /// content or paying for a per-frame backdrop capture.
   final bool disablePlatformViewBackdrop;
+
+  /// Optional opaque colour used when glass is disabled or unavailable. This
+  /// lets shared cards preserve transparent or tinted fallback surfaces while
+  /// still using the same glass implementation on capable platforms.
+  final Color? fallbackColor;
 
   /// Keeps the outline in the opaque fallback path (glass off). Chat bubbles
   /// opt in so their per-message outline survives when liquid glass is
@@ -77,7 +85,7 @@ class GlassSurface extends StatelessWidget {
     int glassTintAlpha = 0,
   }) {
     final colors = Theme.of(context).colorScheme;
-    final content = onTap == null
+    final content = onTap == null && onLongPress == null
         ? child
         : Material(
             color: Colors.transparent,
@@ -85,6 +93,7 @@ class GlassSurface extends StatelessWidget {
               customBorder: circular ? const CircleBorder() : null,
               borderRadius: circular ? null : BorderRadius.circular(radius),
               onTap: onTap,
+              onLongPress: onLongPress,
               child: child,
             ),
           );
@@ -95,7 +104,8 @@ class GlassSurface extends StatelessWidget {
       // text readable in light theme when glass is disabled.
       final isVideoChrome = role == GlassSurfaceRole.platformViewControl;
       final fallbackColor =
-          isVideoChrome ? Colors.black.withAlpha(102) : colors.surface;
+          this.fallbackColor ??
+          (isVideoChrome ? Colors.black.withAlpha(102) : colors.surface);
       final showBorder = isVideoChrome || fallbackBorder;
       final borderColor =
           isVideoChrome ? Colors.white.withAlpha(46) : colors.outlineVariant;

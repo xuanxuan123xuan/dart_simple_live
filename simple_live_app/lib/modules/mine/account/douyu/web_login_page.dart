@@ -11,6 +11,7 @@ class DouyuWebLoginPage extends GetView<DouyuWebLoginController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('斗鱼网页登录'),
         actions: [

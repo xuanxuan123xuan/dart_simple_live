@@ -15,6 +15,7 @@ class KuaishouWebLoginPage extends GetView<KuaishouWebLoginController> {
     return WillPopScope(
       onWillPop: controller.prepareToClose,
       child: Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
           title: Text(controller.isChallengeFlow
               ? "完成快手安全验证"

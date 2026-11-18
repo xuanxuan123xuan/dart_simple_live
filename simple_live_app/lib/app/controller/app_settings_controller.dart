@@ -138,6 +138,18 @@ class AppSettingsController extends GetxController {
       LocalStorageService.kRenderingAcceleration,
       true,
     );
+    mobileTopExtraInset.value = _normalizeMobileExtraInset(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kMobileTopExtraInset,
+        0,
+      ),
+    );
+    mobileBottomExtraInset.value = _normalizeMobileExtraInset(
+      LocalStorageService.instance.getValue(
+        LocalStorageService.kMobileBottomExtraInset,
+        0,
+      ),
+    );
     iosOriginalQualityPowerSaving.value = LocalStorageService.instance.getValue(
       LocalStorageService.kIosOriginalQualityPowerSaving,
       true,
@@ -775,6 +787,31 @@ class AppSettingsController extends GetxController {
     LocalStorageService.instance.setValue(
       LocalStorageService.kRenderingAcceleration,
       value,
+    );
+  }
+
+  static int _normalizeMobileExtraInset(Object? value) {
+    final parsed = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+    return parsed.clamp(0, 80).toInt();
+  }
+
+  final mobileTopExtraInset = 0.obs;
+  void setMobileTopExtraInset(int value) {
+    final normalized = _normalizeMobileExtraInset(value);
+    mobileTopExtraInset.value = normalized;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kMobileTopExtraInset,
+      normalized,
+    );
+  }
+
+  final mobileBottomExtraInset = 0.obs;
+  void setMobileBottomExtraInset(int value) {
+    final normalized = _normalizeMobileExtraInset(value);
+    mobileBottomExtraInset.value = normalized;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kMobileBottomExtraInset,
+      normalized,
     );
   }
 

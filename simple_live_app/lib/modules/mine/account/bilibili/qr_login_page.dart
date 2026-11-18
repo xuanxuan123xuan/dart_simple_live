@@ -10,6 +10,7 @@ class BiliBiliQRLoginPage extends GetView<BiliBiliQRLoginController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: const Text("哔哩哔哩账号登录")),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

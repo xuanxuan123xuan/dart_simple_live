@@ -12,6 +12,7 @@ class ProfileBackupPage extends GetView<ProfileBackupController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: const Text("配置包")),
       body: ListView(
         padding: AppStyle.pagePadding(),

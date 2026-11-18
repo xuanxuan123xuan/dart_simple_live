@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:simple_live_app/app/platform_utils.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 
 class SettingsCard extends StatelessWidget {
   final Widget child;
@@ -14,18 +16,13 @@ class SettingsCard extends StatelessWidget {
       // their tiles and dividers still provide the visual structure.
       return child;
     }
-    final radius = BorderRadius.circular(14);
-    return Material(
-      color: theme.colorScheme.surface.withAlpha(
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: 14,
+      fallbackColor: theme.colorScheme.surface.withAlpha(
         theme.brightness == Brightness.dark ? 176 : 210,
       ),
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: radius,
-        side: BorderSide(
-          color: theme.colorScheme.outlineVariant.withAlpha(105),
-        ),
-      ),
+      fallbackBorder: true,
       child: child,
     );
   }

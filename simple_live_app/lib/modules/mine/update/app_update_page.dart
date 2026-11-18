@@ -16,6 +16,7 @@ class AppUpdatePage extends GetView<AppUpdateController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: const Text('检查更新')),
       body: Obx(
         () => ListView(

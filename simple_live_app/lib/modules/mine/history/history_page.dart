@@ -22,6 +22,7 @@ class HistoryPage extends GetView<HistoryController> {
       rowCount = 1;
     }
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("观看记录"),
         actions: [

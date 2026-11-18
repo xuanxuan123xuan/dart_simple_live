@@ -59,8 +59,8 @@ void main() {
       'lib/widgets/settings/settings_card.dart',
     ).readAsStringSync();
     final ohosBranchStart = source.indexOf('if (PlatformUtils.isOhos)');
-    final materialBranchStart = source.indexOf('final radius', ohosBranchStart);
-    final ohosBranch = source.substring(ohosBranchStart, materialBranchStart);
+    final nonOhosBranchStart = source.indexOf('return GlassSurface', ohosBranchStart);
+    final ohosBranch = source.substring(ohosBranchStart, nonOhosBranchStart);
 
     expect(ohosBranch, contains('return child;'));
     expect(ohosBranch, isNot(contains('Material(')));

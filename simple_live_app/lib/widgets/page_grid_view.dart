@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/status/app_empty_widget.dart';
 import 'package:simple_live_app/widgets/status/app_error_widget.dart';
 import 'package:simple_live_app/widgets/status/app_loadding_widget.dart';
@@ -98,16 +100,19 @@ class PageGridView extends StatelessWidget {
                   !pageController.pageEmpty.value &&
                   pageController.list.isNotEmpty &&
                   showPCRefreshButton,
-              child: Center(
-                child: IconButton(
-                  style: IconButton.styleFrom(
-                    backgroundColor: Get.theme.cardColor.withAlpha(200),
-                    elevation: 4,
+              child: GlassSurface(
+                role: GlassSurfaceRole.control,
+                radius: 24,
+                circular: true,
+                fallbackColor: Get.theme.cardColor.withAlpha(200),
+                fallbackBorder: true,
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: IconButton(
+                    tooltip: "刷新",
+                    onPressed: pageController.refreshData,
+                    icon: const Icon(Icons.refresh),
                   ),
-                  onPressed: () {
-                    pageController.refreshData();
-                  },
-                  icon: const Icon(Icons.refresh),
                 ),
               ),
             ),

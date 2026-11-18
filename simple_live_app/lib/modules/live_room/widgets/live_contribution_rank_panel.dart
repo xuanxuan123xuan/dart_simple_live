@@ -4,8 +4,10 @@ import 'package:intl/intl.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
@@ -92,20 +94,25 @@ class _LiveContributionRankPanelState extends State<LiveContributionRankPanel> {
     final detail = controller.detail.value;
     final updatedAt = controller.contributionRankUpdatedAt.value;
 
-    return Container(
-      decoration: BoxDecoration(
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: 24,
+      liveBackdrop: false,
+      fallbackBorder: true,
+      child: Container(
+        decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            colorScheme.primaryContainer,
-            colorScheme.surfaceContainerHighest,
+            colorScheme.primaryContainer.withAlpha(190),
+            colorScheme.surfaceContainerHighest.withAlpha(190),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: AppStyle.radius24,
-      ),
-      padding: AppStyle.edgeInsetsA16,
-      child: Column(
+        ),
+        padding: AppStyle.edgeInsetsA16,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -188,6 +195,7 @@ class _LiveContributionRankPanelState extends State<LiveContributionRankPanel> {
             ],
           ),
         ],
+        ),
       ),
     );
   }
@@ -440,18 +448,14 @@ class _LiveContributionRankPanelState extends State<LiveContributionRankPanel> {
   Widget _buildRankTile(BuildContext context, LiveContributionRankItem item) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: AppStyle.radius12,
-        onTap: () => controller.showUserActions(item.userName),
-        onLongPress: () => controller.copyUserName(item.userName),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: AppStyle.radius12,
-            border: Border.all(color: Colors.grey.withAlpha(24)),
-          ),
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: 12,
+      onTap: () => controller.showUserActions(item.userName),
+      onLongPress: () => controller.copyUserName(item.userName),
+      fallbackColor: Theme.of(context).cardColor,
+      fallbackBorder: true,
+      child: Container(
           padding: AppStyle.edgeInsetsA12,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -560,7 +564,6 @@ class _LiveContributionRankPanelState extends State<LiveContributionRankPanel> {
               ),
             ],
           ),
-        ),
       ),
     );
   }

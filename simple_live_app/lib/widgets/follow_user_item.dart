@@ -5,6 +5,8 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 
 enum FollowUserItemStyle {
   defaultList,
@@ -157,15 +159,13 @@ class FollowUserItem extends StatelessWidget {
       );
     }
 
-    return Material(
-      color: cardColor,
-      borderRadius: radius,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        borderRadius: radius,
-        onTap: onTap,
-        onLongPress: handleLongPress,
-        child: Container(
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: radius.topLeft.x,
+      onTap: onTap,
+      onLongPress: handleLongPress,
+      fallbackColor: cardColor,
+      child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
           child: Row(
@@ -264,7 +264,6 @@ class FollowUserItem extends StatelessWidget {
               ),
             ],
           ),
-        ),
       ),
     );
   }
@@ -283,15 +282,13 @@ class FollowUserItem extends StatelessWidget {
     final subtitleStyle = theme.textTheme.bodySmall?.copyWith(
       color: Colors.grey.shade600,
     );
-    return Material(
-      color: _cardBackgroundColor(theme),
-      borderRadius: radius,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        borderRadius: radius,
-        onTap: onTap,
-        onLongPress: handleLongPress,
-        child: Container(
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: radius.topLeft.x,
+      onTap: onTap,
+      onLongPress: handleLongPress,
+      fallbackColor: _cardBackgroundColor(theme),
+      child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: EdgeInsets.symmetric(
             horizontal: compact ? 10 : 12,
@@ -381,7 +378,6 @@ class FollowUserItem extends StatelessWidget {
               ),
             ],
           ),
-        ),
       ),
     );
   }
@@ -408,15 +404,13 @@ class FollowUserItem extends StatelessWidget {
       color: Colors.grey.shade600,
       height: 1.15,
     );
-    return Material(
-      color: cardColor,
-      borderRadius: radius,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        borderRadius: radius,
-        onTap: onTap,
-        onLongPress: handleLongPress,
-        child: Container(
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: radius.topLeft.x,
+      onTap: onTap,
+      onLongPress: handleLongPress,
+      fallbackColor: cardColor,
+      child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -535,7 +529,6 @@ class FollowUserItem extends StatelessWidget {
               ),
             ],
           ),
-        ),
       ),
     );
   }
@@ -638,15 +631,13 @@ class FollowUserItem extends StatelessWidget {
   }) {
     final theme = Theme.of(context);
     final radius = BorderRadius.circular(16);
-    return Material(
-      color: _cardBackgroundColor(theme),
-      borderRadius: radius,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        borderRadius: radius,
-        onTap: onTap,
-        onLongPress: handleLongPress,
-        child: Container(
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: radius.topLeft.x,
+      onTap: onTap,
+      onLongPress: handleLongPress,
+      fallbackColor: _cardBackgroundColor(theme),
+      child: Container(
           foregroundDecoration: _cardFrameDecoration(theme, radius),
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -703,7 +694,6 @@ class FollowUserItem extends StatelessWidget {
               ),
             ],
           ),
-        ),
       ),
     );
   }

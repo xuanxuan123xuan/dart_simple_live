@@ -14,6 +14,7 @@ class AutoExitSettingsPage extends GetView<AppSettingsController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("定时关闭设置"),
       ),

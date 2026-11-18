@@ -16,6 +16,7 @@ class HelpPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: const Text("帮助与排障")),
       body: ListView(
         padding: AppStyle.pagePadding(),

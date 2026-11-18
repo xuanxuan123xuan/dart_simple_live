@@ -23,6 +23,7 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("播放与网络"),
       ),

@@ -65,6 +65,8 @@ class ProfileBackupService extends GetxService {
     // 本机绝对路径，换机后必然指向不存在的文件；parseConfFile 读不到会静默
     // 返回空 map，用户看到设置里挂着一个路径却毫无效果。
     LocalStorageService.kImportedMpvConfPath,
+    LocalStorageService.kMobileTopExtraInset,
+    LocalStorageService.kMobileBottomExtraInset,
     LocalStorageService.kRenderingAcceleration,
   };
 

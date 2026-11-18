@@ -40,6 +40,7 @@ class _RemoteSyncWebDAVConfigPageState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("WebDAV账号配置"),
         centerTitle: true,

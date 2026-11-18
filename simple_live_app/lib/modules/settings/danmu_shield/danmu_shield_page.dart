@@ -14,6 +14,7 @@ class DanmuShieldPage extends GetView<DanmuShieldController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("弹幕屏蔽"),
       ),

@@ -17,6 +17,7 @@ class MultiRoomSettingsPage extends GetView<AppSettingsController> {
   Widget build(BuildContext context) {
     final isDesktop = Platform.isWindows || Platform.isMacOS;
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("多开设置"),
       ),

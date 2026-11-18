@@ -15,6 +15,7 @@ class PlaybackPageSettingsPage extends GetView<IndexedSettingsController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("直播间界面与快捷键"),
       ),

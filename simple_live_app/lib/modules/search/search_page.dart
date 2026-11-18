@@ -130,7 +130,7 @@ class _SearchPageState extends State<SearchPage> {
                         dropdownColor: Theme.of(context)
                             .colorScheme
                             .surfaceContainerHigh
-                            .withAlpha(250),
+                            .withAlpha(226),
                         padding: EdgeInsets.zero,
                         iconSize: 16,
                         items: const [

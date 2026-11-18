@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/constant.dart';
+import 'package:simple_live_app/app/glass_quality_policy.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/services/live_link_health_presentation.dart';
+import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 typedef QuickAccessItemCallback = FutureOr<void> Function(String key);
@@ -264,12 +266,12 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
 
   Widget _buildHealthSection() {
     final presentation = _healthPresentation;
-    return Container(
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: 12,
+      liveBackdrop: false,
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.black.withAlpha(10),
-        borderRadius: BorderRadius.circular(8),
-      ),
+      fallbackColor: Colors.black.withAlpha(10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -310,12 +312,12 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
 
   Widget _buildEndpointSection() {
     final result = _endpointResult;
-    return Container(
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: 12,
+      liveBackdrop: false,
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.black.withAlpha(10),
-        borderRadius: BorderRadius.circular(8),
-      ),
+      fallbackColor: Colors.black.withAlpha(10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -347,22 +349,22 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
 
   Widget _buildPlaybackSection() {
     if (_playbackRows.isEmpty) {
-      return Container(
+      return GlassSurface(
+        role: GlassSurfaceRole.content,
+        radius: 12,
+        liveBackdrop: false,
         padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.black.withAlpha(10),
-          borderRadius: BorderRadius.circular(8),
-        ),
+        fallbackColor: Colors.black.withAlpha(10),
         child: const Text("当前没有可显示的播放信息"),
       );
     }
     final primaryRows = _playbackRows.take(6).toList();
     final detailRows = _playbackRows.skip(6).toList();
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.black.withAlpha(10),
-        borderRadius: BorderRadius.circular(8),
-      ),
+    return GlassSurface(
+      role: GlassSurfaceRole.content,
+      radius: 12,
+      liveBackdrop: false,
+      fallbackColor: Colors.black.withAlpha(10),
       child: Column(
         children: [
           Padding(

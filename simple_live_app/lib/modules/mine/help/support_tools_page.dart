@@ -15,6 +15,7 @@ class SupportToolsPage extends GetView<SupportToolsController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: const Text("日志与配置恢复")),
       body: ListView(
         padding: AppStyle.pagePadding(),

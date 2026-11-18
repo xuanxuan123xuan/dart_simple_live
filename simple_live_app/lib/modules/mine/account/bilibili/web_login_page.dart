@@ -11,6 +11,7 @@ class BiliBiliWebLoginPage extends GetView<BiliBiliWebLoginController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('哔哩哔哩账号登录'),
         actions: [

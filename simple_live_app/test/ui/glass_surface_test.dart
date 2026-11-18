@@ -87,6 +87,42 @@ void main() {
     expect(shape.side.style, BorderStyle.solid);
   });
 
+  testWidgets('fallback colour is preserved when glass is off', (tester) async {
+    settings.glassMode.value = AppGlassMode.off;
+    const fallback = Color(0x12345678);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppStyle.lightTheme,
+        home: const GlassSurface(
+          fallbackColor: fallback,
+          child: SizedBox.square(dimension: 56),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final material = tester.widget<Material>(find.byType(Material).first);
+    expect(material.color, fallback);
+  });
+
+  testWidgets('long press callback uses the same glass hit surface',
+      (tester) async {
+    settings.glassMode.value = AppGlassMode.off;
+    var longPresses = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppStyle.lightTheme,
+        home: GlassSurface(
+          onLongPress: () => longPresses++,
+          child: const SizedBox.square(dimension: 56),
+        ),
+      ),
+    );
+    await tester.longPress(find.byType(GlassSurface));
+
+    expect(longPresses, 1);
+  });
+
   testWidgets('circular glass keeps its round shape and soft shadow',
       (tester) async {
     for (final mode

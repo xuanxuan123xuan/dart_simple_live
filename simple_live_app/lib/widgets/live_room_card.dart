@@ -18,6 +18,11 @@ class LiveRoomCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ShadowCard(
+      // Live-room grids can contain dozens of cards. Keep each item on the
+      // opaque Material path so scrolling does not create a glass surface per
+      // room.
+      glassEnabled: false,
+      shadowEnabled: false,
       onTap: onTap ??
           () {
             AppNavigator.toLiveRoomDetail(site: site, roomId: item.roomId);

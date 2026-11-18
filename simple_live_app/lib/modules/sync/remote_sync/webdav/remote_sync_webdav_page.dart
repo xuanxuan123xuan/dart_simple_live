@@ -13,6 +13,7 @@ class RemoteSyncWebDAVPage extends GetView<RemoteSyncWebDAVController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("WebDAV同步"),
       ),

@@ -273,6 +273,7 @@ class _RecordingsPageState extends State<RecordingsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('录制文件'),
         actions: [

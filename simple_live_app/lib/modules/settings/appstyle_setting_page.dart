@@ -6,6 +6,7 @@ import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/services/app_icon_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_menu.dart';
+import 'package:simple_live_app/widgets/settings/settings_number.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 
 class AppstyleSettingPage extends GetView<AppSettingsController> {
@@ -19,6 +20,7 @@ class AppstyleSettingPage extends GetView<AppSettingsController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("外观设置"),
       ),
@@ -69,6 +71,38 @@ class AppstyleSettingPage extends GetView<AppSettingsController> {
               ),
             ),
           ),
+          if (GetPlatform.isAndroid || GetPlatform.isIOS) ...[
+            AppStyle.vGap12,
+            Padding(
+              padding: AppStyle.edgeInsetsA12,
+              child: Text("移动端留白", style: Get.textTheme.titleSmall),
+            ),
+            SettingsCard(
+              child: Obx(
+                () => Column(
+                  children: [
+                    SettingsNumber(
+                      title: "顶部额外留白",
+                      subtitle: "仅影响普通页面，不改变全屏播放器和系统安全区",
+                      value: controller.mobileTopExtraInset.value,
+                      max: 80,
+                      unit: "dp",
+                      onChanged: controller.setMobileTopExtraInset,
+                    ),
+                    AppStyle.divider,
+                    SettingsNumber(
+                      title: "底部额外留白",
+                      subtitle: "键盘弹出时不会重复增加底部空间",
+                      value: controller.mobileBottomExtraInset.value,
+                      max: 80,
+                      unit: "dp",
+                      onChanged: controller.setMobileBottomExtraInset,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           AppStyle.vGap12,
           Padding(
             padding: AppStyle.edgeInsetsA12,

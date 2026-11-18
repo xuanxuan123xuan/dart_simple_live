@@ -12,6 +12,7 @@ class AdvancedConnectionPage extends GetView<AdvancedConnectionController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: const Text("高级连接设置")),
       body: ListView(
         padding: AppStyle.pagePadding(),

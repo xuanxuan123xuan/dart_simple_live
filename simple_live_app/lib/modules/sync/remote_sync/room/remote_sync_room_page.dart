@@ -13,6 +13,7 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("数据同步"),
         actions: [

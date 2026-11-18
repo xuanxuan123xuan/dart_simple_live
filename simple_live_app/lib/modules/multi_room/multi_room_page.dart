@@ -147,22 +147,27 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                   // 拦截点击，避免冒泡到外层 GestureDetector 触发 toggleOverlay
                   // （那会导致页面 rebuild，弹窗刚打开就被 pop）。
                   onTap: () {},
-                  child: Container(
-                    height: 56 + MediaQuery.of(context).viewPadding.top,
-                    padding: EdgeInsets.only(
-                      left: 32,
-                      right: 32,
-                      top: MediaQuery.of(context).viewPadding.top,
-                    ),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.bottomCenter,
-                        end: Alignment.topCenter,
-                        colors: [Colors.transparent, Colors.black87],
+                  child: GlassSurface(
+                    role: GlassSurfaceRole.platformViewControl,
+                    radius: 0,
+                    disablePlatformViewBackdrop: true,
+                    fallbackColor: Colors.black.withAlpha(160),
+                    child: Container(
+                      height: 56 + MediaQuery.of(context).viewPadding.top,
+                      padding: EdgeInsets.only(
+                        left: 32,
+                        right: 32,
+                        top: MediaQuery.of(context).viewPadding.top,
                       ),
-                    ),
-                    child: Row(
-                      children: [
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [Colors.transparent, Colors.black87],
+                        ),
+                      ),
+                      child: Row(
+                        children: [
                         IconButton(
                           tooltip: "返回",
                           onPressed: () {
@@ -282,7 +287,8 @@ class MultiRoomPage extends GetView<MultiRoomController> {
                               : const Icon(Remix.refresh_line,
                                   color: Colors.white),
                         ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -801,15 +807,13 @@ class _ChatPanelState extends State<_ChatPanel> {
     final chatController = widget.chatController;
     final chatRoomIndex = widget.chatRoomIndex;
     final onSelect = widget.onSelect;
-    return ClipRRect(
-      borderRadius: AppStyle.radius8,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.black.withAlpha(120),
-          borderRadius: AppStyle.radius8,
-        ),
-        child: Column(
-          children: [
+    return GlassSurface(
+      role: GlassSurfaceRole.platformViewControl,
+      radius: 8,
+      disablePlatformViewBackdrop: true,
+      fallbackColor: Colors.black.withAlpha(120),
+      child: Column(
+        children: [
             // 顶部直播间选择按钮行
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
@@ -902,8 +906,7 @@ class _ChatPanelState extends State<_ChatPanel> {
                 );
               }),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

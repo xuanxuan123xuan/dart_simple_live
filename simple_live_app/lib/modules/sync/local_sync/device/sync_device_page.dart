@@ -11,6 +11,7 @@ class SyncDevicePage extends GetView<SyncDeviceController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("同步"),
       ),

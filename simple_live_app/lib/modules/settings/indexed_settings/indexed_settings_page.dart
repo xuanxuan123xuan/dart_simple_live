@@ -12,6 +12,7 @@ class IndexedSettingsPage extends GetView<IndexedSettingsController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text("主页设置"),
       ),

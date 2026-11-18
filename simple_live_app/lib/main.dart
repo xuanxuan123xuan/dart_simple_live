@@ -54,6 +54,7 @@ import 'package:simple_live_app/services/recording/recording_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
 import 'package:simple_live_app/services/windows_fullscreen_service.dart';
 import 'package:simple_live_app/widgets/guide_overlay.dart';
+import 'package:simple_live_app/widgets/mobile_page_insets.dart';
 import 'package:simple_live_app/widgets/glass/glass_route_background.dart';
 import 'package:simple_live_app/widgets/status/app_loadding_widget.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -887,11 +888,18 @@ class MyApp extends StatelessWidget {
                 const GuideOverlay(),
               ],
             );
+            final routedContent = Utils.isOhos
+                ? appContent
+                : GlassRouteBackground(child: appContent);
             return MediaQuery(
               data: fixedMediaQueryData,
-              child: Utils.isOhos
-                  ? appContent
-                  : GlassRouteBackground(child: appContent),
+              child: MobilePageInsets(
+                enabled: !{
+                  RoutePath.kLiveRoomDetail,
+                  RoutePath.kMultiRoom,
+                }.contains(Get.currentRoute),
+                child: routedContent,
+              ),
             );
           },
         ),

@@ -10,6 +10,7 @@ class SyncScanQRPage extends GetView<SyncScanQRControlelr> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('扫描二维码'),
         actions: [

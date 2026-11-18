@@ -15,6 +15,7 @@ class LocalSyncPage extends GetView<LocalSyncController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('局域网数据同步'),
         actions: [
