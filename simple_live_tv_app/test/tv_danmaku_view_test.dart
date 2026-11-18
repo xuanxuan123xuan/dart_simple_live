@@ -42,14 +42,14 @@ void main() {
     await tester.pump();
     expect(controller!.option.maxLines, 3);
     settings.danmuMaxLines.value = 6;
-    settings.danmuSize.value = 64;
+    settings.danmuSize.value = 96;
     settings.danmuOpacity.value = 0.5;
-    settings.danmuSpeed.value = 6;
+    settings.danmuSpeed.value = 30;
     await tester.pump();
     expect(controller!.option.maxLines, 6);
-    expect(controller!.option.fontSize, 64.w);
+    expect(controller!.option.fontSize, 96.w);
     expect(controller!.option.opacity, 0.5);
-    expect(controller!.option.duration, 6);
+    expect(controller!.option.duration, 30);
 
     settings.danmuDisplayMode.value = 'area';
     settings.danmuArea.value = 0.5;

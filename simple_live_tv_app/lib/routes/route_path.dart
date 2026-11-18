@@ -34,6 +34,7 @@ class RoutePath {
   /// 哔哩哔哩登录
   static const kBiliBiliQRLogin = "/bilibili/qr_login";
   static const kDouyuQRLogin = "/douyu/qr_login";
+  static const kAutoSwitchList = "/auto_switch_list";
 
   /// 设置
   static const kSettings = "/settings";

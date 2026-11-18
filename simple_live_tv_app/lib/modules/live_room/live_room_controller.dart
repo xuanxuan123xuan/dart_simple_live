@@ -18,12 +18,14 @@ import 'package:simple_live_tv_app/app/sites.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/models/db/follow_user.dart';
 import 'package:simple_live_tv_app/models/db/history.dart';
+import 'package:simple_live_tv_app/modules/live_room/live_room_auto_switch_policy.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/player_controller.dart';
 import 'package:simple_live_tv_app/modules/live_room/live_room_channel.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_danmaku_burst_scheduler.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_danmaku_content.dart';
 import 'package:simple_live_tv_app/modules/live_room/player/tv_playback_intent.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
+import 'package:simple_live_tv_app/services/auto_switch_list_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
 import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/xiaohongshu_account_service.dart';
@@ -923,6 +925,15 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
       addHistory();
       online.value = loadedDetail.online;
+      if (TvAutoSwitchPolicy.isConfirmedOffline(status)) {
+        await _tryAutoSwitchToNextLiveRoom(
+          reason: TvAutoSwitchReason.liveEnd,
+          roomGeneration: roomGeneration,
+          loadGeneration: loadGeneration,
+        );
+        if (!_isCurrentLoad(roomGeneration, loadGeneration)) return;
+      }
+
       if (status == LiveStatusState.live) {
         await _loadPlayQualities(
           requestSite: requestSite,
@@ -1527,11 +1538,15 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       state = LiveStatusState.unknown;
     }
 
-    if (state == LiveStatusState.offline) {
+    if (TvAutoSwitchPolicy.isConfirmedOffline(state)) {
       roomLiveState.value = LiveStatusState.offline;
       liveStatus.value = false;
       playbackLoadError.value = "";
-      await _tryAutoSwitchToNextLiveRoom(reason: "live_end");
+      await _tryAutoSwitchToNextLiveRoom(
+        reason: TvAutoSwitchReason.liveEnd,
+        roomGeneration: roomGeneration,
+        loadGeneration: loadGeneration,
+      );
       return;
     }
 
@@ -1543,7 +1558,11 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       roomLiveState.value = LiveStatusState.unknown;
       playbackLoadError.value = "播放恢复失败，暂时无法确认直播状态";
     }
-    await _tryAutoSwitchToNextLiveRoom(reason: "playback_failure");
+    await _tryAutoSwitchToNextLiveRoom(
+      reason: TvAutoSwitchReason.playbackFailure,
+      roomGeneration: roomGeneration,
+      loadGeneration: loadGeneration,
+    );
   }
 
   @protected
@@ -1601,12 +1620,62 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   bool get playbackRecoveryInFlight =>
       !_playbackSessionReady || _mediaRecoveryInFlight;
 
-  Future<void> _tryAutoSwitchToNextLiveRoom({required String reason}) async {
+  Future<void> _tryAutoSwitchToNextLiveRoom({
+    required TvAutoSwitchReason reason,
+    int? roomGeneration,
+    int? loadGeneration,
+  }) async {
     final settings = AppSettingsController.instance;
-    final enabled = reason == "live_end"
-        ? settings.autoSwitchNextOnLiveEnd.value
-        : settings.autoSwitchNextOnPlaybackFailure.value;
+    final enabled = TvAutoSwitchPolicy.isEnabled(
+      reason: reason,
+      onLiveEnd: settings.autoSwitchNextOnLiveEnd.value,
+      onPlaybackFailure: settings.autoSwitchNextOnPlaybackFailure.value,
+    );
     if (!enabled || _autoSwitchingRoom) {
+      return;
+    }
+
+    final playlistEnabled = settings.autoSwitchPlaylistOnly.value;
+    if (playlistEnabled && !Get.isRegistered<AutoSwitchListService>()) {
+      return;
+    }
+    final playlist = playlistEnabled ? AutoSwitchListService.instance : null;
+    if (playlist != null) {
+      if (playlist.items.isEmpty) return;
+      if (roomGeneration != null &&
+          loadGeneration != null &&
+          !_isCurrentLoad(roomGeneration, loadGeneration)) {
+        return;
+      }
+      await playlist.refreshStatuses();
+      if (roomGeneration != null &&
+          loadGeneration != null &&
+          !_isCurrentLoad(roomGeneration, loadGeneration)) {
+        return;
+      }
+      final target = playlist.nextLive(
+        '${site.id}_$roomId',
+        random: settings.autoSwitchPlaylistRandom.value,
+      );
+      if (target == null || target.id == '${site.id}_$roomId') return;
+      final targetSite = Sites.allSites[target.siteId];
+      if (targetSite == null) return;
+      if (roomGeneration != null &&
+          loadGeneration != null &&
+          !_isCurrentLoad(roomGeneration, loadGeneration)) {
+        return;
+      }
+      _autoSwitchingRoom = true;
+      try {
+        SmartDialog.showToast(
+          reason == TvAutoSwitchReason.liveEnd
+              ? "当前直播已结束，已切换到轮播列表中的下一个直播间"
+              : "当前直播播放失败，已切换到轮播列表中的下一个直播间",
+        );
+        await resetRoom(targetSite, target.roomId);
+      } finally {
+        _autoSwitchingRoom = false;
+      }
       return;
     }
 
@@ -1637,7 +1706,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     _autoSwitchingRoom = true;
     try {
       SmartDialog.showToast(
-        reason == "live_end" ? "当前直播已结束，已切换到下一个直播间" : "当前直播播放失败，已切换到下一个直播间",
+        reason == TvAutoSwitchReason.liveEnd
+            ? "当前直播已结束，已切换到下一个直播间"
+            : "当前直播播放失败，已切换到下一个直播间",
       );
       await resetRoom(Sites.allSites[target.siteId]!, target.roomId);
     } finally {
@@ -1798,31 +1869,65 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     if (detailRoomId != null) yield detailRoomId;
   }
 
-  void _switchChannel(LiveRoomChannelDirection direction) {
-    final channels = _switchableChannels;
+  Future<void> _switchChannel(LiveRoomChannelDirection direction) async {
+    final roomGeneration = _roomGeneration;
+    final currentSiteId = site.id;
+    final currentRoomIds = _currentRoomIds.toList(growable: false);
+    final settings = Get.isRegistered<AppSettingsController>()
+        ? AppSettingsController.instance
+        : null;
+    final usePlaylist = settings?.autoSwitchPlaylistOnly.value == true &&
+        Get.isRegistered<AutoSwitchListService>();
+    List<LiveRoomChannel> channels;
+    if (usePlaylist) {
+      final playlist = AutoSwitchListService.instance;
+      if (playlist.items.isEmpty) {
+        SmartDialog.showToast("轮播列表为空");
+        return;
+      }
+      await playlist.refreshStatuses();
+      if (_disposed || roomGeneration != _roomGeneration) return;
+      channels = List<LiveRoomChannel>.unmodifiable(
+        playlist.items.where((item) => item.liveStatus == 2).map(
+              (item) => LiveRoomChannel(
+                siteId: item.siteId,
+                roomId: item.roomId,
+              ),
+            ),
+      );
+    } else {
+      channels = _switchableChannels;
+    }
     if (channels.isEmpty) {
       SmartDialog.showToast("没有正在直播的频道");
       return;
     }
-    final target = LiveRoomChannelResolver.neighbor(
+    var target = LiveRoomChannelResolver.neighbor(
       channels,
-      siteId: site.id,
-      roomIds: _currentRoomIds,
+      siteId: currentSiteId,
+      roomIds: currentRoomIds,
       direction: direction,
     );
+    if (target == null && usePlaylist) {
+      target = direction == LiveRoomChannelDirection.next
+          ? channels.first
+          : channels.last;
+    }
     if (target == null) {
       SmartDialog.showToast("当前直播间不在直播列表中");
       return;
     }
     final targetSite = Sites.allSites[target.siteId];
     if (targetSite == null) return;
-    setChannelContext(channels);
+    if (!usePlaylist) setChannelContext(channels);
     unawaited(resetRoom(targetSite, target.roomId));
   }
 
-  void nextChannel() => _switchChannel(LiveRoomChannelDirection.next);
+  void nextChannel() =>
+      unawaited(_switchChannel(LiveRoomChannelDirection.next));
 
-  void prevChannel() => _switchChannel(LiveRoomChannelDirection.previous);
+  void prevChannel() =>
+      unawaited(_switchChannel(LiveRoomChannelDirection.previous));
 
   void setChannelContext(Iterable<LiveRoomChannel> channels) {
     _channelContext = List<LiveRoomChannel>.unmodifiable(channels);

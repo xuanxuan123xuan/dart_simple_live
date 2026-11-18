@@ -590,15 +590,7 @@ void showPlayerSettings(LiveRoomController controller) {
                   foucsNode: danmakuSizeFoucsNode,
                   autofocus: danmakuSizeFoucsNode.isFoucsed.value,
                   title: "弹幕大小",
-                  items: {
-                    24.0: "24",
-                    32.0: "32",
-                    40.0: "40",
-                    48.0: "48",
-                    56.0: "56",
-                    64.0: "64",
-                    72.0: "72",
-                  },
+                  items: AppSettingsController.tvDanmuSizeOptions,
                   value: AppSettingsController.instance.danmuSize.value,
                   onChanged: (e) {
                     AppSettingsController.instance.setDanmuSize(e);
@@ -611,15 +603,7 @@ void showPlayerSettings(LiveRoomController controller) {
                   foucsNode: danmakuSpeedFoucsNode,
                   autofocus: danmakuSpeedFoucsNode.isFoucsed.value,
                   title: "弹幕速度",
-                  items: {
-                    18.0: "很慢",
-                    14.0: "较慢",
-                    12.0: "慢",
-                    10.0: "正常",
-                    8.0: "快",
-                    6.0: "较快",
-                    4.0: "很快",
-                  },
+                  items: AppSettingsController.tvDanmuSpeedOptions,
                   value: AppSettingsController.instance.danmuSpeed.value,
                   onChanged: (e) {
                     AppSettingsController.instance.setDanmuSpeed(e);

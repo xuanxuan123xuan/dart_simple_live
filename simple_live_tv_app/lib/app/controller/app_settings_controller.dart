@@ -32,6 +32,30 @@ class AppSettingsController extends GetxController {
   static const int kMultiRoomMaxGap = 24;
   static const String kTvPerformanceModeSmooth = 'smooth';
   static const String kTvPerformanceModeRealtime = 'realtime';
+  static final Map<double, String> tvDanmuSizeOptions = {
+    24.0: '24',
+    32.0: '32',
+    40.0: '40',
+    48.0: '48',
+    56.0: '56',
+    64.0: '64',
+    72.0: '72',
+    80.0: '80',
+    88.0: '88',
+    96.0: '96',
+  };
+  static final Map<double, String> tvDanmuSpeedOptions = {
+    30.0: '阅读',
+    26.0: '极慢',
+    22.0: '更慢',
+    18.0: '很慢',
+    14.0: '较慢',
+    12.0: '慢',
+    10.0: '正常',
+    8.0: '快',
+    6.0: '较快',
+    4.0: '很快',
+  };
   static const List<int> kUpdateFollowThreadOptions = [
     0,
     1,
@@ -273,6 +297,14 @@ class AppSettingsController extends GetxController {
     autoSwitchNextOnPlaybackFailure.value =
         LocalStorageService.instance.getValue(
       LocalStorageService.kAutoSwitchNextOnPlaybackFailure,
+      false,
+    );
+    autoSwitchPlaylistOnly.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kAutoSwitchPlaylistOnly,
+      false,
+    );
+    autoSwitchPlaylistRandom.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kAutoSwitchPlaylistRandom,
       false,
     );
 
@@ -743,6 +775,24 @@ class AppSettingsController extends GetxController {
     autoSwitchNextOnPlaybackFailure.value = e;
     LocalStorageService.instance.setValue(
       LocalStorageService.kAutoSwitchNextOnPlaybackFailure,
+      e,
+    );
+  }
+
+  final autoSwitchPlaylistOnly = false.obs;
+  void setAutoSwitchPlaylistOnly(bool e) {
+    autoSwitchPlaylistOnly.value = e;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kAutoSwitchPlaylistOnly,
+      e,
+    );
+  }
+
+  final autoSwitchPlaylistRandom = false.obs;
+  void setAutoSwitchPlaylistRandom(bool e) {
+    autoSwitchPlaylistRandom.value = e;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kAutoSwitchPlaylistRandom,
       e,
     );
   }

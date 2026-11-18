@@ -135,6 +135,8 @@ class LocalStorageService extends GetxService {
   static const String kAutoSwitchNextOnLiveEnd = "AutoSwitchNextOnLiveEnd";
   static const String kAutoSwitchNextOnPlaybackFailure =
       "AutoSwitchNextOnPlaybackFailure";
+  static const String kAutoSwitchPlaylistOnly = "AutoSwitchPlaylistOnly";
+  static const String kAutoSwitchPlaylistRandom = "AutoSwitchPlaylistRandom";
   static const String kPlayerVolume = "PlayerVolume";
   static const String kLogEnable = "LogEnable";
   static const String kMpvProfile = "MpvProfile";

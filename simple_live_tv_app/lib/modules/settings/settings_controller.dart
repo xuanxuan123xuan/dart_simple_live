@@ -230,6 +230,10 @@ class SettingsController extends BaseController
     }
   }
 
+  void openAutoSwitchList() {
+    Get.toNamed(RoutePath.kAutoSwitchList);
+  }
+
   Future<void> _editDouyuCookie() async {
     final account = DouyuAccountService.instance;
     final value = await Utils.showEditTextDialog(

@@ -11,6 +11,7 @@ import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_tv_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_controller.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_focus_policy.dart';
+import 'package:simple_live_tv_app/modules/multi_room/multi_room_layout_metrics.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_overlay_controller.dart';
 import 'package:simple_live_tv_app/modules/multi_room/multi_room_player_controller.dart';
@@ -248,17 +249,17 @@ class _MultiRoomPageState extends State<MultiRoomPage> {
     final other = rooms.firstWhere((room) => room.key != main.key);
     final ratio = mainSub ? 2.0 : 1.0;
     final gap = AppSettingsController.instance.effectiveMultiRoomGap.w;
-    final tileWidth = math
-        .min(
-          math.max(0.0, (size.width - gap * 3) / (ratio + 1)),
-          math.max(0.0, size.height - gap * 2) * 16 / 9 / ratio,
-        )
-        .toDouble();
-    final tileHeight = tileWidth * 9 / 16;
+    final metrics = TvMultiRoomLayoutMetrics.twoRoom(
+      viewport: size,
+      gap: gap,
+      mainSub: mainSub,
+    );
+    final tileWidth = metrics.tileSize.width;
+    final tileHeight = metrics.tileSize.height;
     return Center(
       child: SizedBox(
-        width: tileWidth * (ratio + 1) + gap,
-        height: tileHeight * ratio,
+        width: metrics.contentSize.width,
+        height: metrics.contentSize.height,
         child: Row(
           children: [
             SizedBox(
@@ -285,18 +286,16 @@ class _MultiRoomPageState extends State<MultiRoomPage> {
   ) {
     if (rooms.length == 1) return _roomTile(rooms.first, rooms, selectedRoom);
     final gap = AppSettingsController.instance.effectiveMultiRoomGap.w;
-
-    final tileWidth = math
-        .min(
-          math.max(0.0, (size.width - gap * 3) / 2),
-          math.max(0.0, (size.height - gap * 3) / 2) * 16 / 9,
-        )
-        .toDouble();
-    final tileHeight = tileWidth * 9 / 16;
+    final metrics = TvMultiRoomLayoutMetrics.grid(
+      viewport: size,
+      gap: gap,
+    );
+    final tileWidth = metrics.tileSize.width;
+    final tileHeight = metrics.tileSize.height;
     return Center(
       child: SizedBox(
-        width: tileWidth * 2 + gap,
-        height: tileHeight * 2 + gap,
+        width: metrics.contentSize.width,
+        height: metrics.contentSize.height,
         child: Column(
           children: [
             Row(

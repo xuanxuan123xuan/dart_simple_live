@@ -33,6 +33,8 @@ import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
 import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
+import 'package:simple_live_tv_app/services/auto_switch_list_service.dart';
+import 'package:simple_live_tv_app/models/auto_switch_item.dart';
 import 'package:simple_live_tv_app/services/local_storage_service.dart';
 import 'package:simple_live_tv_app/services/profile_backup_service.dart';
 import 'package:simple_live_tv_app/services/sync_service.dart';
@@ -240,6 +242,7 @@ Future initServices() async {
 
   Hive.registerAdapter(FollowUserAdapter());
   Hive.registerAdapter(HistoryAdapter());
+  Hive.registerAdapter(AutoSwitchItemAdapter());
 
   //包信息
   Utils.packageInfo = await PackageInfo.fromPlatform();
@@ -247,6 +250,7 @@ Future initServices() async {
   Log.d("Init LocalStorage Service");
   await Get.put(LocalStorageService()).init();
   await Get.put(DBService()).init();
+  await Get.put(AutoSwitchListService()).init();
   Get.put(CurrentRoomService());
   //初始化设置控制器
   Get.put(AppSettingsController());

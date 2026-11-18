@@ -180,6 +180,41 @@ class SettingsPage extends GetView<SettingsController> {
         AppStyle.vGap24,
         Obx(
           () => SettingsItemWidget(
+            foucsNode: AppFocusNode(),
+            title: "自动换台使用轮播列表",
+            items: const {0: "关", 1: "开"},
+            value: AppSettingsController.instance.autoSwitchPlaylistOnly.value
+                ? 1
+                : 0,
+            onChanged: (e) {
+              AppSettingsController.instance.setAutoSwitchPlaylistOnly(e == 1);
+            },
+          ),
+        ),
+        AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
+            foucsNode: AppFocusNode(),
+            title: "轮播列表随机换台",
+            items: const {0: "顺序", 1: "随机"},
+            value: AppSettingsController.instance.autoSwitchPlaylistRandom.value
+                ? 1
+                : 0,
+            onChanged: (e) {
+              AppSettingsController.instance.setAutoSwitchPlaylistRandom(e == 1);
+            },
+          ),
+        ),
+        AppStyle.vGap24,
+        HighlightListTile(
+          focusNode: AppFocusNode(),
+          title: "管理轮播列表",
+          subtitle: "从关注列表加入、删除和调整顺序",
+          onTap: controller.openAutoSwitchList,
+        ),
+        AppStyle.vGap24,
+        Obx(
+          () => SettingsItemWidget(
             foucsNode: controller.mpvProfileFocusNode,
             autofocus: controller.mpvProfileFocusNode.isFoucsed.value,
             title: "mpv档位",
@@ -438,8 +473,9 @@ class SettingsPage extends GetView<SettingsController> {
             foucsNode: AppFocusNode(),
             title: "进入多开默认全部有声",
             items: const {0: "关", 1: "开"},
-            value: AppSettingsController
-                .instance.multiRoomAllAudioOnEntry.value ? 1 : 0,
+            value: AppSettingsController.instance.multiRoomAllAudioOnEntry.value
+                ? 1
+                : 0,
             onChanged: (value) {
               AppSettingsController.instance
                   .setMultiRoomAllAudioOnEntry(value == 1);
@@ -636,15 +672,7 @@ class SettingsPage extends GetView<SettingsController> {
             foucsNode: controller.danmakuSizeFoucsNode,
             autofocus: controller.danmakuSizeFoucsNode.isFoucsed.value,
             title: "弹幕大小",
-            items: {
-              24.0: "24",
-              32.0: "32",
-              40.0: "40",
-              48.0: "48",
-              56.0: "56",
-              64.0: "64",
-              72.0: "72",
-            },
+            items: AppSettingsController.tvDanmuSizeOptions,
             value: AppSettingsController.instance.danmuSize.value,
             onChanged: (e) {
               AppSettingsController.instance.setDanmuSize(e);
@@ -657,15 +685,7 @@ class SettingsPage extends GetView<SettingsController> {
             foucsNode: controller.danmakuSpeedFoucsNode,
             autofocus: controller.danmakuSpeedFoucsNode.isFoucsed.value,
             title: "弹幕速度",
-            items: {
-              18.0: "很慢",
-              14.0: "较慢",
-              12.0: "慢",
-              10.0: "正常",
-              8.0: "快",
-              6.0: "较快",
-              4.0: "很快",
-            },
+            items: AppSettingsController.tvDanmuSpeedOptions,
             value: AppSettingsController.instance.danmuSpeed.value,
             onChanged: (e) {
               AppSettingsController.instance.setDanmuSpeed(e);
