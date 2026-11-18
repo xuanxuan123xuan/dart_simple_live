@@ -135,6 +135,16 @@ struct PlayerView: View {
                         }
                     }
             }
+            Button {
+                danmakuEnabled.toggle()
+                controlsActivity += 1
+            } label: {
+                Label(danmakuEnabled ? "弹幕开" : "弹幕关", systemImage: danmakuEnabled ? "text.bubble.fill" : "text.bubble")
+            }
+            .focused($focusedControl, equals: .danmaku)
+            .accessibilityLabel("弹幕")
+            .accessibilityValue(danmakuEnabled ? "开" : "关")
+            .accessibilityIdentifier("player-danmaku")
             let isFavorite = library.isFavorite(room)
             Button {
                 library.toggleFavorite(room)
@@ -205,7 +215,7 @@ struct PlayerView: View {
 }
 
 private enum PlayerFocus: Hashable {
-    case video, quality, favorite, retry
+    case video, quality, danmaku, favorite, retry
 }
 
 private struct HLSVideoView: UIViewControllerRepresentable {
