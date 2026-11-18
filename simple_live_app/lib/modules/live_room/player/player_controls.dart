@@ -931,29 +931,16 @@ Widget buildDanmuView(BuildContext context, LiveRoomController controller,
                     if (!context.mounted || !videoState.mounted) return null;
                     final root = videoState.context.findRenderObject();
                     final overlay = context.findRenderObject();
-                    final source =
-                        videoState.widget.controller.notifier.value?.rect.value;
-                    if (root is! RenderBox ||
-                        overlay is! RenderBox ||
-                        !root.hasSize ||
-                        source == null ||
-                        source.isEmpty) {
-                      return null;
-                    }
+                    final source = videoState.widget.controller.notifier.value?.rect.value;
+                    if (root is! RenderBox || overlay is! RenderBox ||
+                        !root.hasSize || source == null || source.isEmpty) return null;
                     final params = videoState.videoViewParametersNotifier.value;
                     return recordingVideoRect(
-                      source: Size(
-                        params.aspectRatio == null
-                            ? source.width
-                            : source.height * params.aspectRatio!,
-                        source.height,
-                      ),
-                      viewport: root.size,
-                      fit: params.fit,
+                      source: Size(params.aspectRatio == null ? source.width :
+                          source.height * params.aspectRatio!, source.height),
+                      viewport: root.size, fit: params.fit,
                       alignment: params.alignment,
-                      danmakuOrigin: root.globalToLocal(
-                        overlay.localToGlobal(Offset.zero),
-                      ),
+                      danmakuOrigin: root.globalToLocal(overlay.localToGlobal(Offset.zero)),
                     );
                   };
                 }
@@ -1132,8 +1119,11 @@ void showPlayerSettings(LiveRoomController controller) {
       () => ListView(
         padding: AppStyle.edgeInsetsV12,
         children: [
-          if (!Utils.isOhos) RecordingMenuTile(
-            recording: controller.recording, closeMenu: Utils.hideRightDialog),
+          if (!Utils.isOhos)
+            RecordingMenuTile(
+              recording: controller.recording,
+              closeMenu: Utils.hideRightDialog,
+            ),
           if (controller.supportsDouyinDualScreenLayout) ...[
             Padding(
               padding: AppStyle.edgeInsetsH16.copyWith(top: 8, bottom: 4),

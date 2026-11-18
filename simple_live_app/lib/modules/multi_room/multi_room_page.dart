@@ -20,6 +20,7 @@ import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
 import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/immersive_volume_slider.dart';
+import 'package:simple_live_app/widgets/player_view_gate.dart';
 
 final Expando<Map<String, GlobalKey<_MultiRoomTileState>>>
     _tileKeysByController =
@@ -1010,11 +1011,17 @@ class _MultiRoomTileState extends State<_MultiRoomTile> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: Video(
-                key: ValueKey('multi-room-video-${controller.item.key}'),
-                controller: controller.videoController,
-                controls: NoVideoControls,
-                fit: BoxFit.contain,
+              child: Obx(
+                () => PlayerViewGate(
+                  ready: controller.playerViewReady.value,
+                  waitingBuilder: (_) => const SizedBox.expand(),
+                  readyBuilder: (_) => Video(
+                    key: ValueKey('multi-room-video-${controller.item.key}'),
+                    controller: controller.videoController,
+                    controls: NoVideoControls,
+                    fit: BoxFit.contain,
+                  ),
+                ),
               ),
             ),
             // 弹幕铺在画面区域上。行数按格子高度自适应，格子太矮时会自动隐藏。

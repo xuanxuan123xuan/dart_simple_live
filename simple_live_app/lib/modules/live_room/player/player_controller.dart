@@ -39,6 +39,7 @@ import 'package:simple_live_app/services/mpv_options_service.dart';
 import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:simple_live_app/services/ios_video_output_size.dart';
 import 'package:simple_live_app/services/playback_display_coordinator.dart';
+import 'package:simple_live_app/services/player_resource_lifecycle.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:simple_live_app/services/windows_fullscreen_service.dart';
@@ -131,6 +132,14 @@ class _DanmakuReplayEntry {
 const int _kDanmakuReplayLimit = 300;
 
 mixin PlayerMixin {
+  static const _nativePlayerOperationTimeout = Duration(seconds: 8);
+
+  final PlayerNativeOpenQueue _nativeOpenQueue = PlayerNativeOpenQueue();
+  final int playerLifecycleInstanceId =
+      PlayerRetirementCoordinator.shared.register();
+  final RxBool playerViewReady = false.obs;
+  Future<void>? _playerLifecycleReadyFuture;
+  Future<void>? _closePlayerResourcesFuture;
   final RxBool listeningMode = false.obs;
   final RxBool listeningModeChanging = false.obs;
   LiveListeningSession? _listeningSession;
@@ -138,6 +147,52 @@ mixin PlayerMixin {
 
   bool get videoPresentationEnabled =>
       !listeningMode.value && !listeningModeChanging.value;
+
+  bool get lifecycleClosing => false;
+
+  /// Waits for the previous single-room owner and for the native video output
+  /// itself. The page must use [playerViewReady] before building [Video], so a
+  /// retired native output cannot overlap the next single-room instance.
+  Future<void> ensurePlayerViewReady() {
+    final existing = _playerLifecycleReadyFuture;
+    if (existing != null) return existing;
+    late final Future<void> readyFuture;
+    readyFuture = _preparePlayerView().catchError((Object error, StackTrace stack) {
+      if (!lifecycleClosing) {
+        playerViewReady.value = false;
+      }
+      Error.throwWithStackTrace(error, stack);
+    });
+    _playerLifecycleReadyFuture = readyFuture;
+    return readyFuture;
+  }
+
+  Future<void> _preparePlayerView() async {
+    if (Utils.isOhos) {
+      playerViewReady.value = !lifecycleClosing;
+      return;
+    }
+    var status = await PlayerRetirementCoordinator.shared.waitUntilReleased(
+      instanceId: playerLifecycleInstanceId,
+      timeout: _nativePlayerOperationTimeout,
+    );
+    // A timeout only bounds the first handoff observation. Keep waiting for
+    // actual retirement before creating a native output; never bypass it.
+    if (status == PlayerHandoffStatus.timedOut) {
+      status = await PlayerRetirementCoordinator.shared.waitUntilReleased(
+        instanceId: playerLifecycleInstanceId,
+      );
+    }
+    if (lifecycleClosing) return;
+    if (status != PlayerHandoffStatus.ready) {
+      throw StateError('单直播间播放器交接失败：${status.name}');
+    }
+    final nativeVideo = videoController;
+    await nativeVideo.platform.future;
+    if (!lifecycleClosing) {
+      playerViewReady.value = true;
+    }
+  }
 
   bool get listeningPlaybackAvailable =>
       hasMpvPlayer &&
@@ -190,12 +245,31 @@ mixin PlayerMixin {
   Future<void> openListeningMedia(
     Media media, {
     bool Function()? isCurrent,
-  }) {
-    if (_listeningClosed) return Future<void>.value();
-    return _listening.withSource(() async {
-      if (_listeningClosed || !(isCurrent?.call() ?? true)) return;
-      await player.open(media);
-    });
+  }) async {
+    if (_listeningClosed) return;
+    await ensurePlayerViewReady();
+    if (lifecycleClosing || _listeningClosed || !playerViewReady.value) return;
+    final status = await _nativeOpenQueue.open(
+      operation: () => _listening.withSource(() async {
+        if (_listeningClosed || !(isCurrent?.call() ?? true)) return;
+        await player.open(media);
+      }),
+      isCurrent: () => !_listeningClosed && (isCurrent?.call() ?? true),
+      timeout: _nativePlayerOperationTimeout,
+      onPreviousError: (error, stackTrace) {
+        Log.e('前一个原生播放器打开失败，继续处理新的打开请求: $error', stackTrace);
+      },
+    );
+    switch (status) {
+      case PlayerOpenStatus.opened:
+      case PlayerOpenStatus.stale:
+        return;
+      case PlayerOpenStatus.timedOut:
+        throw TimeoutException(
+          '原生播放器打开超时',
+          _nativePlayerOperationTimeout,
+        );
+    }
   }
 
   /// Invalidates new and queued listening work before room cleanup can await.
@@ -1121,6 +1195,9 @@ mixin PlayerStateMixin on PlayerMixin {
   bool _playerClosing = false;
   bool _desktopVolumeDragging = false;
 
+  @override
+  bool get lifecycleClosing => _playerClosing;
+
   ///音量控制条计时器
   Timer? hidevolumeTimer;
 
@@ -1373,6 +1450,28 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
   DanmakuController? danmakuController;
   final List<_DanmakuReplayEntry> _danmakuReplayHistory = [];
   bool _danmakuReplayScheduled = false;
+  DateTime? _danmakuStatsStartedAt;
+  int _danmakuOverlayMessageCount = 0;
+  int _danmakuOverlayImageMessageCount = 0;
+  int _danmakuViewRebuildCount = 0;
+
+  int get danmakuOverlayMessageCount => _danmakuOverlayMessageCount;
+
+  int get danmakuOverlayImageMessageCount =>
+      _danmakuOverlayImageMessageCount;
+
+  int get danmakuViewRebuildCount => _danmakuViewRebuildCount;
+
+  double get danmakuOverlayMessagesPerMinute {
+    final startedAt = _danmakuStatsStartedAt;
+    if (startedAt == null || _danmakuOverlayMessageCount == 0) {
+      return 0;
+    }
+    final elapsedMinutes =
+        DateTime.now().difference(startedAt).inMilliseconds / 60000.0;
+    if (elapsedMinutes <= 0) return 0;
+    return _danmakuOverlayMessageCount / elapsedMinutes;
+  }
 
   void initDanmakuController(DanmakuController e) {
     danmakuController = e;
@@ -1413,6 +1512,10 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
 
   void clearDanmakuReplayHistory() {
     _danmakuReplayHistory.clear();
+    _danmakuStatsStartedAt = null;
+    _danmakuOverlayMessageCount = 0;
+    _danmakuOverlayImageMessageCount = 0;
+    _danmakuViewRebuildCount = 0;
   }
 
   void rememberDanmakuReplay(
@@ -1491,6 +1594,7 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
   }
 
   void rebuildDanmakuView({bool clearCurrent = true}) {
+    _danmakuViewRebuildCount += 1;
     if (clearCurrent) {
       danmakuController?.clear();
     }
@@ -1506,6 +1610,11 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
       return;
     }
     for (var item in items) {
+      _danmakuStatsStartedAt ??= DateTime.now();
+      _danmakuOverlayMessageCount += 1;
+      if (item.imageUrls?.isNotEmpty ?? false) {
+        _danmakuOverlayImageMessageCount += 1;
+      }
       danmakuController?.addDanmaku(item);
     }
   }
@@ -4322,6 +4431,12 @@ class PlayerController extends BaseController
       MapEntry('AudioBitrate', textOf(player.state.audioBitrate)),
       MapEntry('Volume', textOf(player.state.volume)),
       MapEntry('音频输出', _audioOutputDiagnostic()),
+      MapEntry(
+        '弹幕消息速率',
+        '${danmakuOverlayMessagesPerMinute.toStringAsFixed(1)} 条/分钟',
+      ),
+      MapEntry('弹幕图片消息', '$danmakuOverlayImageMessageCount 条'),
+      MapEntry('弹幕视图重建', '$danmakuViewRebuildCount 次'),
     ];
   }
 
@@ -4464,11 +4579,34 @@ class PlayerController extends BaseController
   /// this with the profile actually selected for the active generation.
   String get ohosPlaybackProfileDiagnostic => 'stable';
 
-  Future<void> closePlayerResources() async {
-    if (_playerClosing) {
-      return;
+  Future<void> closePlayerResources() {
+    final existing = _closePlayerResourcesFuture;
+    if (existing != null) {
+      return existing;
     }
+    late final Future<void> closing;
+    closing = _closePlayerResources();
+    _closePlayerResourcesFuture = closing;
+    unawaited(closing.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {
+        if (identical(_closePlayerResourcesFuture, closing)) {
+          _closePlayerResourcesFuture = null;
+        }
+      },
+    ));
+    // Retire the owner immediately. A later single-room instance waits for
+    // this exact future instead of constructing a competing native output.
+    PlayerRetirementCoordinator.shared.retire(
+      playerLifecycleInstanceId,
+      closing,
+    );
+    return closing;
+  }
+
+  Future<void> _closePlayerResources() async {
     _playerClosing = true;
+    playerViewReady.value = false;
     _recordingRecheckTimer?.cancel();
     _recordingRecheckTimer = null;
     _recordingDeferredError = null;
@@ -4533,14 +4671,27 @@ class PlayerController extends BaseController
       BackgroundPlaybackService.instance.setAndroidControlHandler(null);
       await stopLiveLatencyChase();
       await beforePlayerMutationForRecording();
-      await player.stop();
+      // Do not put a timeout around this wait. An open that timed out for its
+      // caller still owns the native player until its future settles.
+      await _nativeOpenQueue.waitUntilIdle();
       if (smallWindowState.value) {
         await exitSmallWindow();
       }
       disposeStream();
       disposeDanmakuController();
-      await resetSystem();
-      await player.dispose();
+      await releasePlayerResources(
+        steps: [
+          PlayerCleanupStep('resetSystem', resetSystem),
+          PlayerCleanupStep('stop', () => player.stop()),
+        ],
+        dispose: player.dispose,
+        onError: (name, error, stackTrace) {
+          Log.e('播放器清理步骤失败: $name $error', stackTrace);
+        },
+      );
+    } catch (error, stackTrace) {
+      _playerClosing = false;
+      rethrow;
     } finally {
       diagnosticService?.dispose();
       _androidVideoDiagnosticService = null;

@@ -25,6 +25,7 @@ import 'package:simple_live_app/widgets/chat_message_item.dart';
 import 'package:simple_live_app/widgets/glass/glass_surface.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
+import 'package:simple_live_app/widgets/player_view_gate.dart';
 import 'package:simple_live_app/widgets/settings/settings_action.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_number.dart';
@@ -1220,20 +1221,26 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         const Positioned.fill(
           child: ColoredBox(color: Colors.black),
         ),
-        Video(
-          key: controller.globalPlayerKey,
-          controller: controller.videoController,
-          pauseUponEnteringBackgroundMode:
-              !AppSettingsController.instance.allowBackgroundPlayback.value,
-          resumeUponEnteringForegroundMode:
-              !AppSettingsController.instance.allowBackgroundPlayback.value,
-          controls: (state) {
-            return playerControls(state, controller);
-          },
-          aspectRatio: aspectRatio,
-          fit: boxFit,
-          // 自己实现
-          wakelock: false,
+        Obx(
+          () => PlayerViewGate(
+            ready: controller.playerViewReady.value,
+            waitingBuilder: (_) => const SizedBox.expand(),
+            readyBuilder: (_) => Video(
+              key: controller.globalPlayerKey,
+              controller: controller.videoController,
+              pauseUponEnteringBackgroundMode:
+                  !AppSettingsController.instance.allowBackgroundPlayback.value,
+              resumeUponEnteringForegroundMode:
+                  !AppSettingsController.instance.allowBackgroundPlayback.value,
+              controls: (state) {
+                return playerControls(state, controller);
+              },
+              aspectRatio: aspectRatio,
+              fit: boxFit,
+              // 自己实现
+              wakelock: false,
+            ),
+          ),
         ),
         Obx(
           () => Visibility(

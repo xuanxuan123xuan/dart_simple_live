@@ -45,6 +45,9 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
   void initState() {
     super.initState();
     _showDiagnostics = widget.initialDiagnostics;
+    if (_showDiagnostics) {
+      widget.controller.setPlaybackDiagnosticsActive(true);
+    }
     _watchRecommendationDetail();
     if (_shouldPrepareRecommendation) {
       unawaited(widget.controller.prepareCategoryRecommendation());
@@ -103,6 +106,9 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
 
   @override
   void dispose() {
+    if (_showDiagnostics) {
+      widget.controller.setPlaybackDiagnosticsActive(false);
+    }
     _cancelRecommendationSubscriptions();
     super.dispose();
   }
@@ -170,6 +176,7 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
           : () {
               if (key == "network_diagnostics") {
                 setState(() => _showDiagnostics = true);
+                widget.controller.setPlaybackDiagnosticsActive(true);
                 unawaited(_runDiagnostics());
                 return;
               }
@@ -210,7 +217,10 @@ class _LiveRoomQuickAccessPanelState extends State<LiveRoomQuickAccessPanel> {
         IconButton(
           tooltip: canReturn ? "返回快捷入口" : "关闭",
           onPressed: canReturn
-              ? () => setState(() => _showDiagnostics = false)
+              ? () {
+                  setState(() => _showDiagnostics = false);
+                  widget.controller.setPlaybackDiagnosticsActive(false);
+                }
               : widget.onClose,
           icon: Icon(
             canReturn

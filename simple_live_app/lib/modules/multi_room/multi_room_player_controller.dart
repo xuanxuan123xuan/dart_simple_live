@@ -28,6 +28,7 @@ import 'package:simple_live_app/services/live_play_quality_presentation.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_service.dart';
 import 'package:simple_live_app/services/mpv_live_latency_chase_sampling_loop.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
+import 'package:simple_live_app/services/player_resource_lifecycle.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 export 'multi_room_player_configuration.dart';
@@ -177,6 +178,12 @@ class MultiRoomPlayerController extends GetxController {
   final MultiRoomPlayerConfiguration configuration;
   final bool Function()? externalCancellation;
 
+  /// Becomes true only after the platform video output has been created.
+  /// Multi-room players keep this state locally; they do not participate in
+  /// the single-room retirement coordinator.
+  final playerViewReady = false.obs;
+
+
   MultiRoomPlayerController(
     this.item, {
     this.onPlayerOpened,
@@ -300,6 +307,9 @@ class MultiRoomPlayerController extends GetxController {
   int _lineIndex = 0;
   bool _disposed = false;
   bool _playerDisposed = false;
+  Future<void>? _viewReadyFuture;
+  final PlayerNativeOpenQueue _nativeOpenQueue = PlayerNativeOpenQueue();
+  static const _nativeOpenTimeout = Duration(seconds: 8);
   bool _routeTransitionClosed = false;
   Future<void>? _routeTransitionFuture;
   bool _playbackDesired = false;
@@ -504,7 +514,30 @@ class MultiRoomPlayerController extends GetxController {
         );
       });
     }
-    unawaited(load());
+    _viewReadyFuture = _prepareView();
+    unawaited(_viewReadyFuture!.then<void>((_) {
+      if (!_operationCancelled && playerViewReady.value) {
+        unawaited(load());
+      }
+    }));
+  }
+
+  Future<void> _prepareView() async {
+    if (Utils.isOhos) {
+      playerViewReady.value = !_operationCancelled;
+      return;
+    }
+    try {
+      await videoController.platform.future;
+      if (!_operationCancelled) {
+        playerViewReady.value = true;
+      }
+    } catch (error, stackTrace) {
+      if (!_operationCancelled) {
+        errorText.value = error.toString();
+        Log.e('多开播放器视图初始化失败：$error', stackTrace);
+      }
+    }
   }
 
   /// Limits this player's iOS texture to the preview render box in physical
@@ -969,6 +1002,10 @@ class MultiRoomPlayerController extends GetxController {
   }
 
   Future<void> load() {
+    final viewReady = _viewReadyFuture;
+    if (viewReady != null && !playerViewReady.value) {
+      return viewReady.then<void>((_) => load());
+    }
     final activeLoad = _loadFuture;
     if (activeLoad != null) return activeLoad;
     final result = _enqueue(_loadInternal);
@@ -1184,10 +1221,21 @@ class MultiRoomPlayerController extends GetxController {
     await MpvOptionsService.applyLiveLatencyOptions(player, protocol);
     if (_operationCancelled || _routeTransitionClosed) return;
     _playbackDesired = true;
-    await player.open(
-      Media(url, httpHeaders: _playHeaders),
-      play: playbackDesired,
+    final openStatus = await _nativeOpenQueue.open(
+      operation: () => player.open(
+        Media(url, httpHeaders: _playHeaders),
+        play: playbackDesired,
+      ),
+      isCurrent: () => !_operationCancelled && !_routeTransitionClosed,
+      timeout: _nativeOpenTimeout,
+      onPreviousError: (error, stackTrace) {
+        Log.e('多开前一个原生打开失败，继续处理新的打开请求: $error', stackTrace);
+      },
     );
+    if (openStatus == PlayerOpenStatus.timedOut) {
+      throw TimeoutException('多开原生播放器打开超时', _nativeOpenTimeout);
+    }
+    if (openStatus == PlayerOpenStatus.stale) return;
     if (_operationCancelled || _routeTransitionClosed) return;
     final completedAt = DateTime.now();
     final healthGeneration = healthOpenAttempt == null
@@ -1761,6 +1809,9 @@ class MultiRoomPlayerController extends GetxController {
         await _iosVideoParamsSubscription?.cancel();
         _iosVideoParamsSubscription = null;
         await _stopDanmaku();
+        // A timed-out open still owns native resources until its future
+        // settles. Wait for that ownership before stop/dispose.
+        await _nativeOpenQueue.waitUntilIdle();
         await player.stop();
         await player.dispose();
         _playerDisposed = true;
@@ -1829,6 +1880,7 @@ class MultiRoomPlayerController extends GetxController {
         await _liveLatencyChaser.stop();
       }
       if (!_playerDisposed) {
+        await _nativeOpenQueue.waitUntilIdle();
         await player.stop();
         await player.dispose();
         _playerDisposed = true;

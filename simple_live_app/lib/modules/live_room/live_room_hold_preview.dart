@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_player_controller.dart';
+import 'package:simple_live_app/widgets/player_view_gate.dart';
 
 export 'live_room_hold_preview_layout.dart';
 
@@ -186,13 +187,17 @@ class ObxPreviewPlayer extends StatelessWidget {
         return Stack(
           fit: StackFit.expand,
           children: [
-            Video(
-              controller: controller.videoController,
-              controls: NoVideoControls,
-              fit: BoxFit.contain,
-              wakelock: false,
-              pauseUponEnteringBackgroundMode: true,
-              resumeUponEnteringForegroundMode: false,
+            PlayerViewGate(
+              ready: controller.playerViewReady.value,
+              waitingBuilder: (_) => const SizedBox.expand(),
+              readyBuilder: (_) => Video(
+                controller: controller.videoController,
+                controls: NoVideoControls,
+                fit: BoxFit.contain,
+                wakelock: false,
+                pauseUponEnteringBackgroundMode: true,
+                resumeUponEnteringForegroundMode: false,
+              ),
             ),
             if (controller.loading.value)
               const Center(

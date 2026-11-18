@@ -629,6 +629,9 @@ class _HoldPreviewAudioSnapshot {
 class LiveRoomController extends PlayerController
     with WidgetsBindingObserver, WindowListener {
   @override
+  bool get lifecycleClosing => super.lifecycleClosing || _roomDisposed;
+
+  @override
   String get liveLinkHealthTarget => '${rxSite.value.id}/${rxRoomId.value}';
 
   static const volumeSliderDialogTag = "live_room_volume_slider";
@@ -659,6 +662,7 @@ class LiveRoomController extends PlayerController
 
   String? _xiaohongshuHostId;
   int? _xiaohongshuDetailRequestToken;
+  Future<void>? _roomCloseFuture;
 
   late Rx<Site> rxSite;
   Site get site => rxSite.value;
@@ -1101,8 +1105,15 @@ class LiveRoomController extends PlayerController
   Timer? _kuaishouContinuousBufferingTimer;
   Timer? _liveLatencyTelemetryTimer;
   final _liveLatencyTelemetryTracker = LiveLatencyTelemetryTracker();
+  static const _liveLatencyTelemetryInterval = Duration(seconds: 30);
+  LiveStreamProtocol? _liveLatencyTelemetryProtocol;
+  int? _liveLatencyTelemetryRequestRevision;
+  int? _liveLatencyTelemetryLoadGeneration;
+  DateTime? _liveLatencyTelemetryOpenedAt;
   bool _onlineRefreshInFlight = false;
   bool _liveLatencyTelemetryInFlight = false;
+  bool _playbackDiagnosticsActive = false;
+  Worker? _liveLatencyTelemetryLogWorker;
   bool _hasActivePlaybackSession = false;
   bool _playbackBootstrapInFlight = false;
   int _kuaishouRecoverySessionRevision = 0;
@@ -1141,7 +1152,7 @@ class LiveRoomController extends PlayerController
         ? false
         : AppSettingsController.instance.danmuEnable.value;
     followed.value = DBService.instance.getFollowExist("${site.id}_$roomId");
-    loadData();
+    unawaited(_preparePlayerLifecycleAndLoad());
     _startLiveEventFlowTimer();
 
     scrollController.addListener(scrollListener);
@@ -1152,7 +1163,29 @@ class LiveRoomController extends PlayerController
         _lastKnownPlayerPosition = event;
       });
     }
+    _liveLatencyTelemetryLogWorker = ever<bool>(
+      AppSettingsController.instance.logEnable,
+      (enabled) {
+        if (enabled) {
+          _scheduleLiveLatencyTelemetrySample(immediate: true);
+        } else if (!_playbackDiagnosticsActive) {
+          _stopLiveLatencyTelemetry();
+        }
+      },
+    );
     _setupAutoQualityAdjust();
+  }
+
+  Future<void> _preparePlayerLifecycleAndLoad() async {
+    try {
+      await ensurePlayerViewReady();
+      if (!_roomDisposed && playerViewReady.value) loadData();
+    } catch (error, stackTrace) {
+      if (!_roomDisposed) {
+        Log.e('等待播放器原生视图就绪失败: $error', stackTrace);
+        errorMsg.value = '播放器初始化失败：$error';
+      }
+    }
   }
 
   late final recording = LiveRoomRecordingCoordinator(
@@ -3337,7 +3370,22 @@ class LiveRoomController extends PlayerController
   }
 
   @override
-  Future<void> closePlayerResources() async {
+  Future<void> closePlayerResources() {
+    final existing = _roomCloseFuture;
+    if (existing != null) return existing;
+    late final Future<void> closing;
+    closing = _closeRoomResources();
+    _roomCloseFuture = closing;
+    unawaited(closing.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {
+        if (identical(_roomCloseFuture, closing)) _roomCloseFuture = null;
+      },
+    ));
+    return closing;
+  }
+
+  Future<void> _closeRoomResources() async {
     if (!Utils.isOhos) await recording.close();
     await closeListeningSession();
     await beforePlayerMutationForRecording();
@@ -3388,6 +3436,8 @@ class LiveRoomController extends PlayerController
     _superChatRefreshTimer?.cancel();
     _liveEventFlowTimer?.cancel();
     _onlineRefreshTimer?.cancel();
+    _liveLatencyTelemetryLogWorker?.dispose();
+    _liveLatencyTelemetryLogWorker = null;
     _cancelKuaishouDeviceRecoveryTimer(clearState: true);
     _stopLiveLatencyTelemetry();
     _chatBottomRestoreTimer?.cancel();
@@ -4479,33 +4529,82 @@ class LiveRoomController extends PlayerController
     required int requestRevision,
     required int loadGeneration,
   }) {
+    _liveLatencyTelemetryProtocol = protocol;
+    _liveLatencyTelemetryRequestRevision = requestRevision;
+    _liveLatencyTelemetryLoadGeneration = loadGeneration;
+    _liveLatencyTelemetryOpenedAt = DateTime.now();
     _stopLiveLatencyTelemetry();
-    final openedAt = DateTime.now();
-    unawaited(
-      _sampleLiveLatencyTelemetry(
-        protocol: protocol,
-        openedAt: openedAt,
-        requestRevision: requestRevision,
-        loadGeneration: loadGeneration,
-      ),
-    );
-    _liveLatencyTelemetryTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => unawaited(
-        _sampleLiveLatencyTelemetry(
-          protocol: protocol,
-          openedAt: openedAt,
-          requestRevision: requestRevision,
-          loadGeneration: loadGeneration,
-        ),
-      ),
-    );
+    _scheduleLiveLatencyTelemetrySample(immediate: true);
   }
 
   void _stopLiveLatencyTelemetry() {
     _liveLatencyTelemetryTimer?.cancel();
     _liveLatencyTelemetryTimer = null;
     _liveLatencyTelemetryTracker.reset();
+  }
+
+  bool get _liveLatencyTelemetryEnabled =>
+      AppSettingsController.instance.logEnable.value ||
+      _playbackDiagnosticsActive;
+
+  /// Enables the detailed playback sampler while the diagnostics panel is open.
+  /// Ordinary playback stays free of periodic native property reads unless
+  /// file logging is explicitly enabled.
+  void setPlaybackDiagnosticsActive(bool active) {
+    if (_playbackDiagnosticsActive == active) return;
+    _playbackDiagnosticsActive = active;
+    if (!active) {
+      if (_liveLatencyTelemetryEnabled) {
+        _scheduleLiveLatencyTelemetrySample(immediate: true);
+      } else {
+        _stopLiveLatencyTelemetry();
+      }
+      return;
+    }
+    _scheduleLiveLatencyTelemetrySample(immediate: true);
+  }
+
+  void _scheduleLiveLatencyTelemetrySample({required bool immediate}) {
+    _liveLatencyTelemetryTimer?.cancel();
+    _liveLatencyTelemetryTimer = null;
+    if (!_liveLatencyTelemetryEnabled ||
+        !_hasActivePlaybackSession ||
+        _liveLatencyTelemetryProtocol == null ||
+        _liveLatencyTelemetryRequestRevision == null ||
+        _liveLatencyTelemetryLoadGeneration == null) {
+      return;
+    }
+    final delay = immediate ? Duration.zero : _liveLatencyTelemetryInterval;
+    _liveLatencyTelemetryTimer = Timer(
+      delay,
+      () => unawaited(_runScheduledLiveLatencyTelemetrySample()),
+    );
+  }
+
+  Future<void> _runScheduledLiveLatencyTelemetrySample() async {
+    _liveLatencyTelemetryTimer = null;
+    final protocol = _liveLatencyTelemetryProtocol;
+    final requestRevision = _liveLatencyTelemetryRequestRevision;
+    final loadGeneration = _liveLatencyTelemetryLoadGeneration;
+    final openedAt = _liveLatencyTelemetryOpenedAt;
+    if (protocol == null ||
+        requestRevision == null ||
+        loadGeneration == null ||
+        openedAt == null ||
+        !_liveLatencyTelemetryEnabled) {
+      return;
+    }
+    await _sampleLiveLatencyTelemetry(
+      protocol: protocol,
+      openedAt: openedAt,
+      requestRevision: requestRevision,
+      loadGeneration: loadGeneration,
+    );
+    if (_liveLatencyTelemetryProtocol == protocol &&
+        _liveLatencyTelemetryRequestRevision == requestRevision &&
+        _liveLatencyTelemetryLoadGeneration == loadGeneration) {
+      _scheduleLiveLatencyTelemetrySample(immediate: false);
+    }
   }
 
   Future<void> _sampleLiveLatencyTelemetry({
