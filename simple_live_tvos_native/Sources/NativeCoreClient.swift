@@ -13,11 +13,7 @@ final class NativeCoreClient: ObservableObject {
         ProviderDescriptor(id: "xiaohongshu", title: "小红书", supportLabel: "链接进房"),
     ]
 
-    @Published private(set) var rooms: [RoomDescriptor] = []
     @Published private(set) var categories: [CategoryDescriptor] = []
-    @Published private(set) var isLoading = false
-    @Published private(set) var hasMore = false
-    @Published private(set) var errorMessage: String?
     @Published private(set) var authenticated: Set<String> = []
 
     private let bilibili = BilibiliService()
@@ -27,10 +23,7 @@ final class NativeCoreClient: ObservableObject {
     private let kuaishou = KuaishouService()
     private let xiaohongshu = XiaohongshuService()
     private let keychain = KeychainSessionStore()
-    private var roomRequest = 0
     private var categoryRequest = 0
-    private var page = 0
-    private var context: (provider: String, listing: RoomListing)?
     private var hasRestored = false
     private var sessionChanges: Set<String> = []
 
@@ -88,40 +81,6 @@ final class NativeCoreClient: ObservableObject {
         }
     }
 
-    func isCurrentRoomListing(provider: String, listing: RoomListing) -> Bool {
-        context?.provider == provider && context?.listing == listing
-    }
-
-    func loadRooms(provider: String, listing: RoomListing, append: Bool = false) async {
-        if append {
-            guard !isLoading, hasMore, isCurrentRoomListing(provider: provider, listing: listing) else { return }
-        } else {
-            context = (provider, listing)
-            rooms = []
-            hasMore = false
-            page = 0
-        }
-        roomRequest += 1
-        let request = roomRequest
-        isLoading = true
-        errorMessage = nil
-        defer { if request == roomRequest { isLoading = false } }
-
-        do {
-            if case .search = listing, !append { try await Task.sleep(for: .milliseconds(350)) }
-            let nextPage = page + 1
-            let result = try await service(provider).rooms(in: listing, page: nextPage)
-            guard request == roomRequest, !Task.isCancelled else { return }
-            var seen = Set(rooms.map(\.key))
-            rooms.append(contentsOf: result.rooms.filter { seen.insert($0.key).inserted })
-            hasMore = result.hasMore
-            page = nextPage
-        } catch {
-            guard request == roomRequest, !Task.isCancelled else { return }
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func loginChallenge(provider: String) async throws -> LoginChallenge {
         try await accountService(provider).makeLoginChallenge()
     }
@@ -151,5 +110,59 @@ final class NativeCoreClient: ObservableObject {
     private func accountService(_ provider: String) throws -> any ProviderSessionService {
         guard let service = try service(provider) as? any ProviderSessionService else { throw LiveProviderError.unsupported }
         return service
+    }
+}
+
+/// Each results view owns a store so navigation and overlapping requests do not share pagination.
+@MainActor
+final class RoomResultsStore: ObservableObject {
+    struct Query: Hashable {
+        let provider: String
+        let listing: RoomListing
+        let retry: Int
+    }
+
+    enum Status: Equatable {
+        case idle, loading, loaded, failed(String)
+    }
+
+    @Published private(set) var query: Query?
+    @Published private(set) var rooms: [RoomDescriptor] = []
+    @Published private(set) var status = Status.idle
+    @Published private(set) var hasMore = false
+    private var page = 0
+    private var generation = 0
+
+    func load(_ query: Query, next: Bool = false, fetch: (Int) async throws -> RoomPage) async {
+        if next {
+            guard self.query == query, hasMore, status != .loading else { return }
+        } else {
+            guard self.query != query || status == .idle || (status == .loading && page == 0) else { return }
+            self.query = query
+            rooms = []
+            hasMore = false
+            page = 0
+        }
+
+        generation += 1
+        let request = generation
+        let nextPage = page + 1
+        status = .loading
+        defer {
+            if generation == request, status == .loading { status = next ? .loaded : .idle }
+        }
+
+        do {
+            let result = try await fetch(nextPage)
+            guard generation == request, !Task.isCancelled else { return }
+            var seen = Set(rooms.map(\.key))
+            rooms += result.rooms.filter { seen.insert($0.key).inserted }
+            hasMore = result.hasMore
+            page = nextPage
+            status = .loaded
+        } catch {
+            guard generation == request, !Task.isCancelled else { return }
+            status = .failed(error.localizedDescription)
+        }
     }
 }

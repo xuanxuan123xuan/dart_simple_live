@@ -183,44 +183,74 @@ private struct CategoryListView: View {
 
 private struct HomeRoomResults: View {
     @EnvironmentObject private var core: NativeCoreClient
+    @StateObject private var results = RoomResultsStore()
     @State private var retry = 0
+    @State private var pagination: Pagination?
     let provider: String
     let listing: RoomListing
 
     var body: some View {
-        results.task(id: Request(provider: provider, listing: listing, retry: retry)) {
-            await core.loadRooms(provider: provider, listing: listing)
+        let query = RoomResultsStore.Query(provider: provider, listing: listing, retry: retry)
+        let request = pagination.flatMap { $0.query == query ? $0 : nil }
+        content(query)
+            .task(id: query) { await load(query, next: false) }
+            .task(id: request) {
+                guard let request else { return }
+                await load(request.query, next: true)
+                if pagination == request { pagination = nil }
+            }
+    }
+
+    @ViewBuilder
+    private func content(_ query: RoomResultsStore.Query) -> some View {
+        if results.query != query || results.status == .idle {
+            ProgressView()
+        } else if results.rooms.isEmpty && !results.hasMore {
+            switch results.status {
+            case .idle, .loading:
+                ProgressView()
+            case let .failed(message):
+                ContentUnavailableView {
+                    Label(emptyTitle, systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(message)
+                } actions: {
+                    Button("重试") { retry += 1 }
+                }
+            case .loaded:
+                ContentUnavailableView(emptyTitle, systemImage: "tv")
+            }
+        } else if results.rooms.isEmpty {
+            VStack(spacing: 18) {
+                ContentUnavailableView(emptyTitle, systemImage: "tv")
+                pageFooter(query)
+            }
+        } else {
+            RoomGrid(rooms: results.rooms) { pageFooter(query) }
         }
     }
 
     @ViewBuilder
-    private var results: some View {
-        if !core.isCurrentRoomListing(provider: provider, listing: listing) {
-            ProgressView()
-        } else if core.rooms.isEmpty {
-            if core.isLoading {
-                ProgressView()
-            } else if let message = core.errorMessage {
-                ContentUnavailableView {
-                    Label(message, systemImage: "tv")
-                } actions: {
-                    Button("重试") { retry += 1 }
-                }
+    private func pageFooter(_ query: RoomResultsStore.Query) -> some View {
+        switch results.status {
+        case let .failed(message):
+            Text(message).foregroundStyle(.secondary)
+            Button("重试加载更多") { pagination = Pagination(query: query) }
+        case .loading:
+            ProgressView("正在加载更多")
+        case .idle, .loaded:
+            if results.hasMore {
+                Button("加载更多") { pagination = Pagination(query: query) }
             } else {
-                ContentUnavailableView(emptyTitle, systemImage: "tv")
+                Text("已到底").foregroundStyle(.secondary)
             }
-        } else {
-            RoomGrid(rooms: core.rooms) {
-                if let message = core.errorMessage {
-                    Text(message).foregroundStyle(.secondary)
-                }
-                if core.hasMore {
-                    Button(core.isLoading ? "加载中" : "加载更多") {
-                        Task { await core.loadRooms(provider: provider, listing: listing, append: true) }
-                    }
-                    .disabled(core.isLoading)
-                }
-            }
+        }
+    }
+
+    private func load(_ query: RoomResultsStore.Query, next: Bool) async {
+        await results.load(query, next: next) { page in
+            if case .search = query.listing, !next { try await Task.sleep(for: .milliseconds(350)) }
+            return try await core.service(query.provider).rooms(in: query.listing, page: page)
         }
     }
 
@@ -229,10 +259,9 @@ private struct HomeRoomResults: View {
         return "暂无直播间"
     }
 
-    private struct Request: Hashable {
-        let provider: String
-        let listing: RoomListing
-        let retry: Int
+    private struct Pagination: Equatable {
+        let query: RoomResultsStore.Query
+        let id = UUID()
     }
 }
 
