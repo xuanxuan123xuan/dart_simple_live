@@ -64,7 +64,7 @@ struct FavoritesView: View {
                 ContentUnavailableView(library.favoriteEntries.isEmpty ? "还没有关注" : "没有符合条件的关注",
                                        systemImage: "star")
             } else {
-                grid(visible)
+                grid(visible, queue: entries.map(\.room))
                 if !preview && pageCount > 1 { pager(currentPage, of: pageCount) }
             }
         }
@@ -142,7 +142,7 @@ struct FavoritesView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private func grid(_ entries: [FavoriteEntry]) -> some View {
+    private func grid(_ entries: [FavoriteEntry], queue: [RoomDescriptor]) -> some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: preview ? 238 : layout.minimumWidth), spacing: 24)], spacing: 24) {
                 ForEach(entries) { entry in
@@ -150,7 +150,7 @@ struct FavoritesView: View {
                         if manage {
                             Menu { actions(entry) } label: { card(entry) }
                         } else {
-                            NavigationLink(value: HomeRoute.room(entry.room)) { card(entry) }
+                            NavigationLink(value: HomeRoute.room(entry.room, queue: queue)) { card(entry) }
                                 .contextMenu { actions(entry) }
                         }
                     }

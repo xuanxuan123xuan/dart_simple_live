@@ -10,6 +10,8 @@ struct PlayerView: View {
     @AppStorage("simple_live_tvos.danmaku") private var danmakuEnabled = true
 
     let room: RoomDescriptor
+    let queue: ChannelQueue
+    let openChannel: (RoomDescriptor) -> Void
 
     @StateObject private var engine = PlaybackEngine()
     @State private var errorMessage: String?
@@ -23,6 +25,7 @@ struct PlayerView: View {
     @State private var controlsVisible = true
     @State private var controlsActivity = 0
     @State private var selectionMenu: PlayerMenu?
+    @State private var showChannels = false
     @FocusState private var focusedControl: PlayerFocus?
 
     var body: some View {
@@ -42,7 +45,14 @@ struct PlayerView: View {
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
                 .focused($focusedControl, equals: .video)
-                .onMoveCommand { if $0 == .up { showControls() } }
+                .onMoveCommand { direction in
+                    switch direction {
+                    case .up: showControls()
+                    case .left: switchChannel(-1)
+                    case .right: switchChannel(1)
+                    default: break
+                    }
+                }
                 .accessibilityLabel("显示播放控制")
                 .accessibilityIdentifier("player-video-controls")
             }
@@ -76,6 +86,9 @@ struct PlayerView: View {
         .toolbar(.hidden, for: .navigationBar)
         .defaultFocus($focusedControl, preferredFocus)
         .onPlayPauseCommand { engine.togglePlayback() }
+        .sheet(isPresented: $showChannels, onDismiss: { controlsActivity += 1 }) {
+            PlayerChannelList(current: room, queue: queue, select: openChannel)
+        }
         .onChange(of: focusedControl) { _, _ in controlsActivity += 1 }
         .onChange(of: errorMessage) { _, message in
             if message != nil { focusedControl = .retry }
@@ -115,7 +128,7 @@ struct PlayerView: View {
     }
 
     private var autoHideActivity: Int? {
-        controlsVisible && selectionMenu == nil && scenePhase == .active ? controlsActivity : nil
+        controlsVisible && selectionMenu == nil && !showChannels && scenePhase == .active ? controlsActivity : nil
     }
 
     private var firstControl: PlayerFocus { qualities.isEmpty ? .danmaku : .quality }
@@ -136,6 +149,11 @@ struct PlayerView: View {
                 if let danmakuError { Text(danmakuError).font(.caption).foregroundStyle(.secondary) }
             }
             Spacer(minLength: 24)
+            if queue.rooms.count > 1 {
+                Button("换台") { showChannels = true }
+                    .focused($focusedControl, equals: .channels)
+                    .accessibilityIdentifier("player-channels")
+            }
             if !qualities.isEmpty {
                 Button(selectedQuality?.name ?? "清晰度") { selectionMenu = .quality }
                     .focused($focusedControl, equals: .quality)
@@ -192,6 +210,10 @@ struct PlayerView: View {
         }
         .environment(\.colorScheme, .dark)
         .focusSection()
+    }
+
+    private func switchChannel(_ offset: Int) {
+        if let next = queue.adjacent(to: room, offset: offset) { openChannel(next) }
     }
 
     private func showControls() {
@@ -268,7 +290,7 @@ struct PlayerView: View {
 }
 
 private enum PlayerFocus: Hashable {
-    case video, quality, line, danmaku, favorite, retry
+    case video, channels, quality, line, danmaku, favorite, retry
 }
 
 private enum PlayerMenu {

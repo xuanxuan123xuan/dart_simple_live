@@ -40,8 +40,8 @@ struct HomeView: View {
                         .navigationTitle(category?.name ?? "全部直播")
                 case let .openRoom(provider):
                     OpenRoomView(provider: provider) { path = [.room($0)] }
-                case let .room(room):
-                    PlayerView(room: room)
+                case let .room(room, rooms):
+                    ChannelPlayerView(room: room, rooms: rooms)
                 }
             }
         }
@@ -60,7 +60,7 @@ struct HomeView: View {
         case .favorites:
             FavoritesView()
         case .history:
-            libraryPage(.history, rooms: library.recent)
+            HistoryView()
         case .settings:
             VStack(alignment: .leading, spacing: 12) {
                 pageTitle("设置")
@@ -163,14 +163,6 @@ struct HomeView: View {
         .accessibilityIdentifier("live-open-room")
     }
 
-    private func libraryPage(_ section: HomeSection, rooms: [RoomDescriptor]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            pageTitle(section.title)
-            RoomGrid(rooms: rooms)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
     private func pageTitle(_ title: LocalizedStringKey) -> some View {
         Text(title)
             .font(.system(size: 42, weight: .bold))
@@ -183,7 +175,7 @@ enum HomeRoute: Hashable {
     case categoryChildren(String, CategoryDescriptor)
     case categoryRooms(String, CategoryDescriptor?)
     case openRoom(String)
-    case room(RoomDescriptor)
+    case room(RoomDescriptor, queue: [RoomDescriptor] = [])
 }
 
 private struct CategoryListView: View {
@@ -420,7 +412,7 @@ private struct RoomGrid<Footer: View>: View {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 24)], spacing: 24) {
                     ForEach(rooms) { room in
-                        NavigationLink(value: HomeRoute.room(room)) {
+                        NavigationLink(value: HomeRoute.room(room, queue: rooms)) {
                             RoomTile(room: room)
                         }
                         .buttonStyle(HomeButtonStyle())
@@ -508,11 +500,5 @@ struct RoomTile: View {
                     }
                 }
                 .accessibilityHidden(true)
-    }
-}
-
-private extension RoomGrid where Footer == EmptyView {
-    init(rooms: [RoomDescriptor]) {
-        self.init(rooms: rooms) { EmptyView() }
     }
 }

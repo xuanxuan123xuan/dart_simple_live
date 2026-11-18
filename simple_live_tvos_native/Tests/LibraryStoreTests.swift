@@ -42,6 +42,17 @@ final class LibraryStoreTests: XCTestCase {
         }
     }
 
+    func testChannelQueueKeepsSourceOrderAndWrapsAcrossPlatforms() {
+        let first = room("1")
+        let second = room("1", provider: "douyu")
+        let third = room("2")
+        let queue = ChannelQueue(rooms: [first, second, first, third], current: second)
+        XCTAssertEqual(queue.rooms, [first, second, third])
+        XCTAssertEqual(queue.adjacent(to: first, offset: -1), third)
+        XCTAssertEqual(queue.adjacent(to: third, offset: 1), first)
+        XCTAssertNil(ChannelQueue(rooms: [], current: first).adjacent(to: first, offset: 1))
+    }
+
     @MainActor
     private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
         let suite = "simple_live_tvos.tests.\(UUID().uuidString)"
