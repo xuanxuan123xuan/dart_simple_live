@@ -9,6 +9,7 @@ struct PlayerView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
     @AppStorage("simple_live_tvos.danmaku") private var danmakuEnabled = true
+    @AppStorage(PlaybackPreferences.autoQuality) private var autoQuality = true
 
     let room: RoomDescriptor
     let queue: ChannelQueue
@@ -18,6 +19,8 @@ struct PlayerView: View {
     @StateObject private var engine = PlaybackEngine()
     @State private var playbackIssue: PlaybackIssue?
     @State private var sleepExpired = false
+    @State private var qualityRecovery = AutoQualityRecovery()
+    @State private var qualityRecoveryMessage: String?
     @State private var danmakuError: String?
     @State private var qualities: [LiveQuality] = []
     @State private var selectedQuality: LiveQuality?
@@ -106,6 +109,8 @@ struct PlayerView: View {
                                        sleepDeadline: $sleepDeadline)
             }
         }
+        .onChange(of: engine.state) { _, state in observeQualityRecovery(state) }
+        .onChange(of: autoQuality) { _, _ in qualityRecovery = AutoQualityRecovery() }
         .onChange(of: focusedControl) { _, _ in controlsActivity += 1 }
         .onChange(of: playbackIssue) { _, issue in
             if sleepExpired { focusedControl = .sleepExit }
@@ -185,6 +190,7 @@ struct PlayerView: View {
                             .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
+                if let qualityRecoveryMessage { Text(qualityRecoveryMessage).font(.caption).foregroundStyle(.secondary) }
                 if let danmakuError { Text(danmakuError).font(.caption).foregroundStyle(.secondary) }
                 Spacer()
             }
@@ -289,6 +295,7 @@ struct PlayerView: View {
     }
 
     private func refreshPlayback() {
+        qualityRecoveryMessage = nil
         playbackResources = []
         controlsActivity += 1
         retry += 1
@@ -330,8 +337,18 @@ struct PlayerView: View {
 
     private func lineTitle(_ line: Int) -> String { "线路 \(line + 1)" }
 
-    private func selectQuality(_ quality: LiveQuality) {
+    private func observeQualityRecovery(_ state: PlaybackState) {
+        guard autoQuality, scenePhase == .active, !sleepExpired else { return }
+        let now = ContinuousClock.now
+        guard qualityRecovery.observe(state, now: now), let selectedQuality,
+              let lower = AutoQualityRecovery.nextLower(from: selectedQuality, choices: qualities) else { return }
+        qualityRecovery.markDowngraded(at: now)
+        selectQuality(lower, automatically: true)
+    }
+
+    private func selectQuality(_ quality: LiveQuality, automatically: Bool = false) {
         guard selectedQuality != quality else { return }
+        qualityRecoveryMessage = automatically ? "网络波动，已切换至\(quality.name)" : nil
         playbackResources = []
         preferredLine = nil
         selectedQuality = quality

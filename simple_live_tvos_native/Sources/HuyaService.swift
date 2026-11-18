@@ -79,8 +79,9 @@ actor HuyaService: LiveProviderService, DanmakuService {
         let qualities = stream["vBitRateInfo"].objects("value").compactMap { value -> LiveQuality? in
             let name = value.text("sDisplayName")
             let id = value.text("iBitRate")
-            guard !name.isEmpty, !name.contains("HDR"), Int(id) != nil, seen.insert(id).inserted else { return nil }
-            return LiveQuality(id: id, name: name)
+            guard !name.isEmpty, !name.contains("HDR"), let bitrate = Int(id), bitrate >= 0,
+                  seen.insert(id).inserted else { return nil }
+            return LiveQuality(id: id, name: name, recoveryRank: bitrate == 0 ? Int.max : bitrate)
         }
         return qualities.isEmpty ? [LiveQuality(id: "0", name: "原画")] : qualities
     }

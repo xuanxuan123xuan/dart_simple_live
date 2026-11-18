@@ -155,7 +155,7 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
         let ordered = play.objects("g_qn_desc").compactMap { entry -> LiveQuality? in
             let qn = entry.text("qn")
             guard accepted.contains(qn) else { return nil }
-            return LiveQuality(id: qn, name: entry.text("desc"))
+            return LiveQuality(id: qn, name: entry.text("desc"), recoveryRank: Int(qn))
         }
         guard !ordered.isEmpty else { throw LiveProviderError.noPlayback }
         return ordered

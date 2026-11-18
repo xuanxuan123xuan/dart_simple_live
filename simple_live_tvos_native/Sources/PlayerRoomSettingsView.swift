@@ -5,6 +5,7 @@ struct PlayerRoomSettingsView: View {
     @ObservedObject var engine: PlaybackEngine
     @Binding var danmakuEnabled: Bool
     @Binding var sleepDeadline: Date?
+    @AppStorage(PlaybackPreferences.autoQuality) private var autoQuality = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 26) {
@@ -21,7 +22,10 @@ struct PlayerRoomSettingsView: View {
                     .disabled(engine.volume == 100)
                 Toggle("静音", isOn: Binding(get: { engine.isMuted }, set: { engine.setMuted($0) }))
             }
-            Toggle("显示弹幕", isOn: $danmakuEnabled)
+            HStack(spacing: 40) {
+                Toggle("显示弹幕", isOn: $danmakuEnabled)
+                Toggle("网络波动时自动降低清晰度", isOn: $autoQuality)
+            }
             Text("定时关闭").font(.headline)
             HStack(spacing: 22) {
                 ForEach([15, 30, 60, 90, 120], id: \.self) { minutes in

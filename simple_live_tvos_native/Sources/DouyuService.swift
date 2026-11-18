@@ -90,7 +90,9 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
             let id = item.text("rate")
             let name = item.text("name")
             guard Int(id) != nil, !name.isEmpty, seen.insert(id).inserted else { return nil }
-            return LiveQuality(id: id, name: name)
+            let bitrate = item.integer("bit") ?? item.integer("bitrate")
+            let rank = bitrate.flatMap { $0 > 0 ? $0 : nil }
+            return LiveQuality(id: id, name: name, recoveryRank: id == "0" ? Int.max : rank)
         }
         guard !result.isEmpty else { throw LiveProviderError.noPlayback }
         return result

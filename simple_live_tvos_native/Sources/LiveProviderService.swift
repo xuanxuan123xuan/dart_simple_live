@@ -57,6 +57,14 @@ struct RoomPage {
 struct LiveQuality: Identifiable, Hashable {
     let id: String
     let name: String
+    /// Comparable only within a provider. Unknown tiers must not be used for automatic downgrades.
+    let recoveryRank: Int?
+
+    init(id: String, name: String, recoveryRank: Int? = nil) {
+        self.id = id
+        self.name = name
+        self.recoveryRank = recoveryRank
+    }
 }
 
 enum LiveProviderError: LocalizedError {

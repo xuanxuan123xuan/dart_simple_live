@@ -133,7 +133,8 @@ actor DouyinService: LiveProviderService, DanmakuService {
             let main = sources[key]["main"]
             let urls = [MediaVariant.url(main.text("hls"), hint: .hls), MediaVariant.url(main.text("flv"), hint: .flv)].compactMap { $0 }
             if !urls.isEmpty {
-                result.append((quality.integer("level") ?? 0, MediaVariant(quality: LiveQuality(id: key, name: name), urls: urls)))
+                let level = quality.integer("level")
+                result.append((level ?? 0, MediaVariant(quality: LiveQuality(id: key, name: name, recoveryRank: level), urls: urls)))
             }
         }
         if result.isEmpty {

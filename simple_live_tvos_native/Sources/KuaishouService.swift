@@ -189,7 +189,8 @@ actor KuaishouService: LiveProviderService, DanmakuService {
             switch value {
             case let value as String:
                 guard let entry = MediaVariant.url(value), seen.insert(entry.0).inserted else { return }
-                byQuality[LiveQuality(id: level + ":" + name, name: name), default: []].append(entry)
+                let rank = Int(level).flatMap { $0 > 0 ? $0 : nil }
+                byQuality[LiveQuality(id: level + ":" + name, name: name, recoveryRank: rank), default: []].append(entry)
             case let values as [Any]:
                 values.forEach { collect($0, name: name, level: level, depth: depth + 1) }
             case let raw as [String: Any]:
