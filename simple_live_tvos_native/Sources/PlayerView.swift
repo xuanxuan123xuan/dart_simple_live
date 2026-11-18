@@ -16,11 +16,13 @@ struct PlayerView: View {
     @State private var danmakuError: String?
     @State private var qualities: [LiveQuality] = []
     @State private var selectedQuality: LiveQuality?
+    @State private var playbackResources: [PlaybackResource] = []
+    @State private var preferredLine: Int?
     @State private var danmakuEvents = PassthroughSubject<DanmakuEvent, Never>()
     @State private var retry = 0
     @State private var controlsVisible = true
     @State private var controlsActivity = 0
-    @State private var isChoosingQuality = false
+    @State private var selectionMenu: PlayerMenu?
     @FocusState private var focusedControl: PlayerFocus?
 
     var body: some View {
@@ -48,7 +50,10 @@ struct PlayerView: View {
                 ContentUnavailableView {
                     Label(errorMessage, systemImage: "play.slash")
                 } actions: {
-                    Button("重试") { retry += 1 }
+                    Button("重试") {
+                        playbackResources = []
+                        retry += 1
+                    }
                         .focused($focusedControl, equals: .retry)
                         .onMoveCommand(perform: controlsVisible ? nil : { if $0 == .up { showControls() } })
                 }
@@ -87,7 +92,11 @@ struct PlayerView: View {
             }
         }
         .task(id: PlaybackRequest(quality: selectedQuality, retry: retry, active: scenePhase == .active)) {
-            guard scenePhase == .active else { engine.stop(); return }
+            guard scenePhase == .active else {
+                engine.stop()
+                playbackResources = []
+                return
+            }
             await startPlayback()
         }
         .task(id: danmakuEnabled && scenePhase == .active) {
@@ -106,10 +115,14 @@ struct PlayerView: View {
     }
 
     private var autoHideActivity: Int? {
-        controlsVisible && !isChoosingQuality && scenePhase == .active ? controlsActivity : nil
+        controlsVisible && selectionMenu == nil && scenePhase == .active ? controlsActivity : nil
     }
 
-    private var firstControl: PlayerFocus { qualities.isEmpty ? .favorite : .quality }
+    private var firstControl: PlayerFocus { qualities.isEmpty ? .danmaku : .quality }
+
+    private var availableLines: [Int] {
+        Set(playbackResources.map(\.lineIndex)).sorted()
+    }
 
     private var preferredFocus: PlayerFocus {
         if errorMessage != nil { return .retry }
@@ -124,17 +137,32 @@ struct PlayerView: View {
             }
             Spacer(minLength: 24)
             if !qualities.isEmpty {
-                Button(selectedQuality?.name ?? "清晰度") { isChoosingQuality = true }
+                Button(selectedQuality?.name ?? "清晰度") { selectionMenu = .quality }
                     .focused($focusedControl, equals: .quality)
                     .accessibilityLabel("清晰度")
                     .accessibilityValue(selectedQuality?.name ?? "")
                     .accessibilityIdentifier("player-quality")
-                    .confirmationDialog("清晰度", isPresented: $isChoosingQuality, titleVisibility: .visible) {
+                    .confirmationDialog("清晰度", isPresented: menuIsPresented(.quality), titleVisibility: .visible) {
                         ForEach(qualities) { quality in
-                            Button(quality.name) { selectedQuality = quality }
+                            Button(quality.name) { selectQuality(quality) }
                         }
                     }
             }
+            Button(engine.currentLine.map(lineTitle) ?? "线路") { selectionMenu = .line }
+                .disabled(availableLines.isEmpty)
+                .focused($focusedControl, equals: .line)
+                .accessibilityLabel("线路")
+                .accessibilityValue(engine.currentLine.map(lineTitle) ?? "")
+                .accessibilityIdentifier("player-line")
+                .confirmationDialog("选择线路", isPresented: menuIsPresented(.line), titleVisibility: .visible) {
+                    ForEach(availableLines, id: \.self) { line in
+                        Button(line == engine.currentLine ? "\(lineTitle(line))（当前）" : lineTitle(line)) {
+                            guard line != engine.currentLine else { return }
+                            preferredLine = line
+                            retry += 1
+                        }
+                    }
+                }
             Button {
                 danmakuEnabled.toggle()
                 controlsActivity += 1
@@ -175,8 +203,24 @@ struct PlayerView: View {
         }
     }
 
+    private func menuIsPresented(_ menu: PlayerMenu) -> Binding<Bool> {
+        Binding(get: { selectionMenu == menu }, set: { presented in
+            if !presented, selectionMenu == menu { selectionMenu = nil }
+        })
+    }
+
+    private func lineTitle(_ line: Int) -> String { "线路 \(line + 1)" }
+
+    private func selectQuality(_ quality: LiveQuality) {
+        guard selectedQuality != quality else { return }
+        playbackResources = []
+        preferredLine = nil
+        selectedQuality = quality
+    }
+
     private func startPlayback() async {
         errorMessage = nil
+        let requestedLine = preferredLine
         do {
             let service = try core.service(room.provider)
             guard let selectedQuality else {
@@ -187,7 +231,10 @@ struct PlayerView: View {
                 self.selectedQuality = first
                 return
             }
-            let resources = try await service.playback(roomId: room.roomId, quality: selectedQuality)
+            var resources = playbackResources
+            if resources.isEmpty {
+                resources = try await service.playback(roomId: room.roomId, quality: selectedQuality)
+            }
             try Task.checkCancellation()
             let history = Task { @MainActor in
                 while !Task.isCancelled {
@@ -200,22 +247,32 @@ struct PlayerView: View {
             }
             defer { history.cancel() }
             do {
-                try await engine.run(resources: resources)
+                try await play(resources, preferredLine: requestedLine)
             } catch LiveProviderError.noPlayback {
                 try Task.checkCancellation()
                 let fresh = try await service.playback(roomId: room.roomId, quality: selectedQuality)
                 try Task.checkCancellation()
                 if fresh == resources { throw LiveProviderError.noPlayback }
-                try await engine.run(resources: fresh)
+                try await play(fresh, preferredLine: requestedLine)
             }
         } catch {
             if !Task.isCancelled { errorMessage = error.localizedDescription }
         }
     }
+
+    private func play(_ resources: [PlaybackResource], preferredLine: Int?) async throws {
+        try Task.checkCancellation()
+        playbackResources = resources
+        try await engine.run(resources: resources, preferredLine: preferredLine)
+    }
 }
 
 private enum PlayerFocus: Hashable {
-    case video, quality, danmaku, favorite, retry
+    case video, quality, line, danmaku, favorite, retry
+}
+
+private enum PlayerMenu {
+    case quality, line
 }
 
 private struct HLSVideoView: UIViewControllerRepresentable {

@@ -65,14 +65,18 @@ public struct PlaybackFailoverController: Sendable {
 
     public init() {}
 
-    public mutating func begin(resources: [PlaybackResource]) throws -> PlaybackAttempt {
+    public mutating func begin(resources: [PlaybackResource], preferredLine: Int? = nil) throws -> PlaybackAttempt {
         guard !resources.isEmpty else { throw PlaybackFailoverError.noResources }
         generation += 1
         self.resources = resources
+        if let preferredLine, let index = resources.firstIndex(where: { $0.lineIndex == preferredLine }), index != 0 {
+            let preferred = self.resources.remove(at: index)
+            self.resources.insert(preferred, at: 0)
+        }
         nextIndex = 0
         currentLine = nil
         state = .preparing
-        return PlaybackAttempt(resource: resources[0], generation: generation)
+        return PlaybackAttempt(resource: self.resources[0], generation: generation)
     }
 
     public mutating func failCurrent(generation: Int) throws -> PlaybackAttempt {
@@ -88,7 +92,9 @@ public struct PlaybackFailoverController: Sendable {
 
     public mutating func markPlaying(lineIndex: Int, generation: Int) throws {
         guard generation == self.generation else { throw PlaybackFailoverError.staleGeneration }
-        guard resources.indices.contains(lineIndex) else { throw PlaybackFailoverError.noResources }
+        guard resources.indices.contains(nextIndex), resources[nextIndex].lineIndex == lineIndex else {
+            throw PlaybackFailoverError.noResources
+        }
         currentLine = lineIndex
         state = .playing
     }

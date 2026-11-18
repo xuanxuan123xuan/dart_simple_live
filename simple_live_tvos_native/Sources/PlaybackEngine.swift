@@ -10,6 +10,7 @@ final class PlaybackEngine: ObservableObject {
     @Published private(set) var player: AVPlayer?
     @Published private(set) var nativeView: UIView?
     @Published private(set) var state: PlaybackState = .idle
+    @Published private(set) var currentLine: Int?
 
     private static let configureLogging: Void = {
         KSOptions.logger = PrivateMediaLogger()
@@ -19,16 +20,18 @@ final class PlaybackEngine: ObservableObject {
     private var runID = UUID()
     private var nativePlayer: KSPlayerLayer?
 
-    func run(resources: [PlaybackResource]) async throws {
+    func run(resources: [PlaybackResource], preferredLine: Int? = nil) async throws {
+        try Task.checkCancellation()
         stop()
         let id = runID
-        var attempt = try failover.begin(resources: resources)
+        var attempt = try failover.begin(resources: resources, preferredLine: preferredLine)
         defer {
             if runID == id { stop() }
         }
         while true {
             try Task.checkCancellation()
             guard runID == id else { throw CancellationError() }
+            currentLine = attempt.resource.lineIndex
             state = .preparing
             do {
                 try await play(attempt, id: id)
@@ -51,6 +54,7 @@ final class PlaybackEngine: ObservableObject {
         runID = UUID()
         releaseBackend()
         failover.stop()
+        currentLine = nil
         state = .stopped
     }
 
