@@ -1,0 +1,30 @@
+name: simple_live_tvos_app
+description: Apple TV client for dart_simple_live dev (HLS/AVPlayer).
+publish_to: none
+version: 0.2.0+2
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  simple_live_core:
+    path: ../simple_live_core
+  video_player: ^2.10.0
+  video_player_tvos: ^0.0.1
+  shared_preferences: ^2.5.3
+  shared_preferences_tvos: ^0.0.2
+
+dependency_overrides:
+  # tvOS-native QuickJS is not verified. JS-signed platforms remain limited.
+  dart_quickjs:
+    path: ../third_party/dart_quickjs_stub
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
