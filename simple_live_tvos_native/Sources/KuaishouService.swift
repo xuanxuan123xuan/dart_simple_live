@@ -10,16 +10,27 @@ actor KuaishouService: LiveProviderService, DanmakuService {
     private let http = ProviderHTTP()
 
     func categories() async throws -> [CategoryDescriptor] {
+        let names = ["热门", "网游", "单机", "手游", "棋牌", "娱乐", "综合", "文化"]
         var categories: [CategoryDescriptor] = []
-        for type in 1...8 {
-            try Task.checkCancellation()
-            let data = try await request("/live_api/category/data", ["type": String(type), "page": "1", "size": "35"])
-            categories += data.objects("list").compactMap {
-                let id = $0.text("id")
-                let name = $0.text("name")
-                guard !id.isEmpty, !name.isEmpty else { return nil }
-                return CategoryDescriptor(categoryId: id, name: name, parentId: String(type))
+        for (index, name) in names.enumerated() {
+            let type = String(index + 1)
+            var children: [CategoryDescriptor] = []
+            for page in 1...10 {
+                try Task.checkCancellation()
+                let data = try await request("/live_api/category/data", ["type": type, "page": String(page), "size": "50"])
+                guard data.fields["list"] is [Any], let more = data.integer("hasMore"), (0...1).contains(more) else {
+                    throw LiveProviderError.invalidResponse
+                }
+                children += data.objects("list").compactMap {
+                    let id = $0.text("id")
+                    let name = $0.text("name")
+                    guard !id.isEmpty, !name.isEmpty else { return nil }
+                    return CategoryDescriptor(categoryId: id, name: name, parentId: type)
+                }
+                if more == 0 { break }
+                if page == 10 { throw LiveProviderError.remote("快手分区目录超过分页上限") }
             }
+            categories.append(.group(type, name: name, children: children))
         }
         return categories
     }

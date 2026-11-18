@@ -275,17 +275,17 @@ actor DouyinService: LiveProviderService, DanmakuService {
                               userName: author.text("nickname"))
     }
 
-    private static func parseCategories(_ nodes: [JSONObject], parent: String = "", depth: Int = 0) -> [CategoryDescriptor] {
-        guard depth < 5 else { return [] }
-        return nodes.flatMap { node -> [CategoryDescriptor] in
+    static func parseCategories(_ nodes: [JSONObject], parent: String = "", depth: Int = 0) -> [CategoryDescriptor] {
+        guard depth < 16 else { return [] }
+        return nodes.compactMap { node in
             let partition = node["partition"]
             let id = partition.text("id_str").isEmpty ? partition.text("id") : partition.text("id_str")
             let type = partition.text("type")
             let name = [partition.text("title"), partition.text("name"), partition.text("partition_name")].first { !$0.isEmpty } ?? ""
-            guard Int(id) != nil, Int(type) != nil, !name.isEmpty else { return [] }
+            guard Int(id) != nil, Int(type) != nil, !name.isEmpty else { return nil }
             let key = id + "," + type
-            return [CategoryDescriptor(categoryId: key, name: name, parentId: parent)] +
-                parseCategories(node.objects("sub_partition"), parent: key, depth: depth + 1)
+            let children = parseCategories(node.objects("sub_partition"), parent: key, depth: depth + 1)
+            return CategoryDescriptor(categoryId: key, name: name, parentId: parent, children: children)
         }
     }
 

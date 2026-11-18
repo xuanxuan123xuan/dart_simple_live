@@ -75,13 +75,17 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
     func categories() async throws -> [CategoryDescriptor] {
         let result = try await request(Self.live + "/room/v1/Area/getList", ["need_entrance": "1", "parent_id": "0"])
         _ = try Self.payload(result)
-        return result.objects("data").flatMap { parent in
-            parent.objects("list").compactMap { child in
+        return result.objects("data").compactMap { parent in
+            let parentID = parent.text("id")
+            let parentName = parent.text("name")
+            guard !parentID.isEmpty, !parentName.isEmpty else { return nil }
+            let children = parent.objects("list").compactMap { child -> CategoryDescriptor? in
                 let id = child.text("id")
                 let name = child.text("name")
                 guard !id.isEmpty, !name.isEmpty else { return nil }
-                return CategoryDescriptor(categoryId: id, name: name, parentId: parent.text("id"))
+                return CategoryDescriptor(categoryId: id, name: name, parentId: parentID)
             }
+            return .group(parentID, name: parentName, children: children)
         }
     }
 

@@ -6,7 +6,6 @@ struct HomeView: View {
     @State private var section: HomeSection = .live
     @State private var provider = "bilibili"
     @State private var searchQuery = ""
-    @State private var category: CategoryDescriptor?
     @State private var path: [HomeRoute] = []
     @FocusState private var focusedSection: HomeSection?
 
@@ -14,10 +13,7 @@ struct HomeView: View {
         NavigationStack(path: $path) {
             VStack(spacing: 16) {
                 HomePlatformBar(providers: section == .settings ? [] : core.providers, selection: provider) { id in
-                    if provider != id {
-                        category = nil
-                        provider = id
-                    }
+                    provider = id
                     if section != .search { section = .live }
                 }
 
@@ -33,8 +29,13 @@ struct HomeView: View {
             .onExitCommand(perform: focusedSection == nil ? { focusedSection = section } : nil)
             .navigationDestination(for: HomeRoute.self) { route in
                 switch route {
-                case .categories:
-                    CategoryListView(categories: core.categories, selected: $category)
+                case let .categories(provider):
+                    CategoryListView(provider: provider, category: nil)
+                case let .categoryChildren(provider, category):
+                    CategoryListView(provider: provider, category: category)
+                case let .categoryRooms(provider, category):
+                    HomeRoomResults(provider: provider, listing: category.map(RoomListing.category) ?? .recommended)
+                        .navigationTitle(category?.name ?? "全部直播")
                 case let .openRoom(provider):
                     OpenRoomView(provider: provider) { path = [.room($0)] }
                 case let .room(room):
@@ -67,21 +68,20 @@ struct HomeView: View {
     private var browse: some View {
         VStack(alignment: .leading, spacing: 10) {
             browseTools
-            HomeRoomResults(provider: provider, listing: category.map(RoomListing.category) ?? .recommended)
+            HomeRoomResults(provider: provider, listing: .recommended)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task(id: provider) { await core.loadCategories(provider: provider) }
     }
 
     private var browseTools: some View {
         HStack(spacing: 12) {
-            pageTitle(category == nil ? "推荐直播" : "分类直播")
+            pageTitle("推荐直播")
             Spacer()
 
-            if !core.categories.isEmpty {
-                NavigationLink(value: HomeRoute.categories) {
+            if provider != "xiaohongshu" {
+                NavigationLink(value: HomeRoute.categories(provider)) {
                     HomePill(quiet: false) {
-                        Label(category?.name ?? "分类", systemImage: "square.grid.2x2")
+                        Label("直播类目", systemImage: "square.grid.2x2")
                             .lineLimit(1)
                     }
                 }
@@ -155,29 +155,90 @@ struct HomeView: View {
 }
 
 private enum HomeRoute: Hashable {
-    case categories
+    case categories(String)
+    case categoryChildren(String, CategoryDescriptor)
+    case categoryRooms(String, CategoryDescriptor?)
     case openRoom(String)
     case room(RoomDescriptor)
 }
 
 private struct CategoryListView: View {
-    @Environment(\.dismiss) private var dismiss
-    let categories: [CategoryDescriptor]
-    @Binding var selected: CategoryDescriptor?
+    @EnvironmentObject private var core: NativeCoreClient
+    @FocusState private var focused: String?
+    @State private var lastFocused: String?
+    @State private var catalog: [CategoryDescriptor]?
+    @State private var error: String?
+    @State private var retry = 0
+    let provider: String
+    let category: CategoryDescriptor?
 
     var body: some View {
-        List {
-            Button("全部") { select(nil) }
-            ForEach(categories) { category in
-                Button(category.name) { select(category) }
+        Group {
+            if let categories = category?.children ?? catalog {
+                categoryGrid(categories)
+            } else if let error {
+                ContentUnavailableView {
+                    Label("无法加载直播类目", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("重试") { retry += 1 }
+                }
+            } else {
+                ProgressView("正在加载直播类目")
             }
         }
-        .navigationTitle("直播分类")
+        .navigationTitle(category?.name ?? "直播类目")
+        .task(id: retry) {
+            guard category == nil, catalog == nil else { return }
+            error = nil
+            do {
+                var seen = Set<String>()
+                let result = try await core.service(provider).categories()
+                try Task.checkCancellation()
+                catalog = result.filter { seen.insert($0.id).inserted }
+            } catch {
+                if !Task.isCancelled { self.error = error.localizedDescription }
+            }
+        }
     }
 
-    private func select(_ category: CategoryDescriptor?) {
-        selected = category
-        dismiss()
+    private var includesAll: Bool { category?.canBrowseRooms ?? true }
+
+    @ViewBuilder
+    private func categoryGrid(_ categories: [CategoryDescriptor]) -> some View {
+        if categories.isEmpty && !includesAll {
+            ContentUnavailableView("暂无子类目", systemImage: "square.grid.2x2")
+        } else {
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 26)], spacing: 26) {
+                    if includesAll {
+                        categoryLink("全部", id: "all", icon: "square.grid.2x2", route: .categoryRooms(provider, category))
+                    }
+                    ForEach(categories) { item in
+                        let branch = !item.children.isEmpty || !item.canBrowseRooms
+                        categoryLink(item.name, id: item.id, icon: branch ? "folder" : "tv",
+                                     route: branch ? .categoryChildren(provider, item) : .categoryRooms(provider, item))
+                    }
+                }
+                .padding(28)
+            }
+            .defaultFocus($focused, lastFocused ?? (includesAll ? "all" : categories.first?.id))
+            .onChange(of: focused) { _, value in
+                if let value { lastFocused = value }
+            }
+        }
+    }
+
+    private func categoryLink(_ title: String, id: String, icon: String, route: HomeRoute) -> some View {
+        NavigationLink(value: route) {
+            HomePill(quiet: false) {
+                Label(title, systemImage: icon).lineLimit(1).frame(maxWidth: .infinity, minHeight: 64)
+            }
+        }
+        .buttonStyle(HomeButtonStyle())
+        .focusEffectDisabled()
+        .focused($focused, equals: id)
     }
 }
 

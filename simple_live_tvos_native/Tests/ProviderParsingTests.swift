@@ -4,6 +4,25 @@ import XCTest
 @testable import SimpleLiveTVOS
 
 final class ProviderParsingTests: XCTestCase {
+    func testDouyinCategoryTreePreservesThreeLevelsAndParentKeys() throws {
+        let fixture = #"""
+            {"catalog":[{"partition":{"id_str":"1","type":1,"title":"游戏"},"sub_partition":[
+                {"partition":{"id":2,"type":2,"title":"主机"},"sub_partition":[
+                    {"partition":{"id":3,"type":3,"title":"动作"}},
+                    {"partition":{"id":3,"type":3,"title":"重复"}}
+                ]}
+            ]}]}
+            """#
+        let data = try JSONObject.decode(Data(fixture.utf8))
+        let roots = DouyinService.parseCategories(data.objects("catalog"))
+        let root = try XCTUnwrap(roots.first)
+        let branch = try XCTUnwrap(root.children.first)
+        XCTAssertTrue(root.canBrowseRooms)
+        XCTAssertEqual(branch.parentId, "1,1")
+        XCTAssertEqual(branch.children.map(\.name), ["动作"])
+        XCTAssertEqual(branch.children.first?.parentId, "2,2")
+    }
+
     func testSSRDataPreservesQuotedUndefinedAndBalancesNestedObjects() throws {
         let page = #"<script>window.__INITIAL_STATE__ = {"title":"undefined and }","body":{"missing":undefined}}</script>"#
         let state = try EmbeddedPageData.initialState(in: page)

@@ -15,12 +15,22 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
 
     func categories() async throws -> [CategoryDescriptor] {
         let data = try Self.payload(await http.json("https://m.douyu.com/api/cate/list"))
-        return data.objects("cate2Info").compactMap {
-            let id = $0.text("cate2Id")
-            let name = $0.text("cate2Name")
+        let children = data.objects("cate2Info").compactMap { item -> CategoryDescriptor? in
+            let id = item.text("cate2Id")
+            let name = item.text("cate2Name")
             guard Int(id) != nil, !name.isEmpty else { return nil }
-            return CategoryDescriptor(categoryId: id, name: name, parentId: $0.text("cate1Id"))
+            return CategoryDescriptor(categoryId: id, name: name, parentId: item.text("cate1Id"))
         }
+        let byParent = Dictionary(grouping: children, by: \.parentId)
+        let groups = data.objects("cate1Info").compactMap { item -> CategoryDescriptor? in
+            let id = item.text("cate1Id")
+            let name = item.text("cate1Name")
+            guard Int(id) != nil, !name.isEmpty else { return nil }
+            return .group(id, name: name, children: byParent[id] ?? [])
+        }
+        let knownParents = Set(groups.map(\.categoryId))
+        return groups.sorted { (Int($0.categoryId) ?? 0) < (Int($1.categoryId) ?? 0) }
+            + children.filter { !knownParents.contains($0.parentId) }
     }
 
     func rooms(in listing: RoomListing, page: Int) async throws -> RoomPage {

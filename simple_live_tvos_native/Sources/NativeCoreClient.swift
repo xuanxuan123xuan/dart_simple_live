@@ -13,7 +13,6 @@ final class NativeCoreClient: ObservableObject {
         ProviderDescriptor(id: "xiaohongshu", title: "小红书", supportLabel: "链接进房"),
     ]
 
-    @Published private(set) var categories: [CategoryDescriptor] = []
     @Published private(set) var authenticated: Set<String> = []
 
     private let bilibili = BilibiliService()
@@ -23,7 +22,6 @@ final class NativeCoreClient: ObservableObject {
     private let kuaishou = KuaishouService()
     private let xiaohongshu = XiaohongshuService()
     private let keychain = KeychainSessionStore()
-    private var categoryRequest = 0
     private var hasRestored = false
     private var sessionChanges: Set<String> = []
 
@@ -66,19 +64,6 @@ final class NativeCoreClient: ObservableObject {
             throw LiveProviderError.unsupported
         }
         return source.danmaku(roomId: room.roomId)
-    }
-
-    func loadCategories(provider: String) async {
-        categoryRequest += 1
-        let request = categoryRequest
-        categories = []
-        do {
-            let result = try await service(provider).categories()
-            guard request == categoryRequest, !Task.isCancelled else { return }
-            categories = result
-        } catch {
-            return
-        }
     }
 
     func loginChallenge(provider: String) async throws -> LoginChallenge {

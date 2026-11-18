@@ -11,7 +11,22 @@ struct CategoryDescriptor: Identifiable, Hashable {
     let categoryId: String
     let name: String
     let parentId: String
+    let children: [CategoryDescriptor]
+    let canBrowseRooms: Bool
     var id: String { "\(parentId):\(categoryId)" }
+
+    init(categoryId: String, name: String, parentId: String, children: [Self] = [], canBrowseRooms: Bool = true) {
+        self.categoryId = categoryId
+        self.name = name
+        self.parentId = parentId
+        var seen = Set<String>()
+        self.children = children.filter { seen.insert($0.id).inserted }
+        self.canBrowseRooms = canBrowseRooms
+    }
+
+    static func group(_ id: String, name: String, children: [Self]) -> Self {
+        Self(categoryId: id, name: name, parentId: "", children: children, canBrowseRooms: false)
+    }
 }
 
 struct RoomDescriptor: Identifiable, Hashable, Codable {

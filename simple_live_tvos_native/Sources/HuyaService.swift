@@ -13,16 +13,18 @@ actor HuyaService: LiveProviderService, DanmakuService {
 
     func categories() async throws -> [CategoryDescriptor] {
         var result: [CategoryDescriptor] = []
-        for type in ["1", "2", "8", "3"] {
+        for (type, name) in [("1", "网游"), ("2", "单机"), ("8", "娱乐"), ("3", "手游")] {
+            try Task.checkCancellation()
             let json = try await http.json("https://live.cdn.huya.com/liveconfig/game/bussLive", query: ["bussType": type], headers: Self.headers)
             try Self.checkStatus(json)
-            result += json.objects("data").compactMap { item in
+            let children = json.objects("data").compactMap { item -> CategoryDescriptor? in
                 let raw = item.text("gid")
                 let id = raw.isEmpty ? item["gid"].text("value").components(separatedBy: ",").first ?? "" : raw
                 let name = item.text("gameFullName")
                 guard !id.isEmpty, !name.isEmpty else { return nil }
                 return CategoryDescriptor(categoryId: id, name: name, parentId: type)
             }
+            result.append(.group(type, name: name, children: children))
         }
         return result
     }
