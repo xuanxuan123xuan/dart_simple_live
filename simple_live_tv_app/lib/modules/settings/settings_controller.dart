@@ -196,6 +196,7 @@ class SettingsController extends BaseController
     final account = DouyuAccountService.instance;
     final action = await Utils.showOptionDialog<String>(
       [
+        "扫码登录",
         "粘贴或编辑 Cookie",
         if (account.hasCookie.value) "清除 Cookie",
       ],
@@ -203,6 +204,9 @@ class SettingsController extends BaseController
       title: "斗鱼账号",
     );
     switch (action) {
+      case "扫码登录":
+        await Get.toNamed(RoutePath.kDouyuQRLogin);
+        break;
       case "粘贴或编辑 Cookie":
         await _editDouyuCookie();
         break;

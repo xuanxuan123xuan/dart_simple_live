@@ -154,6 +154,19 @@ class DouyuAccountService extends GetxService with WidgetsBindingObserver {
     await setCookie('');
   }
 
+  Future<bool> applyQrCredentials(DouyuPassport passport) async {
+    final cookie = passport.cookie;
+    if (passport.did.isEmpty ||
+        passport.ltp0.isEmpty ||
+        !DouyuCookieHelper.hasAuthenticatedSession(cookie, now: _clock())) {
+      return false;
+    }
+    await setCookie(cookie);
+    await checkCookieRefresh();
+    return hasCookie.value &&
+        DouyuCookieHelper.hasAuthenticatedSession(_cookie, now: _clock());
+  }
+
   /// Runs one proactive check for the current account. Concurrent checks for
   /// the same manual Cookie revision share a single core request.
   Future<DouyuCookieRefreshResult?> checkCookieRefresh() {

@@ -152,6 +152,17 @@ class AccountController extends GetxController {
                 Get.toNamed(RoutePath.kDouyuWebLogin);
               },
             ),
+          if (supportsInAppLogin)
+            ListTile(
+              leading: const Icon(Icons.qr_code_2),
+              title: const Text("扫码登录"),
+              subtitle: const Text("使用斗鱼手机客户端扫码确认"),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Get.back();
+                Get.toNamed(RoutePath.kDouyuQRLogin);
+              },
+            ),
           if (!supportsInAppLogin)
             ListTile(
               leading: const Icon(Icons.open_in_browser),

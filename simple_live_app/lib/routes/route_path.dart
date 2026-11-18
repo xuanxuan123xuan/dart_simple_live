@@ -89,6 +89,7 @@ class RoutePath {
 
   /// 斗鱼 Web 登录
   static const kDouyuWebLogin = "/settings/account/douyu/web_login";
+  static const kDouyuQRLogin = "/settings/account/douyu/qr_login";
 
   /// 快手 Web登录
   static const kKuaishouWebLogin = "/settings/account/kuaishou/web_login";

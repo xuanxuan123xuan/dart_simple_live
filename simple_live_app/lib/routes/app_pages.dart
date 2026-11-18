@@ -49,6 +49,8 @@ import 'package:simple_live_app/modules/mine/account/douyin/web_login_controller
 import 'package:simple_live_app/modules/mine/account/douyin/web_login_page.dart';
 import 'package:simple_live_app/modules/mine/account/douyu/web_login_controller.dart';
 import 'package:simple_live_app/modules/mine/account/douyu/web_login_page.dart';
+import 'package:simple_live_app/modules/mine/account/douyu/qr_login_controller.dart';
+import 'package:simple_live_app/modules/mine/account/douyu/qr_login_page.dart';
 import 'package:simple_live_app/modules/mine/account/kuaishou/web_login_controller.dart';
 import 'package:simple_live_app/modules/mine/account/kuaishou/web_login_page.dart';
 import 'package:simple_live_app/modules/mine/account/kuaishou/account_page.dart';
@@ -335,6 +337,11 @@ class AppPages {
       bindings: [
         BindingsBuilder.put(() => DouyuWebLoginController()),
       ],
+    ),
+    GetPage(
+      name: RoutePath.kDouyuQRLogin,
+      page: () => const DouyuQRLoginPage(),
+      binding: BindingsBuilder.put(() => DouyuQRLoginController()),
     ),
     //快手Web登录
     GetPage(
