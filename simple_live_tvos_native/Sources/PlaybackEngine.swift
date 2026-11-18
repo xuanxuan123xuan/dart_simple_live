@@ -11,6 +11,9 @@ final class PlaybackEngine: ObservableObject {
     @Published private(set) var nativeView: UIView?
     @Published private(set) var state: PlaybackState = .idle
     @Published private(set) var currentLine: Int?
+    @Published private(set) var pausedByUser = false
+    @Published private(set) var volume = 100
+    @Published private(set) var isMuted = false
 
     private static let configureLogging: Void = {
         KSOptions.logger = PrivateMediaLogger()
@@ -32,7 +35,7 @@ final class PlaybackEngine: ObservableObject {
             try Task.checkCancellation()
             guard runID == id else { throw CancellationError() }
             currentLine = attempt.resource.lineIndex
-            state = .preparing
+            state = pausedByUser ? .paused : .preparing
             do {
                 try await play(attempt, id: id)
                 return
@@ -85,10 +88,11 @@ final class PlaybackEngine: ObservableObject {
         let item = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: item)
         self.player = player
-        player.play()
+        applyAudio()
+        if !pausedByUser { player.play() }
         try await monitor(attempt, id: id) {
             if item.status == .failed || player.status == .failed { throw LiveProviderError.noPlayback }
-            return (player.currentTime().seconds, player.timeControlStatus == .paused)
+            return player.currentTime().seconds
         }
     }
 
@@ -99,34 +103,52 @@ final class PlaybackEngine: ObservableObject {
         options.appendHeader(attempt.resource.headers)
         let previousPlayerType = KSOptions.firstPlayerType
         KSOptions.firstPlayerType = KSMEPlayer.self
-        let layer = KSPlayerLayer(url: attempt.resource.url, options: options)
+        let layer = KSPlayerLayer(url: attempt.resource.url, isAutoPlay: !pausedByUser, options: options)
         KSOptions.firstPlayerType = previousPlayerType
         nativePlayer = layer
         nativeView = layer.player.view
+        applyAudio()
         try await monitor(attempt, id: id) {
             if layer.state == .error || layer.state == .playedToTheEnd { throw LiveProviderError.noPlayback }
-            return (layer.player.currentPlaybackTime, layer.state == .paused)
+            return layer.player.currentPlaybackTime
         }
     }
 
-    func togglePlayback() {
-        if let player {
-            if player.timeControlStatus == .paused {
-                player.play()
-            } else {
-                player.pause()
-            }
-            return
-        }
-        guard let nativePlayer else { return }
-        if nativePlayer.state == .paused {
-            nativePlayer.play()
-        } else if state == .playing || state == .buffering {
-            nativePlayer.pause()
+    func togglePlayback() { setPaused(!pausedByUser) }
+
+    func setPaused(_ paused: Bool) {
+        guard pausedByUser != paused else { return }
+        pausedByUser = paused
+        if paused {
+            player?.pause()
+            nativePlayer?.pause()
+            state = .paused
+        } else {
+            player?.play()
+            nativePlayer?.play()
+            state = .preparing
         }
     }
 
-    private func monitor(_ attempt: PlaybackAttempt, id: UUID, sample: () throws -> (position: Double, paused: Bool)) async throws {
+    func setVolume(_ value: Int) {
+        volume = min(100, max(0, value))
+        applyAudio()
+    }
+
+    func setMuted(_ muted: Bool) {
+        isMuted = muted
+        applyAudio()
+    }
+
+    private func applyAudio() {
+        let gain = Float(volume) / 100
+        player?.volume = gain
+        player?.isMuted = isMuted
+        nativePlayer?.player.playbackVolume = gain
+        nativePlayer?.player.isMuted = isMuted
+    }
+
+    private func monitor(_ attempt: PlaybackAttempt, id: UUID, sample: () throws -> Double) async throws {
         let clock = ContinuousClock()
         var lastProgress = clock.now
         var lastTime = 0.0
@@ -134,7 +156,12 @@ final class PlaybackEngine: ObservableObject {
         while true {
             try await Task.sleep(for: .milliseconds(350))
             guard id == runID else { throw CancellationError() }
-            let (position, paused) = try sample()
+            if pausedByUser {
+                lastProgress = clock.now
+                state = .paused
+                continue
+            }
+            let position = try sample()
             if position.isFinite && abs(position - lastTime) > 0.03 {
                 if !hasStarted {
                     try failover.markPlaying(lineIndex: attempt.resource.lineIndex, generation: attempt.generation)
@@ -143,9 +170,7 @@ final class PlaybackEngine: ObservableObject {
                 lastProgress = clock.now
                 lastTime = position
                 state = .playing
-            } else if hasStarted && paused {
-                lastProgress = clock.now
-                state = .paused
+
             } else {
                 state = hasStarted ? .buffering : .preparing
                 if lastProgress.duration(to: clock.now) > .seconds(15) { throw LiveProviderError.noPlayback }

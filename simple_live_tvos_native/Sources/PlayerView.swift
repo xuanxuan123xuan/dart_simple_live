@@ -25,7 +25,7 @@ struct PlayerView: View {
     @State private var controlsVisible = true
     @State private var controlsActivity = 0
     @State private var selectionMenu: PlayerMenu?
-    @State private var showChannels = false
+    @State private var activeSheet: PlayerSheet?
     @FocusState private var focusedControl: PlayerFocus?
 
     var body: some View {
@@ -60,10 +60,7 @@ struct PlayerView: View {
                 ContentUnavailableView {
                     Label(errorMessage, systemImage: "play.slash")
                 } actions: {
-                    Button("重试") {
-                        playbackResources = []
-                        retry += 1
-                    }
+                    Button("重试", action: refreshPlayback)
                         .focused($focusedControl, equals: .retry)
                         .onMoveCommand(perform: controlsVisible ? nil : { if $0 == .up { showControls() } })
                 }
@@ -85,9 +82,16 @@ struct PlayerView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .defaultFocus($focusedControl, preferredFocus)
-        .onPlayPauseCommand { engine.togglePlayback() }
-        .sheet(isPresented: $showChannels, onDismiss: { controlsActivity += 1 }) {
-            PlayerChannelList(current: room, queue: queue, select: openChannel)
+        .onPlayPauseCommand(perform: togglePlayback)
+        .sheet(item: $activeSheet, onDismiss: { controlsActivity += 1 }) { sheet in
+            switch sheet {
+            case .channels:
+                PlayerChannelList(current: room, queue: queue, select: openChannel)
+            case .favorites:
+                PlayerChannelList(current: room, rooms: library.favorites, title: "收藏列表", select: openChannel)
+            case .settings:
+                PlayerRoomSettingsView(engine: engine, danmakuEnabled: $danmakuEnabled)
+            }
         }
         .onChange(of: focusedControl) { _, _ in controlsActivity += 1 }
         .onChange(of: errorMessage) { _, message in
@@ -128,10 +132,10 @@ struct PlayerView: View {
     }
 
     private var autoHideActivity: Int? {
-        controlsVisible && selectionMenu == nil && !showChannels && scenePhase == .active ? controlsActivity : nil
+        controlsVisible && selectionMenu == nil && activeSheet == nil && scenePhase == .active ? controlsActivity : nil
     }
 
-    private var firstControl: PlayerFocus { qualities.isEmpty ? .danmaku : .quality }
+    private var firstControl: PlayerFocus { .playPause }
 
     private var availableLines: [Int] {
         Set(playbackResources.map(\.lineIndex)).sorted()
@@ -143,14 +147,39 @@ struct PlayerView: View {
     }
 
     private var playerControls: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
                 Text(room.title).font(.headline).lineLimit(1)
+                Text(playbackStatus).font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("player-status")
                 if let danmakuError { Text(danmakuError).font(.caption).foregroundStyle(.secondary) }
+                Spacer()
             }
-            Spacer(minLength: 24)
+            playbackActions
+            roomActions
+        }
+        .buttonStyle(.bordered)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 18)
+        .background {
+            LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea(edges: [.top, .horizontal])
+        }
+        .environment(\.colorScheme, .dark)
+        .focusSection()
+    }
+
+    private var playbackActions: some View {
+        HStack(spacing: 16) {
+            Button(engine.pausedByUser ? "继续" : "暂停", action: togglePlayback)
+                .disabled(errorMessage != nil)
+                .focused($focusedControl, equals: .playPause)
+                .accessibilityIdentifier("player-play-pause")
+            Button("刷新", action: refreshPlayback)
+                .focused($focusedControl, equals: .refresh)
+                .accessibilityIdentifier("player-refresh")
             if queue.rooms.count > 1 {
-                Button("换台") { showChannels = true }
+                Button("换台") { activeSheet = .channels }
                     .focused($focusedControl, equals: .channels)
                     .accessibilityIdentifier("player-channels")
             }
@@ -181,6 +210,11 @@ struct PlayerView: View {
                         }
                     }
                 }
+        }
+    }
+
+    private var roomActions: some View {
+        HStack(spacing: 16) {
             Button {
                 danmakuEnabled.toggle()
                 controlsActivity += 1
@@ -200,16 +234,37 @@ struct PlayerView: View {
             }
             .focused($focusedControl, equals: .favorite)
             .accessibilityIdentifier("player-favorite")
+            Button("收藏列表") { activeSheet = .favorites }
+                .focused($focusedControl, equals: .favoriteList)
+                .accessibilityIdentifier("player-favorite-list")
+            Button("房内设置") { activeSheet = .settings }
+                .focused($focusedControl, equals: .settings)
+                .accessibilityIdentifier("player-room-settings")
         }
-        .buttonStyle(.bordered)
-        .padding(.horizontal, 24)
-        .padding(.bottom, 18)
-        .background {
-            LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea(edges: [.top, .horizontal])
+    }
+
+    private var playbackStatus: String {
+        if errorMessage != nil { return "播放失败" }
+        switch engine.state {
+        case .idle, .preparing: return "连接中"
+        case .buffering: return "缓冲中"
+        case .playing: return "正在播放"
+        case .paused: return "已暂停"
+        case .failed: return "播放失败"
+        case .stopped: return "已停止"
         }
-        .environment(\.colorScheme, .dark)
-        .focusSection()
+    }
+
+    private func refreshPlayback() {
+        playbackResources = []
+        controlsActivity += 1
+        retry += 1
+    }
+
+    private func togglePlayback() {
+        guard errorMessage == nil else { return }
+        engine.togglePlayback()
+        controlsActivity += 1
     }
 
     private func switchChannel(_ offset: Int) {
@@ -290,7 +345,12 @@ struct PlayerView: View {
 }
 
 private enum PlayerFocus: Hashable {
-    case video, channels, quality, line, danmaku, favorite, retry
+    case video, playPause, refresh, channels, quality, line, danmaku, favorite, favoriteList, settings, retry
+}
+
+private enum PlayerSheet: String, Identifiable {
+    case channels, favorites, settings
+    var id: Self { self }
 }
 
 private enum PlayerMenu {

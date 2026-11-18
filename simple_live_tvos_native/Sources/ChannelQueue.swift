@@ -19,39 +19,67 @@ struct ChannelQueue {
 /// Recreate playback and danmaku state when changing the active room; the navigation stack stays put.
 struct ChannelPlayerView: View {
     @State private var room: RoomDescriptor
-    let queue: ChannelQueue
+    @State private var queue: ChannelQueue
 
     init(room: RoomDescriptor, rooms: [RoomDescriptor]) {
         _room = State(initialValue: room)
-        queue = ChannelQueue(rooms: rooms, current: room)
+        _queue = State(initialValue: ChannelQueue(rooms: rooms, current: room))
     }
 
     var body: some View {
-        PlayerView(room: room, queue: queue) { next in room = next }
-            .id(room.key)
+        PlayerView(room: room, queue: queue) { next in
+            if !queue.rooms.contains(where: { $0.key == next.key }) {
+                queue = ChannelQueue(rooms: queue.rooms + [next], current: next)
+            }
+            room = next
+        }
+        .id(room.key)
     }
 }
 
 struct PlayerChannelList: View {
     @Environment(\.dismiss) private var dismiss
     let current: RoomDescriptor
-    let queue: ChannelQueue
+    let rooms: [RoomDescriptor]
+    let title: String
+    let queue: ChannelQueue?
     let select: (RoomDescriptor) -> Void
+
+    init(current: RoomDescriptor, queue: ChannelQueue, select: @escaping (RoomDescriptor) -> Void) {
+        self.current = current
+        self.queue = queue
+        rooms = queue.rooms
+        title = "切换频道"
+        self.select = select
+    }
+
+    init(current: RoomDescriptor, rooms: [RoomDescriptor], title: String, select: @escaping (RoomDescriptor) -> Void) {
+        self.current = current
+        self.rooms = rooms
+        self.title = title
+        queue = nil
+        self.select = select
+    }
 
     var body: some View {
         VStack(spacing: 22) {
             HStack {
-                Text("切换频道").font(.title.bold()).accessibilityAddTraits(.isHeader)
+                Text(title).font(.title.bold()).accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button("关闭") { dismiss() }
             }
-            HStack(spacing: 32) {
-                Button("上一台") { choose(queue.adjacent(to: current, offset: -1)) }
-                    .disabled(queue.rooms.count < 2)
-                Button("下一台") { choose(queue.adjacent(to: current, offset: 1)) }
-                    .disabled(queue.rooms.count < 2)
+            if let queue {
+                HStack(spacing: 32) {
+                    Button("上一台") { choose(queue.adjacent(to: current, offset: -1)) }
+                        .disabled(queue.rooms.count < 2)
+                    Button("下一台") { choose(queue.adjacent(to: current, offset: 1)) }
+                        .disabled(queue.rooms.count < 2)
+                }
             }
-            List(queue.rooms) { room in
+            if rooms.isEmpty {
+                ContentUnavailableView("暂无收藏", systemImage: "star")
+            }
+            List(rooms) { room in
                 Button { choose(room) } label: {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(room.title).lineLimit(1)
