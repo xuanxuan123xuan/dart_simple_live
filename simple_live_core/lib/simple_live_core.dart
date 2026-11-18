@@ -18,6 +18,7 @@ export 'src/common/http_log_sanitizer.dart';
 export 'src/common/douyin_cookie_helper.dart';
 export 'src/common/douyu_cookie_helper.dart';
 export 'src/common/douyu_passport.dart';
+export 'src/common/windows_video_acceleration_policy.dart';
 export 'src/common/douyin_follow_refresh_limiter.dart';
 export 'src/common/kuaishou_live_link.dart';
 export 'src/common/kuaishou_request_coordinator.dart';

@@ -103,6 +103,19 @@ class OtherSettingsPage extends GetView<OtherSettingsController> {
                           AppSettingsController.instance.setCustomPlayerOutput,
                     ),
                   ),
+                  if (Platform.isWindows) ...[
+                    AppStyle.divider,
+                    Obx(
+                      () => SettingsSwitch(
+                        value: AppSettingsController
+                            .instance.renderingAcceleration.value,
+                        title: "视频渲染加速",
+                        subtitle: "关闭后使用 CPU 可访问帧，适合 Windows 黑屏或花屏排查",
+                        onChanged: AppSettingsController
+                            .instance.setRenderingAcceleration,
+                      ),
+                    ),
+                  ],
                   AppStyle.divider,
                   GetBuilder<OtherSettingsController>(
                     builder: (controller) => SettingsAction(

@@ -214,6 +214,21 @@ class MpvOptionsService {
     for (final key in confOptions.keys) {
       source[key] = "conf";
     }
+    if (Platform.isWindows) {
+      final decision = WindowsVideoAccelerationPolicy.resolve(
+        hardwareDecode: settings.hardwareDecode.value,
+        renderingAcceleration: settings.renderingAcceleration.value,
+        requestedHwdec: options['hwdec'],
+      );
+      if (decision.hwdec == null) {
+        options.remove('hwdec');
+      } else {
+        options['hwdec'] = decision.hwdec!;
+      }
+      if (decision.sourceOverride != null) {
+        source['hwdec'] = decision.sourceOverride!;
+      }
+    }
     // Applied last so it covers every source, including options imported from
     // another platform's config.
     final filtered = filterForPlatform(options, currentPlatform());
@@ -472,6 +487,7 @@ class MpvOptionsService {
             : value("hwdec"));
     return "profile=${AppSettingsController.instance.mpvProfile.value}, "
         "hardwareDecode=${settings.hardwareDecode.value}, "
+        "renderingAcceleration=${settings.renderingAcceleration.value}, "
         "compatMode=${settings.playerCompatMode.value}, "
         "liveLatency=${settings.mpvLiveLatencyMode.value}, "
         "vo=$actualVo, hwdec=$actualHwdec, ao=${value("ao")}, "

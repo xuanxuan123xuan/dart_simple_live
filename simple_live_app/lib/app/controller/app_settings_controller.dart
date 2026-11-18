@@ -134,6 +134,10 @@ class AppSettingsController extends GetxController {
 
     hardwareDecode.value = LocalStorageService.instance
         .getValue(LocalStorageService.kHardwareDecode, true);
+    renderingAcceleration.value = LocalStorageService.instance.getValue(
+      LocalStorageService.kRenderingAcceleration,
+      true,
+    );
     iosOriginalQualityPowerSaving.value = LocalStorageService.instance.getValue(
       LocalStorageService.kIosOriginalQualityPowerSaving,
       true,
@@ -763,6 +767,15 @@ class AppSettingsController extends GetxController {
     hardwareDecode.value = e;
     LocalStorageService.instance
         .setValue(LocalStorageService.kHardwareDecode, e);
+  }
+
+  final renderingAcceleration = true.obs;
+  void setRenderingAcceleration(bool value) {
+    renderingAcceleration.value = value;
+    LocalStorageService.instance.setValue(
+      LocalStorageService.kRenderingAcceleration,
+      value,
+    );
   }
 
   var iosOriginalQualityPowerSaving = true.obs;
