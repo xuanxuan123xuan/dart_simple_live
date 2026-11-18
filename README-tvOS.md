@@ -1,80 +1,66 @@
-# Simple Live for tvOS
+# Simple Live tvOS 客户端
 
-`simple_live_tvos_app/` is an independent Apple TV viewing client that shares
-the repository's `simple_live_core` site adapters. It is intentionally a
-read-only third-party client: it receives live chat messages but does not send
-danmaku, provide chat input, or implement purchases and other interactions.
+`simple_live_tvos_native/` 是使用 SwiftUI、AVPlayer 和 KSPlayer/FFmpeg 的原生
+Apple TV 客户端。构建命令和当前平台验证范围见 [原生客户端说明](simple_live_tvos_native/README.md)。
 
-## Current scope
+`simple_live_tvos_app/` 是一个独立的 Apple TV 观看客户端，复用本仓库
+`simple_live_core` 中的直播平台适配器。它定位为仅供观看的第三方客户端：
+可以接收直播聊天消息，但不支持发送弹幕、聊天输入、购买或其他交互操作。
 
-- Six provider entries: Bilibili, Huya, Douyu, Douyin, Kuaishou and Xiaohongshu.
-- HLS playback through the tvOS AVPlayer plugin, with quality selection,
-  line failover, request headers and direct HLS URL playback.
-- TV-friendly recommendation, search, room-number entry, pagination, favorites,
-  history, settings and D-pad focus navigation.
-- Text-only danmaku overlay with enable/disable and connection status. Image
-  expressions, GIFs, gifts and structured paid messages remain future display
-  work; sending danmaku is outside the product scope.
-- Session Cookie recovery through a tvOS Keychain method-channel boundary.
-  Manual Cookie input remains available for Bilibili, Douyu, Douyin, Kuaishou
-  and Xiaohongshu. The first native web-login target is Xiaohongshu.
+## 当前功能范围
 
-The provider matrix is deliberately honest: Bilibili and Kuaishou can use HLS
-when the source returns it; Xiaohongshu may require a web session; Huya is
-usually FLV; Douyu and Douyin may require JS signing or return unsupported
-protocols. An entry or room-detail response does not mean that its stream is
-playable on tvOS.
+- 提供六个直播平台入口：哔哩哔哩、虎牙、斗鱼、抖音、快手和小红书。
+- 通过 tvOS AVPlayer 插件播放 HLS，支持清晰度选择、线路故障切换、
+  请求头配置，以及直接播放 HLS 链接。
+- 提供适合电视使用的推荐、搜索、房间号输入、分页、收藏、历史记录、
+  设置和方向键焦点导航。
+- 支持纯文本弹幕叠加显示，可开关弹幕并查看连接状态。图片表情、GIF、
+  礼物和结构化付费消息的展示仍待实现；发送弹幕不在产品范围内。
+- 通过 tvOS Keychain 方法通道恢复会话 Cookie。哔哩哔哩、斗鱼、抖音、
+  快手和小红书仍支持手动输入 Cookie。首个计划支持原生网页登录的平台是小红书。
 
-The repository now also contains `simple_live_tvos_native/`, an XcodeGen-based
-SwiftUI host. It starts a headless FlutterEngine for `simple_live_core`, owns
-tvOS navigation and Keychain access, and defines the native playback boundary.
-The Windows checkout cannot compile this target because Xcode, the tvOS SDK,
-KSPlayer and FFmpeg are macOS dependencies.
+各平台的实际播放能力仍有差异：哔哩哔哩和快手在直播源返回 HLS 时可以使用；
+小红书可能需要网页会话；虎牙通常返回 FLV；斗鱼和抖音可能需要 JS 签名，
+或返回尚不支持的协议。能进入平台或获取房间详情，并不代表该直播流可以在 tvOS 上播放。
 
-The platform-neutral Swift state and protocol package lives in
-`simple_live_tvos_core/`. Its SwiftPM tests can run through xtool on Windows
-and Linux. This package does not build the tvOS app and does not replace the
-macOS/Xcode validation path.
+与平台无关的 Swift 状态和协议包位于 `simple_live_tvos_core/`。
+其 SwiftPM 测试可以通过 xtool 在 Windows 和 Linux 上运行。该包不负责构建
+tvOS 应用，也不能替代 macOS/Xcode 环境下的验证。
 
-## Known limitations
+## Flutter 客户端的已知限制
 
-1. The Flutter client remains HLS-only. The native host has the KSPlayer/FFmpeg
-   integration boundary and AVPlayer HLS path, while the final FLV adapter
-   still requires a macOS/Xcode build and device verification.
-2. `dart_quickjs_stub` remains a test substitute. JS-signed Douyu/Douyin
-   paths are not claimed as migrated.
-3. The native Keychain and web-session method channels require a generated
-   tvOS host. Windows runs with an in-memory fallback when those plugins are
-   absent.
-4. This checkout has not been validated with Xcode, a tvOS simulator, an Apple
-   TV device, a signed IPA, or long-running production streams. Windows static
-   checks and Dart tests are the current acceptance gate.
+1. Flutter 客户端目前仅支持 HLS。
+2. `dart_quickjs_stub` 仍是测试替代实现，斗鱼和抖音依赖 JS 签名的相关逻辑
+   尚不能视为已完成迁移。
+3. Flutter 的 Keychain 和网页会话方法通道需要生成的 tvOS 宿主支持。在 Windows
+   环境中缺少这些插件时，会回退到内存实现。
+4. 当前代码尚未通过 Xcode、tvOS 模拟器、Apple TV 真机、签名 IPA 或
+   生产环境直播流长时间播放的验证。目前的验收标准是 Windows 静态检查和 Dart 测试。
 
-## Dependencies and layout
+## 依赖与目录结构
 
-The app expects these existing repository paths:
+应用依赖仓库中的以下现有路径：
 
 ```text
 simple_live_tvos_app/
-  lib/tvos_playback.dart       # HLS backend boundary and AVPlayer adapter
-  lib/tvos_session.dart        # Keychain/WebView method-channel contracts
-  lib/site_registry.dart       # provider capability and Cookie routing
-  lib/live_page.dart            # room playback, failover and text danmaku
+  lib/tvos_playback.dart       # HLS 后端接口与 AVPlayer 适配器
+  lib/tvos_session.dart        # Keychain/WebView 方法通道约定
+  lib/site_registry.dart       # 平台能力与 Cookie 路由
+  lib/live_page.dart           # 房间播放、故障切换与文本弹幕
   test/playback_sources_test.dart
 simple_live_core/
 third_party/dart_quickjs_stub/
 ```
 
-## AngelLive reference
+## AngelLive 参考
 
-AngelLive is used as an architectural reference for tvOS native boundaries,
-playback recovery and future FLV work. Do not copy code or assets without
-retaining the repository's GPL-3.0 attribution and checking compatibility with
-this repository's GPL-3.0 license.
+AngelLive 为 tvOS 原生层接口划分、播放恢复和后续 FLV 支持提供架构参考。
+复制其代码或资源时，必须保留原仓库的 GPL-3.0 许可声明和署名，并检查与
+本仓库 GPL-3.0 许可证的兼容性。
 
-## Validation
+## 验证
 
-Run the following on Windows:
+在 Windows 上运行以下命令：
 
 ```powershell
 Push-Location simple_live_tvos_app
@@ -85,6 +71,5 @@ Pop-Location
 dart format --output=none --set-exit-if-changed simple_live_tvos_app/lib simple_live_tvos_app/test
 ```
 
-These checks do not prove tvOS native compilation or real-device playback.
-Those results must be recorded separately after a macOS/Xcode and Apple TV
-environment is available.
+这些检查不能证明 tvOS 原生代码可以编译或能够在真机上播放。
+具备 macOS/Xcode 和 Apple TV 环境后，必须单独记录相应验证结果。

@@ -1,387 +1,155 @@
-import Foundation
-import Flutter
 import Combine
-import WebKit
+import Foundation
+import SimpleLiveTVOSCore
 
 @MainActor
 final class NativeCoreClient: ObservableObject {
-    @Published private(set) var providers: [ProviderDescriptor] = []
-    @Published private(set) var categories: [CategoryDescriptor] = []
-    @Published private(set) var danmakuMessages: [DanmakuDescriptor] = []
-    @Published private(set) var rooms: [RoomDescriptor] = []
-    @Published private(set) var isLoading = false
-    @Published var errorMessage: String?
+    let providers = [
+        ProviderDescriptor(id: "bilibili", title: "哔哩哔哩", supportLabel: "扫码登录"),
+        ProviderDescriptor(id: "huya", title: "虎牙", supportLabel: "游客观看"),
+        ProviderDescriptor(id: "douyu", title: "斗鱼", supportLabel: "扫码登录"),
+        ProviderDescriptor(id: "douyin", title: "抖音", supportLabel: "游客观看"),
+        ProviderDescriptor(id: "kuaishou", title: "快手", supportLabel: "游客观看"),
+        ProviderDescriptor(id: "xiaohongshu", title: "小红书", supportLabel: "链接进房"),
+    ]
 
-    private var engine: FlutterEngine?
-    private var channel: FlutterMethodChannel?
+    @Published private(set) var rooms: [RoomDescriptor] = []
+    @Published private(set) var categories: [CategoryDescriptor] = []
+    @Published private(set) var isLoading = false
+    @Published private(set) var hasMore = false
+    @Published private(set) var errorMessage: String?
+    @Published private(set) var authenticated: Set<String> = []
+
+    private let bilibili = BilibiliService()
+    private let huya = HuyaService()
+    private let douyu = DouyuService()
+    private let douyin = DouyinService()
+    private let kuaishou = KuaishouService()
+    private let xiaohongshu = XiaohongshuService()
     private let keychain = KeychainSessionStore()
-    private let webSession = WebSessionCoordinator()
-    private var sequence = 0
+    private var roomRequest = 0
+    private var categoryRequest = 0
+    private var page = 0
+    private var context: (provider: String, listing: RoomListing)?
+    private var hasRestored = false
+    private var sessionChanges: Set<String> = []
+
+    var loginProviders: [ProviderDescriptor] {
+        providers.filter { $0.id == "bilibili" || $0.id == "douyu" }
+    }
 
     func start() async {
-        guard engine == nil else { return }
-        let engine = FlutterEngine(
-            name: "SimpleLiveCore",
-            project: nil,
-            allowHeadlessExecution: true
-        )
-        guard engine.run(withEntrypoint: "tvosCoreEntrypoint") else {
-            errorMessage = "无法启动直播核心服务"
-            return
-        }
-        self.engine = engine
-        let channel = FlutterMethodChannel(
-            name: "simple_live/tvos_core",
-            binaryMessenger: engine.binaryMessenger
-        )
-        self.channel = channel
-        installNativeChannels(on: engine)
-        do {
-            let raw = try await request(method: "site.providers", payload: [:])
-            providers = try Self.decodeProviders(raw)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    var loginWebView: WKWebView? { webSession.webView }
-
-    func prepareXiaohongshuLogin() {
-        _ = webSession.prepareLoginWebView()
-    }
-
-    func loginXiaohongshu() async throws {
-        let cookie = try await webSession.loginXiaohongshu()
-        try keychain.saveCookie(provider: "xiaohongshu", cookie: cookie)
-        _ = try await request(method: "session.setCookie", payload: [
-            "provider": "xiaohongshu",
-            "cookie": cookie,
-        ])
-    }
-
-    func closeWebLogin() {
-        webSession.close()
-    }
-
-    private func installNativeChannels(on engine: FlutterEngine) {
-        let danmakuChannel = FlutterBasicMessageChannel(
-            name: "simple_live/tvos_danmaku_events",
-            binaryMessenger: engine.binaryMessenger,
-            codec: FlutterStandardMessageCodec.sharedInstance()
-        )
-        danmakuChannel.setMessageHandler { [weak self] message, reply in
-            if let event = message as? [String: Any],
-               event["kind"] as? String == "message",
-               let userName = event["userName"] as? String,
-               let text = event["message"] as? String {
-                let color = event["color"] as? [String: Any]
-                let value = DanmakuDescriptor(
-                    id: UUID().uuidString,
-                    userName: userName,
-                    message: text,
-                    red: color?["r"] as? Int ?? 255,
-                    green: color?["g"] as? Int ?? 255,
-                    blue: color?["b"] as? Int ?? 255,
-                    imageURLs: event["imageUrls"] as? [String] ?? []
-                )
-                self?.danmakuMessages = Array((self?.danmakuMessages ?? []) + [value].suffix(36))
-            }
-            reply(nil)
-        }
-
-        let sessionChannel = FlutterMethodChannel(
-            name: "simple_live/tvos_session",
-            binaryMessenger: engine.binaryMessenger
-        )
-        sessionChannel.setMethodCallHandler { [weak self] call, result in
-            guard let self else { return result(FlutterError(code: "closed", message: "session host is closed", details: nil)) }
-            let provider = (call.arguments as? [String: Any])?["provider"] as? String ?? ""
+        guard !hasRestored else { return }
+        hasRestored = true
+        for provider in loginProviders where !sessionChanges.contains(provider.id) {
+            let id = provider.id
             do {
-                switch call.method {
-                case "readCookie":
-                    result(try self.keychain.readCookie(provider: provider))
-                case "saveCookie":
-                    let cookie = (call.arguments as? [String: Any])?["cookie"] as? String ?? ""
-                    try self.keychain.saveCookie(provider: provider, cookie: cookie)
-                    result(nil)
-                case "clearCookie":
-                    try self.keychain.clearCookie(provider: provider)
-                    result(nil)
-                default:
-                    result(FlutterMethodNotImplemented)
-                }
+                guard let cookie = try keychain.readCookie(provider: id) else { continue }
+                let session = try accountService(id)
+                try await session.validate(cookie)
+                guard !sessionChanges.contains(id) else { continue }
+                await session.setVerifiedCookie(cookie)
+                if !sessionChanges.contains(id) { authenticated.insert(id) }
             } catch {
-                result(FlutterError(code: "keychain", message: error.localizedDescription, details: nil))
-            }
-        }
-
-        let webChannel = FlutterMethodChannel(
-            name: "simple_live/tvos_web",
-            binaryMessenger: engine.binaryMessenger
-        )
-        webChannel.setMethodCallHandler { [weak self] call, result in
-            guard let self else { return result(FlutterError(code: "closed", message: "web host is closed", details: nil)) }
-            switch call.method {
-            case "login":
-                Task { @MainActor in
-                    do {
-                        let cookie = try await self.webSession.loginXiaohongshu()
-                        result(["provider": "xiaohongshu", "cookie": cookie])
-                    } catch {
-                        result(FlutterError(code: "web_login", message: error.localizedDescription, details: nil))
-                    }
-                }
-            case "close":
-                self.webSession.close()
-                result(nil)
-            default:
-                result(FlutterMethodNotImplemented)
+                continue
             }
         }
     }
 
-    func loadRecommend(provider: String, page: Int = 1) async {
-        await loadRooms(method: "site.recommend", payload: [
-            "provider": provider,
-            "page": page,
-        ])
+    func service(_ provider: String) throws -> any LiveProviderService {
+        switch ProviderID(rawValue: provider) {
+        case .bilibili: bilibili
+        case .huya: huya
+        case .douyu: douyu
+        case .douyin: douyin
+        case .kuaishou: kuaishou
+        case .xiaohongshu: xiaohongshu
+        default: throw LiveProviderError.unsupported
+        }
     }
 
-    func search(provider: String, keyword: String, page: Int = 1) async {
-        await loadRooms(method: "site.search", payload: [
-            "provider": provider,
-            "keyword": keyword,
-            "page": page,
-        ])
+    func danmaku(for room: RoomDescriptor) throws -> AsyncThrowingStream<DanmakuEvent, Error> {
+        guard let source = try service(room.provider) as? any DanmakuService else {
+            throw LiveProviderError.unsupported
+        }
+        return source.danmaku(roomId: room.roomId)
     }
 
     func loadCategories(provider: String) async {
+        categoryRequest += 1
+        let request = categoryRequest
+        categories = []
         do {
-            let raw = try await request(method: "site.categories", payload: [
-                "provider": provider,
-            ])
-            categories = Self.decodeCategories(raw)
+            let result = try await service(provider).categories()
+            guard request == categoryRequest, !Task.isCancelled else { return }
+            categories = result
         } catch {
-            categories = []
-            errorMessage = error.localizedDescription
+            return
         }
     }
 
-    func loadCategory(
-        provider: String,
-        categoryId: String,
-        categoryName: String,
-        parentId: String,
-        page: Int = 1
-    ) async {
-        await loadRooms(method: "site.categoryRooms", payload: [
-            "provider": provider,
-            "categoryId": categoryId,
-            "categoryName": categoryName,
-            "parentId": parentId,
-            "page": page,
-        ])
+    func isCurrentRoomListing(provider: String, listing: RoomListing) -> Bool {
+        context?.provider == provider && context?.listing == listing
     }
 
-    func firstPlayback(provider: String, roomId: String) async throws -> PlaybackDescriptor {
-        let qualities = try await qualityNames(provider: provider, roomId: roomId)
-        guard let quality = qualities.first else {
-            throw NativeCoreError.remote("直播间没有返回清晰度")
+    func loadRooms(provider: String, listing: RoomListing, append: Bool = false) async {
+        if append {
+            guard !isLoading, hasMore, isCurrentRoomListing(provider: provider, listing: listing) else { return }
+        } else {
+            context = (provider, listing)
+            rooms = []
+            hasMore = false
+            page = 0
         }
-        return try await playback(
-            provider: provider,
-            roomId: roomId,
-            quality: quality
-        )
-    }
-
-    func qualityNames(provider: String, roomId: String) async throws -> [String] {
-        let qualities = try await request(method: "room.qualities", payload: [
-            "provider": provider,
-            "roomId": roomId,
-        ]) as? [[String: Any]] ?? []
-        return qualities.compactMap { $0["quality"] as? String }
-    }
-
-    func playback(
-        provider: String,
-        roomId: String,
-        quality: String
-    ) async throws -> PlaybackDescriptor {
-        let raw = try await request(method: "room.playUrls", payload: [
-            "provider": provider,
-            "roomId": roomId,
-            "quality": quality
-        ])
-        guard let data = raw as? [String: Any],
-              let urls = data["urls"] as? [String] else {
-            throw NativeCoreError.invalidResponse
-        }
-        return PlaybackDescriptor(
-            urls: urls.compactMap(URL.init(string:)),
-            headers: data["headers"] as? [String: String] ?? [:],
-            protocols: data["protocols"] as? [String] ?? []
-        )
-    }
-
-    func startDanmaku(provider: String, roomId: String) async {
-        danmakuMessages.removeAll()
-        try? await request(method: "danmaku.start", payload: [
-            "provider": provider,
-            "roomId": roomId,
-        ])
-    }
-
-    func stopDanmaku(provider: String, roomId: String) async {
-        try? await request(method: "danmaku.stop", payload: [
-            "provider": provider,
-            "roomId": roomId,
-        ])
-        danmakuMessages.removeAll()
-    }
-
-    private func loadRooms(method: String, payload: [String: Any]) async {
+        roomRequest += 1
+        let request = roomRequest
         isLoading = true
-        defer { isLoading = false }
+        errorMessage = nil
+        defer { if request == roomRequest { isLoading = false } }
+
         do {
-            let raw = try await request(method: method, payload: payload)
-            rooms = try Self.decodeRooms(
-                raw,
-                provider: payload["provider"] as? String ?? ""
-            )
-            errorMessage = nil
+            if case .search = listing, !append { try await Task.sleep(for: .milliseconds(350)) }
+            let nextPage = page + 1
+            let result = try await service(provider).rooms(in: listing, page: nextPage)
+            guard request == roomRequest, !Task.isCancelled else { return }
+            var seen = Set(rooms.map(\.key))
+            rooms.append(contentsOf: result.rooms.filter { seen.insert($0.key).inserted })
+            hasMore = result.hasMore
+            page = nextPage
         } catch {
+            guard request == roomRequest, !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
         }
     }
 
-    func request(method: String, payload: [String: Any]) async throws -> Any {
-        guard let channel else { throw NativeCoreError.notStarted }
-        sequence += 1
-        let requestId = "tvos-\(sequence)"
-        let arguments: [String: Any] = [
-            "requestId": requestId,
-            "method": method,
-            "payload": payload,
-        ]
-        return try await withCheckedThrowingContinuation { continuation in
-            channel.invokeMethod("request", arguments: arguments) { result in
-                switch result {
-                case let value as [String: Any] where value["ok"] as? Bool == true:
-                    continuation.resume(returning: value["data"] as Any)
-                case let value as [String: Any]:
-                    let error = value["error"] as? [String: Any]
-                    continuation.resume(throwing: NativeCoreError.remote(
-                        error?["message"] as? String ?? "核心服务请求失败"
-                    ))
-                case let error as Error:
-                    continuation.resume(throwing: error)
-                default:
-                    continuation.resume(throwing: NativeCoreError.invalidResponse)
-                }
-            }
-        }
+    func loginChallenge(provider: String) async throws -> LoginChallenge {
+        try await accountService(provider).makeLoginChallenge()
     }
 
-    private static func decodeProviders(_ value: Any) throws -> [ProviderDescriptor] {
-        guard let items = value as? [[String: Any]] else { throw NativeCoreError.invalidResponse }
-        return items.compactMap { item in
-            guard let id = item["id"] as? String,
-                  let title = item["title"] as? String else { return nil }
-            return ProviderDescriptor(
-                id: id,
-                title: title,
-                supportLabel: item["supportLabel"] as? String ?? ""
-            )
-        }
+    func pollLogin(_ challenge: LoginChallenge, provider: String) async throws -> LoginResult {
+        try await accountService(provider).pollLogin(challenge)
     }
 
-    private static func decodeCategories(_ value: Any) -> [CategoryDescriptor] {
-        guard let items = value as? [[String: Any]] else { return [] }
-        var result: [CategoryDescriptor] = []
-        func append(_ item: [String: Any]) {
-            guard let id = item["id"] as? String,
-                  let name = item["name"] as? String else { return }
-            result.append(CategoryDescriptor(
-                id: id,
-                name: name,
-                parentId: item["parentId"] as? String ?? ""
-            ))
-            for child in item["children"] as? [[String: Any]] ?? [] {
-                append(child)
-            }
-        }
-        items.forEach(append)
-        return result
+    func finishLogin(cookie: String, provider: String) async throws {
+        let session = try accountService(provider)
+        try await session.validate(cookie)
+        try Task.checkCancellation()
+        try keychain.saveCookie(provider: provider, cookie: cookie)
+        sessionChanges.insert(provider)
+        await session.setVerifiedCookie(cookie)
+        authenticated.insert(provider)
     }
 
-    private static func decodeRooms(_ value: Any, provider: String) throws -> [RoomDescriptor] {
-        guard let result = value as? [String: Any],
-              let items = result["items"] as? [[String: Any]] else {
-            throw NativeCoreError.invalidResponse
-        }
-        return items.compactMap { item in
-            guard let roomId = item["roomId"] as? String,
-                  let title = item["title"] as? String else { return nil }
-            return RoomDescriptor(
-                provider: provider,
-                roomId: roomId,
-                title: title,
-                cover: item["cover"] as? String ?? "",
-                userName: item["userName"] as? String ?? ""
-            )
-        }
+    func signOut(provider: String) async throws {
+        let session = try accountService(provider)
+        try keychain.clearCookie(provider: provider)
+        sessionChanges.insert(provider)
+        await session.setVerifiedCookie(nil)
+        authenticated.remove(provider)
     }
-}
 
-struct ProviderDescriptor: Identifiable, Hashable {
-    let id: String
-    let title: String
-    let supportLabel: String
-}
-
-struct CategoryDescriptor: Identifiable, Hashable {
-    let id: String
-    let name: String
-    let parentId: String
-}
-
-struct RoomDescriptor: Identifiable, Hashable {
-    let provider: String
-    let roomId: String
-    let title: String
-    let cover: String
-    let userName: String
-    var id: String { roomId }
-    var key: String { "\(provider):\(roomId)" }
-}
-
-struct PlaybackDescriptor {
-    let urls: [URL]
-    let headers: [String: String]
-    let protocols: [String]
-}
-
-struct DanmakuDescriptor: Identifiable, Hashable {
-    let id: String
-    let userName: String
-    let message: String
-    let red: Int
-    let green: Int
-    let blue: Int
-    let imageURLs: [String]
-}
-
-enum NativeCoreError: LocalizedError {
-    case notStarted
-    case invalidResponse
-    case remote(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notStarted: "直播核心尚未启动"
-        case .invalidResponse: "直播核心返回了无效数据"
-        case let .remote(message): message
-        }
+    private func accountService(_ provider: String) throws -> any ProviderSessionService {
+        guard let service = try service(provider) as? any ProviderSessionService else { throw LiveProviderError.unsupported }
+        return service
     }
 }

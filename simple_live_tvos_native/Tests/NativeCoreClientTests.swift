@@ -1,4 +1,5 @@
 import XCTest
+import SimpleLiveTVOSCore
 @testable import SimpleLiveTVOS
 
 final class NativeCoreClientTests: XCTestCase {

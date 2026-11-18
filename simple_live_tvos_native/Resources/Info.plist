@@ -4,18 +4,22 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>Simple Live</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleName</key>
 	<string>SimpleLiveTVOS</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
-	<key>UILaunchStoryboardName</key>
-	<string>LaunchScreen</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<false/>
+		<key>NSAllowsArbitraryLoadsInMedia</key>
+		<true/>
 	</dict>
 </dict>
 </plist>

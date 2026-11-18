@@ -5,30 +5,44 @@ options:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.xuanxuan.simplelive.tvos
-    SWIFT_VERSION: 5.9
+    SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: 3
-    TVOS_DEPLOYMENT_TARGET: 17.0
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "3"
+packages:
+  SimpleLiveTVOSCore:
+    path: ../simple_live_tvos_core
+  KSPlayer:
+    path: build/vendor/KSPlayer
 targets:
   SimpleLiveTVOS:
     type: application
     platform: tvOS
     sources:
       - path: Sources
+      - path: Resources/Signers
+        buildPhase: resources
+      - path: Resources/BrandAssets.xcassets
     settings:
       INFOPLIST_FILE: Resources/Info.plist
     dependencies:
+      - package: SimpleLiveTVOSCore
       - package: KSPlayer
-        product: KSPlayerUI
-      - framework: Vendor/Flutter.xcframework
-        embed: true
   SimpleLiveTVOSTests:
     type: bundle.unit-test
     platform: tvOS
     sources:
       - path: Tests
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: com.xuanxuan.simplelive.tvos.tests
     dependencies:
       - target: SimpleLiveTVOS
-packages:
-  KSPlayer:
-    url: https://github.com/kingslay/KSPlayer.git
-    branch: main
+schemes:
+  SimpleLiveTVOS:
+    build:
+      targets:
+        SimpleLiveTVOS: all
+    test:
+      targets:
+        - SimpleLiveTVOSTests

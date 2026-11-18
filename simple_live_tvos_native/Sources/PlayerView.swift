@@ -1,132 +1,136 @@
 import AVKit
+import Combine
+import SimpleLiveTVOSCore
 import SwiftUI
 
 struct PlayerView: View {
     @EnvironmentObject private var core: NativeCoreClient
-    let provider: String
+    @EnvironmentObject private var library: LibraryStore
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("simple_live_tvos.danmaku") private var danmakuEnabled = true
+
     let room: RoomDescriptor
 
-    @StateObject private var engine = KSPlayerPlaybackEngine()
+    @StateObject private var engine = PlaybackEngine()
     @State private var errorMessage: String?
-    @State private var qualities: [String] = []
-    @State private var selectedQuality: String?
+    @State private var danmakuError: String?
+    @State private var qualities: [LiveQuality] = []
+    @State private var selectedQuality: LiveQuality?
+    @State private var danmakuEvents = PassthroughSubject<DanmakuEvent, Never>()
+    @State private var retry = 0
 
     var body: some View {
         ZStack {
-            if let nativeView = engine.session?.nativeView {
-                KSPlayerViewRepresentable(playerView: nativeView)
-                    .ignoresSafeArea()
-            } else if let player = engine.session?.player {
-                VideoPlayer(player: player)
-                    .ignoresSafeArea()
-            } else {
-                ProgressView()
+            Color.black.ignoresSafeArea()
+            if let player = engine.player {
+                VideoPlayer(player: player).ignoresSafeArea()
+            } else if let view = engine.nativeView {
+                NativeVideoView(view: view).id(ObjectIdentifier(view)).ignoresSafeArea()
+                    .onPlayPauseCommand { engine.toggleNativePlayback() }
             }
             if let errorMessage {
-                Text(errorMessage)
-                    .padding(24)
-                    .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 14))
+                ContentUnavailableView {
+                    Label(errorMessage, systemImage: "play.slash")
+                } actions: {
+                    Button("重试") { retry += 1 }
+                }
+            } else if engine.state != .playing && engine.state != .paused {
+                ProgressView()
             }
-            DanmakuOverlay(messages: core.danmakuMessages)
+            if danmakuEnabled, scenePhase == .active, errorMessage == nil {
+                DanmakuOverlay(events: danmakuEvents)
+                    .ignoresSafeArea(.container, edges: .horizontal)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .navigationTitle(room.title)
+        .toolbar {
             if !qualities.isEmpty {
-                Menu(selectedQuality ?? "清晰度") {
-                    ForEach(qualities, id: \.self) { quality in
-                        Button(quality) {
-                            selectedQuality = quality
-                            Task { await reloadPlayback() }
+                ToolbarItem {
+                    Menu(selectedQuality?.name ?? "清晰度") {
+                        ForEach(qualities) { quality in
+                            Button(quality.name) { selectedQuality = quality }
                         }
                     }
                 }
-                .padding(.top, 36)
-                .padding(.trailing, 40)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            }
+            ToolbarItem {
+                Button { library.toggleFavorite(room) } label: {
+                    Label(library.isFavorite(room) ? "取消收藏" : "收藏", systemImage: library.isFavorite(room) ? "star.fill" : "star")
+                }
+            }
+            if let danmakuError {
+                ToolbarItem { Text(danmakuError).font(.caption) }
             }
         }
-        .task {
-            await core.startDanmaku(provider: provider, roomId: room.roomId)
+        .task(id: PlaybackRequest(quality: selectedQuality, retry: retry, active: scenePhase == .active)) {
+            guard scenePhase == .active else { engine.stop(); return }
             await startPlayback()
         }
-        .onDisappear {
-            engine.stop()
-            Task { await core.stopDanmaku(provider: provider, roomId: room.roomId) }
+        .task(id: danmakuEnabled && scenePhase == .active) {
+            danmakuError = nil
+            guard danmakuEnabled, scenePhase == .active else { return }
+            do {
+                for try await event in try core.danmaku(for: room) {
+                    try Task.checkCancellation()
+                    if engine.state == .playing { danmakuEvents.send(event) }
+                }
+            } catch {
+                if !Task.isCancelled { danmakuError = "弹幕暂不可用" }
+            }
         }
+        .onDisappear { engine.stop() }
     }
 
     private func startPlayback() async {
+        errorMessage = nil
         do {
-            qualities = try await core.qualityNames(provider: provider, roomId: room.roomId)
-            selectedQuality = qualities.first
-            await reloadPlayback()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func reloadPlayback() async {
-        guard let selectedQuality else { return }
-        engine.stop()
-        do {
-            let descriptor = try await core.playback(
-                provider: provider,
-                roomId: room.roomId,
-                quality: selectedQuality
-            )
-            for (index, url) in descriptor.urls.enumerated() {
-                let protocolName = descriptor.protocols.indices.contains(index)
-                    ? descriptor.protocols[index]
-                    : "unknown"
-                let kind = StreamProtocol(rawValue: protocolName) ?? .unknown
-                do {
-                    _ = try await engine.prepare(
-                        url: url,
-                        headers: descriptor.headers,
-                        protocolKind: kind
-                    )
-                    engine.play()
-                    errorMessage = nil
-                    return
-                } catch {
-                    errorMessage = error.localizedDescription
+            let service = try core.service(room.provider)
+            guard let selectedQuality else {
+                let values = try await service.qualities(roomId: room.roomId)
+                try Task.checkCancellation()
+                qualities = values
+                guard let first = values.first else { throw LiveProviderError.noPlayback }
+                self.selectedQuality = first
+                return
+            }
+            let resources = try await service.playback(roomId: room.roomId, quality: selectedQuality)
+            try Task.checkCancellation()
+            let history = Task { @MainActor in
+                while !Task.isCancelled {
+                    if engine.state == .playing {
+                        library.visit(room)
+                        return
+                    }
+                    try await Task.sleep(for: .milliseconds(300))
                 }
             }
-            if descriptor.urls.isEmpty {
-                errorMessage = "平台没有返回播放地址"
+            defer { history.cancel() }
+            do {
+                try await engine.run(resources: resources)
+            } catch LiveProviderError.noPlayback {
+                try Task.checkCancellation()
+                let fresh = try await service.playback(roomId: room.roomId, quality: selectedQuality)
+                try Task.checkCancellation()
+                if fresh == resources { throw LiveProviderError.noPlayback }
+                try await engine.run(resources: fresh)
             }
         } catch {
-            errorMessage = error.localizedDescription
+            if !Task.isCancelled { errorMessage = error.localizedDescription }
         }
     }
 }
 
-private struct DanmakuOverlay: View {
-    let messages: [DanmakuDescriptor]
+private struct NativeVideoView: UIViewRepresentable {
+    let view: UIView
 
-    var body: some View {
-        VStack(spacing: 12) {
-            ForEach(messages.suffix(8)) { item in
-                HStack(spacing: 8) {
-                    Text("\(item.userName)：\(item.message)")
-                        .foregroundStyle(Color(
-                            red: Double(item.red) / 255,
-                            green: Double(item.green) / 255,
-                            blue: Double(item.blue) / 255
-                        ))
-                        .shadow(radius: 4)
-                    if let imageURL = item.imageURLs.first,
-                       let url = URL(string: imageURL) {
-                        AsyncImage(url: url) { image in
-                            image.resizable().scaledToFit()
-                        } placeholder: {
-                            EmptyView()
-                        }
-                        .frame(width: 28, height: 28)
-                    }
-                }
-            }
-        }
-        .font(.title3)
-        .padding(.top, 32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .allowsHitTesting(false)
-    }
+    func makeUIView(context: Context) -> UIView { view }
+    func updateUIView(_ uiView: UIView, context: Context) {}
+}
+
+private struct PlaybackRequest: Hashable {
+    let quality: LiveQuality?
+    let retry: Int
+    let active: Bool
 }

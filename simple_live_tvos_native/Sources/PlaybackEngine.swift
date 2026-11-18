@@ -1,120 +1,148 @@
 import AVFoundation
+import Combine
 import Foundation
-import SwiftUI
-import UIKit
-#if canImport(KSPlayer)
 import KSPlayer
-#endif
-#if canImport(KSPlayerUI)
-import KSPlayerUI
-#endif
+import SimpleLiveTVOSCore
+import UIKit
 
-enum StreamProtocol: String {
-    case hls
-    case flv
-    case rtmp
-    case unknown
-}
-
-struct PlaybackSession {
-    let player: AVPlayer?
-    #if canImport(KSPlayerUI)
-    let nativeView: IOSVideoPlayerView?
-    #endif
-    let protocolKind: StreamProtocol
-}
-
-protocol LivePlaybackEngine {
-    func prepare(url: URL, headers: [String: String], protocolKind: StreamProtocol) async throws -> PlaybackSession
-    func play()
-    func pause()
-    func stop()
-}
-
-/// Native playback boundary used by the SwiftUI player.
-///
 @MainActor
-final class KSPlayerPlaybackEngine: LivePlaybackEngine, ObservableObject {
-    private(set) var session: PlaybackSession?
+final class PlaybackEngine: ObservableObject {
+    @Published private(set) var player: AVPlayer?
+    @Published private(set) var nativeView: UIView?
+    @Published private(set) var state: PlaybackState = .idle
 
-    func prepare(url: URL, headers: [String: String], protocolKind: StreamProtocol) async throws -> PlaybackSession {
-        switch protocolKind {
-        case .hls:
-            var assetOptions: [String: Any] = [:]
-            if !headers.isEmpty {
-                assetOptions["AVURLAssetHTTPHeaderFieldsKey"] = headers
+    private static let configureLogging: Void = {
+        KSOptions.logger = PrivateMediaLogger()
+        KSOptions.logLevel = .panic
+    }()
+    private var failover = PlaybackFailoverController()
+    private var runID = UUID()
+    private var nativePlayer: KSPlayerLayer?
+
+    func run(resources: [PlaybackResource]) async throws {
+        stop()
+        let id = runID
+        var attempt = try failover.begin(resources: resources)
+        defer {
+            if runID == id { stop() }
+        }
+        while true {
+            try Task.checkCancellation()
+            guard runID == id else { throw CancellationError() }
+            state = .preparing
+            do {
+                try await play(attempt, id: id)
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                guard runID == id, !Task.isCancelled else { throw CancellationError() }
+                releaseBackend()
+                do {
+                    attempt = try failover.failCurrent(generation: attempt.generation)
+                } catch {
+                    throw LiveProviderError.noPlayback
+                }
             }
-            let asset = AVURLAsset(url: url, options: assetOptions)
-            let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
-            let value = PlaybackSession(
-                player: player,
-                #if canImport(KSPlayerUI)
-                nativeView: nil,
-                #endif
-                protocolKind: .hls
-            )
-            session = value
-            return value
-        case .flv, .rtmp:
-            #if canImport(KSPlayer), canImport(KSPlayerUI)
-            KSOptions.secondPlayerType = KSMEPlayer.self
-            let playerView = IOSVideoPlayerView()
-            let options = KSOptions()
-            if !headers.isEmpty {
-                options.appendHeader(headers)
-            }
-            let definition = KSPlayerResourceDefinition(
-                url: url,
-                definition: "直播",
-                options: options
-            )
-            let resource = KSPlayerResource(
-                name: url.lastPathComponent,
-                definitions: [definition]
-            )
-            playerView.set(resource: resource)
-            let value = PlaybackSession(
-                player: nil,
-                nativeView: playerView,
-                protocolKind: protocolKind
-            )
-            session = value
-            return value
-            #else
-            throw PlaybackError.backendUnavailable(protocolKind)
-            #endif
-        case .unknown:
-            throw PlaybackError.unsupportedURL
         }
     }
 
-    func play() { session?.player?.play() }
-    func pause() { session?.player?.pause() }
     func stop() {
-        session?.player?.pause()
-        session = nil
+        runID = UUID()
+        releaseBackend()
+        failover.stop()
+        state = .stopped
     }
-}
 
-#if canImport(KSPlayerUI)
-struct KSPlayerViewRepresentable: UIViewRepresentable {
-    let playerView: IOSVideoPlayerView
+    private func releaseBackend() {
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        player = nil
+        nativePlayer?.pause()
+        nativePlayer?.stop()
+        nativePlayer = nil
+        nativeView = nil
+    }
 
-    func makeUIView(context: Context) -> IOSVideoPlayerView { playerView }
-    func updateUIView(_ uiView: IOSVideoPlayerView, context: Context) {}
-}
-#endif
-
-enum PlaybackError: LocalizedError {
-    case backendUnavailable(StreamProtocol)
-    case unsupportedURL
-
-    var errorDescription: String? {
-        switch self {
-        case let .backendUnavailable(protocolKind):
-            "KSPlayer 当前不可用，无法播放 \(protocolKind.rawValue.uppercased())"
-        case .unsupportedURL:
-            "播放地址协议无法识别"
+    private func play(_ attempt: PlaybackAttempt, id: UUID) async throws {
+        let resource = attempt.resource
+        switch resource.protocolKind {
+        case .hls where resource.url.scheme == "https":
+            try await playHLS(attempt, id: id)
+        case .hls, .flv, .rtmp:
+            try await playNative(attempt, id: id)
+        case .unknown: throw LiveProviderError.unsupported
         }
     }
+
+    private func playHLS(_ attempt: PlaybackAttempt, id: UUID) async throws {
+        let resource = attempt.resource
+        let asset = AVURLAsset(url: resource.url, options: ["AVURLAssetHTTPHeaderFieldsKey": resource.headers])
+        let item = AVPlayerItem(asset: asset)
+        let player = AVPlayer(playerItem: item)
+        self.player = player
+        player.play()
+        try await monitor(attempt, id: id) {
+            if item.status == .failed || player.status == .failed { throw LiveProviderError.noPlayback }
+            return (player.currentTime().seconds, player.timeControlStatus == .paused)
+        }
+    }
+
+    private func playNative(_ attempt: PlaybackAttempt, id: UUID) async throws {
+        _ = Self.configureLogging
+        let options = KSOptions()
+        options.registerRemoteControll = false
+        options.appendHeader(attempt.resource.headers)
+        let previousPlayerType = KSOptions.firstPlayerType
+        KSOptions.firstPlayerType = KSMEPlayer.self
+        let layer = KSPlayerLayer(url: attempt.resource.url, options: options)
+        KSOptions.firstPlayerType = previousPlayerType
+        nativePlayer = layer
+        nativeView = layer.player.view
+        try await monitor(attempt, id: id) {
+            if layer.state == .error || layer.state == .playedToTheEnd { throw LiveProviderError.noPlayback }
+            return (layer.player.currentPlaybackTime, layer.state == .paused)
+        }
+    }
+
+    func toggleNativePlayback() {
+        guard let nativePlayer else { return }
+        if nativePlayer.state == .paused {
+            nativePlayer.play()
+        } else if state == .playing || state == .buffering {
+            nativePlayer.pause()
+        }
+    }
+
+    private func monitor(_ attempt: PlaybackAttempt, id: UUID, sample: () throws -> (position: Double, paused: Bool)) async throws {
+        let clock = ContinuousClock()
+        var lastProgress = clock.now
+        var lastTime = 0.0
+        var hasStarted = false
+        while true {
+            try await Task.sleep(for: .milliseconds(350))
+            guard id == runID else { throw CancellationError() }
+            let (position, paused) = try sample()
+            if position.isFinite && abs(position - lastTime) > 0.03 {
+                if !hasStarted {
+                    try failover.markPlaying(lineIndex: attempt.resource.lineIndex, generation: attempt.generation)
+                    hasStarted = true
+                }
+                lastProgress = clock.now
+                lastTime = position
+                state = .playing
+            } else if hasStarted && paused {
+                lastProgress = clock.now
+                state = .paused
+            } else {
+                state = hasStarted ? .buffering : .preparing
+                if lastProgress.duration(to: clock.now) > .seconds(15) { throw LiveProviderError.noPlayback }
+            }
+        }
+    }
+}
+
+private struct PrivateMediaLogger: LogHandler {
+    // FFmpeg diagnostic messages can include temporary CDN credentials.
+    func log(level: KSPlayer.LogLevel, message: CustomStringConvertible, file: String, function: String, line: UInt) {}
 }
