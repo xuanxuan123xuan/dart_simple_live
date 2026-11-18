@@ -131,8 +131,14 @@ final class DanmakuSurface: UIView {
         let color = event.color
         let foreground = UIColor(red: CGFloat(color.red) / 255, green: CGFloat(color.green) / 255,
                                  blue: CGFloat(color.blue) / 255, alpha: 1)
-        let label = DanmakuTextView(message, font: font, color: foreground, maximumWidth: bounds.width,
+        let label: UIView
+        if style.renderStickers, event.spans.contains(where: { if case .image = $0 { return true }; return false }) {
+            label = DanmakuStickerLine(spans: event.spans, font: font, color: foreground,
+                                       maximumWidth: bounds.width, outlineWidth: style.outlineWidth)
+        } else {
+            label = DanmakuTextView(message, font: font, color: foreground, maximumWidth: bounds.width,
                                     outlineWidth: style.outlineWidth)
+        }
         label.alpha = style.opacity
         let width = label.bounds.width
         let speed = bounds.width / style.crossingSeconds

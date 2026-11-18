@@ -10,6 +10,7 @@ struct DanmakuStyle: Equatable {
     var fontSize: Double = 36
     var crossingSeconds: Double = 9
     var opacity: Double = 1
+    var renderStickers = true
     var outlineWidth: Double = 8
     var layout: DanmakuLayout = .area
     var area: Double = 0.25
@@ -30,6 +31,7 @@ struct DanmakuStyleStorage: DynamicProperty {
     @AppStorage("simple_live_tvos.danmaku.font") var fontSize = 36.0
     @AppStorage("simple_live_tvos.danmaku.speed") var crossingSeconds = 9.0
     @AppStorage("simple_live_tvos.danmaku.opacity") var opacity = 1.0
+    @AppStorage("simple_live_tvos.danmaku.stickers") var renderStickers = true
     @AppStorage("simple_live_tvos.danmaku.stroke") var outlineWidth = 8.0
     @AppStorage("simple_live_tvos.danmaku.layout") var layout = DanmakuLayout.area
     @AppStorage("simple_live_tvos.danmaku.area") var area = 0.25
@@ -38,7 +40,7 @@ struct DanmakuStyleStorage: DynamicProperty {
     var style: DanmakuStyle {
         DanmakuStyle(fontSize: clamp(fontSize, to: 20...64, fallback: 36),
                      crossingSeconds: clamp(crossingSeconds, to: 3...18, fallback: 9),
-                     opacity: clamp(opacity, to: 0.1...1, fallback: 1),
+                     opacity: clamp(opacity, to: 0.1...1, fallback: 1), renderStickers: renderStickers,
                      outlineWidth: clamp(outlineWidth, to: 0...16, fallback: 8),
                      layout: layout, area: clamp(area, to: 0.25...1, fallback: 0.25),
                      lines: min(6, max(1, lines)))
@@ -59,6 +61,7 @@ struct DanmakuSettingsView: View {
         List {
             Section("显示") {
                 Toggle("显示直播弹幕", isOn: $enabled)
+                Toggle("显示图片表情", isOn: storage.$renderStickers)
                 Picker("弹幕大小", selection: storage.$fontSize) {
                     ForEach([24.0, 30, 36, 42, 48, 56, 64], id: \.self) { Text("\(Int($0))").tag($0) }
                 }

@@ -42,6 +42,17 @@ final class DanmakuOverlayTests: XCTestCase {
         XCTAssertEqual(surface.subviews.first?.bounds.width, label.bounds.width)
     }
 
+    func testBilibiliStickersPreserveTextAndRejectUnrelatedHosts() throws {
+        var attributes = Array<Any>(repeating: NSNull(), count: 16)
+        attributes[15] = ["extra": #"{"emots":{"[你好]":{"url":"//i0.hdslb.com/emote.png"},"[外站]":{"url":"https://hdslb.com.example/track"}}}"#]
+        let message = "欢迎[你好][外站]"
+        let url = try XCTUnwrap(URL(string: "https://i0.hdslb.com/emote.png"))
+        XCTAssertEqual(BilibiliPacket.stickerSpans(message: message, attributes: attributes),
+                       [.text("欢迎"), .image(url: url, fallbackText: "[你好]"), .text("[外站]")])
+        XCTAssertFalse(DanmakuStickerURL.permits(URL(string: "https://i0.hdslb.com:8080/a")!))
+        XCTAssertFalse(DanmakuStickerURL.permits(URL(string: "https://foo@i0.hdslb.com/a")!))
+    }
+
     @MainActor
     func testStyleChangesLimitLanesAndReplaceActiveLabels() throws {
         let surface = makeSurface()

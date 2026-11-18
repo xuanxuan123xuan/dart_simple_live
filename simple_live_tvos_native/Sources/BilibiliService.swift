@@ -378,11 +378,43 @@ enum BilibiliPacket {
                 let attributes = info[0] as? [Any] ?? []
                 let color = attributes.count > 3 ? (attributes[3] as? Int ?? 0xffffff) : 0xffffff
                 events.append(DanmakuEvent(id: UUID().uuidString, room: room, userName: name, message: message,
-                                           color: DanmakuColor(red: (color >> 16) & 255, green: (color >> 8) & 255, blue: color & 255), spans: [.text(message)]))
+                                           color: DanmakuColor(red: (color >> 16) & 255, green: (color >> 8) & 255, blue: color & 255),
+                                           spans: stickerSpans(message: message, attributes: attributes)))
             }
             if events.count >= 128 { return Array(events.prefix(128)) }
         }
         return events
+    }
+
+    static func stickerSpans(message: String, attributes: [Any]) -> [DanmakuSpan] {
+        var stickers: [String: URL] = [:]
+        if attributes.count > 13, message.hasPrefix("["), message.hasSuffix("]"),
+           let direct = (attributes[13] as? [String: Any])?["url"] as? String,
+           let url = DanmakuStickerURL.bilibili(direct) {
+            stickers[message] = url
+        }
+        if attributes.count > 15, let extra = (attributes[15] as? [String: Any])?["extra"] as? String,
+           extra.utf8.count < 16 * 1024, let metadata = try? JSONObject.decode(Data(extra.utf8)) {
+            for (key, entry) in metadata["emots"].fields.prefix(32) {
+                guard !key.isEmpty, key.count < 64, message.contains(key),
+                      let url = DanmakuStickerURL.bilibili(JSONObject(entry as? [String: Any] ?? [:]).text("url")) else { continue }
+                stickers[key] = url
+            }
+        }
+        guard !stickers.isEmpty else { return [.text(message)] }
+        var spans = [DanmakuSpan]()
+        var cursor = message.startIndex
+        while cursor < message.endIndex, spans.count < 24 {
+            let matches = stickers.keys.compactMap { key in message.range(of: key, range: cursor..<message.endIndex).map { (key, $0) } }
+            guard let (key, range) = matches.min(by: {
+                $0.1.lowerBound == $1.1.lowerBound ? $0.0.count > $1.0.count : $0.1.lowerBound < $1.1.lowerBound
+            }), let url = stickers[key] else { break }
+            if cursor < range.lowerBound { spans.append(.text(String(message[cursor..<range.lowerBound]))) }
+            spans.append(.image(url: url, fallbackText: key))
+            cursor = range.upperBound
+        }
+        if cursor < message.endIndex { spans.append(.text(String(message[cursor...]))) }
+        return spans
     }
 
     private static func inflate(_ data: Data) -> Data? {
