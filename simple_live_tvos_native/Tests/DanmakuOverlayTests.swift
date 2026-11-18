@@ -43,6 +43,27 @@ final class DanmakuOverlayTests: XCTestCase {
     }
 
     @MainActor
+    func testStyleChangesLimitLanesAndReplaceActiveLabels() throws {
+        let surface = makeSurface()
+        surface.display(event("默认弹幕"), now: 100)
+        let defaultHeight = try XCTUnwrap(surface.subviews.first?.bounds.height)
+
+        surface.configure(DanmakuStyle(fontSize: 56, crossingSeconds: 6, opacity: 0.4,
+                                      outlineWidth: 0, layout: .lines, lines: 2))
+        XCTAssertTrue(surface.subviews.isEmpty)
+        for _ in 0..<10 { surface.display(event("调大后"), now: 100) }
+        XCTAssertEqual(surface.subviews.count, 2)
+        for label in surface.subviews {
+            XCTAssertGreaterThan(label.bounds.height, defaultHeight)
+            XCTAssertEqual(label.alpha, 0.4, accuracy: 0.01)
+        }
+        surface.configure(DanmakuStyle(layout: .area, area: 0.5))
+        for _ in 0..<20 { surface.display(event("半屏弹幕"), now: 100) }
+        XCTAssertGreaterThan(surface.subviews.count, 2)
+        XCTAssertTrue(surface.subviews.allSatisfy { $0.frame.maxY <= surface.bounds.height / 2 })
+    }
+
+    @MainActor
     func testOutlineKeepsSolidColoredGlyphsOnLightAndDarkBackgrounds() throws {
         let text = DanmakuTextView("弹幕测试！", font: .systemFont(ofSize: 36, weight: .semibold),
                                    color: UIColor(red: 1, green: 0.7, blue: 0.1, alpha: 1), maximumWidth: 400)

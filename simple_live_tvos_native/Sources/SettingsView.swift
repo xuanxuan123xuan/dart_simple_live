@@ -3,14 +3,11 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var core: NativeCoreClient
-    @AppStorage("simple_live_tvos.danmaku") private var danmakuEnabled = true
     @State private var error: String?
 
     var body: some View {
         List {
-            Section("观看") {
-                Toggle("显示直播弹幕", isOn: $danmakuEnabled)
-            }
+            NavigationLink("弹幕设置") { DanmakuSettingsView() }
             NavigationLink("关注设置") { FavoriteSettingsView() }
             NavigationLink("频道轮播") { ChannelRotationSettingsView() }
             ForEach(core.loginProviders) { provider in

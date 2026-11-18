@@ -6,6 +6,9 @@ import UIKit
 
 struct DanmakuOverlay: UIViewRepresentable {
     let events: PassthroughSubject<DanmakuEvent, Never>
+    private var storage = DanmakuStyleStorage()
+
+    init(events: PassthroughSubject<DanmakuEvent, Never>) { self.events = events }
 
     func makeUIView(context: Context) -> DanmakuSurface {
         let surface = DanmakuSurface(frame: .zero)
@@ -15,7 +18,7 @@ struct DanmakuOverlay: UIViewRepresentable {
         return surface
     }
 
-    func updateUIView(_ uiView: DanmakuSurface, context: Context) {}
+    func updateUIView(_ uiView: DanmakuSurface, context: Context) { uiView.configure(storage.style) }
 
     static func dismantleUIView(_ uiView: DanmakuSurface, coordinator: Void) {
         uiView.subscription = nil
@@ -24,7 +27,8 @@ struct DanmakuOverlay: UIViewRepresentable {
 }
 
 final class DanmakuSurface: UIView {
-    private let font = UIFont.systemFont(ofSize: 36, weight: .semibold)
+    private var style = DanmakuStyle()
+    private var font = UIFont.systemFont(ofSize: 36, weight: .semibold)
     private let horizontalGap: CGFloat = 40
     private let topInset: CGFloat = 12
     private var surfaceSize = CGSize.zero
@@ -47,9 +51,20 @@ final class DanmakuSurface: UIView {
         super.layoutSubviews()
         guard bounds.size != surfaceSize else { return }
         surfaceSize = bounds.size
+        rebuildLanes()
+    }
+
+    func configure(_ style: DanmakuStyle) {
+        guard self.style != style else { return }
+        self.style = style
+        font = .systemFont(ofSize: style.fontSize, weight: .semibold)
+        rebuildLanes()
+    }
+
+    private func rebuildLanes() {
         clear()
-        let laneCount = max(0, Int((bounds.height * 0.25 - topInset) / lineHeight))
-        laneReadyTimes = Array(repeating: 0, count: laneCount)
+        let count = style.laneCount(height: bounds.height, topInset: topInset, lineHeight: lineHeight)
+        laneReadyTimes = Array(repeating: 0, count: count)
     }
 
     func display(_ event: DanmakuEvent, now: CFTimeInterval = CACurrentMediaTime()) {
@@ -62,9 +77,11 @@ final class DanmakuSurface: UIView {
         let color = event.color
         let foreground = UIColor(red: CGFloat(color.red) / 255, green: CGFloat(color.green) / 255,
                                  blue: CGFloat(color.blue) / 255, alpha: 1)
-        let label = DanmakuTextView(message, font: font, color: foreground, maximumWidth: bounds.width)
+        let label = DanmakuTextView(message, font: font, color: foreground, maximumWidth: bounds.width,
+                                    outlineWidth: style.outlineWidth)
+        label.alpha = style.opacity
         let width = label.bounds.width
-        let speed = bounds.width / 9
+        let speed = bounds.width / style.crossingSeconds
         // With one velocity for all text, the previous tail only needs to clear the entry plus the gap.
         laneReadyTimes[lane] = now + (width + horizontalGap) / speed
         label.frame = CGRect(x: bounds.maxX, y: topInset + CGFloat(lane) * lineHeight, width: width, height: lineHeight)
@@ -89,18 +106,18 @@ final class DanmakuSurface: UIView {
 final class DanmakuTextView: UIView {
     private static let horizontalInset: CGFloat = 5
     private let fill: CTLine
-    private let outline: CTLine
+    private let outline: CTLine?
 
-    init(_ message: String, font: UIFont, color: UIColor, maximumWidth: CGFloat) {
+    init(_ message: String, font: UIFont, color: UIColor, maximumWidth: CGFloat, outlineWidth: Double = 8) {
         let contentWidth = max(0, maximumWidth - Self.horizontalInset * 2)
         let fill = Self.line(message, attributes: [.font: font, .foregroundColor: color], width: contentWidth)
         self.fill = fill
         // Repaint the solid glyphs over the stroke so it cannot eat into small strokes and counters.
-        outline = Self.line(message, attributes: [
+        outline = outlineWidth == 0 ? nil : Self.line(message, attributes: [
             .font: font,
             .foregroundColor: UIColor.black,
             .strokeColor: UIColor.black,
-            .strokeWidth: -8,
+            .strokeWidth: -outlineWidth,
         ], width: contentWidth)
         let width = min(maximumWidth, ceil(CTLineGetTypographicBounds(fill, nil, nil, nil)) + Self.horizontalInset * 2)
         super.init(frame: CGRect(x: 0, y: 0, width: width, height: ceil(font.lineHeight) + 10))
@@ -123,7 +140,7 @@ final class DanmakuTextView: UIView {
         context.scaleBy(x: 1, y: -1)
         context.setLineJoin(.round)
         let baseline = (bounds.height - ascent + descent) / 2
-        for line in [outline, fill] {
+        for line in [outline, fill].compactMap({ $0 }) {
             context.saveGState()
             context.textMatrix = .identity
             context.textPosition = CGPoint(x: 0, y: baseline)
