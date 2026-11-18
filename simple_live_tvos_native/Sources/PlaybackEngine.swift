@@ -105,7 +105,15 @@ final class PlaybackEngine: ObservableObject {
         }
     }
 
-    func toggleNativePlayback() {
+    func togglePlayback() {
+        if let player {
+            if player.timeControlStatus == .paused {
+                player.play()
+            } else {
+                player.pause()
+            }
+            return
+        }
         guard let nativePlayer else { return }
         if nativePlayer.state == .paused {
             nativePlayer.play()
