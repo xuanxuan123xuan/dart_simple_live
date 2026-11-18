@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var core: NativeCoreClient
     @StateObject private var library = LibraryStore()
+    @StateObject private var favoriteStatus = FavoriteStatusStore()
     @State private var section: HomeSection = .live
     @State private var provider = "bilibili"
     @State private var searchQuery = ""
@@ -45,6 +46,8 @@ struct HomeView: View {
             }
         }
         .environmentObject(library)
+        .environmentObject(favoriteStatus)
+        .onChange(of: library.favorites, initial: true) { _, rooms in favoriteStatus.keepOnly(rooms) }
     }
 
     @ViewBuilder
@@ -55,7 +58,7 @@ struct HomeView: View {
         case .search:
             search
         case .favorites:
-            libraryPage(.favorites, rooms: library.favorites)
+            FavoritesView()
         case .history:
             libraryPage(.history, rooms: library.recent)
         case .settings:
@@ -175,7 +178,7 @@ struct HomeView: View {
     }
 }
 
-private enum HomeRoute: Hashable {
+enum HomeRoute: Hashable {
     case categories(String)
     case categoryChildren(String, CategoryDescriptor)
     case categoryRooms(String, CategoryDescriptor?)
@@ -444,37 +447,25 @@ private struct RoomGrid<Footer: View>: View {
     }
 }
 
-private struct RoomTile: View {
+struct RoomTile: View {
     @Environment(\.isFocused) private var isFocused
     let room: RoomDescriptor
+    var heading: String? = nil
+    var caption: String? = nil
+    var showCover = true
+    var coverOverride: String? = nil
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 18)
         VStack(alignment: .leading, spacing: 0) {
-            Color.white.opacity(0.06)
-                .aspectRatio(16.0 / 9, contentMode: .fit)
-                .overlay {
-                    GeometryReader { proxy in
-                        AsyncImage(url: URL(string: room.cover)) { phase in
-                            if let image = phase.image {
-                                image.resizable().scaledToFill()
-                            } else {
-                                Image(systemName: "play.tv")
-                                    .font(.system(size: 32))
-                                    .foregroundStyle(.white.opacity(0.24))
-                            }
-                        }
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                        .clipped()
-                    }
-                }
-                .accessibilityHidden(true)
-
+            if showCover { cover }
             VStack(alignment: .leading, spacing: 4) {
-                Text(room.title)
+                Text(heading ?? room.title)
                     .font(.system(size: 24, weight: .semibold))
                     .lineLimit(1)
-                if let isLive = room.isLive {
+                if let caption {
+                    Text(caption).font(.system(size: 20)).foregroundStyle(.secondary).lineLimit(1)
+                } else if let isLive = room.isLive {
                     Label(isLive ? "直播中" : "未开播", systemImage: isLive ? "dot.radiowaves.left.and.right" : "moon")
                         .font(.system(size: 20))
                         .foregroundStyle(isLive ? Color.green : Color.white.opacity(0.64))
@@ -496,6 +487,27 @@ private struct RoomTile: View {
         .scaleEffect(isFocused ? 1.035 : 1)
         .animation(.easeOut(duration: 0.15), value: isFocused)
         .accessibilityElement(children: .combine)
+    }
+
+    private var cover: some View {
+        Color.white.opacity(0.06)
+                .aspectRatio(16.0 / 9, contentMode: .fit)
+                .overlay {
+                    GeometryReader { proxy in
+                        AsyncImage(url: URL(string: coverOverride.flatMap { $0.isEmpty ? nil : $0 } ?? room.cover)) { phase in
+                            if let image = phase.image {
+                                image.resizable().scaledToFill()
+                            } else {
+                                Image(systemName: "play.tv")
+                                    .font(.system(size: 32))
+                                    .foregroundStyle(.white.opacity(0.24))
+                            }
+                        }
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipped()
+                    }
+                }
+                .accessibilityHidden(true)
     }
 }
 

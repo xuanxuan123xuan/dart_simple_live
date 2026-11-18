@@ -69,7 +69,8 @@ actor HuyaService: LiveProviderService, DanmakuService {
         let resolvedID = live.text("lProfileRoom")
         return RoomDescriptor(provider: "huya", roomId: resolvedID.isEmpty || resolvedID == "0" ? id : resolvedID,
                               title: title, cover: normalizedImage(live.text("sScreenshot")),
-                              userName: data["roomInfo"]["tProfileInfo"].text("sNick"))
+                              userName: data["roomInfo"]["tProfileInfo"].text("sNick"),
+                              isLive: data["roomInfo"].integer("eLiveStatus").flatMap { [0, 1, 2].contains($0) ? $0 == 2 : nil })
     }
 
     func qualities(roomId: String) async throws -> [LiveQuality] {

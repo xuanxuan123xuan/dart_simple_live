@@ -74,8 +74,11 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
         let data = try await http.json(Self.web + "/betard/" + id, headers: headers(path: "/" + id))["room"]
         let realID = data.text("room_id")
         guard let roomID = Int(realID), roomID > 0 else { throw LiveProviderError.invalidRoom }
+        let loop = data.bool("videoLoop")
+        let status = data.integer("show_status")
+        let isLive: Bool? = (loop == true || status == 1) ? true : (status == 2 && loop == false ? false : nil)
         return RoomDescriptor(provider: "douyu", roomId: realID, title: data.text("room_name"),
-                              cover: normalizedImage(data.text("room_pic")), userName: data.text("owner_name"))
+                              cover: normalizedImage(data.text("room_pic")), userName: data.text("owner_name"), isLive: isLive)
     }
 
     func qualities(roomId: String) async throws -> [LiveQuality] {

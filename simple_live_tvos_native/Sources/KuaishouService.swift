@@ -165,7 +165,17 @@ actor KuaishouService: LiveProviderService, DanmakuService {
         guard let id else { return nil }
         let title = [item.text("caption"), stream.text("caption"), item.text("title"), author.text("name")].first { !$0.isEmpty } ?? id
         let cover = [stream.text("poster"), item.text("poster"), item.text("coverUrl"), item["gameInfo"].text("poster")].first { !$0.isEmpty } ?? ""
-        return RoomDescriptor(provider: "kuaishou", roomId: id, title: title, cover: normalizedImage(cover), userName: author.text("name"))
+        let flags = [item.bool("isLiving"), item.bool("living"), stream.bool("isLiving"), stream.bool("living")]
+        let isLive: Bool?
+        if !stream.text("id").isEmpty || flags.contains(true) {
+            isLive = true
+        } else if !item["errorType"].fields.isEmpty || item.integer("errorType").map({ $0 != 0 }) == true {
+            isLive = nil
+        } else {
+            isLive = flags.contains(false) ? false : nil
+        }
+        return RoomDescriptor(provider: "kuaishou", roomId: id, title: title, cover: normalizedImage(cover),
+                              userName: author.text("name"), isLive: isLive)
     }
 
     private func variants(_ id: String) async throws -> [MediaVariant] {

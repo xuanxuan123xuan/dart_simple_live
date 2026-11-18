@@ -296,7 +296,8 @@ actor DouyinService: LiveProviderService, DanmakuService {
         guard !id.isEmpty else { return nil }
         return RoomDescriptor(provider: "douyin", roomId: id, title: room.text("title"),
                               cover: normalizedImage(room["cover"].values("url_list").first as? String ?? ""),
-                              userName: author.text("nickname"))
+                              userName: author.text("nickname"),
+                              isLive: room.integer("status").flatMap { $0 == 2 ? true : $0 == 4 ? false : nil })
     }
 
     static func parseCategories(_ nodes: [JSONObject], parent: String = "", depth: Int = 0) -> [CategoryDescriptor] {

@@ -143,7 +143,8 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
         let realID = room.text("room_id")
         guard !realID.isEmpty else { throw LiveProviderError.invalidRoom }
         return RoomDescriptor(provider: "bilibili", roomId: realID, title: room.text("title"),
-                              cover: normalizedImage(room.text("cover")), userName: data["anchor_info"]["base_info"].text("uname"))
+                              cover: normalizedImage(room.text("cover")), userName: data["anchor_info"]["base_info"].text("uname"),
+                              isLive: room.integer("live_status").flatMap { [0, 1, 2].contains($0) ? $0 == 1 : nil })
     }
 
     func qualities(roomId: String) async throws -> [LiveQuality] {

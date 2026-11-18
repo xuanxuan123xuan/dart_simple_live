@@ -36,11 +36,14 @@ actor XiaohongshuService: LiveProviderService, DanmakuService {
         } else {
             id = try normalizedRoomID(value, hosts: [])
         }
-        let (room, host, _) = try await detail(id)
+        let (room, host, data) = try await detail(id)
+        let status = room.integer("status") ?? data.integer("status")
+        let isLive = status.flatMap { $0 == 2 ? true : [0, 1, 3].contains($0) ? false : nil }
         return RoomDescriptor(provider: "xiaohongshu", roomId: id,
                               title: [room.text("roomTitle"), room.text("title")].first { !$0.isEmpty } ?? id,
                               cover: normalizedImage([room.text("cover"), room.text("roomCover"), host.text("cover")].first { !$0.isEmpty } ?? ""),
-                              userName: [host.text("nickname"), host.text("nickName"), host.text("name")].first { !$0.isEmpty } ?? "")
+                              userName: [host.text("nickname"), host.text("nickName"), host.text("name")].first { !$0.isEmpty } ?? "",
+                              isLive: isLive)
     }
 
     func qualities(roomId: String) async throws -> [LiveQuality] {

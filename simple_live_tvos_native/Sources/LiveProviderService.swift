@@ -29,7 +29,7 @@ struct CategoryDescriptor: Identifiable, Hashable {
     }
 }
 
-struct RoomDescriptor: Identifiable, Hashable, Codable {
+struct RoomDescriptor: Identifiable, Hashable, Codable, Sendable {
     let provider: String
     let roomId: String
     let title: String
