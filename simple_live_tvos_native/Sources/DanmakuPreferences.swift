@@ -53,6 +53,7 @@ struct DanmakuSettingsView: View {
     @AppStorage("simple_live_tvos.danmaku") private var enabled = true
     private var storage = DanmakuStyleStorage()
     private var filtering = DanmakuFilterStorage()
+    private var highlightStorage = DanmakuHighlightsStorage()
 
     var body: some View {
         List {
@@ -85,6 +86,21 @@ struct DanmakuSettingsView: View {
                         Text("1/2").tag(0.5)
                         Text("3/4").tag(0.75)
                         Text("全屏").tag(1.0)
+                    }
+                }
+            }
+            Section("重点动态") {
+                Toggle("显示重点动态", isOn: highlightStorage.$enabled)
+                if highlightStorage.enabled {
+                    Toggle("隐藏控制面板时显示", isOn: highlightStorage.$fullScreen)
+                    Picker("统计跨度", selection: highlightStorage.$window) {
+                        ForEach([5, 10, 15, 30, 60, 120], id: \.self) { Text("\($0) 秒").tag($0) }
+                    }
+                    Picker("展示时间", selection: highlightStorage.$displayTime) {
+                        ForEach([3, 5, 10, 15, 30, 60], id: \.self) { Text("\($0) 秒").tag($0) }
+                    }
+                    Picker("起显次数", selection: highlightStorage.$minimumCount) {
+                        ForEach([2, 3, 5, 8, 10, 20], id: \.self) { Text("\($0) 次").tag($0) }
                     }
                 }
             }

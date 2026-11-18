@@ -85,7 +85,7 @@ struct PlayerView: View {
                 ProgressView()
             }
             if danmakuEnabled, scenePhase == .active, playbackIssue == nil, !sleepExpired {
-                DanmakuOverlay(events: danmakuEvents)
+                DanmakuOverlay(events: danmakuEvents, showControls: controlsVisible)
                     .ignoresSafeArea(.container, edges: .horizontal)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
