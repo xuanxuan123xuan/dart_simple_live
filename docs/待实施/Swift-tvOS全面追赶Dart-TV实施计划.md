@@ -102,6 +102,8 @@
 | 2026-11-19 | TV-18 | 待验收 | 局域网页打开时监听并展示 IPv4 地址、二维码、回执结果；离开或切到后台停止接收。Apple TV 模拟器遥控进入、地址及二维码显示通过，`SyncLANTests` 通过。待真机局域网权限、跨设备 UDP 广播及手机扫码验收。 |
 | 2026-11-19 | TV-19 | 待验收 | WebDAV 页提供验证并保存连接、移除凭据、上传和下载恢复的阶段进度、上次成功时间与类别选择。独立新旧 Dart ZIP 和本机真实 WsgiDAV 互通通过，Apple TV 模拟器编译通过。待 Apple TV 真机输入凭据、远端上传和选择性覆盖恢复验收。 |
 | 2026-11-19 | TV-09 / TV-10 / TV-14 | 待验收 | 单房间响应实体播放键后在控制栏显示状态，定时关闭弹层后把焦点交给「返回」，从房内确认多屏时先释放原播放器。隔离 UI 工程 `xcodebuild test` 的 `testSinglePlayerRemotePauseAfterFallback` 与 `testSinglePlayerSleepDismissesSheetAndFocusesReturn` 通过，覆盖无效首线路回退后用实体键暂停、前后台保留暂停和定时到期后的焦点。待真机复验。 |
+| 2026-11-19 | TV-08、TV-18 | 待验收 | 模拟器联调发现系统弹窗会打断待确认的局域网连接，改用页内确认面板并让接收服务仅在进后台或离开页面时停止。Apple TV 4K（tvOS 26.5）`xcodebuild test -only-testing:SyncUITests/SyncNavigationTests/testHistoryImportOpensScopedReceivePageAndPersists` 通过，遥控确认后 HTTP 返回成功，回到历史页显示导入记录。 |
+| 2026-11-19 | TV-02、TV-08、TV-17、TV-18、TV-19 | 待验收 | Apple TV 模拟器 `xcodebuild test` 的同步和 TV-16 事务专项共 15 项通过，另有首页／远程／多屏路由及历史／局域网／WebDAV 遥控验证。完成总数维持 2 / 20。`xcrun devicectl list devices` 返回 `No devices found`，真机扫码、跨设备广播、实账号、WebDAV 真机恢复及返回焦点仍待验收。 |
 
 ## 对照入口
 

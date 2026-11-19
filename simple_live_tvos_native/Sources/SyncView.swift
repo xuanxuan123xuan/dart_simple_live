@@ -81,21 +81,43 @@ struct SyncCategoryControls: View {
 
 struct SyncReviewModifier: ViewModifier {
     @ObservedObject var receiver: SyncReceiver
+    @FocusState private var focused: Action?
+
+    private enum Action: Hashable { case cancel, confirm }
 
     func body(content: Content) -> some View {
-        let review = receiver.review
-        content.alert(review?.overwrite == true ? "确认覆盖所选数据？" : "确认导入账号？", isPresented: Binding {
-            receiver.review != nil
-        } set: { presented in
-            if !presented, let review { receiver.answer(false, id: review.id) }
-        }, presenting: review) { review in
-            Button(review.overwrite ? "覆盖导入" : "导入", role: review.overwrite ? .destructive : nil) {
-                receiver.answer(true, id: review.id)
+        content
+            .disabled(receiver.review != nil)
+            .accessibilityHidden(receiver.review != nil)
+            .overlay {
+                if let review = receiver.review {
+                    ZStack {
+                        Color.black.opacity(0.7).ignoresSafeArea()
+                        VStack(spacing: 24) {
+                            Text(review.overwrite ? "确认覆盖所选数据？" : "确认导入账号？")
+                                .font(.title2.bold())
+                                .accessibilityAddTraits(.isHeader)
+                            Text(review.summary).foregroundStyle(.secondary)
+                            HStack(spacing: 24) {
+                                Button("取消") { receiver.answer(false, id: review.id) }
+                                    .focused($focused, equals: .cancel)
+                                Button(review.overwrite ? "覆盖导入" : "导入",
+                                       role: review.overwrite ? .destructive : nil) {
+                                    receiver.answer(true, id: review.id)
+                                }
+                                .focused($focused, equals: .confirm)
+                                .accessibilityIdentifier("sync-review-confirm")
+                            }
+                        }
+                        .padding(44)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 30))
+                        .focusSection()
+                    }
+                    .defaultFocus($focused, .cancel)
+                    .task(id: review.id) { focused = .cancel }
+                    .onExitCommand { receiver.answer(false, id: review.id) }
+                }
             }
-            Button("取消", role: .cancel) { receiver.answer(false, id: review.id) }
-        } message: { review in
-            Text(review.summary)
-        }
     }
 }
 
@@ -230,8 +252,12 @@ private struct LANSyncView: View {
         }
         .navigationTitle("局域网同步")
         .modifier(SyncReviewModifier(receiver: receiver))
-        .task(id: scenePhase) {
-            if scenePhase == .active { start() } else { client.stop() }
+        .task {
+            if scenePhase != .background { start() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { client.stop() }
+            if phase == .active && !client.ready { start() }
         }
         .onDisappear { client.stop() }
     }
