@@ -126,6 +126,24 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertTrue(DouyuPackets.messages(Data(packet.dropLast()), room: room).isEmpty)
     }
 
+    func testDouyuChatUsesOfficialEmojiThenTwemojiAndKeepsUnknownText() throws {
+        let room = RoomKey(provider: .douyu, roomId: "123")
+        let content = "😀斗鱼[大笑][未来表情][笑哭][大笑]收尾"
+        let packet = DouyuPackets.make("type@=chatmsg/dms@=1/txt@=\(content)/")
+        let event = try XCTUnwrap(DouyuPackets.messages(packet, room: room).first)
+        let official = try XCTUnwrap(URL(string: "https://shark2.douyucdn.cn/front-publish/live-next-player-aside-master/assets/images/daxiao_1d13a5a.png"))
+        let common = try XCTUnwrap(URL(string: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f602.png"))
+        XCTAssertEqual(event.message, content)
+        XCTAssertEqual(event.spans, [.text("😀斗鱼"), .image(url: official, fallbackText: "[大笑]"),
+                                     .text("[未来表情]"), .image(url: common, fallbackText: "[笑哭]"),
+                                     .image(url: official, fallbackText: "[大笑]"), .text("收尾")])
+        XCTAssertTrue(DanmakuStickerURL.permits(official))
+        XCTAssertTrue(DanmakuStickerURL.permits(common))
+        XCTAssertNil(DanmakuStickerURL.bilibili(official.absoluteString))
+        XCTAssertFalse(DanmakuStickerURL.permits(URL(string: "https://cdn.jsdelivr.net/npm/unrelated/image.png")!))
+        XCTAssertFalse(DanmakuStickerURL.permits(URL(string: "https://shark2.douyucdn.cn.example.org/a.png")!))
+    }
+
     func testMediaURLsRejectCredentialsAndNonMediaSchemes() {
         XCTAssertNil(MediaVariant.url("https://alice:secret@example.com/a.flv"))
         XCTAssertNil(MediaVariant.url("file:///tmp/a.m3u8"))

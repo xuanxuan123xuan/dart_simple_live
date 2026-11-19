@@ -363,7 +363,8 @@ enum DouyuPackets {
             }
             guard fields["type"] == "chatmsg", fields["dms"] != nil, let message = fields["txt"], !message.isEmpty else { continue }
             result.append(DanmakuEvent(id: UUID().uuidString, room: room, userName: fields["nn"] ?? "",
-                                       message: message, color: DanmakuColor(red: 255, green: 255, blue: 255), spans: [.text(message)]))
+                                       message: message, color: DanmakuColor(red: 255, green: 255, blue: 255),
+                                       spans: DanmakuEmoji.douyu(message)))
         }
         return result
     }

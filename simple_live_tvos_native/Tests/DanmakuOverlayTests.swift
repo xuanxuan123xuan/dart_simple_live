@@ -54,6 +54,49 @@ final class DanmakuOverlayTests: XCTestCase {
     }
 
     @MainActor
+    func testStickerDownloadFailureLeavesOriginalLabelVisible() async throws {
+        let token = "[天降正义]"
+        let spans = DanmakuEmoji.douyu(token)
+        let completed = expectation(description: "Sticker download returned no image")
+        let font = UIFont.systemFont(ofSize: 36)
+        let line = DanmakuStickerLine(spans: spans, font: font, color: .white, maximumWidth: 400,
+                                     outlineWidth: 8) { url in
+            XCTAssertEqual(url.host, "shark2.douyucdn.cn")
+            completed.fulfill()
+            return nil
+        }
+        let surface = makeSurface()
+        surface.addSubview(line)
+        await fulfillment(of: [completed], timeout: 1)
+        let fallback = try XCTUnwrap(line.subviews.first as? DanmakuTextView)
+        let image = try XCTUnwrap(line.subviews.last as? UIImageView)
+        let original = DanmakuTextView(token, font: font, color: .white, maximumWidth: 400)
+        XCTAssertFalse(fallback.isHidden)
+        XCTAssertNil(image.image)
+        XCTAssertEqual(fallback.bounds.width, original.bounds.width)
+    }
+
+    @MainActor
+    func testTurningOffStickersReplacesActiveLinesAndDrawsThePlainMessage() throws {
+        let surface = makeSurface()
+        let message = "斗鱼[666][未来表情]"
+        let stickerEvent = DanmakuEvent(id: "sticker", room: RoomKey(provider: .douyu, roomId: "123"),
+                                        userName: "用户", message: message,
+                                        color: DanmakuColor(red: 255, green: 255, blue: 255),
+                                        spans: DanmakuEmoji.douyu(message))
+        surface.display(stickerEvent, now: 100)
+        XCTAssertTrue(surface.subviews.first is DanmakuStickerLine)
+        surface.configure(DanmakuStyle(renderStickers: false))
+        XCTAssertTrue(surface.subviews.isEmpty)
+        surface.display(stickerEvent, now: 100)
+        let label = try XCTUnwrap(surface.subviews.first as? DanmakuTextView)
+        XCTAssertTrue(label.subviews.isEmpty)
+        surface.clear()
+        surface.display(event(message), now: 100)
+        XCTAssertEqual(surface.subviews.first?.bounds.width, label.bounds.width)
+    }
+
+    @MainActor
     func testStyleChangesLimitLanesAndReplaceActiveLabels() throws {
         let surface = makeSurface()
         surface.display(event("默认弹幕"), now: 100)

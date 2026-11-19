@@ -65,22 +65,6 @@ final class DanmakuStickerLoader {
     }
 }
 
-enum DanmakuStickerURL {
-    static func permits(_ url: URL) -> Bool {
-        guard url.scheme == "https", url.user == nil, url.password == nil,
-              url.port == nil || url.port == 443, let host = url.host?.lowercased() else { return false }
-        return host == "hdslb.com" || host.hasSuffix(".hdslb.com")
-    }
-
-    static func bilibili(_ string: String) -> URL? {
-        let value = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard var parts = URLComponents(string: value.hasPrefix("//") ? "https:" + value : value) else { return nil }
-        if parts.scheme == "http" { parts.scheme = "https" }
-        guard let url = parts.url, permits(url) else { return nil }
-        return url
-    }
-}
-
 private final class StickerRedirectGuard: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -89,7 +73,8 @@ private final class StickerRedirectGuard: NSObject, URLSessionTaskDelegate {
 }
 
 final class DanmakuStickerLine: UIView {
-    init(spans: [DanmakuSpan], font: UIFont, color: UIColor, maximumWidth: CGFloat, outlineWidth: Double) {
+    init(spans: [DanmakuSpan], font: UIFont, color: UIColor, maximumWidth: CGFloat, outlineWidth: Double,
+         loadImage: @escaping @MainActor (URL) async -> UIImage? = { await DanmakuStickerLoader.shared.image($0) }) {
         let height = ceil(font.lineHeight) + 10
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: height))
         clipsToBounds = true
@@ -105,13 +90,13 @@ final class DanmakuStickerLine: UIView {
                     appendText(text, font: font, color: color, width: remaining, outlineWidth: outlineWidth)
                     continue
                 }
-                let label = appendText(text, font: font, color: color,
-                                       width: min(remaining, max(height, font.pointSize * 3)), outlineWidth: outlineWidth)
+                let label = appendText(text, font: font, color: color, width: remaining, outlineWidth: outlineWidth)
                 let container = UIImageView(frame: label.frame.insetBy(dx: 1, dy: 2))
                 container.contentMode = .scaleAspectFit
                 addSubview(container)
                 Task { [weak container, weak label] in
-                    guard let image = await DanmakuStickerLoader.shared.image(url),
+                    guard container?.superview?.superview != nil,
+                          let image = await loadImage(url),
                           let container, container.superview?.superview != nil else { return }
                     container.image = image
                     label?.isHidden = true
