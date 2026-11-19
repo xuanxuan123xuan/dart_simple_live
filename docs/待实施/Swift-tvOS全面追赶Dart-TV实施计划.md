@@ -95,6 +95,7 @@
 | 2026-11-19 | TV-15 | 待验收 | 设置首页接入播放、弹幕、关注、多屏、账号、关于六区。频道轮播放在播放区，账号与关于链接到各自已交付页面。Apple TV 4K 模拟器隔离 UI 工程 `xcodebuild test -only-testing:MultiRoomUITests/MultiRoomFlowUITests/testFollowEntryAndSettingsHome` 遥控测试通过，确认进入多屏与播放设置。新版播放器与多屏参数专项测试复跑通过，待 Apple TV 真机复验。 |
 | 2026-11-19 | TV-02 / TV-13 | 进行中／待验收 | 把确认、取消与来源切换放在同一焦点行，使用可在房内弹层打开的平台菜单。隔离 UI 工程 `xcodebuild test -only-testing:MultiRoomUITests/MultiRoomFlowUITests/testFollowEntryAndSettingsHome` 通过；首页遥控流程已验证从关注和历史各选一路后进入双屏。临时 `MultiRoomProviderProbeTests` 在 Apple TV 模拟器验证真实 B 站和斗鱼直播搜索、跨平台识别分享文本中的 B 站链接、斗鱼房号解析和去重，1 项通过。其余站点及真机仍待抽验。 |
 | 2026-11-19 | TV-17、TV-18 | 进行中 | 拒绝同一来源重叠分块和布尔值编号，远程房间有多个发送方时要求分块提供来源标识。隔离运行 `swift test --package-path /private/tmp/sl-sync-package` 共 14 项通过，新增重叠序列不混合的回归测试。使用本机 HTTP CONNECT 代理连接国内站点，Dart 两段历史收到回执，Swift 持久化成功。 |
+| 2026-11-19 | TV-09 | 待验收 | 完整快照 `e9603abd` 加列表焦点修复，离线执行 `xcodebuild test-without-building -skip-testing:SimpleLiveTVOSTests/ProviderSmokeTests -skip-testing:SimpleLiveTVOSTests/PlaybackAcceptanceTests`，71 项通过、1 项多屏联网用例跳过、0 失败。临时遥控工程的 `testTV09RoomControlsAndPreservedChoices` 与 `testTV09VolumeFavoritesAndChannelSheets` 分别通过，覆盖暂停、刷新保留清晰度和指定线路、打开设置调至 90%、打开收藏列表，以及从频道列表选房并完成换台。完整引擎专项验证静音、30% 音量、继续播放和线路回退；五个平台真实直播在模拟器起播。线路回退后实体 Play/Pause 首轮未观察到状态变化，隔离复验通过，现象及复验已交给多屏与播放对话。Apple TV 未配对，真实遥控和实播控制仍待验收。 |
 
 ## 对照入口
 
