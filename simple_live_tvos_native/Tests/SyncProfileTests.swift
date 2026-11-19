@@ -70,6 +70,19 @@ final class SyncProfileTests: XCTestCase {
         XCTAssertEqual(LibraryStore(defaults: defaults).blockedWords, ["本机"])
     }
 
+    func testDartKuaishouExpirySentinelAndNumericString() throws {
+        let profile = try SyncProfile(payload: [
+            "schema": "simple_live_profile", "schemaVersion": 4,
+            "accounts": ["items": [["siteId": "kuaishou", "slots": [
+                "primary": ["cookie": "passToken=primary", "cookieExpiresAt": 0],
+                "secondary": ["cookie": "passToken=secondary", "cookieExpiresAt": "1795050903000"],
+            ]]]],
+        ])
+        let accounts = try XCTUnwrap(profile.prepare(SyncSelection(categories: [.accounts])).accounts)
+        XCTAssertNil(accounts[0].expiresAt)
+        XCTAssertEqual(accounts[1].expiresAt?.timeIntervalSince1970, 1795050903)
+    }
+
     func testDartLegacyFormatsAndUnknownProviderProtection() throws {
         let history = try SyncProfile(data: Self.fixture("dart-legacy-history.json"))
         XCTAssertEqual(try history.prepare(SyncSelection()).histories?.first?.id, "douyu:17")

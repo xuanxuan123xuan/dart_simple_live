@@ -30,7 +30,7 @@ final class SyncReceiver: ObservableObject {
             if overwrite || plan.accounts != nil {
                 let request = Review(overwrite: overwrite, summary: plan.summary)
                 let approved = await waitForReview(request, timeout: reviewTimeout)
-                guard approved else { throw SyncError.confirmationRequired }
+                guard approved else { throw SyncError.reviewDeclined }
             }
             try await importer.apply(plan, overwrite: overwrite, confirmed: true)
             result = "已导入 · \(plan.summary)"

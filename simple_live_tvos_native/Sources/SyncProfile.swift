@@ -20,7 +20,7 @@ enum SyncCategory: String, CaseIterable, Identifiable {
 
 enum SyncError: LocalizedError {
     case invalidProfile, unsupportedVersion, invalidCategory(SyncCategory), tooLarge
-    case noSelection, confirmationRequired, busy, accountsUnavailable
+    case noSelection, confirmationRequired, reviewDeclined, busy, accountsUnavailable
     case invalidChunk, incompleteTransfer, invalidAddress, connectionFailed
     case invalidArchive, httpStatus(Int)
 
@@ -32,6 +32,7 @@ enum SyncError: LocalizedError {
         case .tooLarge: "同步数据超过大小限制"
         case .noSelection: "没有可导入的已选类别"
         case .confirmationRequired: "请确认覆盖已有数据"
+        case .reviewDeclined: "已取消导入或确认超时"
         case .busy: "已有同步导入正在处理"
         case .accountsUnavailable: "当前账号接口无法导入所选凭据"
         case .invalidChunk: "分块编号、范围或内容不一致"
@@ -134,7 +135,7 @@ struct SyncProfile {
         if selection.categories.contains(.follows), let value = values[.follows] {
             let rows = try Self.rooms(value, category: .follows, plan: &plan)
             plan.favorites = rows.map { room, row in
-                FavoriteEntry(room: room, isPriority: (row["isSpecialFollow"] as? NSNumber)?.intValue == 1)
+                FavoriteEntry(room: room, isPriority: (row["isSpecialFollow"] as? NSNumber)?.doubleValue == 1)
             }
         }
         if selection.categories.contains(.histories), let value = values[.histories] {
@@ -191,8 +192,10 @@ struct SyncProfile {
         var rooms: [(RoomDescriptor, [String: Any])] = []
         for row in rows {
             let site = (row["siteId"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let id = ((row["roomId"] as? String) ?? (row["roomId"] as? NSNumber)?.stringValue ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let numericID = (row["roomId"] as? NSNumber).flatMap { value in
+                CFGetTypeID(value) == CFBooleanGetTypeID() ? nil : value.stringValue
+            }
+            let id = ((row["roomId"] as? String) ?? numericID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !site.isEmpty, !id.isEmpty, id != "null" else { throw SyncError.invalidCategory(category) }
             guard sites.contains(site) else {
                 plan.skipped += 1
@@ -204,7 +207,7 @@ struct SyncProfile {
             let cover = row["roomCover"] as? String ?? ""
             rooms.append((RoomDescriptor(provider: site, roomId: id,
                                          title: title.isEmpty ? (name.isEmpty ? id : name) : title,
-                                         cover: cover.isEmpty ? (row["face"] as? String ?? "") : cover,
+                                         cover: normalizedImage(cover.isEmpty ? (row["face"] as? String ?? "") : cover),
                                          userName: name), row))
         }
         return rooms
@@ -238,9 +241,16 @@ struct SyncProfile {
             guard cookie.utf8.count <= 32_768, !cookie.contains("\r"), !cookie.contains("\n") else {
                 throw SyncError.invalidCategory(.accounts)
             }
-            let expiresAt = (raw["cookieExpiresAt"] as? NSNumber).map {
-                Date(timeIntervalSince1970: $0.doubleValue / 1000)
-            } ?? Self.parseDate(raw["cookieExpiresAt"] as? String ?? "")
+            let rawExpiry = raw["cookieExpiresAt"]
+            let milliseconds = (rawExpiry as? NSNumber)?.doubleValue ?? (rawExpiry as? String).flatMap(Double.init)
+            let expiresAt: Date?
+            if let milliseconds {
+                // Dart exports zero when no explicit expiry is known.
+                expiresAt = (1...253_402_300_799_999).contains(milliseconds)
+                    ? Date(timeIntervalSince1970: milliseconds / 1000) : nil
+            } else {
+                expiresAt = Self.parseDate(rawExpiry as? String ?? "")
+            }
             entries[slot] = SyncAccount(slot: slot, cookie: cookie, kww: raw["kww"] as? String, expiresAt: expiresAt)
         }
         for item in items {

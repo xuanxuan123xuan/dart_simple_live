@@ -90,6 +90,7 @@
 | 2026-11-19 | TV-10 | 待验收 | 离线 `PlaybackFailoverTests`、`PlaybackRecoveryTests` 和 `AutoQualityRecoveryTests` 通过。完整 tvOS 模拟器运行临时 `PlaybackAcceptanceTests`，无效首线回退到真实 HLS 样例，音量、静音和暂停在同一引擎重开后保留；两次独立缓冲的状态注入触发会话降到最近较低档。遥控用例 `testTV10SleepDeadlineAndBackgroundPause` 通过，Home 退后台并回前台后仍暂停，15 秒测试倒计时到点后关闭设置、显示停止状态并将焦点移到返回；第一次即时焦点断言失败，等待弹层动画结束后的复验通过。真实 HLS／FLV 样例单独复跑通过。多屏与播放对话已收到复现和复验结果。Apple TV 未配对，真实直播的连续缓冲、实际分钟定时和设备前后台仍待验收。 |
 | 2026-11-19 | TV-07 | 待验收 | 补跑固定数据工程 `xcodebuild test -only-testing:RemoteAcceptance` 的关注进页、定时及三种布局专项，三项通过。模拟器验证进页后重查未知状态，1 分钟测试间隔到期后更新开播三态，按持久化的默认、紧凑和大卡片偏好启动时列宽对应变化且房卡保留。真实账号连续刷新、电视端设置切换和 Apple TV 真机长列表仍待验收，当前没有配对真机。 |
 | 2026-11-19 | TV-19 | 进行中 | WebDAV 连接信息保存在独立 Keychain 项。接入 `PROPFIND`、`MKCOL`、`PUT` 和 `GET`，复用 Dart 的 `simple_live_app/backup.zip` 路径，支持新版 v2–v4 配置和旧版拆分 JSON。用 Dart archive 4.0.9 生成两个 ZIP，Swift 在本机 WsgiDAV 通过认证、上传、下载和恢复。Dart `ZipDecoder().decodeBytes(..., verify: true)` 反向验证 Swift ZIP 并读取历史。隔离 `SyncArchiveTests` 2 项通过，覆盖类别选择、损坏 ZIP 和时间往返。待电视端配置、恢复确认和真机验收。 |
+| 2026-11-19 | TV-08、TV-17、TV-18、TV-19 | 进行中 | 对齐 Dart 快手无过期时间时的 `0` 值和数字字符串写法；修正房间号布尔值校验、图片地址及取消提示。隔离 `swift test --package-path /private/tmp/sl-sync-package` 通过新增快手过期时间断言及归档微秒时间往返断言。 |
 
 ## 对照入口
 
