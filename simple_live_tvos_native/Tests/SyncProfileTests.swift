@@ -30,7 +30,7 @@ final class SyncProfileTests: XCTestCase {
         XCTAssertTrue(library.favoriteEntries[1].isPriority)
         XCTAssertEqual(library.historyEntries.map(\.id), ["douyu:17", local.key])
         let timestamp = try XCTUnwrap(library.historyEntries.first?.watchedAt)
-        XCTAssertEqual(timestamp.timeIntervalSince1970, 1795050903.123456, accuracy: 0.001)
+        XCTAssertEqual(timestamp.timeIntervalSince1970, 1795050903.123456, accuracy: 0.000002)
         XCTAssertEqual(library.blockedWords, ["本机规则", "关键词", "/广告.*/"])
 
         let history = try profile.prepare(SyncSelection(categories: [.histories]))

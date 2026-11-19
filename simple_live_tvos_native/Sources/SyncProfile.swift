@@ -2,7 +2,7 @@ import Foundation
 import CoreFoundation
 
 enum SyncCategory: String, CaseIterable, Identifiable {
-    case follows, histories, shields, accounts
+    case follows, histories, shields, settings, accounts
 
     var id: Self { self }
     var title: String {
@@ -10,6 +10,7 @@ enum SyncCategory: String, CaseIterable, Identifiable {
         case .follows: "关注"
         case .histories: "观看历史"
         case .shields: "屏蔽词"
+        case .settings: "通用设置"
         case .accounts: "账号"
         }
     }
@@ -59,16 +60,18 @@ struct SyncImportPlan {
     var favorites: [FavoriteEntry]?
     var histories: [HistoryEntry]?
     var shields: [String]?
+    var settings: [String: Any]?
     var accounts: [SyncAccount]?
     var mergeOnly: Set<SyncCategory> = []
     var skipped = 0
 
-    var hasData: Bool { favorites != nil || histories != nil || shields != nil || accounts != nil }
+    var hasData: Bool { favorites != nil || histories != nil || shields != nil || settings != nil || accounts != nil }
     var summary: String {
         var parts: [String] = []
         if let favorites { parts.append("关注 \(Set(favorites.map(\.id)).count) 条") }
         if let histories { parts.append("历史 \(Set(histories.map(\.id)).count) 条") }
         if let shields { parts.append("屏蔽词 \(Set(shields).count) 条") }
+        if let settings { parts.append("设置 \(settings.count) 项") }
         if let accounts { parts.append("账号 \(accounts.count) 个") }
         if skipped > 0 { parts.append("跳过 \(skipped) 条") }
         return parts.joined(separator: "，")
@@ -100,9 +103,11 @@ struct SyncProfile {
             guard let number = version as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
                   [2.0, 3.0, 4.0].contains(number.doubleValue) else { throw SyncError.unsupportedVersion }
             if number.intValue < 4 { legacySettings = payload["settings"] as? [String: Any] ?? [:] }
+            values[.settings] = payload["settings"]
             values[.accounts] = payload["accounts"]
             values[.shields] = payload["danmuShield"]
         } else if payload["type"] as? String == "simple_live" {
+            values[.settings] = payload["config"]
             legacySettings = payload["config"] as? [String: Any] ?? [:]
             if let shield = payload["shield"] {
                 guard let map = shield as? [String: Any] else { throw SyncError.invalidCategory(.shields) }
@@ -156,6 +161,11 @@ struct SyncProfile {
                 plan.shields = try Self.strings(value)
             }
         }
+        if selection.categories.contains(.settings), let value = values[.settings] {
+            guard let settings = value as? [String: Any] else { throw SyncError.invalidCategory(.settings) }
+            let mapped = try SyncPreferences.nativeValues(settings)
+            if !mapped.isEmpty { plan.settings = mapped }
+        }
         if selection.categories.contains(.accounts) {
             let accounts = try accountEntries(sites: selection.accountSites ?? Self.accountSites)
             if !accounts.isEmpty { plan.accounts = accounts }
@@ -198,6 +208,17 @@ struct SyncProfile {
                                          userName: name), row))
         }
         return rooms
+    }
+
+    static func accountItem(site: String, object: [String: Any]) throws -> [String: Any] {
+        guard accountSites.contains(site) else { throw SyncError.invalidCategory(.accounts) }
+        var item = object
+        if let credentials = object["credentials"] as? [String: Any] {
+            guard object["accountType"] as? String == site else { throw SyncError.invalidCategory(.accounts) }
+            item = credentials
+        }
+        item["siteId"] = site
+        return item
     }
 
     private func accountEntries(sites: Set<String>) throws -> [SyncAccount] {
@@ -255,16 +276,15 @@ struct SyncProfile {
             local.timeZone = .current
             local.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
             let parts = normalized.split(separator: ".", maxSplits: 1)
-            guard let base = local.date(from: String(parts[0])) else { return nil }
+            guard let first = parts.first, first.count == 19,
+                  let base = local.date(from: String(first)) else { return nil }
             guard parts.count > 1 else { return base }
-            guard let fraction = Double("0." + parts[1]), fraction >= 0, fraction < 1 else { return nil }
+            guard parts[1].utf8.allSatisfy({ (48...57).contains($0) }),
+                  let fraction = Double("0." + parts[1]) else { return nil }
             return base.addingTimeInterval(fraction)
         }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: normalized) { return date }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: normalized)
+        if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(normalized) { return date }
+        return try? Date.ISO8601FormatStyle().parse(normalized)
     }
 }
 

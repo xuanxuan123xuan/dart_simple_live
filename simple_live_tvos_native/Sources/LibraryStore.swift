@@ -148,9 +148,21 @@ final class LibraryStore: ObservableObject {
         if let favoriteData { defaults.set(favoriteData, forKey: Self.favoritesKey) }
         if let historyData { defaults.set(historyData, forKey: Self.recentKey) }
         if let words { defaults.set(words, forKey: Self.blockedWordsKey) }
+        if let settings = plan.settings {
+            for (key, value) in settings { defaults.set(value, forKey: key) }
+        }
         if let favorites { favoriteEntries = favorites }
         if let history { historyEntries = history }
         if let words { blockedWords = words }
+    }
+
+    func syncBackup(selection: SyncSelection) -> SyncImportPlan {
+        var plan = SyncImportPlan()
+        if selection.categories.contains(.follows) { plan.favorites = favoriteEntries }
+        if selection.categories.contains(.histories) { plan.histories = historyEntries }
+        if selection.categories.contains(.shields) { plan.shields = blockedWords }
+        if selection.categories.contains(.settings) { plan.settings = SyncPreferences.read(defaults) }
+        return plan
     }
 
     private static func sortedHistory(_ entries: [HistoryEntry]) -> [HistoryEntry] {
