@@ -41,7 +41,7 @@ enum KuaishouDanmaku {
         }
         return try ProtoMessage(payload).values(5).prefix(128).compactMap { bytes in
             let comment = try ProtoMessage(bytes)
-            let text = comment.text(3)
+            let text = DanmakuEmoji.kuaishouText(comment.text(3))
             guard !text.isEmpty, comment.number(7) != 2 else { return nil }
             let author = try ProtoMessage(comment.data(2)).text(2)
             let colorText = comment.text(6).trimmingCharacters(in: CharacterSet(charactersIn: "#"))
@@ -49,7 +49,7 @@ enum KuaishouDanmaku {
             return DanmakuEvent(id: UUID().uuidString, room: RoomKey(provider: .kuaishou, roomId: roomID),
                                 userName: author, message: text,
                                 color: DanmakuColor(red: (color >> 16) & 255, green: (color >> 8) & 255, blue: color & 255),
-                                spans: [.text(text)])
+                                spans: DanmakuEmoji.kuaishou(text))
         }
     }
 

@@ -164,6 +164,38 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertFalse(DanmakuStickerURL.permits(URL(string: "https://unrelated.msstatic.com/a.png")!))
     }
 
+    func testKuaishouChatUsesMobileEmojiAndAliasesAndStripsMalformedTail() throws {
+        let prefix = "快手[奸笑][未来表情][ILOVEU][點讚]"
+        let truncated = Data((prefix + "[新").utf8) + Data([0xe5, 0x88])
+        let events = try KuaishouDanmaku.decode(kuaishouFrame([truncated]), roomID: "123")
+        let event = try XCTUnwrap(events.first)
+        let grin = try XCTUnwrap(URL(string: "https://p4-plat.wsbkwai.com/kimg/bs2/emotion/CigxNzA0Nzc2MDU5ODE2dGhpcmRfcGFydHlfczEyOTY3NDgwNTIucG5nEIfN1y8.webp"))
+        let love = try XCTUnwrap(URL(string: "https://p4-plat.wsbkwai.com/kimg/bs2/emotion/CigxNzM1MTIwMDYyODIydGhpcmRfcGFydHlfczIwNDA2NzY0ODcucG5nEIfN1y8.webp"))
+        let like = try XCTUnwrap(URL(string: "https://p4-plat.wsbkwai.com/kimg/bs2/emotion/CigxNzA0NzAxNzczNzQ1dGhpcmRfcGFydHlfczEyOTU5NjUzODIucG5nEIfN1y8.webp"))
+        XCTAssertEqual(event.message, prefix)
+        XCTAssertEqual(event.spans, [.text("快手"), .image(url: grin, fallbackText: "[奸笑]"), .text("[未来表情]"),
+                                     .image(url: love, fallbackText: "[ILOVEU]"), .image(url: like, fallbackText: "[點讚]")])
+        XCTAssertTrue(DanmakuStickerURL.permits(URL(string: "https://p66-plat.ndcjl.com/bs2/emotion/a.png")!))
+        XCTAssertFalse(DanmakuStickerURL.permits(URL(string: "https://p4-plat.wsbkwai.com.example.org/a.png")!))
+    }
+
+    func testKuaishouChatDropsOnlyShortUnclosedTailAndSkipsEmptyResult() throws {
+        let messages = ["[新表", "尾[", "保留[123456789", "[未知]", "长[😂😂😂😂😂", "短[😂😂😂😂"]
+        let events = try KuaishouDanmaku.decode(kuaishouFrame(messages.map { Data($0.utf8) }), roomID: "123")
+        XCTAssertEqual(events.map(\.message), ["尾", "保留[123456789", "[未知]", "长[😂😂😂😂😂", "短"])
+        XCTAssertTrue(events.allSatisfy { $0.spans == [.text($0.message)] })
+    }
+
+    private func kuaishouFrame(_ messages: [Data]) -> Data {
+        var payload = ProtoWriter()
+        for message in messages {
+            var comment = ProtoWriter()
+            comment.bytes(3, message)
+            payload.bytes(5, comment.data)
+        }
+        return KuaishouDanmaku.socketFrame(type: 310, content: payload.data)
+    }
+
     func testMediaURLsRejectCredentialsAndNonMediaSchemes() {
         XCTAssertNil(MediaVariant.url("https://alice:secret@example.com/a.flv"))
         XCTAssertNil(MediaVariant.url("file:///tmp/a.m3u8"))

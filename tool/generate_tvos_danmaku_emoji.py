@@ -15,6 +15,11 @@ TABLES = {
     "common": [("common", "commonEmojiAssets", "urls")],
     "douyu": [("douyu", "douyuEmojiAssets", "urls")],
     "huya": [("huya", "huyaEmojiAssets", "urls")],
+    "kuaishou": [
+        ("kuaishou", "kuaishouEmojiAssets", "web"),
+        ("kuaishou_mobile", "kuaishouMobileEmojiAssets", "mobile"),
+        ("kuaishou", "_kuaishouEmojiAliasMap", "aliases"),
+    ],
 }
 
 

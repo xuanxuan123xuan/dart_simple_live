@@ -72,6 +72,7 @@
 | 2026-11-19 | TV-04 | 待验收 | 修复斗鱼类目目录对成功响应的识别，并校验父子类目数组。离线：`ProviderParsingTests.testDouyinCategoryTreePreservesThreeLevelsAndParentKeys` 通过。模拟器：三层目录、「全部」、重试及逐层返回的遥控专项另行记录。真实平台：macOS 原生适配器探针获得五个平台目录和所选类目的前两页。斗鱼修复后取到 10 个根类目，实例在第二页结束。真机：`xcrun devicectl list devices` 无配对设备，待复验长列表滚动、焦点及逐级返回。 |
 | 2026-11-19 | TV-08、TV-17、TV-18、TV-19 | 进行中 | 用 Dart 生成新版配置包、旧历史文件和旧式配置样例。共用导入流程支持关注、观看时间、屏蔽词及账号凭据解析，选定类别可合并或经确认后覆盖，分块按发送顺序收齐才交付。隔离运行 `swift test --disable-sandbox --package-path /private/tmp/sl-sync-package`，8 项通过，覆盖未选类别、未确认覆盖、非法数据、账号提交失败、缺块及超时。待接同步入口、TV-16 接口及传输验收。 |
 | 2026-11-19 | TV-12 | 进行中 | 虎牙弹幕接入官方默认和动漫等词库，按官方映射优先、Twemoji 兜底的顺序解析，未收录的标签保留文字。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/ProviderParsingTests CODE_SIGN_IDENTITY=-` 12 项通过，包含 Tars 消息与两个图片 CDN；`curl` 检查两处官方样图均为 HTTP 200 PNG，词库生成检查与 `git diff --check` 通过。 |
+| 2026-11-19 | TV-12 | 进行中 | 快手弹幕接入移动端及网页内置词库，支持繁简别名和大小写别名。保留闭合的未知标签，按 Dart 的 UTF-16 长度规则清除短的未闭合尾片及残留替换字符，清理后为空的消息丢弃。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/ProviderParsingTests CODE_SIGN_IDENTITY=-` 14 项通过；`curl` 获取 WebP 和 PNG 样图均为 HTTP 200，词库生成检查与 `git diff --check` 通过。 |
 
 ## 对照入口
 
