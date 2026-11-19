@@ -105,6 +105,7 @@
 | 2026-11-19 | TV-08、TV-18 | 待验收 | 模拟器联调发现系统弹窗会打断待确认的局域网连接，改用页内确认面板并让接收服务仅在进后台或离开页面时停止。Apple TV 4K（tvOS 26.5）`xcodebuild test -only-testing:SyncUITests/SyncNavigationTests/testHistoryImportOpensScopedReceivePageAndPersists` 通过，遥控确认后 HTTP 返回成功，回到历史页显示导入记录。 |
 | 2026-11-19 | TV-02、TV-08、TV-17、TV-18、TV-19 | 待验收 | Apple TV 模拟器 `xcodebuild test` 的同步和 TV-16 事务专项共 15 项通过，另有首页／远程／多屏路由及历史／局域网／WebDAV 遥控验证。完成总数维持 2 / 20。`xcrun devicectl list devices` 返回 `No devices found`，真机扫码、跨设备广播、实账号、WebDAV 真机恢复及返回焦点仍待验收。 |
 | 2026-11-19 | TV-02 / TV-13 / TV-14 | 待验收 | 修复房内选房和多屏控制弹层高度、关闭按钮焦点以及放大时遥控器唤醒。Apple TV 模拟器隔离 UI 工程 `xcodebuild test -only-testing:MultiRoomUITests/MultiRoomFlowUITests/testPickFromHomeAndControlTwoRoomsWithRemote` 通过，覆盖首页选关注和历史、双屏、单格放大、五秒隐藏后按下键唤醒、恢复双屏、整组暂停、转单路和房内预选及取消。当前整合代码 `xcodebuild test` 95 项中 84 项通过、11 项按默认配置跳过，`xcodebuild -destination 'generic/platform=tvOS' CODE_SIGNING_ALLOWED=NO build` 通过。 `xcrun devicectl list devices` 无已配对设备，待 Apple TV 真机实播、遥控与资源验收。 |
+| 2026-11-19 | TV-14 | 待验收 | Apple TV 模拟器隔离 UI 工程 `xcodebuild test -only-testing:MultiRoomUITests/MultiRoomFlowUITests/testEditMultiRoomAndControlBottomTile` 通过。遥控器从双屏管理房间加入第三路，选底排新房间，打开本路控制并将其移除，原两路仍保留。真实多平台连续四路及硬件资源验收待 Apple TV 真机。 |
 
 ## 对照入口
 
