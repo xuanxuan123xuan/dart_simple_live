@@ -44,6 +44,7 @@ struct HomeView: View {
                     ChannelPlayerView(room: room, rooms: rooms, openMultiRoom: openMultiRoom)
                 case .selectMultiRoom:
                     MultiRoomPickerView { rooms in
+                        guard path.last == .selectMultiRoom else { return }
                         path[path.count - 1] = .multiRoom(rooms, seed: nil)
                     }
                 case let .multiRoom(rooms, seed):
@@ -354,6 +355,8 @@ private struct HomeRoomResults: View {
                 } actions: {
                     Button("重试") { retry += 1 }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .focusSection()
             case .loaded:
                 ContentUnavailableView(emptyTitle, systemImage: "tv")
             }
@@ -362,6 +365,8 @@ private struct HomeRoomResults: View {
                 ContentUnavailableView(emptyTitle, systemImage: "tv")
                 pageFooter(query)
             }
+            .frame(maxWidth: .infinity)
+            .focusSection()
         } else {
             RoomGrid(rooms: results.rooms) { pageFooter(query) }
         }
@@ -487,8 +492,12 @@ private struct RoomGrid<Footer: View>: View {
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 12)
-                footer()
+                .frame(maxWidth: .infinity)
+                .focusSection()
+                VStack(spacing: 12) { footer() }
+                    .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
+                    .focusSection()
             }
             .mask {
                 VStack(spacing: 0) {
