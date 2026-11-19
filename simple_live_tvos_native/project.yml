@@ -14,6 +14,9 @@ packages:
     path: ../simple_live_tvos_core
   KSPlayer:
     path: build/vendor/KSPlayer
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    exactVersion: 0.9.20
 targets:
   SimpleLiveTVOS:
     type: application
@@ -28,6 +31,7 @@ targets:
     dependencies:
       - package: SimpleLiveTVOSCore
       - package: KSPlayer
+      - package: ZIPFoundation
   SimpleLiveTVOSTests:
     type: bundle.unit-test
     platform: tvOS

@@ -150,6 +150,14 @@ final class NativeCoreClient: ObservableObject {
         try applyAccounts([slot: validated])
     }
 
+    func exportSyncAccounts() throws -> [SyncAccount] {
+        try accountSlots.compactMap { slot in
+            guard let credential = try accountStore.read(slot) else { return nil }
+            return SyncAccount(slot: slot.rawValue, cookie: credential.cookie,
+                               kww: credential.kww, expiresAt: credential.expiresAt)
+        }
+    }
+
     func signOut(provider: String) async throws {
         guard let slot = AccountSlot(rawValue: provider) else { throw LiveProviderError.unsupported }
         try signOut(slot)

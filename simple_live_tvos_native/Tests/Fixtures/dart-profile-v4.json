@@ -4,7 +4,10 @@
   "appVersion": "1.0.0",
   "platform": "android",
   "exportedAt": "2026-11-19T09:15:03.123456",
-  "settings": {},
+  "settings": {
+    "DanmuEnable": false,
+    "VideoOutputDriver": "gpu"
+  },
   "accounts": {
     "items": [
       {
@@ -61,7 +64,7 @@
     }
   ],
   "summary": {
-    "settingCount": 0,
+    "settingCount": 2,
     "keywordShieldCount": 1,
     "followUserCount": 1,
     "historyCount": 1,
