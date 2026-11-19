@@ -63,7 +63,7 @@
 | 2026-11-19 | TV-12 | 进行中 | 重点动态只汇总过滤后弹幕，支持统计跨度、起显次数、展示时长以及隐藏控制面板时是否显示，计数及可见条数有上限。`DanmakuHighlightsTests` 和 tvOS 离线套件通过。 |
 | 2026-11-19 | TV-12 | 进行中 | 接入哔哩哔哩弹幕携带的图片表情和开关，限制下载域名、大小和并发，图片不可用时保留原文字。图片分段及域名限制测试、tvOS 离线套件通过；其余平台表情映射和 Dart 正则屏蔽规则仍缺。 |
 | 2026-11-19 | TV-12 | 进行中 | 屏蔽词支持 Dart TV 的 `/…/` 写法，并以 Foundation 正则匹配原始弹幕。添加时提示语法错误，已存的无效规则会跳过。macOS 上用隔离的 `swift test` 运行 `DanmakuFilterTests` 和 `LibraryStoreTests`，共 7 项通过；相关源码和测试通过 `swiftc -typecheck`（tvOS 17 模拟器目标）。仍待其余平台表情映射和电视端验收。 |
-| 2026-11-19 | TV-20 | 进行中 | 核对 Dart TV 的手动更新交互及原生版本配置 `0.2.0 (3)`。新增可分页查询 GitHub Release 的服务，筛选稳定的原生 tvOS 标签并按三段版本号排序。隔离运行 `swift test --disable-sandbox --filter TVOSReleaseServiceTests`，5 项通过，覆盖数值比较、稳定筛选、跨页选择、无版本和错误后重试。 |
+| 2026-11-19 | TV-20 | 进行中 | 核对 Dart TV 的手动更新交互及原生版本配置 `0.2.0 (3)`。新增可分页查询 GitHub Release 的服务，筛选稳定的原生 tvOS 标签并按三段版本号排序。隔离运行 `swift test --disable-sandbox --filter TVOSReleaseServiceTests`，5 项通过，覆盖数值比较、跨页选择、其他产品和预发布过滤、无版本、无效响应和 HTTP 限流后重试。 |
 | 2026-11-19 | TV-16 | 进行中 | 统一 B 站和斗鱼扫码后的校验、Keychain 会话恢复、退出与错误状态，斗鱼保存 safeAuth 下发的续签 Cookie。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/AccountSessionTests CODE_SIGN_IDENTITY=-` 5 项通过，`git diff --check` 通过；完整扫码、其他平台与账号页仍待验收。 |
 | 2026-11-19 | TV-13 | 进行中 | 沿用选房草稿，修复预选房间的去重与上限，接入关注、历史、分页搜索及公共链接解析。切换来源时取消过期请求，支持搜索分页重试。Apple TV 模拟器 `xcodebuild -only-testing:SimpleLiveTVOSTests/MultiRoomSelectionTests test` 2 项通过，`git diff --check` 通过。待接入三个入口和多屏观看。 |
 
