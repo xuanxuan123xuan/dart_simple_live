@@ -71,6 +71,7 @@
 | 2026-11-19 | TV-03 | 待验收 | 修复斗鱼热门首屏误报末页，改用有可信 `pgcnt` 的公开目录；校验目录回包格式，保留重试入口。离线：`xcodebuild test -skip-testing:SimpleLiveTVOSTests/ProviderSmokeTests` 的 36 项通过，其中分页测试覆盖同页重试、去重、末页和乱序平台切换。模拟器：Apple TV 4K（tvOS 26.5）遥控专项另行记录。真实平台：用 macOS 上编译的原生适配器探针验证 B 站、虎牙、斗鱼和抖音首两页；快手为单页。`curl` 验证斗鱼新接口样本共 42 页，末页返回 49 条。真机：`xcrun devicectl list devices` 无配对设备，待复验焦点、返回和真实断网重试。 |
 | 2026-11-19 | TV-04 | 待验收 | 修复斗鱼类目目录对成功响应的识别，并校验父子类目数组。离线：`ProviderParsingTests.testDouyinCategoryTreePreservesThreeLevelsAndParentKeys` 通过。模拟器：三层目录、「全部」、重试及逐层返回的遥控专项另行记录。真实平台：macOS 原生适配器探针获得五个平台目录和所选类目的前两页。斗鱼修复后取到 10 个根类目，实例在第二页结束。真机：`xcrun devicectl list devices` 无配对设备，待复验长列表滚动、焦点及逐级返回。 |
 | 2026-11-19 | TV-08、TV-17、TV-18、TV-19 | 进行中 | 用 Dart 生成新版配置包、旧历史文件和旧式配置样例。共用导入流程支持关注、观看时间、屏蔽词及账号凭据解析，选定类别可合并或经确认后覆盖，分块按发送顺序收齐才交付。隔离运行 `swift test --disable-sandbox --package-path /private/tmp/sl-sync-package`，8 项通过，覆盖未选类别、未确认覆盖、非法数据、账号提交失败、缺块及超时。待接同步入口、TV-16 接口及传输验收。 |
+| 2026-11-19 | TV-12 | 进行中 | 虎牙弹幕接入官方默认和动漫等词库，按官方映射优先、Twemoji 兜底的顺序解析，未收录的标签保留文字。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/ProviderParsingTests CODE_SIGN_IDENTITY=-` 12 项通过，包含 Tars 消息与两个图片 CDN；`curl` 检查两处官方样图均为 HTTP 200 PNG，词库生成检查与 `git diff --check` 通过。 |
 
 ## 对照入口
 

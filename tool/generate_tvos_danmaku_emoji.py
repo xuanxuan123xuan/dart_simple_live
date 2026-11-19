@@ -14,6 +14,7 @@ ENTRY = re.compile(r"""\s*(['"])([^'"\\\r\n]+)\1:\s*(['"])([^'"\\\r\n]+)\3,""")
 TABLES = {
     "common": [("common", "commonEmojiAssets", "urls")],
     "douyu": [("douyu", "douyuEmojiAssets", "urls")],
+    "huya": [("huya", "huyaEmojiAssets", "urls")],
 }
 
 

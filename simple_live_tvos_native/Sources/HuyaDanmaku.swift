@@ -34,7 +34,7 @@ enum HuyaDanmaku {
         return DanmakuEvent(id: UUID().uuidString, room: RoomKey(provider: .huya, roomId: roomID),
             userName: nickname, message: content,
             color: DanmakuColor(red: Int((color >> 16) & 255), green: Int((color >> 8) & 255), blue: Int(color & 255)),
-            spans: [.text(content)])
+            spans: DanmakuEmoji.huya(content))
     }
 }
 

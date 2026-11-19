@@ -144,6 +144,26 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertFalse(DanmakuStickerURL.permits(URL(string: "https://shark2.douyucdn.cn.example.org/a.png")!))
     }
 
+    func testHuyaChatUsesBothOfficialCDNsAndTwemojiFallback() throws {
+        func byteList(tag: UInt8, payload: Data) -> Data {
+            Data([tag << 4 | 13, 0, 0, UInt8(payload.count)]) + payload
+        }
+        let content = "虎牙[大笑][动漫哇][未来表情][哈哈]"
+        let notice = Data([0x36, UInt8(content.utf8.count)]) + Data(content.utf8)
+        let push = Data([0x11, 0x05, 0x78]) + byteList(tag: 2, payload: notice)
+        let frame = Data([0, 7]) + byteList(tag: 1, payload: push)
+        let event = try XCTUnwrap(HuyaDanmaku.decode(frame, roomID: "123"))
+        let official = try XCTUnwrap(URL(string: "https://cdnfile2.msstatic.com/cdnfile/material_manage/web_base_material_16141715551855_pic.png"))
+        let animation = try XCTUnwrap(URL(string: "https://materials-g-ai.msstatic.com/banshen/prod/banshen_00226/stickers/aiwa/aiwa%4056x48.png"))
+        let common = try XCTUnwrap(URL(string: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f604.png"))
+        XCTAssertEqual(event.room, RoomKey(provider: .huya, roomId: "123"))
+        XCTAssertEqual(event.message, content)
+        XCTAssertEqual(event.spans, [.text("虎牙"), .image(url: official, fallbackText: "[大笑]"),
+                                     .image(url: animation, fallbackText: "[动漫哇]"), .text("[未来表情]"),
+                                     .image(url: common, fallbackText: "[哈哈]")])
+        XCTAssertFalse(DanmakuStickerURL.permits(URL(string: "https://unrelated.msstatic.com/a.png")!))
+    }
+
     func testMediaURLsRejectCredentialsAndNonMediaSchemes() {
         XCTAssertNil(MediaVariant.url("https://alice:secret@example.com/a.flv"))
         XCTAssertNil(MediaVariant.url("file:///tmp/a.m3u8"))

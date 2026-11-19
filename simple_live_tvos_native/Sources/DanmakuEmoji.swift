@@ -10,6 +10,12 @@ enum DanmakuEmoji {
         }
     }
 
+    static func huya(_ message: String) -> [DanmakuSpan] {
+        spans(in: message, matching: shortToken) {
+            HuyaDanmakuEmojiAssets.urls[$0] ?? CommonDanmakuEmojiAssets.urls[$0]
+        }
+    }
+
     private static func spans(in message: String, matching pattern: NSRegularExpression,
                               lookup: (String) -> String?) -> [DanmakuSpan] {
         let text = message as NSString
@@ -32,7 +38,8 @@ enum DanmakuEmoji {
 enum DanmakuStickerURL {
     static func permits(_ url: URL) -> Bool {
         guard let host = secureHost(url) else { return false }
-        if isBilibili(host) || host == "shark2.douyucdn.cn" { return true }
+        if isBilibili(host) || host == "shark2.douyucdn.cn"
+            || host == "cdnfile2.msstatic.com" || host == "materials-g-ai.msstatic.com" { return true }
         return host == "cdn.jsdelivr.net" && url.path.hasPrefix("/gh/twitter/twemoji@14.0.2/assets/72x72/")
     }
 
