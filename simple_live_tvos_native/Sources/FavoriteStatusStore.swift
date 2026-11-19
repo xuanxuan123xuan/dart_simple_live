@@ -31,15 +31,26 @@ final class FavoriteStatusStore: ObservableObject {
     @Published private(set) var snapshots: [String: Snapshot] = [:]
     @Published private(set) var isRefreshing = false
     private var validKeys: Set<String>?
+    private var refreshWaiters: [CheckedContinuation<Void, Never>] = []
 
     func presence(for room: RoomDescriptor) -> FavoritePresence {
         snapshots[room.key]?.presence ?? .unknown
     }
 
     func refresh(_ rooms: [RoomDescriptor], fetch: @escaping @Sendable (RoomDescriptor) async throws -> RoomDescriptor) async {
-        guard !rooms.isEmpty, !isRefreshing else { return }
+        guard !rooms.isEmpty else { return }
+        // A new view can request a refresh while the previous view's cancelled task is still finishing.
+        while isRefreshing && !Task.isCancelled {
+            await withCheckedContinuation { refreshWaiters.append($0) }
+        }
+        guard !Task.isCancelled else { return }
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer {
+            isRefreshing = false
+            let waiters = refreshWaiters
+            refreshWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
         var seen = Set<String>()
         let unique = rooms.filter { seen.insert($0.key).inserted }
         let groups = Dictionary(grouping: unique, by: \.provider)

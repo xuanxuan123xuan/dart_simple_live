@@ -33,6 +33,29 @@ final class FavoriteStatusStoreTests: XCTestCase {
         XCTAssertNil(store.snapshots[live.key])
     }
 
+    @MainActor
+    func testRefreshFromNextViewSurvivesCancellationOfPreviousRefresh() async {
+        let live = room("101", provider: "bilibili", isLive: true)
+        let store = FavoriteStatusStore()
+        let started = expectation(description: "Previous refresh starts")
+        let previous = Task {
+            await store.refresh([live]) { room in
+                started.fulfill()
+                try await Task.sleep(for: .seconds(10))
+                return room
+            }
+        }
+        await fulfillment(of: [started], timeout: 2)
+
+        let cancel = Task { previous.cancel() }
+        await store.refresh([live]) { $0 }
+        await cancel.value
+        await previous.value
+
+        XCTAssertEqual(store.presence(for: live), .live)
+        XCTAssertFalse(store.isRefreshing)
+    }
+
     private func room(_ id: String, provider: String, isLive: Bool) -> RoomDescriptor {
         RoomDescriptor(provider: provider, roomId: id, title: id, cover: "", userName: "", isLive: isLive)
     }

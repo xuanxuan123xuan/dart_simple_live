@@ -55,14 +55,14 @@ struct FavoritesView: View {
         let pageCount = max(1, (entries.count + limit - 1) / limit)
         let currentPage = min(page, pageCount - 1)
         let visible = Array(entries.dropFirst(currentPage * limit).prefix(limit))
+        let roomsToRefresh = shouldRefreshOnEntry ? library.favorites : []
         VStack(alignment: .leading, spacing: 14) {
             tools(visible: visible)
             if !preview {
                 filters
             }
             if visible.isEmpty {
-                ContentUnavailableView(library.favoriteEntries.isEmpty ? "还没有关注" : "没有符合条件的关注",
-                                       systemImage: "star")
+                emptyState
             } else {
                 grid(visible, queue: entries.map(\.room))
                 if !preview && pageCount > 1 { pager(currentPage, of: pageCount) }
@@ -77,9 +77,8 @@ struct FavoritesView: View {
             await refresh(request.rooms)
             if request == refreshRequest { refreshRequest = nil }
         }
-        .task(id: scenePhase == .active) {
-            guard scenePhase == .active, preview || refreshOnEnter else { return }
-            await refresh(library.favorites)
+        .task(id: roomsToRefresh.map(\.key)) {
+            await refresh(roomsToRefresh)
         }
         .task(id: scenePhase == .active ? refreshMinutes : 0) {
             guard scenePhase == .active, refreshMinutes > 0 else { return }
@@ -92,6 +91,26 @@ struct FavoritesView: View {
     }
 
     private var limit: Int { preview ? 6 : min(max(2, pageSize), 400) }
+
+    private var shouldRefreshOnEntry: Bool {
+        scenePhase == .active && (preview || refreshOnEnter || onlyLive || (showLiveCover && layout != .compact))
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        if library.favoriteEntries.isEmpty {
+            ContentUnavailableView("还没有关注", systemImage: "star")
+        } else if !preview && onlyLive {
+            if status.isRefreshing {
+                ProgressView("正在查询开播状态")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView("暂无已确认开播的关注", systemImage: "dot.radiowaves.left.and.right")
+            }
+        } else {
+            ContentUnavailableView("没有符合条件的关注", systemImage: "star")
+        }
+    }
 
     private var filteredEntries: [FavoriteEntry] {
         let entries = library.favoriteEntries.filter { entry in
