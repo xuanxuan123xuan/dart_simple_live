@@ -107,7 +107,11 @@ struct PlayerView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .defaultFocus($focusedControl, preferredFocus)
-        .onPlayPauseCommand(perform: togglePlayback)
+        .onPlayPauseCommand {
+            guard activeSheet == nil, selectionMenu == nil, !sleepExpired else { return }
+            togglePlayback()
+            if !controlsVisible { showControls() }
+        }
         .sheet(item: $activeSheet, onDismiss: finishSheet) { sheet in
             switch sheet {
             case .channels:
@@ -127,8 +131,8 @@ struct PlayerView: View {
         .onChange(of: focusedControl) { _, _ in controlsActivity += 1 }
         .onChange(of: playbackIssue) { _, issue in
             onPlaybackIssue(engine.pausedByUser ? nil : issue, room.key)
-            if sleepExpired { focusedControl = .sleepExit }
-            else if issue != nil { focusedControl = .retry }
+            guard !sleepExpired else { return }
+            if issue != nil { focusedControl = .retry }
             else if focusedControl == .retry { focusedControl = preferredFocus }
         }
         .task(id: engine.state == .playing) {
@@ -281,10 +285,15 @@ struct PlayerView: View {
 
     private func finishSheet() {
         controlsActivity += 1
+        if sleepExpired {
+            focusedControl = .sleepExit
+            return
+        }
         guard let rooms = pendingMultiRoom else { return }
         pendingMultiRoom = nil
-        guard !sleepExpired else { return }
-        openMultiRoom(rooms, session.handoff(danmakuEnabled: danmaku.wrappedValue))
+        let handoff = session.handoff(danmakuEnabled: danmaku.wrappedValue)
+        session.stop()
+        openMultiRoom(rooms, handoff)
     }
 
     private func refreshPlayback() {
@@ -302,9 +311,10 @@ struct PlayerView: View {
     private func stopForSleepTimer() {
         guard !sleepExpired else { return }
         sleepExpired = true
+        focusedControl = activeSheet == nil ? .sleepExit : nil
+        pendingMultiRoom = nil
         activeSheet = nil
         selectionMenu = nil
-        focusedControl = .sleepExit
         session.stop()
     }
 
