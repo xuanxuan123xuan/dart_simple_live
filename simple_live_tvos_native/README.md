@@ -26,9 +26,32 @@ tool/build_tvos_native.sh \
 
 `ProviderSmokeTests` 需要访问真实站点和媒体样例，常规测试跳过。使用 `build-for-testing` 生成 `.xctestrun` 后，在 `SimpleLiveTVOSTests.EnvironmentVariables` 下设置 `SIMPLELIVE_LIVE_SMOKE=1`，然后用 `xcodebuild -xctestrun <路径> -destination <模拟器> test-without-building` 运行。小红书实播测试还需要通过 `SIMPLELIVE_XIAOHONGSHU_SHARE_URL` 提供正在直播的公开分享链接。
 
+## TV-16 账号导入接口
+
+同步代码在主线程调用 `NativeCoreClient`。单笔账号导入使用 `saveAccount(_:for:)`，远程、局域网或 WebDAV 的批量导入可将 `core.prepareSyncAccounts` 直接传给 `SyncImporter`。
+
+```swift
+@MainActor
+func saveAccount(_ credential: AccountCredential, for slot: AccountSlot) async throws
+
+@MainActor
+func prepareSyncAccounts(_ accounts: [SyncAccount]) async throws -> (@MainActor () throws -> Void)
+```
+
+`SyncAccount(slot:cookie:kww:expiresAt:)` 的槽位取值为 `bilibili`、`douyu`、`douyin`、`kuaishou`（主账号）、`kuaishou.secondary`（备用账号）和 `xiaohongshu`。`kww` 和 `expiresAt` 供快手使用。同步层负责解析 Dart 的传输包和筛选所选账号。准备阶段验证全部传入的凭据，返回的闭包将它们作为一个 Keychain 更新提交。省略的槽位保留原值，空 Cookie 会报错。账号在准备后被用户修改或退出时，闭包会报告冲突。
+
+在 Apple TV 模拟器运行以下命令。测试使用专用 Keychain 命名空间和模拟凭据，覆盖旧值迁移、准备与提交、失败保留、主备切换及重启恢复。
+
+```bash
+tool/build_tvos_native.sh -destination 'id=<Apple TV 模拟器 UDID>' \
+  CODE_SIGN_IDENTITY=- -only-testing:SimpleLiveTVOSTests/AccountSessionTests \
+  -only-testing:SimpleLiveTVOSTests/ProviderAccountTests \
+  -only-testing:SimpleLiveTVOSTests/AccountImportTests test
+```
+
 ## 当前范围
 
 - B 站与斗鱼提供电视端扫码。二维码生成和等待确认已经过测试，完整登录后重启恢复需要在对应平台 App 扫码验收。
-- 虎牙、抖音、快手提供游客入口。小红书已在 Apple TV 模拟器上通过公开分享链接进房和播放的测试。推荐、分类和弹幕接口仍需适配。
+- 虎牙、抖音、快手支持游客观看。斗鱼、抖音、快手、小红书可配置 Cookie，快手有主账号和备用账号。小红书可通过公开分享链接进房。
 - Mac 登录辅助程序和其余四个平台的扫码仍待实现。各平台接口、直播流和弹幕需要分别验证。
 - 模拟器用于应用和联网冒烟测试。未签名真机产物用于构建验证，Apple TV 安装和长期播放需要单独验收。

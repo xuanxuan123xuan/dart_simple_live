@@ -6,13 +6,7 @@ enum AccountSlot: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
-    var otherKuaishouSlot: Self? {
-        switch self {
-        case .kuaishou: .kuaishouSecondary
-        case .kuaishouSecondary: .kuaishou
-        default: nil
-        }
-    }
+    var isKuaishou: Bool { self == .kuaishou || self == .kuaishouSecondary }
 }
 
 enum AccountStatus: Equatable, Sendable {
@@ -36,12 +30,13 @@ struct AccountCredential: Codable, Equatable, Sendable {
 }
 
 enum AccountCredentialError: LocalizedError {
-    case invalidFormat, duplicateKuaishouAccount
+    case invalidFormat, duplicateKuaishouAccount, changedDuringImport
 
     var errorDescription: String? {
         switch self {
         case .invalidFormat: "请输入有效的 Cookie"
         case .duplicateKuaishouAccount: "快手主账号和备用账号不能使用同一个账号"
+        case .changedDuringImport: "账号在导入期间发生更改，请重新导入"
         }
     }
 }
@@ -125,6 +120,10 @@ final class AccountRequestCredentials: @unchecked Sendable {
         }
         try Task.checkCancellation()
         return try await request(nil)
+    }
+
+    func set(_ credentials: [AccountSlot: AccountCredential]) {
+        lock.withLock { values.merge(credentials) { _, new in new } }
     }
 
     func set(_ credential: AccountCredential?, for slot: AccountSlot) {

@@ -27,6 +27,7 @@ final class NativeCoreClient: ObservableObject {
     private var hasRestored = false
     private var edits: [AccountSlot: UUID] = [:]
     private var restorations: [AccountSlot: UUID] = [:]
+    private var accountRevisions: [AccountSlot: UUID] = [:]
 
     let accountSlots: [AccountSlot] = AccountSlot.allCases
 
@@ -146,13 +147,7 @@ final class NativeCoreClient: ObservableObject {
         let validated = try await validateAccount(credential, for: slot)
         try Task.checkCancellation()
         guard edits[slot] == request else { throw CancellationError() }
-        if let other = slot.otherKuaishouSlot, let stored = try accountStore.read(other),
-           ProviderAccountValidation.sameKuaishouAccount(validated.credential, stored) {
-            throw AccountCredentialError.duplicateKuaishouAccount
-        }
-        try accountStore.save(validated.credential, for: slot)
-        restorations[slot] = nil
-        publish(validated.credential, for: slot, status: validated.status)
+        try applyAccounts([slot: validated])
     }
 
     func signOut(provider: String) async throws {
@@ -165,7 +160,56 @@ final class NativeCoreClient: ObservableObject {
         try accountStore.clear(slot)
         edits[slot] = nil
         restorations[slot] = nil
+        accountRevisions[slot] = UUID()
         publish(nil, for: slot, status: .signedOut)
+    }
+
+    /// Validates selected credentials and returns a synchronous commit for the sync importer.
+    /// Unselected slots are preserved and all selected credentials are written in one Keychain update.
+    func prepareAccountImport(_ entries: [AccountSlot: AccountCredential]) async throws -> (@MainActor () throws -> Void) {
+        let snapshots = try entries.keys.map { slot in
+            (slot: slot, credential: try accountStore.read(slot), edit: edits[slot], revision: accountRevisions[slot])
+        }
+        var validated: [AccountSlot: ValidatedAccount] = [:]
+        for slot in accountSlots {
+            guard let credential = entries[slot] else { continue }
+            try Task.checkCancellation()
+            validated[slot] = try await validateAccount(credential, for: slot)
+        }
+        try Task.checkCancellation()
+        try requireDistinctKuaishouAccounts(validated.mapValues(\.credential))
+        return { [self] in
+            try Task.checkCancellation()
+            for state in snapshots {
+                guard edits[state.slot] == state.edit, accountRevisions[state.slot] == state.revision,
+                      try accountStore.read(state.slot) == state.credential else {
+                    throw AccountCredentialError.changedDuringImport
+                }
+            }
+            try applyAccounts(validated)
+        }
+    }
+
+    private func applyAccounts(_ accounts: [AccountSlot: ValidatedAccount]) throws {
+        guard !accounts.isEmpty else { return }
+        let credentials = accounts.mapValues(\.credential)
+        try requireDistinctKuaishouAccounts(credentials)
+        try accountStore.saveBatch(credentials)
+        for slot in accounts.keys {
+            edits[slot] = nil
+            restorations[slot] = nil
+            accountRevisions[slot] = UUID()
+        }
+        requestCredentials.set(credentials)
+        accountStatuses.merge(accounts.mapValues(\.status)) { _, new in new }
+    }
+
+    private func requireDistinctKuaishouAccounts(_ replacements: [AccountSlot: AccountCredential]) throws {
+        guard replacements.keys.contains(where: \.isKuaishou),
+              let primary = try replacements[.kuaishou] ?? accountStore.read(.kuaishou),
+              let secondary = try replacements[.kuaishouSecondary] ?? accountStore.read(.kuaishouSecondary),
+              ProviderAccountValidation.sameKuaishouAccount(primary, secondary) else { return }
+        throw AccountCredentialError.duplicateKuaishouAccount
     }
 
     private func validateAccount(_ credential: AccountCredential, for slot: AccountSlot) async throws -> ValidatedAccount {

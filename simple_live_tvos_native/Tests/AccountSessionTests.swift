@@ -109,9 +109,9 @@ final class MemoryAccountStore: AccountSessionStore {
 
     func read(_ slot: AccountSlot) throws -> AccountCredential? { values[slot] }
 
-    func save(_ credential: AccountCredential, for slot: AccountSlot) throws {
+    func saveBatch(_ credentials: [AccountSlot: AccountCredential]) throws {
         if failWrites { throw Failure.write }
-        values[slot] = credential
+        values.merge(credentials) { _, new in new }
     }
 
     func clear(_ slot: AccountSlot) throws {

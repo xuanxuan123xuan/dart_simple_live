@@ -7,7 +7,7 @@ final class ProviderAccountTests: XCTestCase {
     func testCookieProvidersUseKeychainAcrossClientsAndKeepSlotsSeparate() async throws {
         let namespace = "SimpleLiveTVOS.TV16.tests." + UUID().uuidString
         let store = KeychainSessionStore(service: namespace)
-        defer { for slot in AccountSlot.allCases { try? store.clear(slot) } }
+        defer { removeTestKeychainItems(namespace) }
         let core = NativeCoreClient(accountStore: store)
         try await core.saveAccount(AccountCredential(cookie: "guest-device"), for: .douyin)
         try await core.saveAccount(AccountCredential(cookie: "Cookie: web_session=xhs-test"), for: .xiaohongshu)
@@ -39,7 +39,7 @@ final class ProviderAccountTests: XCTestCase {
     func testLegacyKeychainValueIsReadable() throws {
         let namespace = "SimpleLiveTVOS.TV16.legacy." + UUID().uuidString
         let store = KeychainSessionStore(service: namespace)
-        defer { try? store.clear(.bilibili) }
+        defer { removeTestKeychainItems(namespace) }
         let item: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: namespace,
@@ -48,6 +48,21 @@ final class ProviderAccountTests: XCTestCase {
         ]
         XCTAssertEqual(SecItemAdd(item as CFDictionary, nil), errSecSuccess)
         XCTAssertEqual(try store.read(.bilibili), AccountCredential(cookie: "SESSDATA=legacy"))
+        try store.save(AccountCredential(cookie: "ttwid=test"), for: .douyin)
+        XCTAssertEqual(try store.read(.bilibili), AccountCredential(cookie: "SESSDATA=legacy"))
+        var legacyQuery = item
+        legacyQuery[kSecValueData as String] = nil
+        XCTAssertEqual(SecItemCopyMatching(legacyQuery as CFDictionary, nil), errSecItemNotFound)
+        try store.clear(.bilibili)
+        XCTAssertNil(try store.read(.bilibili))
+        XCTAssertEqual(try store.read(.douyin), AccountCredential(cookie: "ttwid=test"))
+    }
+
+    private func removeTestKeychainItems(_ namespace: String) {
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: namespace
+        ] as CFDictionary)
     }
 
     func testProviderValidationRejectsExpiredAndIncompleteCredentials() throws {
