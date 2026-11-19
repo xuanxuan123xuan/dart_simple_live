@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 
 struct SyncChunk {
@@ -10,7 +11,8 @@ struct SyncChunk {
     init(fields: [String: Any]) throws {
         func number(_ key: String, default fallback: Int) throws -> Int {
             guard let value = fields[key] else { return fallback }
-            guard let text = value as? String ?? (value as? NSNumber)?.stringValue,
+            let number = (value as? NSNumber).flatMap { CFGetTypeID($0) == CFBooleanGetTypeID() ? nil : $0 }
+            guard let text = value as? String ?? number?.stringValue,
                   let result = Int(text), result >= 0 else { throw SyncError.invalidChunk }
             return result
         }
@@ -66,7 +68,7 @@ struct SyncChunks {
             }
             var transfer: Transfer
             if chunk.index == 1 {
-                guard chunk.start == 0, transfers[key] != nil || transfers.count < 4 else {
+                guard chunk.start == 0, transfers[key] == nil, transfers.count < 4 else {
                     throw SyncError.invalidChunk
                 }
                 transfer = Transfer(total: chunk.total, items: chunk.items, overwrite: overwrite,

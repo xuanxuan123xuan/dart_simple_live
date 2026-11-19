@@ -78,7 +78,7 @@ enum RemoteSyncFrame {
             if type == "douyinAccountReceived" { payload["accountType"] = "douyin" }
             if type == "kuaishouAccountReceived" { payload["accountType"] = "kuaishou" }
             let sender = frame["senderId"] as? String ?? frame["connectionId"] as? String
-                ?? (frame["from"] as? [String: Any])?["connectionId"] as? String ?? ""
+                ?? frame["from"] as? String ?? (frame["from"] as? [String: Any])?["connectionId"] as? String ?? ""
             self = .content(category: category, fields: payload, sender: sender)
         }
     }
@@ -198,7 +198,10 @@ final class RemoteSync: ObservableObject {
         }
         let key = "\(sender)/\(category.rawValue)"
         let chunk: SyncChunk
-        do { chunk = try SyncChunk(fields: fields) } catch {
+        do {
+            chunk = try SyncChunk(fields: fields)
+            guard chunk.total == 1 || !sender.isEmpty || peerCount <= 1 else { throw SyncError.invalidChunk }
+        } catch {
             chunks.discard(key)
             throw error
         }

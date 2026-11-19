@@ -19,6 +19,15 @@ final class SyncChunksTests: XCTestCase {
         XCTAssertThrowsError(try chunks.receive(header(2, 2, 3), data: Data("[3]".utf8), overwrite: false, key: "phone"))
     }
 
+    func testOverlappingTransfersFromTheSamePeerNeverMix() throws {
+        var chunks = SyncChunks()
+        let original = try header(1, 0, 2)
+        _ = try chunks.receive(original, data: Data("[1,2]".utf8), overwrite: false, key: "phone")
+        XCTAssertThrowsError(try chunks.receive(original, data: Data("[4,5]".utf8), overwrite: false, key: "phone"))
+        XCTAssertThrowsError(try chunks.receive(header(2, 2, 3), data: Data("[3]".utf8), overwrite: false, key: "phone"))
+        XCTAssertThrowsError(try SyncChunk(fields: ["chunkIndex": true]))
+    }
+
     func testInvalidOrExpiredChunkCannotApplyEarlierRows() throws {
         var chunks = SyncChunks()
         let now = Date()

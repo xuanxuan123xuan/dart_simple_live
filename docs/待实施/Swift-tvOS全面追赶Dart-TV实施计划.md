@@ -94,6 +94,7 @@
 | 2026-11-19 | TV-08、TV-17、TV-18、TV-19 | 进行中 | 对齐 Dart 快手无过期时间时的 `0` 值和数字字符串写法；修正房间号布尔值校验、图片地址及取消提示。隔离 `swift test --package-path /private/tmp/sl-sync-package` 通过新增快手过期时间断言及归档微秒时间往返断言。 |
 | 2026-11-19 | TV-15 | 待验收 | 设置首页接入播放、弹幕、关注、多屏、账号、关于六区。频道轮播放在播放区，账号与关于链接到各自已交付页面。Apple TV 4K 模拟器隔离 UI 工程 `xcodebuild test -only-testing:MultiRoomUITests/MultiRoomFlowUITests/testFollowEntryAndSettingsHome` 遥控测试通过，确认进入多屏与播放设置。新版播放器与多屏参数专项测试复跑通过，待 Apple TV 真机复验。 |
 | 2026-11-19 | TV-02 / TV-13 | 进行中／待验收 | 把确认、取消与来源切换放在同一焦点行，使用可在房内弹层打开的平台菜单。隔离 UI 工程 `xcodebuild test -only-testing:MultiRoomUITests/MultiRoomFlowUITests/testFollowEntryAndSettingsHome` 通过；首页遥控流程已验证从关注和历史各选一路后进入双屏。临时 `MultiRoomProviderProbeTests` 在 Apple TV 模拟器验证真实 B 站和斗鱼直播搜索、跨平台识别分享文本中的 B 站链接、斗鱼房号解析和去重，1 项通过。其余站点及真机仍待抽验。 |
+| 2026-11-19 | TV-17、TV-18 | 进行中 | 拒绝同一来源重叠分块和布尔值编号，远程房间有多个发送方时要求分块提供来源标识。隔离运行 `swift test --package-path /private/tmp/sl-sync-package` 共 14 项通过，新增重叠序列不混合的回归测试。使用本机 HTTP CONNECT 代理连接国内站点，Dart 两段历史收到回执，Swift 持久化成功。 |
 
 ## 对照入口
 
