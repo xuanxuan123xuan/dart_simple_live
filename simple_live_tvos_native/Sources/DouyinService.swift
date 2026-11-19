@@ -19,9 +19,14 @@ actor DouyinService: LiveProviderService, DanmakuService {
     private var deviceCookies: [String: String] = [:]
     private var guestToken = ""
     private let http = ProviderHTTP()
+    private let accounts: AccountRequestCredentials
+
+    init(accounts: AccountRequestCredentials = AccountRequestCredentials()) {
+        self.accounts = accounts
+    }
 
     func categories() async throws -> [CategoryDescriptor] {
-        let (data, _) = try await http.response(Self.live + "/", headers: headers())
+        let (data, _) = try await http.response(Self.live + "/", headers: headers(account: accounts.credential(for: .douyin)))
         let html = String(decoding: data, as: UTF8.self)
         guard let marker = html.range(of: #"\"categoryData\":"#),
               let start = html[marker.upperBound...].firstIndex(of: "["),
@@ -149,7 +154,7 @@ actor DouyinService: LiveProviderService, DanmakuService {
         return result.sorted { $0.0 > $1.0 }.map(\.1)
     }
 
-    private func signedURL(_ endpoint: String, query: [String: String]) async throws -> String {
+    private func signedURL(_ endpoint: String, query: [String: String], account: AccountCredential?) async throws -> String {
         guard var url = URLComponents(string: endpoint) else { throw LiveProviderError.invalidResponse }
         if deviceCookies.isEmpty {
             do {
@@ -167,7 +172,7 @@ actor DouyinService: LiveProviderService, DanmakuService {
             let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
             guestToken = String((0..<107).compactMap { _ in alphabet.randomElement() })
         }
-        params["msToken"] = deviceCookies["msToken"] ?? guestToken
+        params["msToken"] = account.flatMap { cookiePairs($0.cookie)["mstoken"] } ?? deviceCookies["msToken"] ?? guestToken
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~")
         let canonical = params.sorted { $0.key < $1.key }.map {
             "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")"
@@ -191,8 +196,10 @@ actor DouyinService: LiveProviderService, DanmakuService {
     }
 
     private func signedRequest(_ endpoint: String, query: [String: String], path: String = "/") async throws -> JSONObject {
-        let url = try await signedURL(endpoint, query: query)
-        let result = try await http.json(url, headers: headers(path: path, origin: endpoint.hasPrefix(Self.web) ? Self.web : Self.live))
+        let account = accounts.credential(for: .douyin)
+        let url = try await signedURL(endpoint, query: query, account: account)
+        let origin = endpoint.hasPrefix(Self.web) ? Self.web : Self.live
+        let result = try await http.json(url, headers: headers(path: path, origin: origin, account: account))
         if let status = result.integer("status_code"), status != 0 { throw LiveProviderError.authenticationRequired }
         return result
     }
@@ -219,9 +226,10 @@ actor DouyinService: LiveProviderService, DanmakuService {
         ]) { _, new in new }
         var socketBase = "wss://webcast3-ws-web-lq.douyin.com/webcast/im/push/v2/"
         var heartbeat = 10_000
+        let account = accounts.credential(for: .douyin)
         do {
-            let endpoint = try await signedURL(Self.live + "/webcast/im/fetch/", query: query)
-            let (data, _) = try await http.response(endpoint, headers: headers(path: path))
+            let endpoint = try await signedURL(Self.live + "/webcast/im/fetch/", query: query, account: account)
+            let (data, _) = try await http.response(endpoint, headers: headers(path: path, account: account))
             let content = data.starts(with: [0x1f, 0x8b]) ? try DanmakuCompression.inflate(data) : data
             let context = try ProtoMessage(content)
             let cursor = context.text(2).isEmpty ? context.text(11) : context.text(2)
@@ -248,7 +256,7 @@ actor DouyinService: LiveProviderService, DanmakuService {
         parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         guard let socketURL = parts.url else { throw LiveProviderError.invalidResponse }
         var request = URLRequest(url: socketURL)
-        request.allHTTPHeaderFields = headers(path: path)
+        request.allHTTPHeaderFields = headers(path: path, account: account)
         request.setValue(Self.live, forHTTPHeaderField: "Origin")
         return DanmakuConnection(request: request, initialFrames: [], heartbeatInterval: .milliseconds(heartbeat),
                                  heartbeat: DouyinDanmaku.heartbeat) { bytes in
@@ -285,11 +293,15 @@ actor DouyinService: LiveProviderService, DanmakuService {
         return last
     }
 
-    private func headers(path: String = "/", origin: String = DouyinService.live) -> [String: String] {
+    private func headers(path: String = "/", origin: String = DouyinService.live,
+                         account: AccountCredential? = nil) -> [String: String] {
         var headers = ["Referer": origin + path, "User-Agent": Self.userAgent, "Accept": "application/json, text/plain, */*"]
-        if !deviceCookies.isEmpty {
-            headers["Cookie"] = deviceCookies.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "; ")
+        let configured = account.map { cookiePairs($0.cookie) } ?? [:]
+        let guest = deviceCookies.sorted { $0.key < $1.key }.compactMap { key, value in
+            configured[key.lowercased()] == nil ? "\(key)=\(value)" : nil
         }
+        let cookies = (account.map { [$0.cookie] } ?? []) + guest
+        if !cookies.isEmpty { headers["Cookie"] = cookies.joined(separator: "; ") }
         return headers
     }
 

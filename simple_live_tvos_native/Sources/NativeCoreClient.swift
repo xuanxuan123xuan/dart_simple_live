@@ -8,8 +8,8 @@ final class NativeCoreClient: ObservableObject {
         ProviderDescriptor(id: "bilibili", title: "哔哩哔哩", supportLabel: "扫码登录"),
         ProviderDescriptor(id: "huya", title: "虎牙", supportLabel: "游客观看"),
         ProviderDescriptor(id: "douyu", title: "斗鱼", supportLabel: "扫码登录"),
-        ProviderDescriptor(id: "douyin", title: "抖音", supportLabel: "游客观看"),
-        ProviderDescriptor(id: "kuaishou", title: "快手", supportLabel: "游客观看"),
+        ProviderDescriptor(id: "douyin", title: "抖音", supportLabel: "Cookie 登录"),
+        ProviderDescriptor(id: "kuaishou", title: "快手", supportLabel: "Cookie 登录"),
         ProviderDescriptor(id: "xiaohongshu", title: "小红书", supportLabel: "链接进房"),
     ]
 
@@ -18,9 +18,9 @@ final class NativeCoreClient: ObservableObject {
     private let bilibili: BilibiliService
     private let huya = HuyaService()
     private let douyu: DouyuService
-    private let douyin = DouyinService()
-    private let kuaishou = KuaishouService()
-    private let xiaohongshu = XiaohongshuService()
+    private let douyin: DouyinService
+    private let kuaishou: KuaishouService
+    private let xiaohongshu: XiaohongshuService
     private let accountStore: any AccountSessionStore
     private let requestCredentials: AccountRequestCredentials
     private let validateForTesting: ((AccountSlot, AccountCredential) async throws -> AccountCredential)?
@@ -28,7 +28,7 @@ final class NativeCoreClient: ObservableObject {
     private var edits: [AccountSlot: UUID] = [:]
     private var restorations: [AccountSlot: UUID] = [:]
 
-    let accountSlots: [AccountSlot] = [.bilibili, .douyu]
+    let accountSlots: [AccountSlot] = AccountSlot.allCases
 
     init(accountStore: (any AccountSessionStore)? = nil,
          requestCredentials: AccountRequestCredentials = AccountRequestCredentials(),
@@ -38,6 +38,9 @@ final class NativeCoreClient: ObservableObject {
         self.validateForTesting = validateForTesting
         bilibili = BilibiliService(accounts: requestCredentials)
         douyu = DouyuService(accounts: requestCredentials)
+        xiaohongshu = XiaohongshuService(accounts: requestCredentials)
+        kuaishou = KuaishouService(accounts: requestCredentials)
+        douyin = DouyinService(accounts: requestCredentials)
     }
 
     var loginProviders: [ProviderDescriptor] {
@@ -79,8 +82,8 @@ final class NativeCoreClient: ObservableObject {
             let validated = try await validateAccount(stored, for: slot)
             guard restorations[slot] == request else { return }
             try Task.checkCancellation()
-            if stored != validated { try accountStore.save(validated, for: slot) }
-            publish(validated, for: slot, status: .verified)
+            if stored != validated.credential { try accountStore.save(validated.credential, for: slot) }
+            publish(validated.credential, for: slot, status: validated.status)
         } catch {
             guard restorations[slot] == request else { return }
             switch error {
@@ -143,9 +146,13 @@ final class NativeCoreClient: ObservableObject {
         let validated = try await validateAccount(credential, for: slot)
         try Task.checkCancellation()
         guard edits[slot] == request else { throw CancellationError() }
-        try accountStore.save(validated, for: slot)
+        if let other = slot.otherKuaishouSlot, let stored = try accountStore.read(other),
+           ProviderAccountValidation.sameKuaishouAccount(validated.credential, stored) {
+            throw AccountCredentialError.duplicateKuaishouAccount
+        }
+        try accountStore.save(validated.credential, for: slot)
         restorations[slot] = nil
-        publish(validated, for: slot, status: .verified)
+        publish(validated.credential, for: slot, status: validated.status)
     }
 
     func signOut(provider: String) async throws {
@@ -161,11 +168,24 @@ final class NativeCoreClient: ObservableObject {
         publish(nil, for: slot, status: .signedOut)
     }
 
-    private func validateAccount(_ credential: AccountCredential, for slot: AccountSlot) async throws -> AccountCredential {
-        let normalized = credential.replacingCookie(try AccountCookie(credential.cookie).header)
-        if let validateForTesting { return try await validateForTesting(slot, normalized) }
-        let validated = try await accountService(slot.rawValue).validate(normalized.cookie)
-        return normalized.replacingCookie(validated)
+    private func validateAccount(_ credential: AccountCredential, for slot: AccountSlot) async throws -> ValidatedAccount {
+        switch slot {
+        case .douyin: return try ProviderAccountValidation.douyin(credential)
+        case .kuaishou, .kuaishouSecondary: return try ProviderAccountValidation.kuaishou(credential)
+        case .xiaohongshu: return try ProviderAccountValidation.xiaohongshu(credential)
+        case .bilibili, .douyu:
+            let cookie = try AccountCookie(credential.cookie)
+            let normalized = AccountCredential(cookie: cookie.header)
+            if let validateForTesting {
+                let validated = try await validateForTesting(slot, normalized)
+                return ValidatedAccount(credential: validated, status: .verified)
+            }
+            if slot == .douyu, let configured = ProviderAccountValidation.douyuWithoutRefresh(cookie) {
+                return configured
+            }
+            let validated = try await accountService(slot.rawValue).validate(normalized.cookie)
+            return ValidatedAccount(credential: AccountCredential(cookie: validated), status: .verified)
+        }
     }
 
     private func publish(_ credential: AccountCredential?, for slot: AccountSlot, status: AccountStatus) {

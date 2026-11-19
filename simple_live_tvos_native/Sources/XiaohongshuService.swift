@@ -11,6 +11,17 @@ actor XiaohongshuService: LiveProviderService, DanmakuService {
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
     ]
     private let http = ProviderHTTP(redirectHosts: roomHosts.union(shortLinkHosts))
+    private let accounts: AccountRequestCredentials
+
+    init(accounts: AccountRequestCredentials = AccountRequestCredentials()) {
+        self.accounts = accounts
+    }
+
+    private var accountHeaders: [String: String] {
+        var headers = Self.headers
+        headers["Cookie"] = accounts.credential(for: .xiaohongshu)?.cookie
+        return headers
+    }
 
     func categories() async throws -> [CategoryDescriptor] { [] }
 
@@ -60,7 +71,7 @@ actor XiaohongshuService: LiveProviderService, DanmakuService {
 
     private func detail(_ id: String) async throws -> (room: JSONObject, host: JSONObject, data: JSONObject) {
         let id = try normalizedRoomID(id, hosts: [])
-        var headers = Self.headers
+        var headers = accountHeaders
         headers["xy-common-params"] = "platform=iOS"
         let (bytes, _) = try await http.response(Self.web + "/livestream/" + id, headers: headers)
         let state = try EmbeddedPageData.initialState(in: String(decoding: bytes, as: UTF8.self))
@@ -146,7 +157,7 @@ actor XiaohongshuService: LiveProviderService, DanmakuService {
     private func comments(_ id: String, cursor: String) async throws -> JSONObject {
         let result = try await http.json(Self.live + "/api/sns/red/live/h5/v1/interaction/get_simple_interaction", query: [
             "roomId": id, "startTimestamp": cursor, "size": "10", "needPraise": "true", "needViewer": "true",
-        ], headers: Self.headers)
+        ], headers: accountHeaders)
         guard result.fields["success"] as? Bool != false, result.fields["data"] is [String: Any] else {
             throw LiveProviderError.authenticationRequired
         }

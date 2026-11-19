@@ -218,7 +218,7 @@ final class ProviderHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
             completionHandler(nil)
             return
         }
-        if host == response.url?.host?.lowercased() {
+        if host == response.url?.host?.lowercased(), (destination.port ?? 443) == (response.url?.port ?? 443) {
             completionHandler(request)
         } else if redirectHosts.contains(host), destination.port == nil || destination.port == 443 {
             // Shared links are public. Start a fresh request across origins so credentials cannot follow the redirect.

@@ -5,6 +5,14 @@ enum AccountSlot: String, CaseIterable, Identifiable, Sendable {
     case kuaishouSecondary = "kuaishou.secondary"
 
     var id: String { rawValue }
+
+    var otherKuaishouSlot: Self? {
+        switch self {
+        case .kuaishou: .kuaishouSecondary
+        case .kuaishouSecondary: .kuaishou
+        default: nil
+        }
+    }
 }
 
 enum AccountStatus: Equatable, Sendable {
@@ -42,7 +50,7 @@ struct AccountCookie {
     private var fields: [String: (name: String, value: String)] = [:]
 
     init(_ input: String) throws {
-        let raw = Self.requestHeader("cookie", in: input) ?? input.trimmingCharacters(in: .whitespaces)
+        let raw = Self.requestHeader("cookie", in: input) ?? input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard raw.utf8.count <= 32_768, raw.utf8.allSatisfy({ (32...126).contains($0) }) else {
             throw AccountCredentialError.invalidFormat
         }
@@ -103,6 +111,20 @@ final class AccountRequestCredentials: @unchecked Sendable {
 
     func credential(for slot: AccountSlot) -> AccountCredential? {
         lock.withLock { values[slot] }
+    }
+
+    func withKuaishouAccount<T>(_ request: (AccountCredential?) async throws -> T) async throws -> T {
+        for slot in [AccountSlot.kuaishou, .kuaishouSecondary] {
+            try Task.checkCancellation()
+            guard let value = credential(for: slot), (value.expiresAt ?? .distantFuture) > Date() else { continue }
+            do {
+                return try await request(value)
+            } catch LiveProviderError.authenticationRequired {
+                continue
+            }
+        }
+        try Task.checkCancellation()
+        return try await request(nil)
     }
 
     func set(_ credential: AccountCredential?, for slot: AccountSlot) {

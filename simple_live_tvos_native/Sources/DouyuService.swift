@@ -240,14 +240,19 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
     }
 
     private func headers(path: String = "/") -> [String: String] {
-        var pairs = cookiePairs(cookie ?? "")
-        if pairs["dy_did"]?.isEmpty != false { pairs["dy_did"] = guestID }
-        if pairs["acf_did"]?.isEmpty != false { pairs["acf_did"] = pairs["dy_did"] }
-        return ["Referer": Self.web + path, "User-Agent": Self.userAgent, "Cookie": cookieHeader(pairs), "Origin": Self.web]
+        requestAuthentication(path: path).headers
     }
 
     private func credentials(for room: String) -> (did: String, headers: [String: String]) {
-        (cookiePairs(cookie ?? "")["dy_did"] ?? guestID, headers(path: "/" + room))
+        requestAuthentication(path: "/" + room)
+    }
+
+    private func requestAuthentication(path: String) -> (did: String, headers: [String: String]) {
+        var pairs = cookiePairs(cookie ?? "")
+        let did = [pairs["dy_did"], pairs["acf_did"]].compactMap { $0 }.first { !$0.isEmpty } ?? guestID
+        pairs["dy_did"] = did
+        if pairs["acf_did"]?.isEmpty != false { pairs["acf_did"] = did }
+        return (did, ["Referer": Self.web + path, "User-Agent": Self.userAgent, "Cookie": cookieHeader(pairs), "Origin": Self.web])
     }
 
     private func encryptionKey(_ credentials: (did: String, headers: [String: String])) async throws -> JSONObject {

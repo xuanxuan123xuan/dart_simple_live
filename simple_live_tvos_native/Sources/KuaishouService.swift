@@ -8,6 +8,11 @@ actor KuaishouService: LiveProviderService, DanmakuService {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
     ]
     private let http = ProviderHTTP()
+    private let accounts: AccountRequestCredentials
+
+    init(accounts: AccountRequestCredentials = AccountRequestCredentials()) {
+        self.accounts = accounts
+    }
 
     func categories() async throws -> [CategoryDescriptor] {
         let names = ["热门", "网游", "单机", "手游", "棋牌", "娱乐", "综合", "文化"]
@@ -110,15 +115,43 @@ actor KuaishouService: LiveProviderService, DanmakuService {
     }
 
     private func request(_ path: String, _ query: [String: String] = [:]) async throws -> JSONObject {
-        let result = try await http.json(Self.origin + path, query: query, headers: Self.headers)
+        try await accounts.withKuaishouAccount { account in
+            try await request(path, query, account: account)
+        }
+    }
+
+    private func request(_ path: String, _ query: [String: String], account: AccountCredential?,
+                         room: String? = nil) async throws -> JSONObject {
+        var headers = Self.headers
+        headers["Cookie"] = account?.cookie
+        if let room {
+            headers["Referer"] = Self.origin + "/u/" + room
+            headers["Kww"] = account.flatMap(ProviderAccountValidation.kuaishouKww)
+        }
+        let result = try await http.json(Self.origin + path, query: query, headers: headers)
+        let messages = ["message", "error_msg", "errorMessage"].map { result.text($0) }
+        if result.integer("result") == 401 || messages.contains(where: Self.requiresLogin) {
+            throw LiveProviderError.authenticationRequired
+        }
         guard result.fields["data"] is [String: Any] else { throw LiveProviderError.invalidResponse }
         return result["data"]
     }
 
     private func detail(_ id: String) async throws -> JSONObject {
+        try await accounts.withKuaishouAccount { account in
+            try await detail(id, account: account)
+        }
+    }
+
+    private func detail(_ id: String, account: AccountCredential?) async throws -> JSONObject {
         let verified = try normalizedRoomID(id, hosts: [])
-        let (data, _) = try await http.response(Self.origin + "/u/" + verified, headers: Self.headers)
+        var headers = Self.headers
+        headers["Cookie"] = account?.cookie
+        let (data, _) = try await http.response(Self.origin + "/u/" + verified, headers: headers)
         let html = String(decoding: data, as: UTF8.self)
+        if !html.contains("__INITIAL_STATE__"), Self.requiresLogin(html) {
+            throw LiveProviderError.authenticationRequired
+        }
         let state = try EmbeddedPageData.initialState(in: html)
         let rooms = state["liveroom"].objects("playList")
         guard let room = rooms.first(where: { [$0["author"].text("id"), $0.text("authorId"), $0.text("userId")].contains(id) }) else {
@@ -131,12 +164,22 @@ actor KuaishouService: LiveProviderService, DanmakuService {
         DanmakuConnection.stream { try await self.danmakuConnection(roomId) }
     }
 
+    private static func requiresLogin(_ text: String) -> Bool {
+        ["登录已失效", "登录状态已失效", "请重新登录", "passport.kuaishou.com/login"].contains { text.contains($0) }
+    }
+
     private func danmakuConnection(_ id: String) async throws -> DanmakuConnection {
-        let room = try await detail(id)
+        try await accounts.withKuaishouAccount { account in
+            try await danmakuConnection(id, account: account)
+        }
+    }
+
+    private func danmakuConnection(_ id: String, account: AccountCredential?) async throws -> DanmakuConnection {
+        let room = try await detail(id, account: account)
         let live = room["liveStream"]
         let stream = live.text("id")
         guard !stream.isEmpty else { throw LiveProviderError.authenticationRequired }
-        let info = try await request("/live_api/liveroom/websocketinfo", ["liveStreamId": stream])
+        let info = try await request("/live_api/liveroom/websocketinfo", ["liveStreamId": stream], account: account, room: id)
         let nested = info["websocketInfo"]
         let token = [info.text("token"), info.text("websocketToken"), nested.text("token")].first { !$0.isEmpty }
         let candidates = info.values("websocketUrls") + info.values("websocketAddresses") + nested.values("websocketUrls")
