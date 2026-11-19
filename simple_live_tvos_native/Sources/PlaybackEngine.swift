@@ -1,19 +1,23 @@
 import AVFoundation
-import Combine
 import Foundation
 import KSPlayer
+import Observation
 import SimpleLiveTVOSCore
 import UIKit
 
 @MainActor
-final class PlaybackEngine: ObservableObject {
-    @Published private(set) var player: AVPlayer?
-    @Published private(set) var nativeView: UIView?
-    @Published private(set) var state: PlaybackState = .idle
-    @Published private(set) var currentLine: Int?
-    @Published private(set) var pausedByUser = false
-    @Published private(set) var volume = 100
-    @Published private(set) var isMuted = false
+@Observable
+final class PlaybackEngine {
+    private(set) var player: AVPlayer?
+    private(set) var nativeView: UIView?
+    private(set) var state: PlaybackState = .idle
+    private(set) var currentLine: Int?
+    private(set) var pausedByUser = false
+    private(set) var volume: Int
+    private(set) var isMuted = false
+    private(set) var isAudioSuppressed = false
+
+    var isEffectivelyMuted: Bool { isMuted || isAudioSuppressed }
 
     private static let configureLogging: Void = {
         KSOptions.logger = PrivateMediaLogger()
@@ -23,14 +27,18 @@ final class PlaybackEngine: ObservableObject {
     private var runID = UUID()
     private var nativePlayer: KSPlayerLayer?
 
+    init(initialVolume: Int = PlaybackTuning().initialVolume) {
+        volume = min(100, max(0, initialVolume))
+    }
+
     func run(resources: [PlaybackResource], preferredLine: Int? = nil) async throws {
         try Task.checkCancellation()
         stop()
         let id = runID
-        var attempt = try failover.begin(resources: resources, preferredLine: preferredLine)
         defer {
             if runID == id { stop() }
         }
+        var attempt = try failover.begin(resources: resources, preferredLine: preferredLine)
         while true {
             try Task.checkCancellation()
             guard runID == id else { throw CancellationError() }
@@ -86,6 +94,7 @@ final class PlaybackEngine: ObservableObject {
         let resource = attempt.resource
         let asset = AVURLAsset(url: resource.url, options: ["AVURLAssetHTTPHeaderFieldsKey": resource.headers])
         let item = AVPlayerItem(asset: asset)
+        if let buffer = PlaybackTuning().buffering.seconds { item.preferredForwardBufferDuration = buffer }
         let player = AVPlayer(playerItem: item)
         self.player = player
         applyAudio()
@@ -99,15 +108,22 @@ final class PlaybackEngine: ObservableObject {
     private func playNative(_ attempt: PlaybackAttempt, id: UUID) async throws {
         _ = Self.configureLogging
         let options = KSOptions()
+        let tuning = PlaybackTuning()
+        options.hardwareDecode = tuning.hardwareDecode
+        if let buffer = tuning.buffering.seconds {
+            options.preferredForwardBufferDuration = buffer
+            options.maxBufferDuration = max(buffer * 3, 10)
+        }
         options.registerRemoteControll = false
         options.appendHeader(attempt.resource.headers)
         let previousPlayerType = KSOptions.firstPlayerType
         KSOptions.firstPlayerType = KSMEPlayer.self
-        let layer = KSPlayerLayer(url: attempt.resource.url, isAutoPlay: !pausedByUser, options: options)
+        let layer = KSPlayerLayer(url: attempt.resource.url, isAutoPlay: false, options: options)
         KSOptions.firstPlayerType = previousPlayerType
         nativePlayer = layer
         nativeView = layer.player.view
         applyAudio()
+        if !pausedByUser { layer.play() }
         try await monitor(attempt, id: id) {
             if layer.state == .error || layer.state == .playedToTheEnd { throw LiveProviderError.noPlayback }
             return layer.player.currentPlaybackTime
@@ -140,12 +156,18 @@ final class PlaybackEngine: ObservableObject {
         applyAudio()
     }
 
+    func setAudioSuppressed(_ suppressed: Bool) {
+        guard isAudioSuppressed != suppressed else { return }
+        isAudioSuppressed = suppressed
+        applyAudio()
+    }
+
     private func applyAudio() {
         let gain = Float(volume) / 100
         player?.volume = gain
-        player?.isMuted = isMuted
+        player?.isMuted = isEffectivelyMuted
         nativePlayer?.player.playbackVolume = gain
-        nativePlayer?.player.isMuted = isMuted
+        nativePlayer?.player.isMuted = isEffectivelyMuted
     }
 
     private func monitor(_ attempt: PlaybackAttempt, id: UUID, sample: () throws -> Double) async throws {

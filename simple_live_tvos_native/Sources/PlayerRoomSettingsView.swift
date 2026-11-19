@@ -4,7 +4,7 @@ struct PlayerRoomSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: LibraryStore
     let room: RoomDescriptor
-    @ObservedObject var engine: PlaybackEngine
+    let engine: PlaybackEngine
     @Binding var danmakuEnabled: Bool
     @Binding var sleepDeadline: Date?
     @AppStorage(PlaybackPreferences.autoQuality) private var autoQuality = true

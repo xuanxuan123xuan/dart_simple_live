@@ -41,7 +41,15 @@ struct HomeView: View {
                 case let .openRoom(provider):
                     OpenRoomView(provider: provider) { path = [.room($0)] }
                 case let .room(room, rooms):
-                    ChannelPlayerView(room: room, rooms: rooms)
+                    ChannelPlayerView(room: room, rooms: rooms, openMultiRoom: openMultiRoom)
+                case .selectMultiRoom:
+                    MultiRoomPickerView { rooms in
+                        path[path.count - 1] = .multiRoom(rooms, seed: nil)
+                    }
+                case let .multiRoom(rooms, seed):
+                    MultiRoomView(rooms: rooms, restoring: seed, openSingle: openSingleRoom)
+                case let .singleFromMulti(handoff, queue):
+                    ChannelPlayerView(room: handoff.room, rooms: queue, restoring: handoff, openMultiRoom: openMultiRoom)
                 }
             }
         }
@@ -83,6 +91,12 @@ struct HomeView: View {
                 .accessibilityIdentifier("live-categories")
                 dashboardShortcut("搜索直播", icon: "magnifyingglass") { section = .search }
                 dashboardShortcut("观看历史", icon: "clock") { section = .history }
+                NavigationLink(value: HomeRoute.selectMultiRoom) {
+                    HomePill(quiet: false) { Label("多屏观看", systemImage: "rectangle.split.2x2") }
+                }
+                .buttonStyle(HomeButtonStyle())
+                .focusEffectDisabled()
+                .accessibilityIdentifier("home-multi-room")
                 Spacer()
                 openRoomLink
             }
@@ -192,6 +206,20 @@ struct HomeView: View {
         .accessibilityIdentifier("live-open-room")
     }
 
+    private func openMultiRoom(_ rooms: [RoomDescriptor], _ seed: RoomPlaybackHandoff) {
+        path.append(.multiRoom(rooms, seed: seed))
+    }
+
+    private func openSingleRoom(_ handoff: RoomPlaybackHandoff, _ queue: [RoomDescriptor]) {
+        guard case .multiRoom = path.last else { return }
+        path.removeLast()
+        switch path.last {
+        case .room, .singleFromMulti: path.removeLast()
+        default: break
+        }
+        path.append(.singleFromMulti(handoff, queue: queue))
+    }
+
     private func pageTitle(_ title: LocalizedStringKey) -> some View {
         Text(title)
             .font(.system(size: 42, weight: .bold))
@@ -205,6 +233,9 @@ enum HomeRoute: Hashable {
     case categoryRooms(String, CategoryDescriptor?)
     case openRoom(String)
     case room(RoomDescriptor, queue: [RoomDescriptor] = [])
+    case selectMultiRoom
+    case multiRoom([RoomDescriptor], seed: RoomPlaybackHandoff?)
+    case singleFromMulti(RoomPlaybackHandoff, queue: [RoomDescriptor])
 }
 
 private struct CategoryListView: View {

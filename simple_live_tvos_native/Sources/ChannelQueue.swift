@@ -27,18 +27,28 @@ struct ChannelPlayerView: View {
     @AppStorage(ChannelRotationPreferences.random) private var random = false
     @State private var room: RoomDescriptor
     @State private var queue: ChannelQueue
+    @State private var handoff: RoomPlaybackHandoff?
     @State private var sleepDeadline: Date?
     @State private var rotation = ChannelRotation()
     @State private var pendingSwitch: UUID?
 
-    init(room: RoomDescriptor, rooms: [RoomDescriptor]) {
+    let openMultiRoom: ([RoomDescriptor], RoomPlaybackHandoff) -> Void
+
+    init(room: RoomDescriptor, rooms: [RoomDescriptor], restoring handoff: RoomPlaybackHandoff? = nil,
+         openMultiRoom: @escaping ([RoomDescriptor], RoomPlaybackHandoff) -> Void) {
         _room = State(initialValue: room)
         _queue = State(initialValue: ChannelQueue(rooms: rooms, current: room))
+        _handoff = State(initialValue: handoff)
+        self.openMultiRoom = openMultiRoom
     }
 
     var body: some View {
-        PlayerView(room: room, queue: queue, sleepDeadline: $sleepDeadline,
-                   onPlaybackIssue: handlePlaybackIssue, onStablePlayback: { rotation.reset() }) { next in
+        PlayerView(room: room, queue: queue, sleepDeadline: $sleepDeadline, restoring: handoff,
+                   onPlaybackIssue: handlePlaybackIssue, onStablePlayback: { rotation.reset() },
+                   openMultiRoom: { rooms, seed in
+                       pendingSwitch = nil
+                       openMultiRoom(rooms, seed)
+                   }) { next in
             pendingSwitch = nil
             rotation.reset()
             tune(next)
@@ -95,6 +105,7 @@ struct ChannelPlayerView: View {
         if !queue.rooms.contains(where: { $0.key == next.key }) {
             queue = ChannelQueue(rooms: queue.rooms + [next], current: next)
         }
+        handoff = nil
         room = next
     }
 }

@@ -110,6 +110,8 @@ struct FavoritesView: View {
             if let showAll { Button("查看全部", action: showAll).accessibilityIdentifier("favorites-open-all") }
             Button(manage ? "完成管理" : "管理") { manage.toggle() }.disabled(library.favoriteEntries.isEmpty)
             if !preview {
+                NavigationLink("多屏观看", value: HomeRoute.selectMultiRoom)
+                    .accessibilityIdentifier("favorites-multi-room")
                 Button("刷新本页") { refreshRequest = RefreshRequest(rooms: visible.map(\.room)) }
                     .disabled(visible.isEmpty || status.isRefreshing)
             }

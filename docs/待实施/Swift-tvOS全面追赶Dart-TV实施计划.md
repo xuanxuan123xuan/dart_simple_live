@@ -18,9 +18,9 @@
 | TV-10 | 恢复与定时关闭 | 区分确实下播与网络失败，线路回退、自动降档、定时停止、暂停及前后台保留意图 | 待验收 |
 | TV-11 | 频道与轮播 | 各来源换台队列、轮播管理、关播/失败分别设置、顺序或随机并保证有限退出 | 待验收 |
 | TV-12 | 弹幕 | 尺寸、速度、透明度、描边、区域/行数、表情、重点动态、去重和屏蔽词 | 进行中 |
-| TV-13 | 多屏选房 | 首页、关注、播放入口，支持历史、搜索和链接，去重及限制 2–4 路 | 进行中 |
-| TV-14 | 多屏观看 | 均分、主次、单格放大、房间增删、转单路、每路和整组控制、音频隔离及资源释放 | 待实施 |
-| TV-15 | 设置 | 播放、弹幕、关注、多屏、账号、关于六区，完成持久化及实际接线，原生播放器选项替代 mpv 专用项 | 待实施 |
+| TV-13 | 多屏选房 | 首页、关注、播放入口，支持历史、搜索和链接，去重及限制 2–4 路 | 待验收 |
+| TV-14 | 多屏观看 | 均分、主次、单格放大、房间增删、转单路、每路和整组控制、音频隔离及资源释放 | 待验收 |
+| TV-15 | 设置 | 播放、弹幕、关注、多屏、账号、关于六区，完成持久化及实际接线，原生播放器选项替代 mpv 专用项 | 进行中 |
 | TV-16 | 账号和扫码 | B 站、斗鱼扫码；斗鱼、抖音、快手、小红书 Cookie 管理；快手主备用；Keychain | 进行中 |
 | TV-17 | 远程同步 | 现有 WebSocket 协议、房间码、二维码、倒计时、站点与代理、Dart 发送端互通 | 进行中 |
 | TV-18 | 局域网同步 | UDP 发现、IP/二维码、现有 HTTP 路由及配置包，合并、覆盖、分块、回执和导入结果 | 进行中 |
@@ -74,6 +74,8 @@
 | 2026-11-19 | TV-12 | 进行中 | 虎牙弹幕接入官方默认和动漫等词库，按官方映射优先、Twemoji 兜底的顺序解析，未收录的标签保留文字。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/ProviderParsingTests CODE_SIGN_IDENTITY=-` 12 项通过，包含 Tars 消息与两个图片 CDN；`curl` 检查两处官方样图均为 HTTP 200 PNG，词库生成检查与 `git diff --check` 通过。 |
 | 2026-11-19 | TV-12 | 进行中 | 快手弹幕接入移动端及网页内置词库，支持繁简别名和大小写别名。保留闭合的未知标签，按 Dart 的 UTF-16 长度规则清除短的未闭合尾片及残留替换字符，清理后为空的消息丢弃。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/ProviderParsingTests CODE_SIGN_IDENTITY=-` 14 项通过；`curl` 获取 WebP 和 PNG 样图均为 HTTP 200，词库生成检查与 `git diff --check` 通过。 |
 | 2026-11-19 | TV-07 | 待验收 | 离线：完整工程 `xcodebuild test-without-building -skip-testing:SimpleLiveTVOSTests/ProviderSmokeTests` 36 项通过，其中迁移测试保留旧版 205 个去重房间及特别关注，刷新测试区分下播与故障并覆盖刷新时移除。模拟器：临时固定数据工程 `xcodebuild test -only-testing:RemoteAcceptance/RemoteAcceptanceTests/testTV07FavoriteStatesFiltersPagingAndReturn` 通过，遥控完成刷新全部／本页、翻页、筛选、进房和返回原卡片。真实平台：macOS 探针使用原生适配器查到 B 站、虎牙及快手开播／未开播样本；真实账号关注连续刷新未测，当前为游客会话。真机：无配对设备，待核验进页、定时刷新、布局切换和大列表遥控。 |
+| 2026-11-19 | TV-02 / TV-13 | 进行中／待验收 | 首页、关注和房内均接入选房；房内预选当前房间，确认后进入多屏。Apple TV 模拟器 `build-for-testing` 及先前 2 项 `MultiRoomSelectionTests` 通过，待遥控焦点、入口返回和真实搜索／链接验收。首页同步仍由对应项目接线。 |
+| 2026-11-19 | TV-14 / TV-15 | 待验收／进行中 | 单屏与多屏共用播放、恢复和弹幕会话；新增均分、主次、单格放大、房间增删、转单路及每路和整组控制。保留原生播放参数草稿并接入会话。Apple TV 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/MultiRoomGroupTests -only-testing:SimpleLiveTVOSTests/PlaybackTuningTests` 6 项通过、网络媒体测试默认跳过，`git diff --check` 通过。待实播、遥控和设置首页接线。 |
 
 ## 对照入口
 
