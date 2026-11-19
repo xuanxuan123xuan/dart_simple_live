@@ -20,7 +20,7 @@
 | TV-12 | 弹幕 | 尺寸、速度、透明度、描边、区域/行数、表情、重点动态、去重和屏蔽词 | 进行中 |
 | TV-13 | 多屏选房 | 首页、关注、播放入口，支持历史、搜索和链接，去重及限制 2–4 路 | 待验收 |
 | TV-14 | 多屏观看 | 均分、主次、单格放大、房间增删、转单路、每路和整组控制、音频隔离及资源释放 | 待验收 |
-| TV-15 | 设置 | 播放、弹幕、关注、多屏、账号、关于六区，完成持久化及实际接线，原生播放器选项替代 mpv 专用项 | 进行中 |
+| TV-15 | 设置 | 播放、弹幕、关注、多屏、账号、关于六区，完成持久化及实际接线，原生播放器选项替代 mpv 专用项 | 待验收 |
 | TV-16 | 账号和扫码 | B 站、斗鱼扫码；斗鱼、抖音、快手、小红书 Cookie 管理；快手主备用；Keychain | 待验收 |
 | TV-17 | 远程同步 | 现有 WebSocket 协议、房间码、二维码、倒计时、站点与代理、Dart 发送端互通 | 进行中 |
 | TV-18 | 局域网同步 | UDP 发现、IP/二维码、现有 HTTP 路由及配置包，合并、覆盖、分块、回执和导入结果 | 进行中 |
@@ -92,6 +92,7 @@
 | 2026-11-19 | TV-07 | 待验收 | 补跑固定数据工程 `xcodebuild test -only-testing:RemoteAcceptance` 的关注进页、定时及三种布局专项，三项通过。模拟器验证进页后重查未知状态，1 分钟测试间隔到期后更新开播三态，按持久化的默认、紧凑和大卡片偏好启动时列宽对应变化且房卡保留。真实账号连续刷新、电视端设置切换和 Apple TV 真机长列表仍待验收，当前没有配对真机。 |
 | 2026-11-19 | TV-19 | 进行中 | WebDAV 连接信息保存在独立 Keychain 项。接入 `PROPFIND`、`MKCOL`、`PUT` 和 `GET`，复用 Dart 的 `simple_live_app/backup.zip` 路径，支持新版 v2–v4 配置和旧版拆分 JSON。用 Dart archive 4.0.9 生成两个 ZIP，Swift 在本机 WsgiDAV 通过认证、上传、下载和恢复。Dart `ZipDecoder().decodeBytes(..., verify: true)` 反向验证 Swift ZIP 并读取历史。隔离 `SyncArchiveTests` 2 项通过，覆盖类别选择、损坏 ZIP 和时间往返。待电视端配置、恢复确认和真机验收。 |
 | 2026-11-19 | TV-08、TV-17、TV-18、TV-19 | 进行中 | 对齐 Dart 快手无过期时间时的 `0` 值和数字字符串写法；修正房间号布尔值校验、图片地址及取消提示。隔离 `swift test --package-path /private/tmp/sl-sync-package` 通过新增快手过期时间断言及归档微秒时间往返断言。 |
+| 2026-11-19 | TV-15 | 待验收 | 设置首页接入播放、弹幕、关注、多屏、账号、关于六区。频道轮播放在播放区，账号与关于链接到各自已交付页面。Apple TV 4K 模拟器隔离 UI 工程 `xcodebuild test -only-testing:MultiRoomUITests/MultiRoomFlowUITests/testFollowEntryAndSettingsHome` 遥控测试通过，确认进入多屏与播放设置。新版播放器与多屏参数专项测试复跑通过，待 Apple TV 真机复验。 |
 
 ## 对照入口
 
