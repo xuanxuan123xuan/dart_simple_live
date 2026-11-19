@@ -41,11 +41,6 @@ struct MultiRoomPickerView: View {
                 Spacer()
                 Text("\(selection.rooms.count) / \(MultiRoomSelection.maximum) 路").monospacedDigit()
                     .accessibilityIdentifier("multi-room-selection-count")
-                Button("取消") { dismiss() }
-                Button(confirmTitle) { onConfirm(selection.rooms) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!selection.canStart)
-                    .accessibilityIdentifier("multi-room-start")
             }
             HStack(spacing: 18) {
                 ForEach(Source.allCases, id: \.self) { item in
@@ -64,6 +59,11 @@ struct MultiRoomPickerView: View {
                     .accessibilityAddTraits(source == item ? .isSelected : [])
                 }
                 Spacer()
+                Button("取消") { dismiss() }
+                Button(confirmTitle) { onConfirm(selection.rooms) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!selection.canStart)
+                    .accessibilityIdentifier("multi-room-start")
             }
             .focusSection()
             HStack(alignment: .top, spacing: 28) {
@@ -77,6 +77,7 @@ struct MultiRoomPickerView: View {
                             Button { selection.toggle(room) } label: {
                                 Label(room.title, systemImage: "minus.circle").lineLimit(1)
                             }
+                            .accessibilityIdentifier("multi-room-chosen-\(room.key)")
                         }
                     }
                 }
@@ -192,6 +193,7 @@ struct MultiRoomPickerView: View {
                 Text($0.title).tag($0.id)
             }
         }
+        .pickerStyle(.menu)
     }
 
     @ViewBuilder
@@ -220,6 +222,7 @@ struct MultiRoomPickerView: View {
                     }
                 }
                 .accessibilityAddTraits(included ? .isSelected : [])
+                .accessibilityIdentifier("multi-room-source-\(room.key)")
             }
             .focusSection()
         }
