@@ -13,36 +13,81 @@ final class NativeCoreClient: ObservableObject {
         ProviderDescriptor(id: "xiaohongshu", title: "小红书", supportLabel: "链接进房"),
     ]
 
-    @Published private(set) var authenticated: Set<String> = []
+    @Published private(set) var accountStatuses: [AccountSlot: AccountStatus] = [:]
 
-    private let bilibili = BilibiliService()
+    private let bilibili: BilibiliService
     private let huya = HuyaService()
-    private let douyu = DouyuService()
+    private let douyu: DouyuService
     private let douyin = DouyinService()
     private let kuaishou = KuaishouService()
     private let xiaohongshu = XiaohongshuService()
-    private let keychain = KeychainSessionStore()
+    private let accountStore: any AccountSessionStore
+    private let requestCredentials: AccountRequestCredentials
+    private let validateForTesting: ((AccountSlot, AccountCredential) async throws -> AccountCredential)?
     private var hasRestored = false
-    private var sessionChanges: Set<String> = []
+    private var edits: [AccountSlot: UUID] = [:]
+    private var restorations: [AccountSlot: UUID] = [:]
+
+    let accountSlots: [AccountSlot] = [.bilibili, .douyu]
+
+    init(accountStore: (any AccountSessionStore)? = nil,
+         requestCredentials: AccountRequestCredentials = AccountRequestCredentials(),
+         validateForTesting: ((AccountSlot, AccountCredential) async throws -> AccountCredential)? = nil) {
+        self.accountStore = accountStore ?? KeychainSessionStore()
+        self.requestCredentials = requestCredentials
+        self.validateForTesting = validateForTesting
+        bilibili = BilibiliService(accounts: requestCredentials)
+        douyu = DouyuService(accounts: requestCredentials)
+    }
 
     var loginProviders: [ProviderDescriptor] {
         providers.filter { $0.id == "bilibili" || $0.id == "douyu" }
     }
 
+    var authenticated: Set<String> {
+        Set(accountStatuses.compactMap { $0.value == .verified ? $0.key.rawValue : nil })
+    }
+
+    func accountStatus(_ slot: AccountSlot) -> AccountStatus {
+        accountStatuses[slot, default: .signedOut]
+    }
+
     func start() async {
         guard !hasRestored else { return }
         hasRestored = true
-        for provider in loginProviders where !sessionChanges.contains(provider.id) {
-            let id = provider.id
-            do {
-                guard let cookie = try keychain.readCookie(provider: id) else { continue }
-                let session = try accountService(id)
-                try await session.validate(cookie)
-                guard !sessionChanges.contains(id) else { continue }
-                await session.setVerifiedCookie(cookie)
-                if !sessionChanges.contains(id) { authenticated.insert(id) }
-            } catch {
-                continue
+        await withTaskGroup(of: Void.self) { group in
+            for slot in accountSlots {
+                group.addTask { await self.restoreAccount(slot) }
+            }
+        }
+    }
+
+    func restoreAccount(_ slot: AccountSlot) async {
+        guard accountSlots.contains(slot), restorations[slot] == nil,
+              requestCredentials.credential(for: slot) == nil else { return }
+        let request = UUID()
+        restorations[slot] = request
+        defer {
+            if restorations[slot] == request { restorations[slot] = nil }
+        }
+        do {
+            guard let stored = try accountStore.read(slot) else {
+                accountStatuses[slot] = .signedOut
+                return
+            }
+            accountStatuses[slot] = .checking
+            let validated = try await validateAccount(stored, for: slot)
+            guard restorations[slot] == request else { return }
+            try Task.checkCancellation()
+            if stored != validated { try accountStore.save(validated, for: slot) }
+            publish(validated, for: slot, status: .verified)
+        } catch {
+            guard restorations[slot] == request else { return }
+            switch error {
+            case LiveProviderError.authenticationRequired, AccountCredentialError.invalidFormat:
+                accountStatuses[slot] = .invalid
+            default:
+                accountStatuses[slot] = .unavailable
             }
         }
     }
@@ -84,21 +129,48 @@ final class NativeCoreClient: ObservableObject {
     }
 
     func finishLogin(cookie: String, provider: String) async throws {
-        let session = try accountService(provider)
-        try await session.validate(cookie)
+        guard let slot = AccountSlot(rawValue: provider) else { throw LiveProviderError.unsupported }
+        try await saveAccount(AccountCredential(cookie: cookie), for: slot)
+    }
+
+    func saveAccount(_ credential: AccountCredential, for slot: AccountSlot) async throws {
+        guard accountSlots.contains(slot) else { throw LiveProviderError.unsupported }
+        let request = UUID()
+        edits[slot] = request
+        defer {
+            if edits[slot] == request { edits[slot] = nil }
+        }
+        let validated = try await validateAccount(credential, for: slot)
         try Task.checkCancellation()
-        try keychain.saveCookie(provider: provider, cookie: cookie)
-        sessionChanges.insert(provider)
-        await session.setVerifiedCookie(cookie)
-        authenticated.insert(provider)
+        guard edits[slot] == request else { throw CancellationError() }
+        try accountStore.save(validated, for: slot)
+        restorations[slot] = nil
+        publish(validated, for: slot, status: .verified)
     }
 
     func signOut(provider: String) async throws {
-        let session = try accountService(provider)
-        try keychain.clearCookie(provider: provider)
-        sessionChanges.insert(provider)
-        await session.setVerifiedCookie(nil)
-        authenticated.remove(provider)
+        guard let slot = AccountSlot(rawValue: provider) else { throw LiveProviderError.unsupported }
+        try signOut(slot)
+    }
+
+    func signOut(_ slot: AccountSlot) throws {
+        guard accountSlots.contains(slot) else { throw LiveProviderError.unsupported }
+        try accountStore.clear(slot)
+        edits[slot] = nil
+        restorations[slot] = nil
+        publish(nil, for: slot, status: .signedOut)
+    }
+
+    private func validateAccount(_ credential: AccountCredential, for slot: AccountSlot) async throws -> AccountCredential {
+        let normalized = credential.replacingCookie(try AccountCookie(credential.cookie).header)
+        if let validateForTesting { return try await validateForTesting(slot, normalized) }
+        let validated = try await accountService(slot.rawValue).validate(normalized.cookie)
+        return normalized.replacingCookie(validated)
+    }
+
+    private func publish(_ credential: AccountCredential?, for slot: AccountSlot, status: AccountStatus) {
+        requestCredentials.set(credential, for: slot)
+        accountStatuses[slot] = status
     }
 
     private func accountService(_ provider: String) throws -> any ProviderSessionService {

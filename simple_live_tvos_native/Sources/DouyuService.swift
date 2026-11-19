@@ -8,10 +8,15 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
     private static let userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     private let http = ProviderHTTP()
     private let guestID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-    private var cookie: String?
+    private let accounts: AccountRequestCredentials
+    private var cookie: String? { accounts.credential(for: .douyu)?.cookie }
     private var challengeCookies: [String: String] = [:]
     private var challengeID: UUID?
     private var activeCode: String?
+
+    init(accounts: AccountRequestCredentials = AccountRequestCredentials()) {
+        self.accounts = accounts
+    }
 
     func categories() async throws -> [CategoryDescriptor] {
         let data = try Self.payload(await http.json("https://m.douyu.com/api/cate/list"))
@@ -132,17 +137,9 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
         return resources
     }
 
-    func restore(_ cookie: String?) async throws {
-        if let cookie { try await validate(cookie) }
-        setVerifiedCookie(cookie)
-    }
-
-    func setVerifiedCookie(_ cookie: String?) { self.cookie = cookie }
-
-    func validate(_ cookie: String) async throws {
-        let pairs = cookiePairs(cookie)
-        guard cookie.rangeOfCharacter(from: .newlines) == nil,
-              let id = pairs["dy_did"], !id.isEmpty, let token = pairs["ltp0"], !token.isEmpty else {
+    func validate(_ cookie: String) async throws -> String {
+        var fields = try AccountCookie(cookie)
+        guard let id = fields["dy_did"] ?? fields["acf_did"], let token = fields["LTP0"] else {
             throw LiveProviderError.authenticationRequired
         }
         let now = String(Int(Date().timeIntervalSince1970 * 1000))
@@ -150,9 +147,21 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
             query: ["client_id": "1", "t": now, "_": now, "callback": "axiosJsonpCallback"],
             headers: ["Referer": Self.web + "/", "User-Agent": Self.userAgent, "Cookie": "dy_did=\(id); LTP0=\(token)"])
         let refreshed = receivedCookies(response, allowedDomains: ["passport.douyu.com", "douyu.com"])
-        guard refreshed.contains(where: { $0.name.lowercased() == "acf_jwt_token" && !$0.value.isEmpty && ($0.expiresDate ?? .distantFuture) > Date() }) else {
+        let current = Date()
+        guard refreshed.contains(where: {
+            $0.name.lowercased() == "acf_jwt_token" && !$0.value.isEmpty && ($0.expiresDate ?? .distantFuture) > current
+        }) else {
             throw LiveProviderError.authenticationRequired
         }
+        fields.set("dy_did", value: id)
+        for item in refreshed {
+            if item.value.isEmpty || (item.expiresDate ?? .distantFuture) <= current {
+                fields.remove(item.name)
+            } else {
+                fields.set(item.name, value: item.value)
+            }
+        }
+        return try AccountCookie(fields.header).header
     }
 
     func makeLoginChallenge() async throws -> LoginChallenge {

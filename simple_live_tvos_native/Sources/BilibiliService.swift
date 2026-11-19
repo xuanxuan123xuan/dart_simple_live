@@ -17,22 +17,17 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
     ]
 
     private let http = ProviderHTTP()
-    private var cookie: String?
+    private let accounts: AccountRequestCredentials
+    private var cookie: String? { accounts.credential(for: .bilibili)?.cookie }
     private var deviceCookies: [String] = []
-    private var mixin: (key: String, expiration: Date)?
+    private var mixin: (key: String, expiration: Date, cookie: String?)?
 
-    func restore(_ cookie: String?) async throws {
-        if let cookie { try await validate(cookie) }
-        setVerifiedCookie(cookie)
+    init(accounts: AccountRequestCredentials = AccountRequestCredentials()) {
+        self.accounts = accounts
     }
 
-    func setVerifiedCookie(_ value: String?) {
-        cookie = value
-        mixin = nil
-    }
-
-    func validate(_ cookie: String) async throws {
-        guard !cookie.isEmpty, cookie.rangeOfCharacter(from: .newlines) == nil else {
+    func validate(_ cookie: String) async throws -> String {
+        guard try AccountCookie(cookie)["SESSDATA"] != nil else {
             throw LiveProviderError.authenticationRequired
         }
         var headers = Self.mediaHeaders
@@ -41,6 +36,7 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
         guard result["data"].fields["isLogin"] as? Bool == true else {
             throw LiveProviderError.authenticationRequired
         }
+        return cookie
     }
 
     func makeLoginChallenge() async throws -> LoginChallenge {
@@ -309,7 +305,8 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
     private func sign(_ input: [String: String]) async throws -> [String: String] {
         let now = Date()
         let key: String
-        if let mixin, mixin.expiration > now {
+        let accountCookie = cookie
+        if let mixin, mixin.expiration > now, mixin.cookie == accountCookie {
             key = mixin.key
         } else {
             let data = try await request(Self.web + "/x/web-interface/nav")
@@ -318,7 +315,7 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
             guard bytes.count >= 64 else { throw LiveProviderError.invalidResponse }
             let values = Array(bytes)
             key = String(decoding: Self.keyOrder.map { values[$0] }, as: UTF8.self)
-            mixin = (key, now.addingTimeInterval(1800))
+            mixin = (key, now.addingTimeInterval(1800), accountCookie)
         }
         var query = input.mapValues { $0.filter { !"!'()*".contains($0) } }
         query["wts"] = String(Int(now.timeIntervalSince1970))

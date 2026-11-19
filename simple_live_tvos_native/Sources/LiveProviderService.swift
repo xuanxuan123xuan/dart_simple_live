@@ -116,9 +116,7 @@ protocol LiveProviderService: Sendable {
 }
 
 protocol ProviderSessionService: Sendable {
-    func restore(_ cookie: String?) async throws
-    func validate(_ cookie: String) async throws
-    func setVerifiedCookie(_ cookie: String?) async
+    func validate(_ cookie: String) async throws -> String
     func makeLoginChallenge() async throws -> LoginChallenge
     func pollLogin(_ challenge: LoginChallenge) async throws -> LoginResult
 }
