@@ -81,6 +81,7 @@
 | 2026-11-19 | TV-12 | 进行中 | 快手匿名刷新公开表情面板，刷新结果优先于移动端和网页内置词库，失败时继续使用内置表。复用无 Cookie、有超时和大小限制且拒绝重定向的下载器。Apple TV 4K（tvOS 26.5）`xcodebuild test -skip-testing:SimpleLiveTVOSTests/ProviderSmokeTests CODE_SIGN_IDENTITY=-` 离线 72 项通过，1 项多屏实播用例按条件跳过。临时 `TV12LiveProbe` 通过，实际下载并解码斗鱼、虎牙、快手与 Twemoji 样图，验证无效图片返回失败，以及匿名面板返回 207 项。词库生成检查与 `git diff --check` 通过。剩余交付为抖音富文本和内置词库表情。`xcrun devicectl list devices` 无配对设备，待 Apple TV 真机在 B 站、斗鱼、虎牙、快手直播间复验图文顺序、未知标签、快手尾片、图片失败回退及遥控开关重启后持久化，并复验样式切换、去重、普通／正则屏蔽和重点动态。 |
 | 2026-11-19 | TV-03、TV-04 | 待验收 | 修复短网格中方向键绕过首屏重试、房卡及分页按钮的问题。临时固定数据工程运行 `xcodebuild test -only-testing:RemoteAcceptance`，TV-03、TV-04 两项通过。遥控覆盖热门切平台、首屏和分页重试、去重、末页及返回原卡片，类目覆盖三层浏览、「全部」、重试和逐级返回。完整工程的临时联网用例 `PlaybackAcceptanceTests.testDouyuRecommendedAndCategoryPagination` 在 tvOS 模拟器通过。Apple TV 真机验收仍缺配对设备。 |
 | 2026-11-19 | TV-05 | 阻塞 | 沿用首屏重试、房卡及分页区的焦点修复。离线解析测试确认主播房号及开播状态。固定数据工程 `xcodebuild test -only-testing:RemoteAcceptance/RemoteAcceptanceTests/testTV05SearchModesPaginationRetryAndReturn` 通过，遥控验证切模式、切平台、首次和分页失败重试、末页、进房返回及保留关键词。macOS 原生适配器探针验证 B 站、虎牙、斗鱼的两种搜索及快手主播搜索。抖音两种搜索、快手房间搜索以游客访问时都要求登录或重新验证，快手房间接口返回 `result=10`。需要有搜索权限的会话复验这三个入口及分页，并在配对 Apple TV 真机上复验遥控。 |
+| 2026-11-19 | TV-11 | 待验收 | 离线 `ChannelRotationTests` 和 `LibraryStoreTests` 通过，覆盖来源顺序、按平台去重、随机候选、有限退出及独立轮播列表持久化。临时固定数据工程执行 `xcodebuild test-without-building -only-testing:RemoteAcceptance`，三个轮播用例通过，包括 B 站下播后跳过已下播的斗鱼并进入虎牙、仅启用关播时播放失败不触发，以及失败随机轮播无可用候选时停留重试。五个平台真实房间分别在完整模拟器构建中起播。真实直播间之间自动轮播、轮播管理遥控和 Apple TV 真机验收仍待实测，当前无配对设备。 |
 
 ## 对照入口
 
