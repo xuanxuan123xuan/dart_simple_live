@@ -123,7 +123,38 @@ final class LibraryStore: ObservableObject {
     /// Keep the most recent snapshot for each platform/room identity when merging an import.
     func importHistory(_ entries: [HistoryEntry], replacing: Bool = false) {
         let combined = replacing ? entries : historyEntries + entries
-        let sorted = combined.enumerated().sorted { lhs, rhs in
+        historyEntries = Self.sortedHistory(combined)
+        saveHistory()
+    }
+
+    /// Encode every selected category before publishing or mutating disk state.
+    func applySync(_ plan: SyncImportPlan, overwrite: Bool,
+                   beforeCommit: (() throws -> Void)?) throws {
+        func replaces(_ category: SyncCategory) -> Bool { overwrite && !plan.mergeOnly.contains(category) }
+        let favorites = plan.favorites.map { entries in
+            Self.unique(replaces(.follows) ? entries : favoriteEntries + entries)
+        }
+        let history = plan.histories.map { entries in
+            Self.sortedHistory(replaces(.histories) ? entries : historyEntries + entries)
+        }
+        let words = plan.shields.map { entries in
+            Self.cleanedWords(replaces(.shields) ? entries : blockedWords + entries)
+        }
+        let encoder = JSONEncoder()
+        let favoriteData = try favorites.map(encoder.encode)
+        let historyData = try history.map(encoder.encode)
+
+        try beforeCommit?()
+        if let favoriteData { defaults.set(favoriteData, forKey: Self.favoritesKey) }
+        if let historyData { defaults.set(historyData, forKey: Self.recentKey) }
+        if let words { defaults.set(words, forKey: Self.blockedWordsKey) }
+        if let favorites { favoriteEntries = favorites }
+        if let history { historyEntries = history }
+        if let words { blockedWords = words }
+    }
+
+    private static func sortedHistory(_ entries: [HistoryEntry]) -> [HistoryEntry] {
+        let sorted = entries.enumerated().sorted { lhs, rhs in
             switch (lhs.element.watchedAt, rhs.element.watchedAt) {
             case let (a?, b?) where a != b: return a > b
             case (_?, nil): return true
@@ -131,8 +162,7 @@ final class LibraryStore: ObservableObject {
             default: return lhs.offset < rhs.offset
             }
         }.map(\.element)
-        historyEntries = Self.unique(sorted)
-        saveHistory()
+        return Self.unique(sorted)
     }
 
     private static func load<T: Decodable>(_ key: String, from defaults: UserDefaults) -> T? {

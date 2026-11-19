@@ -1,0 +1,9 @@
+{
+  "type": "simple_live",
+  "config": {
+    "DouyuCookie": "uid=fixture"
+  },
+  "shield": {
+    "旧规则": "旧规则"
+  }
+}

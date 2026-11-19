@@ -22,9 +22,9 @@
 | TV-14 | 多屏观看 | 均分、主次、单格放大、房间增删、转单路、每路和整组控制、音频隔离及资源释放 | 待实施 |
 | TV-15 | 设置 | 播放、弹幕、关注、多屏、账号、关于六区，完成持久化及实际接线，原生播放器选项替代 mpv 专用项 | 待实施 |
 | TV-16 | 账号和扫码 | B 站、斗鱼扫码；斗鱼、抖音、快手、小红书 Cookie 管理；快手主备用；Keychain | 进行中 |
-| TV-17 | 远程同步 | 现有 WebSocket 协议、房间码、二维码、倒计时、站点与代理、Dart 发送端互通 | 待实施 |
-| TV-18 | 局域网同步 | UDP 发现、IP/二维码、现有 HTTP 路由及配置包，合并、覆盖、分块、回执和导入结果 | 待实施 |
-| TV-19 | WebDAV | 凭据管理、连接验证、上传/恢复、进度、类别开关、兼容 Dart 新旧备份 | 待实施 |
+| TV-17 | 远程同步 | 现有 WebSocket 协议、房间码、二维码、倒计时、站点与代理、Dart 发送端互通 | 进行中 |
+| TV-18 | 局域网同步 | UDP 发现、IP/二维码、现有 HTTP 路由及配置包，合并、覆盖、分块、回执和导入结果 | 进行中 |
+| TV-19 | WebDAV | 凭据管理、连接验证、上传/恢复、进度、类别开关、兼容 Dart 新旧备份 | 进行中 |
 | TV-20 | 关于和更新 | 本机版本、构建号、查询稳定 `tvos-native-v<版本>` Release，发布页二维码和错误状态 | 进行中 |
 
 ## 实施与验收顺序
@@ -70,6 +70,7 @@
 | 2026-11-19 | TV-12 | 进行中 | 斗鱼弹幕接入官方词库和通用 Twemoji，保留未知标签与原始文字顺序。共用图片渲染在下载失败时保留完整表情标签，关闭图片表情后以纯文字绘制。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/ProviderParsingTests -only-testing:SimpleLiveTVOSTests/DanmakuOverlayTests CODE_SIGN_IDENTITY=-` 共 18 项通过；`python3 tool/generate_tvos_danmaku_emoji.py --check` 和 `git diff --check` 通过。 |
 | 2026-11-19 | TV-03 | 待验收 | 修复斗鱼热门首屏误报末页，改用有可信 `pgcnt` 的公开目录；校验目录回包格式，保留重试入口。离线：`xcodebuild test -skip-testing:SimpleLiveTVOSTests/ProviderSmokeTests` 的 36 项通过，其中分页测试覆盖同页重试、去重、末页和乱序平台切换。模拟器：Apple TV 4K（tvOS 26.5）遥控专项另行记录。真实平台：用 macOS 上编译的原生适配器探针验证 B 站、虎牙、斗鱼和抖音首两页；快手为单页。`curl` 验证斗鱼新接口样本共 42 页，末页返回 49 条。真机：`xcrun devicectl list devices` 无配对设备，待复验焦点、返回和真实断网重试。 |
 | 2026-11-19 | TV-04 | 待验收 | 修复斗鱼类目目录对成功响应的识别，并校验父子类目数组。离线：`ProviderParsingTests.testDouyinCategoryTreePreservesThreeLevelsAndParentKeys` 通过。模拟器：三层目录、「全部」、重试及逐层返回的遥控专项另行记录。真实平台：macOS 原生适配器探针获得五个平台目录和所选类目的前两页。斗鱼修复后取到 10 个根类目，实例在第二页结束。真机：`xcrun devicectl list devices` 无配对设备，待复验长列表滚动、焦点及逐级返回。 |
+| 2026-11-19 | TV-08、TV-17、TV-18、TV-19 | 进行中 | 用 Dart 生成新版配置包、旧历史文件和旧式配置样例。共用导入流程支持关注、观看时间、屏蔽词及账号凭据解析，选定类别可合并或经确认后覆盖，分块按发送顺序收齐才交付。隔离运行 `swift test --disable-sandbox --package-path /private/tmp/sl-sync-package`，8 项通过，覆盖未选类别、未确认覆盖、非法数据、账号提交失败、缺块及超时。待接同步入口、TV-16 接口及传输验收。 |
 
 ## 对照入口
 

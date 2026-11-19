@@ -33,6 +33,10 @@ targets:
     platform: tvOS
     sources:
       - path: Tests
+        excludes: [Fixtures]
+      - path: Tests/Fixtures
+        type: folder
+        buildPhase: resources
     settings:
       GENERATE_INFOPLIST_FILE: YES
       PRODUCT_BUNDLE_IDENTIFIER: com.xuanxuan.simplelive.tvos.tests

@@ -1,0 +1,70 @@
+{
+  "schema": "simple_live_profile",
+  "schemaVersion": 4,
+  "appVersion": "1.0.0",
+  "platform": "android",
+  "exportedAt": "2026-11-19T09:15:03.123456",
+  "settings": {},
+  "accounts": {
+    "items": [
+      {
+        "siteId": "bilibili",
+        "cookie": "SESSDATA=fixture"
+      },
+      {
+        "siteId": "kuaishou",
+        "slots": {
+          "primary": {
+            "cookie": "userId=fixture",
+            "kww": "test"
+          },
+          "secondary": {
+            "cookie": "userId=fixture2"
+          }
+        }
+      }
+    ]
+  },
+  "danmuShield": {
+    "raw": [
+      "关键词",
+      "/广告.*/"
+    ],
+    "keywords": [
+      "关键词"
+    ],
+    "users": [],
+    "userGroups": {}
+  },
+  "followUsers": [
+    {
+      "id": "bilibili_42",
+      "siteId": "bilibili",
+      "roomId": "42",
+      "userName": "主播",
+      "face": "",
+      "addTime": "2026-11-19 09:15:03.123456",
+      "isSpecialFollow": true,
+      "roomTitle": "直播间",
+      "roomCover": "",
+      "previewUpdatedAt": ""
+    }
+  ],
+  "histories": [
+    {
+      "id": "douyu_17",
+      "siteId": "douyu",
+      "roomId": "17",
+      "userName": "斗鱼主播",
+      "face": "",
+      "updateTime": "2026-11-19 01:15:03.123456Z"
+    }
+  ],
+  "summary": {
+    "settingCount": 0,
+    "keywordShieldCount": 1,
+    "followUserCount": 1,
+    "historyCount": 1,
+    "accountCount": 2
+  }
+}
