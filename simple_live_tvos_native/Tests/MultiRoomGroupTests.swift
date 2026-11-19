@@ -70,6 +70,30 @@ final class MultiRoomGroupTests: XCTestCase {
         XCTAssertEqual(restored.danmakuOverride, false)
     }
 
+    @MainActor
+    func testNewGroupUsesPersistedLayoutSpacingAudioAndDanmaku() throws {
+        let name = "multi-room-preferences-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(MultiRoomLayout.primary.rawValue, forKey: MultiRoomPreferences.layoutKey)
+        defaults.set(MultiRoomSpacing.wide.rawValue, forKey: MultiRoomPreferences.spacingKey)
+        defaults.set(MultiRoomAudioMode.mixed.rawValue, forKey: MultiRoomPreferences.audioKey)
+        defaults.set(false, forKey: MultiRoomPreferences.globalDanmakuKey)
+        let group = MultiRoomGroup(rooms: makeRooms(), preferences: MultiRoomPreferences(defaults: defaults))
+        defer { group.retire() }
+        XCTAssertEqual(group.layout, .primary)
+        XCTAssertEqual(group.spacing, .wide)
+        XCTAssertEqual(group.audioMode, .mixed)
+        XCTAssertTrue(group.sessions.allSatisfy { !$0.engine.isEffectivelyMuted })
+        XCTAssertTrue(group.sessions.allSatisfy { $0.danmakuOverride == false })
+
+        defaults.set(MultiRoomDanmaku.enabled.rawValue, forKey: MultiRoomPreferences.danmakuKey)
+        XCTAssertTrue(MultiRoomPreferences(defaults: defaults).danmakuEnabled)
+        let size = CGSize(width: 1920, height: 1080)
+        let frames = MultiRoomGeometry.frames(count: 2, size: size, layout: .grid, primaryIndex: 0, gap: CGFloat(group.spacing.rawValue))
+        XCTAssertEqual(frames[1].minX - frames[0].maxX, 24, accuracy: 0.001)
+    }
+
     func testGridAndPrimaryFramesFitWithoutIntersecting() {
         for size in [CGSize(width: 1920, height: 1080), CGSize(width: 1280, height: 720)] {
             for count in 2...4 {
@@ -132,7 +156,9 @@ final class MultiRoomGroupTests: XCTestCase {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["SIMPLELIVE_LIVE_SMOKE"] == "1",
                           "Set SIMPLELIVE_LIVE_SMOKE=1 to stream the public media fixtures")
         let hls = try XCTUnwrap(URL(string: "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8"))
-        let flv = try XCTUnwrap(URL(string: "https://samples.ffmpeg.org/FLV/zeldaHQ.flv"))
+        let flvFixture = ProcessInfo.processInfo.environment["SIMPLELIVE_TEST_FLV_URL"]
+            ?? "https://samples.ffmpeg.org/FLV/zeldaHQ.flv"
+        let flv = try XCTUnwrap(URL(string: flvFixture))
         let media = [PlaybackResource(url: hls, protocolKind: .hls), PlaybackResource(url: flv, protocolKind: .flv),
                      PlaybackResource(url: hls, protocolKind: .hls), PlaybackResource(url: hls, protocolKind: .hls)]
         let group = MultiRoomGroup(rooms: makeRooms(), preferences: try defaultPreferences())
@@ -144,7 +170,7 @@ final class MultiRoomGroupTests: XCTestCase {
         let subscriptions = group.sessions.enumerated().map { index, session in
             session.danmakuEvents.sink { received[index].append($0.message) }
         }
-        let terminations = streams.indices.map { expectation(description: "弹幕连接 \($0) 取消") }
+        let terminations = streams.indices.map { XCTestExpectation(description: "弹幕连接 \($0) 取消") }
         let danmaku = zip(group.sessions, streams).enumerated().map { index, pair in
             let (session, stream) = pair
             stream.continuation.onTermination = { _ in terminations[index].fulfill() }

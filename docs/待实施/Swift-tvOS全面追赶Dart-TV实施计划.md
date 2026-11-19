@@ -83,6 +83,8 @@
 | 2026-11-19 | TV-05 | 阻塞 | 沿用首屏重试、房卡及分页区的焦点修复。离线解析测试确认主播房号及开播状态。固定数据工程 `xcodebuild test -only-testing:RemoteAcceptance/RemoteAcceptanceTests/testTV05SearchModesPaginationRetryAndReturn` 通过，遥控验证切模式、切平台、首次和分页失败重试、末页、进房返回及保留关键词。macOS 原生适配器探针验证 B 站、虎牙、斗鱼的两种搜索及快手主播搜索。抖音两种搜索、快手房间搜索以游客访问时都要求登录或重新验证，快手房间接口返回 `result=10`。需要有搜索权限的会话复验这三个入口及分页，并在配对 Apple TV 真机上复验遥控。 |
 | 2026-11-19 | TV-11 | 待验收 | 离线 `ChannelRotationTests` 和 `LibraryStoreTests` 通过，覆盖来源顺序、按平台去重、随机候选、有限退出及独立轮播列表持久化。临时固定数据工程执行 `xcodebuild test-without-building -only-testing:RemoteAcceptance`，三个轮播用例通过，包括 B 站下播后跳过已下播的斗鱼并进入虎牙、仅启用关播时播放失败不触发，以及失败随机轮播无可用候选时停留重试。五个平台真实房间分别在完整模拟器构建中起播。真实直播间之间自动轮播、轮播管理遥控和 Apple TV 真机验收仍待实测，当前无配对设备。 |
 | 2026-11-19 | TV-08、TV-17、TV-18、TV-19 | 进行中 | 共用接收流程加上预览、确认、取消和限时回执，历史保留 Dart 微秒时间。配置包仅映射 tvOS 有对应控件的通用设置，账号通过 TV-16 的事务接口准备并提交。隔离 `swift test --package-path /private/tmp/sl-sync-package` 共 12 项通过，断言未确认覆盖时资料不变、不同类别保留和 Dart 新旧格式。 |
+| 2026-11-19 | TV-14 | 待验收 | Apple TV 4K 模拟器 `xcodebuild -xctestrun MultiRoomSmoke.xctestrun -only-testing:SimpleLiveTVOSTests/MultiRoomGroupTests/testFourPlayersAdvanceAndDanmakuStreamsStaySeparate test-without-building` 通过。验证三路 AVPlayer HLS 与一路 KSPlayer FLV 同时推进、逐路暂停、静音切换、逐路模拟弹幕隔离以及退出后媒体后端和四条弹幕流释放。首次公网 FLV 样本未起播，同一样本下载后经本机 HTTP 服务复测通过。待遥控流程和 Apple TV 真机四路实播。 |
+| 2026-11-19 | TV-15 | 进行中 | 播放新增画面比例、分档清晰度和恢复默认，解码与缓冲接入原生引擎；多屏新增持久化布局、间距、默认声音和弹幕。Apple TV 4K 模拟器 `xcodebuild build-for-testing` 与 `xcodebuild test-without-building` 通过，89 项中通过 78 项、按默认配置跳过 11 项，含实际 AVPlayer 缓冲参数和多屏默认值。待设置首页接线提交和遥控复验。 |
 
 ## 对照入口
 

@@ -22,7 +22,8 @@ struct MultiRoomView: View {
         GeometryReader { geometry in
             let primary = group.sessions.firstIndex { $0.room.key == group.primaryKey } ?? 0
             let frames = MultiRoomGeometry.frames(count: group.sessions.count, size: geometry.size,
-                                                  layout: group.layout, primaryIndex: primary)
+                                                  layout: group.layout, primaryIndex: primary,
+                                                  gap: CGFloat(group.spacing.rawValue))
             let expandedFrame = MultiRoomGeometry.fitted(in: CGRect(origin: .zero, size: geometry.size))
             ZStack(alignment: .topLeading) {
                 Color.black

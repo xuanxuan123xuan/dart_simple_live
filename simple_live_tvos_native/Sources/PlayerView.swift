@@ -5,7 +5,8 @@ struct PlayerView: View {
     @EnvironmentObject private var library: LibraryStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("simple_live_tvos.danmaku") private var danmakuEnabled = true
+    @AppStorage(MultiRoomPreferences.globalDanmakuKey) private var danmakuEnabled = true
+    @AppStorage(PlaybackPreferences.aspect) private var aspect = PlaybackAspect.fit
 
     let room: RoomDescriptor
     let queue: ChannelQueue
@@ -50,7 +51,7 @@ struct PlayerView: View {
 
     var body: some View {
         ZStack {
-            RoomVideoView(engine: engine).ignoresSafeArea()
+            RoomVideoView(engine: engine, aspect: aspect).ignoresSafeArea()
             if !controlsVisible && playbackIssue == nil && !sleepExpired {
                 Button(action: showControls) {
                     Color.clear

@@ -26,9 +26,11 @@ final class PlaybackEngine {
     private var failover = PlaybackFailoverController()
     private var runID = UUID()
     private var nativePlayer: KSPlayerLayer?
+    private let defaults: UserDefaults
 
-    init(initialVolume: Int = PlaybackTuning().initialVolume) {
-        volume = min(100, max(0, initialVolume))
+    init(initialVolume: Int? = nil, defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        volume = min(100, max(0, initialVolume ?? PlaybackTuning(defaults: defaults).initialVolume))
     }
 
     func run(resources: [PlaybackResource], preferredLine: Int? = nil) async throws {
@@ -94,8 +96,10 @@ final class PlaybackEngine {
         let resource = attempt.resource
         let asset = AVURLAsset(url: resource.url, options: ["AVURLAssetHTTPHeaderFieldsKey": resource.headers])
         let item = AVPlayerItem(asset: asset)
-        if let buffer = PlaybackTuning().buffering.seconds { item.preferredForwardBufferDuration = buffer }
+        let buffering = PlaybackTuning(defaults: defaults).buffering
+        if let buffer = buffering.seconds { item.preferredForwardBufferDuration = buffer }
         let player = AVPlayer(playerItem: item)
+        if buffering == .lowLatency { player.automaticallyWaitsToMinimizeStalling = false }
         self.player = player
         applyAudio()
         if !pausedByUser { player.play() }
@@ -108,7 +112,7 @@ final class PlaybackEngine {
     private func playNative(_ attempt: PlaybackAttempt, id: UUID) async throws {
         _ = Self.configureLogging
         let options = KSOptions()
-        let tuning = PlaybackTuning()
+        let tuning = PlaybackTuning(defaults: defaults)
         options.hardwareDecode = tuning.hardwareDecode
         if let buffer = tuning.buffering.seconds {
             options.preferredForwardBufferDuration = buffer

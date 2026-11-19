@@ -11,9 +11,11 @@ final class MultiRoomGroup {
     private(set) var audioMode: MultiRoomAudioMode
     private var initialDanmaku: Bool
     var layout: MultiRoomLayout
+    let spacing: MultiRoomSpacing
 
     init(rooms: [RoomDescriptor], preferences: MultiRoomPreferences = .init(), restoring handoff: RoomPlaybackHandoff? = nil) {
         layout = preferences.layout
+        spacing = preferences.spacing
         audioMode = preferences.audioMode
         initialDanmaku = preferences.danmakuEnabled
         replaceRooms(rooms, restoring: handoff)

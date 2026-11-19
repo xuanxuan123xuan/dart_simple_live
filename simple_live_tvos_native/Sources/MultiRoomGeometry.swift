@@ -1,9 +1,8 @@
 import CoreGraphics
 
 enum MultiRoomGeometry {
-    static func frames(count: Int, size: CGSize, layout: MultiRoomLayout, primaryIndex: Int) -> [CGRect] {
+    static func frames(count: Int, size: CGSize, layout: MultiRoomLayout, primaryIndex: Int, gap: CGFloat = 12) -> [CGRect] {
         guard (MultiRoomSelection.minimum...MultiRoomSelection.maximum).contains(count) else { return [] }
-        let gap: CGFloat = 12
         let bounds = CGRect(origin: .zero, size: size)
         switch layout {
         case .grid:
