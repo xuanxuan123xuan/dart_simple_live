@@ -1,6 +1,6 @@
 # Swift tvOS 全界面对齐 Dart TV 实施计划
 
-当前进度 **1 / 20** 项验收完成。
+当前进度 **2 / 20** 项验收完成。
 
 以 `simple_live_tv_app` 的 18 个注册页面及其操作面板为基线，对照 `simple_live_tvos_native`。目标为 Apple TV 上的功能和操作对齐，保留 SwiftUI、AVPlayer、KSPlayer 和 tvOS 17 最低版本。
 
@@ -25,7 +25,7 @@
 | TV-17 | 远程同步 | 现有 WebSocket 协议、房间码、二维码、倒计时、站点与代理、Dart 发送端互通 | 进行中 |
 | TV-18 | 局域网同步 | UDP 发现、IP/二维码、现有 HTTP 路由及配置包，合并、覆盖、分块、回执和导入结果 | 进行中 |
 | TV-19 | WebDAV | 凭据管理、连接验证、上传/恢复、进度、类别开关、兼容 Dart 新旧备份 | 进行中 |
-| TV-20 | 关于和更新 | 本机版本、构建号、查询稳定 `tvos-native-v<版本>` Release，发布页二维码和错误状态 | 进行中 |
+| TV-20 | 关于和更新 | 本机版本、构建号、查询稳定 `tvos-native-v<版本>` Release，发布页二维码和错误状态 | 完成 |
 
 ## 实施与验收顺序
 
@@ -76,6 +76,7 @@
 | 2026-11-19 | TV-07 | 待验收 | 离线：完整工程 `xcodebuild test-without-building -skip-testing:SimpleLiveTVOSTests/ProviderSmokeTests` 36 项通过，其中迁移测试保留旧版 205 个去重房间及特别关注，刷新测试区分下播与故障并覆盖刷新时移除。模拟器：临时固定数据工程 `xcodebuild test -only-testing:RemoteAcceptance/RemoteAcceptanceTests/testTV07FavoriteStatesFiltersPagingAndReturn` 通过，遥控完成刷新全部／本页、翻页、筛选、进房和返回原卡片。真实平台：macOS 探针使用原生适配器查到 B 站、虎牙及快手开播／未开播样本；真实账号关注连续刷新未测，当前为游客会话。真机：无配对设备，待核验进页、定时刷新、布局切换和大列表遥控。 |
 | 2026-11-19 | TV-02 / TV-13 | 进行中／待验收 | 首页、关注和房内均接入选房；房内预选当前房间，确认后进入多屏。Apple TV 模拟器 `build-for-testing` 及先前 2 项 `MultiRoomSelectionTests` 通过，待遥控焦点、入口返回和真实搜索／链接验收。首页同步仍由对应项目接线。 |
 | 2026-11-19 | TV-14 / TV-15 | 待验收／进行中 | 单屏与多屏共用播放、恢复和弹幕会话；新增均分、主次、单格放大、房间增删、转单路及每路和整组控制。保留原生播放参数草稿并接入会话。Apple TV 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/MultiRoomGroupTests -only-testing:SimpleLiveTVOSTests/PlaybackTuningTests` 6 项通过、网络媒体测试默认跳过，`git diff --check` 通过。待实播、遥控和设置首页接线。 |
+| 2026-11-19 | TV-20 | 完成 | 独立 `AboutUpdateView()` 从应用 Bundle 显示版本与构建号，手动查询稳定发布，展示加载、无版本、失败重试、新旧版本与发布页二维码。设置首页入口由多屏与播放整合。完整原生工程 `xcodebuild build-for-testing` 通过，`xcodebuild test -only-testing:SimpleLiveTVOSTests/TVOSReleaseServiceTests` 5 项通过。Apple TV 4K（tvOS 26.5）临时设置页 `xcodebuild -scheme TV20QA test-without-building` 1 项通过，覆盖版本与构建号、加载、失败重试、较新／相同／较旧版本、无稳定版本以及遥控返回焦点。`xcrun simctl io <UDID> screenshot` 截取电视输出，jsQR 解码为样本版本的完整 GitHub 发布页。原生服务实连 GitHub Releases API，限流恢复后 HTTP 200 并确认当前暂无稳定 tvOS Release。`xcrun devicectl list devices` 未发现配对真机，扫码验收使用模拟器截图。`git diff --check` 通过。 |
 
 ## 对照入口
 
