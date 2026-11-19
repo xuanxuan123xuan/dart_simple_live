@@ -4689,7 +4689,7 @@ class PlayerController extends BaseController
           Log.e('播放器清理步骤失败: $name $error', stackTrace);
         },
       );
-    } catch (error, stackTrace) {
+    } catch (_) {
       _playerClosing = false;
       rethrow;
     } finally {
