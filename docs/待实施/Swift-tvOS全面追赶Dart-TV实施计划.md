@@ -87,6 +87,7 @@
 | 2026-11-19 | TV-15 | 进行中 | 播放新增画面比例、分档清晰度和恢复默认，解码与缓冲接入原生引擎；多屏新增持久化布局、间距、默认声音和弹幕。Apple TV 4K 模拟器 `xcodebuild build-for-testing` 与 `xcodebuild test-without-building` 通过，89 项中通过 78 项、按默认配置跳过 11 项，含实际 AVPlayer 缓冲参数和多屏默认值。待设置首页接线提交和遥控复验。 |
 | 2026-11-19 | TV-17 | 进行中 | 接入 Dart 房间 WebSocket 握手、房间成员、600 秒有效期、心跳、国内与 Cloudflare 站点及 HTTP CONNECT 代理配置。用 `dart tool/probe_tvos_sync.dart remote <站点> <房间码>` 在两个现有站点分别通过 `roomJoined` 和两段 `ack`，Swift 接收端均持久化两条历史。独立 XCTest 通过协议帧和代理地址测试；待电视端二维码、倒计时、配置代理和账号实测。 |
 | 2026-11-19 | TV-18 | 进行中 | 接入 UDP 23235 发现与 HTTP 23234，兼容新版配置包及 Dart 关注、历史、屏蔽词、标签和账号路由，完整校验与电视端覆盖确认后返回导入结果。用 `dart tool/probe_tvos_sync.dart lan http://127.0.0.1:23234` 通过 UDP 请求、`/info`、两段屏蔽词及配置包历史导入，Swift 校验持久化内容。独立 XCTest 通过收齐与确认后才写入的断言；待电视端广播、扫码及遥控验收。 |
+| 2026-11-19 | TV-10 | 待验收 | 离线 `PlaybackFailoverTests`、`PlaybackRecoveryTests` 和 `AutoQualityRecoveryTests` 通过。完整 tvOS 模拟器运行临时 `PlaybackAcceptanceTests`，无效首线回退到真实 HLS 样例，音量、静音和暂停在同一引擎重开后保留；两次独立缓冲的状态注入触发会话降到最近较低档。遥控用例 `testTV10SleepDeadlineAndBackgroundPause` 通过，Home 退后台并回前台后仍暂停，15 秒测试倒计时到点后关闭设置、显示停止状态并将焦点移到返回；第一次即时焦点断言失败，等待弹层动画结束后的复验通过。真实 HLS／FLV 样例单独复跑通过。多屏与播放对话已收到复现和复验结果。Apple TV 未配对，真实直播的连续缓冲、实际分钟定时和设备前后台仍待验收。 |
 
 ## 对照入口
 
