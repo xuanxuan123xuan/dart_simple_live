@@ -15,3 +15,10 @@ struct SettingsView: View {
         .listStyle(.plain)
     }
 }
+
+extension Array where Element: Comparable {
+    // Synced preferences can fall between the presets offered on tvOS.
+    func includingSelection(_ selection: Element) -> Self {
+        contains(selection) ? self : (self + [selection]).sorted()
+    }
+}

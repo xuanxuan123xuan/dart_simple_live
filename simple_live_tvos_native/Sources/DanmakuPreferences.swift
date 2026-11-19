@@ -69,7 +69,9 @@ struct DanmakuSettingsView: View {
                     ForEach([15.0, 12, 9, 6, 4], id: \.self) { Text("\(Int($0)) 秒横穿画面").tag($0) }
                 }
                 Picker("不透明度", selection: storage.$opacity) {
-                    ForEach(1...10, id: \.self) { Text("\($0 * 10)%").tag(Double($0) / 10) }
+                    ForEach((1...10).map { Double($0) / 10 }.includingSelection(storage.opacity), id: \.self) { value in
+                        Text(value, format: .percent.precision(.fractionLength(0...2))).tag(value)
+                    }
                 }
                 Picker("描边宽度", selection: storage.$outlineWidth) {
                     ForEach(Array(stride(from: 0, through: 16, by: 2)), id: \.self) { Text("\($0)").tag(Double($0)) }
@@ -85,10 +87,13 @@ struct DanmakuSettingsView: View {
                     }
                 } else {
                     Picker("弹幕区域", selection: storage.$area) {
-                        Text("1/4").tag(0.25)
-                        Text("1/2").tag(0.5)
-                        Text("3/4").tag(0.75)
-                        Text("全屏").tag(1.0)
+                        ForEach([0.25, 0.5, 0.75, 1].includingSelection(storage.area), id: \.self) { value in
+                            if value == 1 {
+                                Text("全屏").tag(value)
+                            } else {
+                                Text(value, format: .percent.precision(.fractionLength(0...2))).tag(value)
+                            }
+                        }
                     }
                 }
             }
@@ -97,13 +102,19 @@ struct DanmakuSettingsView: View {
                 if highlightStorage.enabled {
                     Toggle("隐藏控制面板时显示", isOn: highlightStorage.$fullScreen)
                     Picker("统计跨度", selection: highlightStorage.$window) {
-                        ForEach([5, 10, 15, 30, 60, 120], id: \.self) { Text("\($0) 秒").tag($0) }
+                        ForEach([5, 10, 15, 30, 60, 120].includingSelection(highlightStorage.window), id: \.self) {
+                            Text("\($0) 秒").tag($0)
+                        }
                     }
                     Picker("展示时间", selection: highlightStorage.$displayTime) {
-                        ForEach([3, 5, 10, 15, 30, 60], id: \.self) { Text("\($0) 秒").tag($0) }
+                        ForEach([3, 5, 10, 15, 30, 60].includingSelection(highlightStorage.displayTime), id: \.self) {
+                            Text("\($0) 秒").tag($0)
+                        }
                     }
                     Picker("起显次数", selection: highlightStorage.$minimumCount) {
-                        ForEach([2, 3, 5, 8, 10, 20], id: \.self) { Text("\($0) 次").tag($0) }
+                        ForEach([2, 3, 5, 8, 10, 20].includingSelection(highlightStorage.minimumCount), id: \.self) {
+                            Text("\($0) 次").tag($0)
+                        }
                     }
                 }
             }
@@ -114,13 +125,14 @@ struct DanmakuSettingsView: View {
                 }
                 if filtering.mode != .off {
                     Picker("过滤窗口", selection: filtering.$window) {
-                        ForEach(filtering.mode == .allSenders ? [5, 10, 20, 30, 50, 100] : [1, 5, 10, 20, 30, 50, 100], id: \.self) {
+                        let presets = filtering.mode == .allSenders ? [5, 10, 20, 30, 50, 100] : [1, 5, 10, 20, 30, 50, 100]
+                        ForEach(presets.includingSelection(filtering.window), id: \.self) {
                             Text("\($0) 条").tag($0)
                         }
                     }
                     if filtering.mode == .sameSender {
                         Picker("过滤步长", selection: filtering.$step) {
-                            ForEach([1, 2, 3, 5], id: \.self) { Text("\($0)").tag($0) }
+                            ForEach([1, 2, 3, 5].includingSelection(filtering.step), id: \.self) { Text("\($0)").tag($0) }
                         }
                     }
                 }

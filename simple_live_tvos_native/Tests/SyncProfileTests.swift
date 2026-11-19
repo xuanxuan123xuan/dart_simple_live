@@ -98,4 +98,17 @@ final class SyncProfileTests: XCTestCase {
         XCTAssertTrue(fallback.mergeOnly.contains(.follows))
         XCTAssertThrowsError(try SyncProfile(payload: ["schema": "simple_live_profile", "schemaVersion": 5]))
     }
+
+    func testSyncedSettingsOutsidePresetsHaveMatchingChoices() throws {
+        let values = try SyncPreferences.nativeValues([
+            "DanmuArea": 0.8, "FollowPageSize": 60,
+            "AutoUpdateFollowEnable": true, "AutoUpdateFollowDuration": 7,
+        ])
+        let area = try XCTUnwrap(values["simple_live_tvos.danmaku.area"] as? Double)
+        let pageSize = try XCTUnwrap(values[FavoritePreferences.pageSize] as? Int)
+        let refresh = try XCTUnwrap(values[FavoritePreferences.refreshMinutes] as? Int)
+        XCTAssertEqual([0.25, 0.5, 0.75, 1].includingSelection(area), [0.25, 0.5, 0.75, 0.8, 1])
+        XCTAssertEqual([12, 24, 48, 100, 200, 400].includingSelection(pageSize), [12, 24, 48, 60, 100, 200, 400])
+        XCTAssertEqual([0, 5, 10, 15, 30, 60].includingSelection(refresh), [0, 5, 7, 10, 15, 30, 60])
+    }
 }

@@ -246,7 +246,7 @@ struct FavoriteSettingsView: View {
                     ForEach(FavoriteLayout.allCases) { Text($0.title).tag($0) }
                 }
                 Picker("每页数量", selection: $pageSize) {
-                    ForEach([12, 24, 48, 100, 200, 400], id: \.self) { Text("\($0) 个").tag($0) }
+                    ForEach([12, 24, 48, 100, 200, 400].includingSelection(pageSize), id: \.self) { Text("\($0) 个").tag($0) }
                 }
                 Toggle("只显示开播关注", isOn: $onlyLive)
                 Toggle("显示直播封面", isOn: $showLiveCover)
@@ -254,8 +254,9 @@ struct FavoriteSettingsView: View {
             Section("状态刷新") {
                 Toggle("进入关注页时刷新", isOn: $refreshOnEnter)
                 Picker("定时刷新", selection: $refreshMinutes) {
-                    Text("关闭").tag(0)
-                    ForEach([5, 10, 15, 30, 60], id: \.self) { Text("每 \($0) 分钟").tag($0) }
+                    ForEach([0, 5, 10, 15, 30, 60].includingSelection(refreshMinutes), id: \.self) { minutes in
+                        Text(minutes == 0 ? "关闭" : "每 \(minutes) 分钟").tag(minutes)
+                    }
                 }
             }
         }
