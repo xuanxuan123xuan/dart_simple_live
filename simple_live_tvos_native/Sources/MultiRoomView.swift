@@ -129,12 +129,19 @@ struct MultiRoomView: View {
                 Button {
                     group.select(key)
                     showControls()
+                    if group.expandedKey == key { focus = .expand }
                 } label: {
                     Color.clear.contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
                 .focused($focus, equals: .tile(key))
+                .onMoveCommand(perform: group.expandedKey == key ? { direction in
+                    if direction == .down {
+                        showControls()
+                        focus = .expand
+                    }
+                } : nil)
                 .accessibilityLabel(session.room.title)
                 .accessibilityValue(session.playbackStatus)
                 .accessibilityIdentifier("multi-room-tile-\(key)")
@@ -167,18 +174,23 @@ struct MultiRoomView: View {
                     showControls()
                 }
                 .disabled(session.playbackIssue != nil)
+                .focused($focus, equals: .playPause)
                 .accessibilityIdentifier("multi-room-play-pause")
                 Button(group.expandedKey == nil ? "放大此路" : "恢复多屏") {
                     group.toggleExpanded(session.room.key)
-                    focusSelected()
+                    showControls()
+                    focus = .expand
                 }
+                .focused($focus, equals: .expand)
                 .accessibilityIdentifier("multi-room-expand")
                 Button("本路控制") { sheet = .room }
                     .focused($focus, equals: .roomControls)
                     .accessibilityIdentifier("multi-room-pane-controls")
                 Button("整组控制") { sheet = .group }
+                    .focused($focus, equals: .groupControls)
                     .accessibilityIdentifier("multi-room-group-controls")
                 Button("管理房间") { sheet = .rooms }
+                    .focused($focus, equals: .manageRooms)
                     .accessibilityIdentifier("multi-room-edit")
             }
         }
@@ -258,7 +270,7 @@ struct MultiRoomView: View {
     }
 
     private enum Focus: Hashable {
-        case tile(String), roomControls
+        case tile(String), playPause, expand, roomControls, groupControls, manageRooms
     }
 }
 
@@ -308,6 +320,7 @@ private struct MultiRoomPaneControls: View {
                     Button("降低") { engine.setVolume(engine.volume - 10) }.disabled(engine.volume == 0)
                     Button("提高") { engine.setVolume(engine.volume + 10) }.disabled(engine.volume == 100)
                 }
+                .buttonStyle(.bordered)
                 Toggle("本路弹幕", isOn: Binding(get: { session.danmakuOverride == true },
                                                set: { session.danmakuOverride = $0 }))
                 if let message = session.danmakuError {
@@ -331,13 +344,17 @@ private struct MultiRoomControlPanel<Controls: View>: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            HStack {
+            HStack(spacing: 20) {
+                Button("关闭") { dismiss() }
                 Text(title).font(.title.bold()).lineLimit(1).accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button("关闭") { dismiss() }
             }
+            .focusSection()
             List { controls }
+                .pickerStyle(.menu)
+                .focusSection()
         }
         .padding(32)
+        .frame(width: 1060, height: 800)
     }
 }

@@ -87,6 +87,7 @@ struct MultiRoomPickerView: View {
             if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
         }
         .padding(30)
+        .frame(minWidth: 1180, minHeight: 720)
         .defaultFocus($focusedSource, source)
         .task(id: query) {
             guard let query else { return }
