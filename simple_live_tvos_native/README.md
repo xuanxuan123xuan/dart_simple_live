@@ -49,6 +49,8 @@ tool/build_tvos_native.sh -destination 'id=<Apple TV 模拟器 UDID>' \
   -only-testing:SimpleLiveTVOSTests/AccountImportTests test
 ```
 
+账号设置页的导航目标为 `AccountSettingsView()`，沿用应用的 `NativeCoreClient` 环境对象。可用遥控器进入抖音账号，录入 `ttwid=tv16-fixture`，确认显示「已配置」。终止应用后重新打开，应恢复该状态。清除 Cookie 并确认退出后，再次打开应显示「未配置」。B 站和斗鱼的联机二维码测试可按上文启用 `SIMPLELIVE_LIVE_SMOKE=1`，并只运行 `ProviderSmokeTests` 的 `testBilibiliQRChallenge` 和 `testDouyuQRChallenge`。
+
 ## 当前范围
 
 - B 站与斗鱼提供电视端扫码。二维码生成和等待确认已经过测试，完整登录后重启恢复需要在对应平台 App 扫码验收。

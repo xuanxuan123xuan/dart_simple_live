@@ -1,8 +1,9 @@
 import Foundation
 
 enum AccountSlot: String, CaseIterable, Identifiable, Sendable {
-    case bilibili, douyu, douyin, kuaishou, xiaohongshu
+    case bilibili, douyu, douyin, kuaishou
     case kuaishouSecondary = "kuaishou.secondary"
+    case xiaohongshu
 
     var id: String { rawValue }
 
