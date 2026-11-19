@@ -12,6 +12,8 @@ struct HistoryView: View {
             HStack {
                 Text("观看历史").font(.system(size: 42, weight: .bold)).accessibilityAddTraits(.isHeader)
                 Spacer()
+                NavigationLink("导入历史", value: HomeRoute.sync(.histories))
+                    .accessibilityIdentifier("history-import")
                 Button(manage ? "完成管理" : "管理") { manage.toggle() }
                     .disabled(library.historyEntries.isEmpty)
                 Button("清空记录", role: .destructive) { confirmClear = true }

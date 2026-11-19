@@ -42,6 +42,8 @@ struct HomeView: View {
                     OpenRoomView(provider: provider) { path = [.room($0)] }
                 case let .room(room, rooms):
                     ChannelPlayerView(room: room, rooms: rooms, openMultiRoom: openMultiRoom)
+                case let .sync(category):
+                    SyncView(category: category)
                 case .selectMultiRoom:
                     MultiRoomPickerView { rooms in
                         guard path.last == .selectMultiRoom else { return }
@@ -92,6 +94,12 @@ struct HomeView: View {
                 .accessibilityIdentifier("live-categories")
                 dashboardShortcut("搜索直播", icon: "magnifyingglass") { section = .search }
                 dashboardShortcut("观看历史", icon: "clock") { section = .history }
+                NavigationLink(value: HomeRoute.sync(nil)) {
+                    HomePill(quiet: false) { Label("数据同步", systemImage: "arrow.triangle.2.circlepath") }
+                }
+                .buttonStyle(HomeButtonStyle())
+                .focusEffectDisabled()
+                .accessibilityIdentifier("home-data-sync")
                 NavigationLink(value: HomeRoute.selectMultiRoom) {
                     HomePill(quiet: false) { Label("多屏观看", systemImage: "rectangle.split.2x2") }
                 }
@@ -234,6 +242,7 @@ enum HomeRoute: Hashable {
     case categoryRooms(String, CategoryDescriptor?)
     case openRoom(String)
     case room(RoomDescriptor, queue: [RoomDescriptor] = [])
+    case sync(SyncCategory?)
     case selectMultiRoom
     case multiRoom([RoomDescriptor], seed: RoomPlaybackHandoff?)
     case singleFromMulti(RoomPlaybackHandoff, queue: [RoomDescriptor])
