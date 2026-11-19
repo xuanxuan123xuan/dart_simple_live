@@ -73,6 +73,7 @@
 | 2026-11-19 | TV-08、TV-17、TV-18、TV-19 | 进行中 | 用 Dart 生成新版配置包、旧历史文件和旧式配置样例。共用导入流程支持关注、观看时间、屏蔽词及账号凭据解析，选定类别可合并或经确认后覆盖，分块按发送顺序收齐才交付。隔离运行 `swift test --disable-sandbox --package-path /private/tmp/sl-sync-package`，8 项通过，覆盖未选类别、未确认覆盖、非法数据、账号提交失败、缺块及超时。待接同步入口、TV-16 接口及传输验收。 |
 | 2026-11-19 | TV-12 | 进行中 | 虎牙弹幕接入官方默认和动漫等词库，按官方映射优先、Twemoji 兜底的顺序解析，未收录的标签保留文字。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/ProviderParsingTests CODE_SIGN_IDENTITY=-` 12 项通过，包含 Tars 消息与两个图片 CDN；`curl` 检查两处官方样图均为 HTTP 200 PNG，词库生成检查与 `git diff --check` 通过。 |
 | 2026-11-19 | TV-12 | 进行中 | 快手弹幕接入移动端及网页内置词库，支持繁简别名和大小写别名。保留闭合的未知标签，按 Dart 的 UTF-16 长度规则清除短的未闭合尾片及残留替换字符，清理后为空的消息丢弃。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/ProviderParsingTests CODE_SIGN_IDENTITY=-` 14 项通过；`curl` 获取 WebP 和 PNG 样图均为 HTTP 200，词库生成检查与 `git diff --check` 通过。 |
+| 2026-11-19 | TV-07 | 待验收 | 离线：完整工程 `xcodebuild test-without-building -skip-testing:SimpleLiveTVOSTests/ProviderSmokeTests` 36 项通过，其中迁移测试保留旧版 205 个去重房间及特别关注，刷新测试区分下播与故障并覆盖刷新时移除。模拟器：临时固定数据工程 `xcodebuild test -only-testing:RemoteAcceptance/RemoteAcceptanceTests/testTV07FavoriteStatesFiltersPagingAndReturn` 通过，遥控完成刷新全部／本页、翻页、筛选、进房和返回原卡片。真实平台：macOS 探针使用原生适配器查到 B 站、虎牙及快手开播／未开播样本；真实账号关注连续刷新未测，当前为游客会话。真机：无配对设备，待核验进页、定时刷新、布局切换和大列表遥控。 |
 
 ## 对照入口
 
