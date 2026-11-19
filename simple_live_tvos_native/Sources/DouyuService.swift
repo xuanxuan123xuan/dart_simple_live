@@ -66,10 +66,12 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
             guard Int(category.categoryId) != nil else { throw LiveProviderError.invalidResponse }
             path = "/gapi/rkc/directory/mixList/2_\(category.categoryId)/\(page)"
         } else {
-            path = "/japi/weblist/apinc/allpage/6/\(page)"
+            path = "/gapi/rkc/directory/mixList/0_0/\(page)"
         }
-        let data = try Self.payload(await http.json(Self.web + path, headers: headers()))
-        guard let pages = data.integer("pgcnt") else { throw LiveProviderError.invalidResponse }
+        let response = try await http.json(Self.web + path, headers: headers())
+        let data = response["data"]
+        guard response.integer("code") == 0, data.fields["rl"] is [Any],
+              let pages = data.integer("pgcnt"), pages >= 0 else { throw LiveProviderError.invalidResponse }
         return RoomPage(rooms: data.objects("rl").filter { $0.integer("type") == 1 }
             .compactMap { Self.room($0, title: "rn", cover: "rs16", name: "nn") }, hasMore: page < pages)
     }
