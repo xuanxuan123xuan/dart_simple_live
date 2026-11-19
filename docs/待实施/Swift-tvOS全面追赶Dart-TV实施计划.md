@@ -68,6 +68,7 @@
 | 2026-11-19 | TV-13 | 进行中 | 沿用选房草稿，修复预选房间的去重与上限，接入关注、历史、分页搜索及公共链接解析。切换来源时取消过期请求，支持搜索分页重试。Apple TV 模拟器 `xcodebuild -only-testing:SimpleLiveTVOSTests/MultiRoomSelectionTests test` 2 项通过，`git diff --check` 通过。待接入三个入口和多屏观看。 |
 | 2026-11-19 | TV-12 | 进行中 | 斗鱼弹幕接入官方词库和通用 Twemoji，保留未知标签与原始文字顺序。共用图片渲染在下载失败时保留完整表情标签，关闭图片表情后以纯文字绘制。Apple TV 4K 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/ProviderParsingTests -only-testing:SimpleLiveTVOSTests/DanmakuOverlayTests CODE_SIGN_IDENTITY=-` 共 18 项通过；`python3 tool/generate_tvos_danmaku_emoji.py --check` 和 `git diff --check` 通过。 |
 | 2026-11-19 | TV-03 | 待验收 | 修复斗鱼热门首屏误报末页，改用有可信 `pgcnt` 的公开目录；校验目录回包格式，保留重试入口。离线：`xcodebuild test -skip-testing:SimpleLiveTVOSTests/ProviderSmokeTests` 的 36 项通过，其中分页测试覆盖同页重试、去重、末页和乱序平台切换。模拟器：Apple TV 4K（tvOS 26.5）遥控专项另行记录。真实平台：用 macOS 上编译的原生适配器探针验证 B 站、虎牙、斗鱼和抖音首两页；快手为单页。`curl` 验证斗鱼新接口样本共 42 页，末页返回 49 条。真机：`xcrun devicectl list devices` 无配对设备，待复验焦点、返回和真实断网重试。 |
+| 2026-11-19 | TV-04 | 待验收 | 修复斗鱼类目目录对成功响应的识别，并校验父子类目数组。离线：`ProviderParsingTests.testDouyinCategoryTreePreservesThreeLevelsAndParentKeys` 通过。模拟器：三层目录、「全部」、重试及逐层返回的遥控专项另行记录。真实平台：macOS 原生适配器探针获得五个平台目录和所选类目的前两页。斗鱼修复后取到 10 个根类目，实例在第二页结束。真机：`xcrun devicectl list devices` 无配对设备，待复验长列表滚动、焦点及逐级返回。 |
 
 ## 对照入口
 

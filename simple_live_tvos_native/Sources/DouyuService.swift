@@ -19,7 +19,10 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
     }
 
     func categories() async throws -> [CategoryDescriptor] {
-        let data = try Self.payload(await http.json("https://m.douyu.com/api/cate/list"))
+        let response = try await http.json("https://m.douyu.com/api/cate/list")
+        let data = response["data"]
+        guard response.integer("code") == 0, data.fields["cate1Info"] is [Any],
+              data.fields["cate2Info"] is [Any] else { throw LiveProviderError.invalidResponse }
         let children = data.objects("cate2Info").compactMap { item -> CategoryDescriptor? in
             let id = item.text("cate2Id")
             let name = item.text("cate2Name")
