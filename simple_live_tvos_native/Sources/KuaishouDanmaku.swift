@@ -26,7 +26,7 @@ enum KuaishouDanmaku {
         return socketFrame(type: 1, content: payload.data)
     }
 
-    static func decode(_ bytes: Data, roomID: String) throws -> [DanmakuEvent] {
+    static func decode(_ bytes: Data, roomID: String, emojiPanel: [String: String] = [:]) throws -> [DanmakuEvent] {
         let frame = try ProtoMessage(bytes)
         let kind = frame.number(1)
         if kind == 103 { throw LiveProviderError.authenticationRequired }
@@ -49,7 +49,7 @@ enum KuaishouDanmaku {
             return DanmakuEvent(id: UUID().uuidString, room: RoomKey(provider: .kuaishou, roomId: roomID),
                                 userName: author, message: text,
                                 color: DanmakuColor(red: (color >> 16) & 255, green: (color >> 8) & 255, blue: color & 255),
-                                spans: DanmakuEmoji.kuaishou(text))
+                                spans: DanmakuEmoji.kuaishou(text, panel: emojiPanel))
         }
     }
 

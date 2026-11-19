@@ -17,7 +17,7 @@ enum DanmakuEmoji {
         }
     }
 
-    static func kuaishou(_ message: String) -> [DanmakuSpan] {
+    static func kuaishou(_ message: String, panel: [String: String]) -> [DanmakuSpan] {
         spans(in: message, matching: kuaishouToken) { token in
             var candidates = [token]
             let lowercase = token.lowercased()
@@ -30,12 +30,18 @@ enum DanmakuEmoji {
                 index += 1
             }
             for candidate in candidates {
-                if let url = KuaishouDanmakuEmojiAssets.mobile[candidate] ?? KuaishouDanmakuEmojiAssets.web[candidate] {
+                if let url = panel[candidate] ?? KuaishouDanmakuEmojiAssets.mobile[candidate]
+                    ?? KuaishouDanmakuEmojiAssets.web[candidate] {
                     return url
                 }
             }
             return nil
         }
+    }
+
+    static func isKuaishouToken(_ value: String) -> Bool {
+        let range = NSRange(location: 0, length: value.utf16.count)
+        return kuaishouToken.firstMatch(in: value, range: range)?.range == range
     }
 
     static func kuaishouText(_ message: String) -> String {
@@ -85,11 +91,21 @@ enum DanmakuStickerURL {
     }
 
     static func bilibili(_ string: String) -> URL? {
+        guard let url = httpsURL(string), let host = secureHost(url), isBilibili(host) else { return nil }
+        return url
+    }
+
+    static func kuaishou(_ string: String) -> URL? {
+        guard let url = httpsURL(string), let host = secureHost(url), kuaishouHosts.contains(host),
+              url.path.hasPrefix("/bs2/emotion/") || url.path.hasPrefix("/kimg/bs2/emotion/") else { return nil }
+        return url
+    }
+
+    private static func httpsURL(_ string: String) -> URL? {
         let value = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var parts = URLComponents(string: value.hasPrefix("//") ? "https:" + value : value) else { return nil }
         if parts.scheme == "http" { parts.scheme = "https" }
-        guard let url = parts.url, let host = secureHost(url), isBilibili(host) else { return nil }
-        return url
+        return parts.url
     }
 
     private static func secureHost(_ url: URL) -> String? {

@@ -9,16 +9,8 @@ final class DanmakuStickerLoader {
     private let cache = NSCache<NSURL, UIImage>()
     private var inFlight: [URL: Task<UIImage?, Never>] = [:]
     private var failures: [URL: TimeInterval] = [:]
-    private let client: URLSession
-    private let redirectGuard = StickerRedirectGuard()
 
     private init() {
-        let settings = URLSessionConfiguration.ephemeral
-        settings.httpShouldSetCookies = false
-        settings.httpCookieStorage = nil
-        settings.timeoutIntervalForRequest = 4
-        settings.timeoutIntervalForResource = 6
-        client = URLSession(configuration: settings)
         cache.totalCostLimit = 8 * 1024 * 1024
         cache.countLimit = 128
     }
@@ -30,8 +22,8 @@ final class DanmakuStickerLoader {
         let now = ProcessInfo.processInfo.systemUptime
         if let lastFailure = failures[url], now - lastFailure < 60 { return nil }
         guard inFlight.count < 4 else { return nil }
-        let task = Task { [client, redirectGuard] in
-            try? await Self.fetch(url, client: client, delegate: redirectGuard)
+        let task = Task {
+            try? await Self.fetch(url)
         }
         inFlight[url] = task
         let result = await task.value
@@ -45,17 +37,9 @@ final class DanmakuStickerLoader {
         return result
     }
 
-    nonisolated private static func fetch(_ url: URL, client: URLSession, delegate: StickerRedirectGuard) async throws -> UIImage? {
-        let (bytes, response) = try await client.bytes(for: URLRequest(url: url), delegate: delegate)
-        let limit = 256 * 1024
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200,
-              response.mimeType?.hasPrefix("image/") == true, response.expectedContentLength <= limit else { return nil }
-        var data = Data()
-        for try await byte in bytes {
-            guard data.count < limit else { return nil }
-            data.append(byte)
-        }
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+    nonisolated private static func fetch(_ url: URL) async throws -> UIImage? {
+        guard let data = try await DanmakuAssetRequest.data(from: url, limit: 256 * 1024, mimeTypePrefix: "image/"),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
@@ -65,7 +49,31 @@ final class DanmakuStickerLoader {
     }
 }
 
-private final class StickerRedirectGuard: NSObject, URLSessionTaskDelegate {
+enum DanmakuAssetRequest {
+    private static let redirectGuard = DanmakuAssetRedirectGuard()
+    private static let client: URLSession = {
+        let settings = URLSessionConfiguration.ephemeral
+        settings.httpShouldSetCookies = false
+        settings.httpCookieStorage = nil
+        settings.timeoutIntervalForRequest = 4
+        settings.timeoutIntervalForResource = 6
+        return URLSession(configuration: settings)
+    }()
+
+    static func data(from url: URL, limit: Int, mimeTypePrefix: String) async throws -> Data? {
+        let (bytes, response) = try await client.bytes(for: URLRequest(url: url), delegate: redirectGuard)
+        guard let response = response as? HTTPURLResponse, response.statusCode == 200,
+              response.mimeType?.hasPrefix(mimeTypePrefix) == true, response.expectedContentLength <= limit else { return nil }
+        var data = Data()
+        for try await byte in bytes {
+            guard data.count < limit else { return nil }
+            data.append(byte)
+        }
+        return data
+    }
+}
+
+private final class DanmakuAssetRedirectGuard: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)

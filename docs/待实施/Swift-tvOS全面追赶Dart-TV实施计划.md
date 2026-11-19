@@ -77,6 +77,7 @@
 | 2026-11-19 | TV-02 / TV-13 | 进行中／待验收 | 首页、关注和房内均接入选房；房内预选当前房间，确认后进入多屏。Apple TV 模拟器 `build-for-testing` 及先前 2 项 `MultiRoomSelectionTests` 通过，待遥控焦点、入口返回和真实搜索／链接验收。首页同步仍由对应项目接线。 |
 | 2026-11-19 | TV-14 / TV-15 | 待验收／进行中 | 单屏与多屏共用播放、恢复和弹幕会话；新增均分、主次、单格放大、房间增删、转单路及每路和整组控制。保留原生播放参数草稿并接入会话。Apple TV 模拟器 `xcodebuild test -only-testing:SimpleLiveTVOSTests/MultiRoomGroupTests -only-testing:SimpleLiveTVOSTests/PlaybackTuningTests` 6 项通过、网络媒体测试默认跳过，`git diff --check` 通过。待实播、遥控和设置首页接线。 |
 | 2026-11-19 | TV-20 | 完成 | 独立 `AboutUpdateView()` 从应用 Bundle 显示版本与构建号，手动查询稳定发布，展示加载、无版本、失败重试、新旧版本与发布页二维码。设置首页入口由多屏与播放整合。完整原生工程 `xcodebuild build-for-testing` 通过，`xcodebuild test -only-testing:SimpleLiveTVOSTests/TVOSReleaseServiceTests` 5 项通过。Apple TV 4K（tvOS 26.5）临时设置页 `xcodebuild -scheme TV20QA test-without-building` 1 项通过，覆盖版本与构建号、加载、失败重试、较新／相同／较旧版本、无稳定版本以及遥控返回焦点。`xcrun simctl io <UDID> screenshot` 截取电视输出，jsQR 解码为样本版本的完整 GitHub 发布页。原生服务实连 GitHub Releases API，限流恢复后 HTTP 200 并确认当前暂无稳定 tvOS Release。`xcrun devicectl list devices` 未发现配对真机，扫码验收使用模拟器截图。`git diff --check` 通过。 |
+| 2026-11-19 | TV-12 | 进行中 | 快手匿名刷新公开表情面板，刷新结果优先于移动端和网页内置词库，失败时继续使用内置表。复用无 Cookie、有超时和大小限制且拒绝重定向的下载器。Apple TV 4K（tvOS 26.5）`xcodebuild test -skip-testing:SimpleLiveTVOSTests/ProviderSmokeTests CODE_SIGN_IDENTITY=-` 离线 72 项通过，1 项多屏实播用例按条件跳过。临时 `TV12LiveProbe` 通过，实际下载并解码斗鱼、虎牙、快手与 Twemoji 样图，验证无效图片返回失败，以及匿名面板返回 207 项。词库生成检查与 `git diff --check` 通过。剩余交付为抖音富文本和内置词库表情。`xcrun devicectl list devices` 无配对设备，待 Apple TV 真机在 B 站、斗鱼、虎牙、快手直播间复验图文顺序、未知标签、快手尾片、图片失败回退及遥控开关重启后持久化，并复验样式切换、去重、普通／正则屏蔽和重点动态。 |
 
 ## 对照入口
 

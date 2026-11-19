@@ -193,11 +193,13 @@ actor KuaishouService: LiveProviderService, DanmakuService {
         var request = URLRequest(url: url)
         request.allHTTPHeaderFields = Self.headers
         request.setValue(Self.origin, forHTTPHeaderField: "Origin")
+        let emojiPanel = KuaishouEmojiPanel.shared
+        emojiPanel.refreshIfNeeded()
         return DanmakuConnection(request: request,
             initialFrames: [KuaishouDanmaku.join(token: token, stream: stream, expTag: live.text("expTag"), attach: room.text("expTag"))],
             heartbeatInterval: .seconds(20), heartbeat: KuaishouDanmaku.heartbeat
         ) { bytes in
-            (try KuaishouDanmaku.decode(bytes, roomID: id), nil)
+            (try KuaishouDanmaku.decode(bytes, roomID: id, emojiPanel: emojiPanel.urls), nil)
         }
     }
 

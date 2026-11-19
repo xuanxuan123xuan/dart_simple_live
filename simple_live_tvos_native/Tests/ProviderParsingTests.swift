@@ -186,6 +186,32 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertTrue(events.allSatisfy { $0.spans == [.text($0.message)] })
     }
 
+    func testKuaishouPanelOverridesBuiltInEmojiAndRejectsOtherURLs() throws {
+        let payload = Data("""
+        {"data":{
+            "[奸笑]":"//ali2.a.yximgs.com/bs2/emotion/current.png",
+            "[新增]":"http://bd.a.yximgs.com/bs2/emotion/new.png",
+            "[未来表情]":"https://ali2.a.yximgs.com.example.org/bs2/emotion/bad.png",
+            "[点赞]":"https://i0.hdslb.com/bs2/emotion/unrelated.png",
+            "[端口]":"https://ali2.a.yximgs.com:8080/bs2/emotion/bad.png",
+            "普通文字":"https://ali2.a.yximgs.com/bs2/emotion/current.png"
+        }}
+        """.utf8)
+        let panel = try KuaishouEmojiPanel.decode(payload)
+        XCTAssertEqual(panel, ["[奸笑]": "https://ali2.a.yximgs.com/bs2/emotion/current.png",
+                               "[新增]": "https://bd.a.yximgs.com/bs2/emotion/new.png"])
+        let frame = kuaishouFrame([Data("[奸笑][新增][未来表情][點讚]".utf8)])
+        let event = try XCTUnwrap(KuaishouDanmaku.decode(frame, roomID: "123", emojiPanel: panel).first)
+        let current = try XCTUnwrap(URL(string: "https://ali2.a.yximgs.com/bs2/emotion/current.png"))
+        let new = try XCTUnwrap(URL(string: "https://bd.a.yximgs.com/bs2/emotion/new.png"))
+        XCTAssertEqual(Array(event.spans.prefix(3)), [.image(url: current, fallbackText: "[奸笑]"),
+                                                       .image(url: new, fallbackText: "[新增]"), .text("[未来表情]")])
+        let offline = try XCTUnwrap(KuaishouDanmaku.decode(frame, roomID: "123").first)
+        XCTAssertEqual(event.spans.last, offline.spans.last)
+        XCTAssertEqual(Array(offline.spans.dropFirst().prefix(1)), [.text("[新增][未来表情]")])
+        XCTAssertTrue(try KuaishouEmojiPanel.decode(Data(#"{"data":[]}"#.utf8)).isEmpty)
+    }
+
     private func kuaishouFrame(_ messages: [Data]) -> Data {
         var payload = ProtoWriter()
         for message in messages {
