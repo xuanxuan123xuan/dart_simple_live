@@ -6,7 +6,6 @@ struct PlayerView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
     @AppStorage(MultiRoomPreferences.globalDanmakuKey) private var danmakuEnabled = true
-    @AppStorage(PlaybackPreferences.aspect) private var aspect = PlaybackAspect.fit
 
     let room: RoomDescriptor
     let queue: ChannelQueue
@@ -51,7 +50,7 @@ struct PlayerView: View {
 
     var body: some View {
         ZStack {
-            RoomVideoView(engine: engine, aspect: aspect).ignoresSafeArea()
+            RoomVideoView(engine: engine).ignoresSafeArea()
             if !controlsVisible && playbackIssue == nil && !sleepExpired {
                 Button(action: showControls) {
                     Color.clear

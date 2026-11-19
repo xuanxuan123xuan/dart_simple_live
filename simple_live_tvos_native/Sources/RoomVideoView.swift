@@ -2,8 +2,9 @@ import AVFoundation
 import SwiftUI
 
 struct RoomVideoView: View {
+    @AppStorage(PlaybackPreferences.aspect) private var aspect = PlaybackAspect.fit
+
     let engine: PlaybackEngine
-    var aspect = PlaybackAspect.fit
 
     var body: some View {
         ZStack {
