@@ -2,13 +2,6 @@ name: SimpleLive tvOS core tests
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - dev
-    paths:
-      - 'simple_live_tvos_core/**'
-      - 'tool/run_tvos_core_tests.sh'
-      - '.github/workflows/tvos-core-tests.yml'
 
 permissions:
   contents: read
