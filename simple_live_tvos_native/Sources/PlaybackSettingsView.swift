@@ -99,7 +99,7 @@ struct PlaybackSettingsView: View {
 
     var body: some View {
         List {
-            Section("默认播放") {
+            Section {
                 Picker("画面比例", selection: $aspect) {
                     ForEach(PlaybackAspect.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
@@ -112,14 +112,20 @@ struct PlaybackSettingsView: View {
                 }
                 Toggle("网络波动时自动降低清晰度", isOn: $autoQuality)
                 NavigationLink("频道轮播") { ChannelRotationSettingsView() }
+            } header: {
+                Text("默认播放")
+            } footer: {
+                Text("画面比例也应用于多屏。默认清晰度和初始音量在打开新的直播间时生效，清晰度依据平台提供的档位选择。")
             }
-            Section("原生播放引擎") {
+            Section {
                 Toggle("KSPlayer 硬件解码", isOn: $hardwareDecode)
                 Picker("播放缓冲", selection: $buffering) {
                     ForEach(PlaybackBuffering.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                Text("缓冲与解码设置对下一次连接生效。AVPlayer 由系统决定解码方式。")
-                    .font(.caption).foregroundStyle(.secondary)
+            } header: {
+                Text("原生播放引擎")
+            } footer: {
+                Text("缓冲和解码在下次连接时生效。硬件解码开关仅控制 KSPlayer，AVPlayer 由系统决定解码方式。")
             }
             Button("恢复默认播放设置") {
                 autoQuality = true

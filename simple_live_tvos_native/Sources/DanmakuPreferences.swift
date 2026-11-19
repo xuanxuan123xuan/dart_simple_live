@@ -52,14 +52,14 @@ struct DanmakuStyleStorage: DynamicProperty {
 }
 
 struct DanmakuSettingsView: View {
-    @AppStorage("simple_live_tvos.danmaku") private var enabled = true
+    @AppStorage(MultiRoomPreferences.globalDanmakuKey) private var enabled = true
     private var storage = DanmakuStyleStorage()
     private var filtering = DanmakuFilterStorage()
     private var highlightStorage = DanmakuHighlightsStorage()
 
     var body: some View {
         List {
-            Section("显示") {
+            Section {
                 Toggle("显示直播弹幕", isOn: $enabled)
                 Toggle("显示图片表情", isOn: storage.$renderStickers)
                 Picker("弹幕大小", selection: storage.$fontSize) {
@@ -76,8 +76,12 @@ struct DanmakuSettingsView: View {
                 Picker("描边宽度", selection: storage.$outlineWidth) {
                     ForEach(Array(stride(from: 0, through: 16, by: 2)), id: \.self) { Text("\($0)").tag(Double($0)) }
                 }
+            } header: {
+                Text("显示")
+            } footer: {
+                Text("关闭直播弹幕会同时隐藏滚动弹幕和重点动态。多屏可单独设置是否开启弹幕，图片表情需平台提供。")
             }
-            Section("弹幕位置") {
+            Section {
                 Picker("范围模式", selection: storage.$layout) {
                     ForEach(DanmakuLayout.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
@@ -96,8 +100,12 @@ struct DanmakuSettingsView: View {
                         }
                     }
                 }
+            } header: {
+                Text("弹幕位置")
+            } footer: {
+                Text("弹幕从画面顶部排列。按行数设置的是上限，实际可显示的行数取决于画面高度和弹幕大小。")
             }
-            Section("重点动态") {
+            Section {
                 Toggle("显示重点动态", isOn: highlightStorage.$enabled)
                 if highlightStorage.enabled {
                     Toggle("隐藏控制面板时显示", isOn: highlightStorage.$fullScreen)
@@ -117,8 +125,12 @@ struct DanmakuSettingsView: View {
                         }
                     }
                 }
+            } header: {
+                Text("重点动态")
+            } footer: {
+                Text("重点动态会汇总通过过滤的重复弹幕。关闭「隐藏控制面板时显示」后，汇总只在控制面板打开时出现。")
             }
-            Section("过滤") {
+            Section {
                 NavigationLink("屏蔽词") { BlockedDanmakuWordsView() }
                 Picker("重复过滤模式", selection: filtering.$mode) {
                     ForEach(DanmakuDedupeMode.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -136,6 +148,10 @@ struct DanmakuSettingsView: View {
                         }
                     }
                 }
+            } header: {
+                Text("过滤")
+            } footer: {
+                Text("过滤窗口决定向前比较多少条弹幕。同一用户模式下，过滤步长决定每处理几条弹幕清理一次记录。")
             }
         }
         .onChange(of: filtering.mode) { _, mode in

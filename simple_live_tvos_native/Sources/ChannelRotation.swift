@@ -33,11 +33,15 @@ struct ChannelRotationSettingsView: View {
 
     var body: some View {
         List {
-            Section("自动换台") {
+            Section {
                 Toggle("直播结束时换台", isOn: $onLiveEnd)
                 Toggle("播放失败时换台", isOn: $onFailure)
                 Toggle("使用轮播列表", isOn: $playlistOnly)
                 Toggle("轮播随机换台", isOn: $random).disabled(!playlistOnly)
+            } header: {
+                Text("自动换台")
+            } footer: {
+                Text("单屏自动换台默认从关注中寻找正在开播的房间。使用轮播列表后，仅在下方列表中查找，可按顺序或随机切换。")
             }
             Section("轮播列表") {
                 if library.rotationRooms.isEmpty { Text("可从下方关注或房内设置添加主播").foregroundStyle(.secondary) }

@@ -241,7 +241,7 @@ struct FavoriteSettingsView: View {
 
     var body: some View {
         List {
-            Section("关注列表") {
+            Section {
                 Picker("布局", selection: $layout) {
                     ForEach(FavoriteLayout.allCases) { Text($0.title).tag($0) }
                 }
@@ -250,14 +250,22 @@ struct FavoriteSettingsView: View {
                 }
                 Toggle("只显示开播关注", isOn: $onlyLive)
                 Toggle("显示直播封面", isOn: $showLiveCover)
+            } header: {
+                Text("关注列表")
+            } footer: {
+                Text("每页数量和开播筛选适用于完整「关注」页。直播封面会在默认或大卡片布局中显示，紧凑布局只显示文字。")
             }
-            Section("状态刷新") {
+            Section {
                 Toggle("进入关注页时刷新", isOn: $refreshOnEnter)
                 Picker("定时刷新", selection: $refreshMinutes) {
                     ForEach([0, 5, 10, 15, 30, 60].includingSelection(refreshMinutes), id: \.self) { minutes in
                         Text(minutes == 0 ? "关闭" : "每 \(minutes) 分钟").tag(minutes)
                     }
                 }
+            } header: {
+                Text("状态刷新")
+            } footer: {
+                Text("定时刷新在应用处于前台并显示首页或关注页时运行。开启开播筛选或直播封面时，关注页会主动查询开播状态。")
             }
         }
         .navigationTitle("关注设置")
