@@ -1,3 +1,4 @@
+import Foundation
 import SimpleLiveTVOSCore
 import SwiftUI
 
@@ -20,6 +21,39 @@ struct DanmakuFilterConfiguration: Equatable {
     var blockedWords: [String] = []
 }
 
+private enum DanmakuBlockRule {
+    case literal(String)
+    case regex(NSRegularExpression)
+
+    init?(_ word: String) {
+        let scalars = word.unicodeScalars
+        if scalars.first == "/", scalars.last == "/", scalars.count > 2 {
+            let pattern = String(scalars.dropFirst().dropLast())
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
+            self = .regex(expression)
+        } else {
+            self = .literal(word)
+        }
+    }
+
+    func matches(raw: String, normalized: String) -> Bool {
+        switch self {
+        case let .literal(word):
+            return normalized.contains(word)
+        case let .regex(expression):
+            // Stop expensive patterns so the overlay can keep processing incoming messages.
+            let deadline = DispatchTime.now() + .milliseconds(5)
+            var matched = false
+            expression.enumerateMatches(in: raw, options: .reportProgress,
+                                        range: NSRange(location: 0, length: raw.utf16.count)) { result, _, stop in
+                if result != nil { matched = true }
+                if matched || DispatchTime.now() >= deadline { stop.pointee = true }
+            }
+            return matched
+        }
+    }
+}
+
 struct DanmakuFilter {
     private struct Fingerprint: Hashable {
         var sender: String?
@@ -27,16 +61,19 @@ struct DanmakuFilter {
     }
 
     private let configuration: DanmakuFilterConfiguration
+    private let blockedRules: [DanmakuBlockRule]
     private var recent: [Fingerprint] = []
     private var acceptedSincePrune = 0
 
     init(_ configuration: DanmakuFilterConfiguration = DanmakuFilterConfiguration()) {
         self.configuration = configuration
+        blockedRules = configuration.blockedWords.compactMap(DanmakuBlockRule.init)
     }
 
     mutating func allows(_ event: DanmakuEvent) -> Bool {
-        let text = Self.message(event)
-        guard !text.isEmpty, !configuration.blockedWords.contains(where: { text.contains($0) }) else { return false }
+        let raw = Self.content(event)
+        let text = Self.normalized(raw)
+        guard !text.isEmpty, !blockedRules.contains(where: { $0.matches(raw: raw, normalized: text) }) else { return false }
         guard configuration.mode != .off else { return true }
         let sender = configuration.mode == .sameSender ? event.userName : nil
         let key = Fingerprint(sender: sender, message: text)
@@ -53,14 +90,21 @@ struct DanmakuFilter {
     }
 
     static func message(_ event: DanmakuEvent) -> String {
-        let fallback = event.spans.map { span in
+        normalized(content(event))
+    }
+
+    private static func content(_ event: DanmakuEvent) -> String {
+        guard event.message.isEmpty else { return event.message }
+        return event.spans.map { span in
             switch span {
             case let .text(text): text
             case let .image(url, label): label ?? "[\(url.lastPathComponent)]"
             }
         }.joined()
-        let content = event.message.isEmpty ? fallback : event.message
-        return content.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    private static func normalized(_ content: String) -> String {
+        content.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
     }
 }
 
@@ -77,17 +121,26 @@ struct DanmakuFilterStorage: DynamicProperty {
 struct BlockedDanmakuWordsView: View {
     @EnvironmentObject private var library: LibraryStore
     @State private var input = ""
+    @State private var invalidPattern = false
+
+    private var trimmedInput: String { input.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         List {
-            Section("添加文字关键词") {
-                TextField("输入要屏蔽的文字", text: $input)
+            Section("添加屏蔽词") {
+                TextField("关键词或 /正则表达式/", text: $input)
                     .autocorrectionDisabled()
+                    .onChange(of: input) { _, _ in invalidPattern = false }
                 Button("添加", systemImage: "plus") {
-                    library.importBlockedWords([input])
+                    guard DanmakuBlockRule(trimmedInput) != nil else {
+                        invalidPattern = true
+                        return
+                    }
+                    library.importBlockedWords([trimmedInput])
                     input = ""
                 }
-                .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(trimmedInput.isEmpty)
+                if invalidPattern { Text("正则表达式格式有误").foregroundStyle(.red) }
             }
             Section("已屏蔽") {
                 if library.blockedWords.isEmpty { Text("暂无屏蔽词").foregroundStyle(.secondary) }

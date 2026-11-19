@@ -16,6 +16,27 @@ final class DanmakuFilterTests: XCTestCase {
         XCTAssertTrue(global.allows(event("同一句", from: "乙")))
     }
 
+    func testDartDelimitedRulesMatchRawTextAndPlainWordsStayLiteral() {
+        var filter = DanmakuFilter(.init(blockedWords: [#"/^广告\s{2}[0-9]+$/"#, "a.b", "//"]))
+        XCTAssertFalse(filter.allows(event("广告  123", from: "甲")))
+        XCTAssertTrue(filter.allows(event("广告 123", from: "甲")))
+        XCTAssertTrue(filter.allows(event("转发广告  123", from: "甲")))
+        XCTAssertTrue(filter.allows(event("axb", from: "甲")))
+        XCTAssertFalse(filter.allows(event("a.b", from: "甲")))
+        XCTAssertFalse(filter.allows(event("双斜线 //", from: "甲")))
+    }
+
+    @MainActor
+    func testStoredRegexRulesAreAppliedAndInvalidImportsAreIgnored() throws {
+        let suite = "blocked-regex-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        LibraryStore(defaults: defaults).importBlockedWords(["/广告[0-9]+/", "/[/"])
+        var filter = DanmakuFilter(.init(blockedWords: LibraryStore(defaults: defaults).blockedWords))
+        XCTAssertFalse(filter.allows(event("这是广告123", from: "甲")))
+        XCTAssertTrue(filter.allows(event("显示原样 /[/", from: "甲")))
+    }
+
     @MainActor
     func testEditableBlockedWordsArePersistedAndMergedWithoutDuplicates() throws {
         let suite = "blocked-words-tests-\(UUID().uuidString)"
