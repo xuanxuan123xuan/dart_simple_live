@@ -27,6 +27,7 @@ targets:
         buildPhase: resources
       - path: Resources/BrandAssets.xcassets
     settings:
+      ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
       INFOPLIST_FILE: Resources/Info.plist
     dependencies:
       - package: SimpleLiveTVOSCore
