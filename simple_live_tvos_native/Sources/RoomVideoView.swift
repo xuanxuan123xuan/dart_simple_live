@@ -33,6 +33,13 @@ struct RoomVideoView: View {
     }
 }
 
+struct PlaybackSurfaceButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        // The built-in plain style can draw Liquid Glass over the video when focused.
+        configuration.label
+    }
+}
+
 private extension PlaybackAspect {
     var videoGravity: AVLayerVideoGravity {
         switch self {

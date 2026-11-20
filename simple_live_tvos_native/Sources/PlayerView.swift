@@ -57,7 +57,7 @@ struct PlayerView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PlaybackSurfaceButtonStyle())
                 .focusEffectDisabled()
                 .focused($focusedControl, equals: .video)
                 .onMoveCommand { direction in

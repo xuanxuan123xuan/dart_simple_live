@@ -133,7 +133,7 @@ struct MultiRoomView: View {
                 } label: {
                     Color.clear.contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PlaybackSurfaceButtonStyle())
                 .focusEffectDisabled()
                 .focused($focus, equals: .tile(key))
                 .onMoveCommand(perform: group.expandedKey == key ? { direction in
