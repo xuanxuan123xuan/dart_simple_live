@@ -5,6 +5,7 @@ struct FavoriteEntry: Codable, Equatable, Identifiable {
     let room: RoomDescriptor
     var isPriority = false
     var id: String { room.key }
+    var displayName: String { room.userName.isEmpty ? room.title : room.userName }
 }
 
 struct HistoryEntry: Codable, Equatable, Identifiable {

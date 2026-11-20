@@ -37,6 +37,17 @@ final class FavoriteStatusStore: ObservableObject {
         snapshots[room.key]?.presence ?? .unknown
     }
 
+    func sortedEntries(_ entries: [FavoriteEntry]) -> [FavoriteEntry] {
+        entries.map { entry in
+            let name = entry.displayName
+            return (entry: entry, isLive: presence(for: entry.room) == .live,
+                    name: name.applyingTransform(.mandarinToLatin, reverse: false) ?? name)
+        }.sorted { lhs, rhs in
+            if lhs.isLive != rhs.isLive { return lhs.isLive }
+            return lhs.name.compare(rhs.name, options: [.caseInsensitive, .diacriticInsensitive, .numeric]) == .orderedAscending
+        }.map(\.entry)
+    }
+
     func refresh(_ rooms: [RoomDescriptor], fetch: @escaping @Sendable (RoomDescriptor) async throws -> RoomDescriptor) async {
         guard !rooms.isEmpty else { return }
         // A new view can request a refresh while the previous view's cancelled task is still finishing.

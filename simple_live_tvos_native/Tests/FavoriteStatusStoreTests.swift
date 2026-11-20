@@ -3,6 +3,21 @@ import XCTest
 
 final class FavoriteStatusStoreTests: XCTestCase {
     @MainActor
+    func testSortsLiveFirstAndInterleavesOfflineAndUnknownByName() async {
+        let liveLatin = room("1", provider: "douyu", isLive: true, name: "DANK1NG")
+        let liveChinese = room("2", provider: "douyin", isLive: true, name: "豆本熊")
+        let offline = room("3", provider: "bilibili", isLive: false, name: "b主播")
+        let unknown = room("4", provider: "huya", isLive: nil, name: "Alpha")
+        let titleOnly = RoomDescriptor(provider: "kuaishou", roomId: "5", title: "Charlie", cover: "", userName: "")
+        let store = FavoriteStatusStore()
+        await store.refresh([liveChinese, offline, liveLatin]) { $0 }
+
+        let entries = [FavoriteEntry(room: offline, isPriority: true), FavoriteEntry(room: liveChinese, isPriority: true),
+                       FavoriteEntry(room: titleOnly), FavoriteEntry(room: unknown), FavoriteEntry(room: liveLatin)]
+        XCTAssertEqual(store.sortedEntries(entries).map(\.id), [liveLatin.key, liveChinese.key, unknown.key, offline.key, titleOnly.key])
+    }
+
+    @MainActor
     func testRefreshDistinguishesOfflineFromNetworkFailureAndPreservesOtherPlatforms() async {
         let live = room("101", provider: "bilibili", isLive: true)
         let offline = room("101", provider: "huya", isLive: false)
@@ -56,7 +71,7 @@ final class FavoriteStatusStoreTests: XCTestCase {
         XCTAssertFalse(store.isRefreshing)
     }
 
-    private func room(_ id: String, provider: String, isLive: Bool) -> RoomDescriptor {
-        RoomDescriptor(provider: provider, roomId: id, title: id, cover: "", userName: "", isLive: isLive)
+    private func room(_ id: String, provider: String, isLive: Bool?, name: String = "") -> RoomDescriptor {
+        RoomDescriptor(provider: provider, roomId: id, title: id, cover: "", userName: name, isLive: isLive)
     }
 }

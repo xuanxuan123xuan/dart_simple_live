@@ -117,8 +117,7 @@ struct FavoritesView: View {
             (provider == nil || entry.room.provider == provider) && (!priorityOnly || entry.isPriority)
                 && (preview || !onlyLive || status.presence(for: entry.room) == .live)
         }
-        // Keep one's library order stable within each priority level.
-        return entries.filter(\.isPriority) + entries.filter { !$0.isPriority }
+        return status.sortedEntries(entries)
     }
 
     private func tools(visible: [FavoriteEntry]) -> some View {
@@ -192,9 +191,8 @@ struct FavoritesView: View {
 
     private func card(_ entry: FavoriteEntry) -> some View {
         let presence = status.presence(for: entry.room)
-        let name = entry.room.userName.isEmpty ? entry.room.title : entry.room.userName
         let platform = core.providers.first(where: { $0.id == entry.room.provider })?.title ?? entry.room.provider
-        let title = entry.isPriority ? "★ \(name)" : name
+        let title = entry.isPriority ? "★ \(entry.displayName)" : entry.displayName
         return RoomTile(room: entry.room, heading: title, caption: "\(platform) · \(presence.title)",
                         showCover: layout != .compact && (preview || (showLiveCover && presence == .live)),
                         coverOverride: presence == .live ? status.snapshots[entry.id]?.cover : nil)
