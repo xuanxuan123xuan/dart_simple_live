@@ -189,12 +189,17 @@ struct MultiRoomPickerView: View {
     }
 
     private func platformPicker(selection: Binding<String>, supportsSearch: Bool = false) -> some View {
-        Picker("平台", selection: selection) {
-            ForEach(core.providers.filter { !supportsSearch || $0.id != "xiaohongshu" }) {
-                Text($0.title).tag($0.id)
+        let title: LocalizedStringKey = supportsSearch ? "搜索平台" : "房间平台"
+        return HStack(spacing: 12) {
+            Text(title)
+                .accessibilityHidden(true)
+            Picker(title, selection: selection) {
+                ForEach(core.providers.filter { !supportsSearch || $0.id != "xiaohongshu" }) {
+                    Text($0.title).tag($0.id)
+                }
             }
+            .pickerStyle(.menu)
         }
-        .pickerStyle(.menu)
     }
 
     @ViewBuilder
