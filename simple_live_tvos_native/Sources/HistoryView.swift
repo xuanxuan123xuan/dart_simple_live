@@ -36,7 +36,7 @@ struct HistoryView: View {
                 historyGrid(library.historyEntries)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func historyGrid(_ entries: [HistoryEntry]) -> some View {

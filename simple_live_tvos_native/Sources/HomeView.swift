@@ -72,6 +72,7 @@ struct HomeView: View {
             search
         case .favorites:
             FavoritesView()
+                .frame(maxHeight: .infinity, alignment: .topLeading)
         case .history:
             HistoryView()
         case .settings:
