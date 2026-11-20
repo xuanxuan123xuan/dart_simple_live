@@ -117,10 +117,8 @@ class PageGridView extends StatelessWidget {
               ),
             ),
           ),
-          Offstage(
-            offstage: !(showPageLoadding && pageController.pageLoadding.value),
-            child: const AppLoaddingWidget(),
-          ),
+          if (showPageLoadding && pageController.pageLoadding.value)
+            const AppLoaddingWidget(),
         ],
       ),
     );

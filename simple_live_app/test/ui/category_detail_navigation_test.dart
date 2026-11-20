@@ -61,6 +61,13 @@ void main() {
   });
   tearDown(Get.reset);
 
+  void setTestViewport(WidgetTester tester, Size size) {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = size;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+  }
+
   void expectDetailWithoutNavigation(WidgetTester tester) {
     expect(find.byType(CategoryDetailPage), findsOneWidget);
     expect(navigation, findsNothing);
@@ -75,14 +82,12 @@ void main() {
   for (final category in [parent, leaf]) {
     testWidgets('${category.name} hides navigation across window sizes',
         (tester) async {
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+      setTestViewport(tester, sizes.first);
       Get.put<CategoryDetailController>(_TestCategoryDetailController(category));
-      await tester.binding.setSurfaceSize(sizes.first);
       await tester.pumpWidget(const GetMaterialApp(home: CategoryDetailPage()));
-      await tester.pumpAndSettle();
 
       for (final size in sizes) {
-        await tester.binding.setSurfaceSize(size);
+        tester.view.physicalSize = size;
         await tester.pumpAndSettle();
         expectDetailWithoutNavigation(tester);
       }
@@ -90,8 +95,7 @@ void main() {
   }
 
   Future<_TestIndexedController> pumpRoot(WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(768, 1024));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    setTestViewport(tester, const Size(768, 1024));
     final indexed = _TestIndexedController();
     Get.put<IndexedController>(indexed);
     await tester.pumpWidget(GetMaterialApp(
