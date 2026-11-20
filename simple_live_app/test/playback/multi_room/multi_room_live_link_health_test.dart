@@ -282,12 +282,16 @@ void main() {
       openStart,
     );
     final openMethod = playerController.substring(openStart, openEnd);
-    final playerOpen = openMethod.indexOf('await player.open(');
+    final playerOpen = openMethod.indexOf('await _nativeOpenQueue.open(');
+    final staleGuard = openMethod.indexOf(
+      'if (openStatus == PlayerOpenStatus.stale) return;',
+    );
     final beginSource = openMethod.indexOf('_liveLinkHealth.beginSource(');
     final reconnectEvent = openMethod.indexOf('LiveLinkEventType.cdnReconnect');
     expect(playerOpen, greaterThanOrEqualTo(0));
-    expect(beginSource, greaterThan(playerOpen));
-    expect(reconnectEvent, greaterThan(playerOpen));
+    expect(staleGuard, greaterThan(playerOpen));
+    expect(beginSource, greaterThan(staleGuard));
+    expect(reconnectEvent, greaterThan(beginSource));
     expect(openMethod, contains('expectedGeneration: healthGeneration'));
 
     final pageController = File(

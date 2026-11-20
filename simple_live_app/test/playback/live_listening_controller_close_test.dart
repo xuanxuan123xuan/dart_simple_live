@@ -4,12 +4,27 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:simple_live_app/modules/live_room/player/live_listening_session.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controller.dart';
+import 'package:simple_live_app/services/player_resource_lifecycle.dart';
 
 class _ClosedPlayer with PlayerMixin {
+  _ClosedPlayer() {
+    addTearDown(() {
+      PlayerRetirementCoordinator.shared.retire(
+        playerLifecycleInstanceId,
+        Future<void>.value(),
+      );
+    });
+  }
+
   int playerAccesses = 0;
 
   @override
   bool get listeningPlaybackAvailable => true;
+
+  @override
+  Future<void> ensurePlayerViewReady() async {
+    throw StateError('A closed or obsolete request must not prepare playback');
+  }
 
   @override
   Player get player {
@@ -66,7 +81,8 @@ void main() {
     expect(room.listeningModeChanging.value, isFalse);
   });
 
-  test('an obsolete queued playback request never opens its media', () async {
+  test('an obsolete playback request skips player setup and media open',
+      () async {
     final room = _ClosedPlayer();
     await room.openListeningMedia(
       Media('https://example.invalid/stale'),

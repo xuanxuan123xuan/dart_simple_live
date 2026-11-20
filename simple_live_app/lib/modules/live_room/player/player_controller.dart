@@ -246,7 +246,9 @@ mixin PlayerMixin {
     Media media, {
     bool Function()? isCurrent,
   }) async {
-    if (_listeningClosed) return;
+    if (lifecycleClosing || _listeningClosed || !(isCurrent?.call() ?? true)) {
+      return;
+    }
     await ensurePlayerViewReady();
     if (lifecycleClosing || _listeningClosed || !playerViewReady.value) return;
     final status = await _nativeOpenQueue.open(

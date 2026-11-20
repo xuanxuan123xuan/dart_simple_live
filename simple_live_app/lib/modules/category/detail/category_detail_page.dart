@@ -4,10 +4,7 @@ import 'package:get/get.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/constant.dart';
-import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/modules/category/detail/category_detail_controller.dart';
-import 'package:simple_live_app/modules/indexed/indexed_controller.dart';
-import 'package:simple_live_app/modules/indexed/indexed_page.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
@@ -37,57 +34,45 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
       detailsExtent: 0,
     );
     return LiquidGlassScope(
-      child: Builder(
-        builder: (scopeContext) {
-          final backgroundKey = LiquidGlassScope.of(scopeContext);
-          return Scaffold(
-            backgroundColor: Theme.of(scopeContext).scaffoldBackgroundColor,
-            extendBody: true,
-            appBar: AppBar(
-              title: Text(controller.subCategory.name),
+      child: Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        appBar: AppBar(
+          title: Text(controller.subCategory.name),
+        ),
+        body: GlassBackgroundSource(
+          child: KeepAliveWrapper(
+            child: PageGridView(
+              pageController: controller,
+              padding: AppStyle.edgeInsetsA12,
+              firstRefresh: true,
+              mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
+              crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
+              crossAxisCount: layout.crossAxisCount,
+              errorActionLabel: controller.site.id == Constant.kXiaohongshu
+                  ? "粘贴直播链接"
+                  : null,
+              onErrorAction: controller.site.id == Constant.kXiaohongshu
+                  ? _openXiaohongshuSearch
+                  : null,
+              itemBuilder: (_, i) {
+                var item = controller.list[i];
+                return LiveRoomCard(
+                  controller.site,
+                  item,
+                  onTap: controller.onRoomSelected == null
+                      ? null
+                      : () {
+                          final onRoomSelected = controller.onRoomSelected!;
+                          Get.back();
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            onRoomSelected(controller.site, item.roomId);
+                          });
+                        },
+                );
+              },
             ),
-            body: GlassBackgroundSource(
-              child: KeepAliveWrapper(
-                child: PageGridView(
-                  pageController: controller,
-                  padding: AppStyle.edgeInsetsA12,
-                  firstRefresh: true,
-                  mainAxisSpacing: LiveRoomGridLayout.defaultSpacing,
-                  crossAxisSpacing: LiveRoomGridLayout.defaultSpacing,
-                  crossAxisCount: layout.crossAxisCount,
-                  errorActionLabel: controller.site.id == Constant.kXiaohongshu
-                      ? "粘贴直播链接"
-                      : null,
-                  onErrorAction: controller.site.id == Constant.kXiaohongshu
-                      ? _openXiaohongshuSearch
-                      : null,
-                  itemBuilder: (_, i) {
-                    var item = controller.list[i];
-                    return LiveRoomCard(
-                      controller.site,
-                      item,
-                      onTap: controller.onRoomSelected == null
-                          ? null
-                          : () {
-                              final onRoomSelected =
-                                  controller.onRoomSelected!;
-                              Get.back();
-                              WidgetsBinding.instance
-                                  .addPostFrameCallback((_) {
-                                onRoomSelected(controller.site, item.roomId);
-                              });
-                            },
-                    );
-                  },
-                ),
-              ),
-            ),
-            bottomNavigationBar: _buildPersistentNavigation(
-              scopeContext,
-              backgroundKey: backgroundKey,
-            ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -107,93 +92,61 @@ class CategoryDetailPage extends GetView<CategoryDetailController> {
     final crossAxisCount =
         (MediaQuery.sizeOf(context).width ~/ 96).clamp(1, 12).toInt();
     return LiquidGlassScope(
-      child: Builder(
-        builder: (scopeContext) {
-          final backgroundKey = LiquidGlassScope.of(scopeContext);
-          return Scaffold(
-            backgroundColor: Theme.of(scopeContext).scaffoldBackgroundColor,
-            extendBody: true,
-            appBar: AppBar(
-              title: Text(controller.subCategory.name),
+      child: Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        appBar: AppBar(
+          title: Text(controller.subCategory.name),
+        ),
+        body: GlassBackgroundSource(
+          child: GridView.builder(
+            padding: AppStyle.edgeInsetsA12,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+              childAspectRatio: 1.15,
             ),
-            body: GlassBackgroundSource(
-              child: GridView.builder(
-                padding: AppStyle.edgeInsetsA12,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 8,
-                  childAspectRatio: 1.15,
-                ),
-                itemCount: subCategories.length + 1,
-                itemBuilder: (context, index) {
-                  if (index == 0) {
-                    return _buildChildTile(
-                      context,
-                      name: "全部",
-                      pic: controller.subCategory.pic,
-                      icon: Icons.grid_view_rounded,
-                      onTap: () {
-                        AppNavigator.toCategoryDetail(
-                          site: controller.site,
-                          category: LiveSubCategory(
-                            id: controller.subCategory.id,
-                            name: controller.subCategory.name,
-                            parentId: controller.subCategory.parentId,
-                            pic: controller.subCategory.pic,
-                          ),
-                          onRoomSelected: controller.onRoomSelected,
-                          excludedRoomId: controller.excludedRoomId,
-                        );
-                      },
+            itemCount: subCategories.length + 1,
+            itemBuilder: (context, index) {
+              if (index == 0) {
+                return _buildChildTile(
+                  context,
+                  name: "全部",
+                  pic: controller.subCategory.pic,
+                  icon: Icons.grid_view_rounded,
+                  onTap: () {
+                    AppNavigator.toCategoryDetail(
+                      site: controller.site,
+                      category: LiveSubCategory(
+                        id: controller.subCategory.id,
+                        name: controller.subCategory.name,
+                        parentId: controller.subCategory.parentId,
+                        pic: controller.subCategory.pic,
+                      ),
+                      onRoomSelected: controller.onRoomSelected,
+                      excludedRoomId: controller.excludedRoomId,
                     );
-                  }
-                  final child = subCategories[index - 1];
-                  return _buildChildTile(
-                    context,
-                    name: child.name,
-                    pic: child.pic,
-                    icon: _categoryIcon(child.name),
-                    onTap: () {
-                      AppNavigator.toCategoryDetail(
-                        site: controller.site,
-                        category: child,
-                        onRoomSelected: controller.onRoomSelected,
-                        excludedRoomId: controller.excludedRoomId,
-                      );
-                    },
+                  },
+                );
+              }
+              final child = subCategories[index - 1];
+              return _buildChildTile(
+                context,
+                name: child.name,
+                pic: child.pic,
+                icon: _categoryIcon(child.name),
+                onTap: () {
+                  AppNavigator.toCategoryDetail(
+                    site: controller.site,
+                    category: child,
+                    onRoomSelected: controller.onRoomSelected,
+                    excludedRoomId: controller.excludedRoomId,
                   );
                 },
-              ),
-            ),
-            bottomNavigationBar: _buildPersistentNavigation(
-              scopeContext,
-              backgroundKey: backgroundKey,
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget? _buildPersistentNavigation(
-    BuildContext context, {
-    required GlobalKey? backgroundKey,
-  }) {
-    if (!PlatformUtils.isMobileApp ||
-        MediaQuery.sizeOf(context).shortestSide < 600) {
-      return null;
-    }
-    final indexed = Get.find<IndexedController>();
-    return SafeArea(
-      top: false,
-      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-      child: IndexedBottomNavigationBar(
-        items: indexed.items,
-        selectedIndex: indexed.index,
-        onDestinationSelected: AppNavigator.toIndexedDestination,
-        glassEnabled: true,
-        backgroundKey: backgroundKey,
+              );
+            },
+          ),
+        ),
       ),
     );
   }
