@@ -5,8 +5,11 @@ import SimpleLiveTVOSCore
 actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService {
     private static let web = "https://www.douyu.com"
     private static let passport = "https://passport.douyu.com"
+    private static let loginHosts: Set<String> = ["passport.douyu.com"]
+    private static let loginCookieDomains = loginHosts.union(["douyu.com"])
     private static let userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     private let http = ProviderHTTP()
+    private let loginHTTP: ProviderHTTP
     private let guestID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     private let accounts: AccountRequestCredentials
     private var cookie: String? { accounts.credential(for: .douyu)?.cookie }
@@ -14,8 +17,9 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
     private var challengeID: UUID?
     private var activeCode: String?
 
-    init(accounts: AccountRequestCredentials = AccountRequestCredentials()) {
+    init(accounts: AccountRequestCredentials = AccountRequestCredentials(), loginHTTP: ProviderHTTP = .login) {
         self.accounts = accounts
+        self.loginHTTP = loginHTTP
     }
 
     func categories() async throws -> [CategoryDescriptor] {
@@ -148,24 +152,27 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
             throw LiveProviderError.authenticationRequired
         }
         let now = String(Int(Date().timeIntervalSince1970 * 1000))
-        let (_, response) = try await http.response(Self.passport + "/lapi/passport/iframe/safeAuth",
-            query: ["client_id": "1", "t": now, "_": now, "callback": "axiosJsonpCallback"],
-            headers: ["Referer": Self.web + "/", "User-Agent": Self.userAgent, "Cookie": "dy_did=\(id); LTP0=\(token)"])
-        let refreshed = receivedCookies(response, allowedDomains: ["passport.douyu.com", "douyu.com"])
+        guard let url = URL(string: Self.passport + "/lapi/passport/iframe/safeAuth") else {
+            throw LiveProviderError.invalidResponse
+        }
         let current = Date()
-        guard refreshed.contains(where: {
-            $0.name.lowercased() == "acf_jwt_token" && !$0.value.isEmpty && ($0.expiresDate ?? .distantFuture) > current
-        }) else {
-            throw LiveProviderError.authenticationRequired
-        }
+        var hasNewToken = false
         fields.set("dy_did", value: id)
-        for item in refreshed {
-            if item.value.isEmpty || (item.expiresDate ?? .distantFuture) <= current {
-                fields.remove(item.name)
-            } else {
-                fields.set(item.name, value: item.value)
+        _ = try await loginHTTP.loginResponse(at: url, hosts: Self.loginHosts,
+            query: ["client_id": "1", "t": now, "_": now, "callback": "axiosJsonpCallback"],
+            headers: ["Referer": Self.web + "/", "User-Agent": Self.userAgent, "Cookie": "dy_did=\(id); LTP0=\(token)"]) { response in
+            for item in receivedCookies(response, allowedDomains: Self.loginCookieDomains) {
+                let active = !item.value.isEmpty && (item.expiresDate ?? .distantFuture) > current
+                if active {
+                    fields.set(item.name, value: item.value)
+                } else {
+                    fields.remove(item.name)
+                }
+                if item.name.lowercased() == "acf_jwt_token" { hasNewToken = active }
             }
+            return hasNewToken
         }
+        guard hasNewToken else { throw LiveProviderError.authenticationRequired }
         return try AccountCookie(fields.header).header
     }
 
@@ -214,16 +221,18 @@ actor DouyuService: LiveProviderService, ProviderSessionService, DanmakuService 
     }
 
     private func passportRequest(_ path: String, id: UUID, query: [String: String] = [:], form: [String: String]? = nil) async throws -> JSONObject {
-        guard !path.isEmpty, let url = URL(string: path, relativeTo: URL(string: Self.passport + "/"))?.absoluteURL,
-              url.scheme == "https", url.host == "passport.douyu.com" else { throw LiveProviderError.invalidResponse }
-        let (bytes, response) = try await http.response(url.absoluteString, query: query, headers: [
-            "Referer": Self.passport + "/", "Origin": Self.passport, "User-Agent": Self.userAgent,
-            "Cookie": cookieHeader(challengeCookies),
-        ], form: form)
-        try Task.checkCancellation()
-        guard challengeID == id else { throw CancellationError() }
-        for cookie in receivedCookies(response, allowedDomains: ["passport.douyu.com", "douyu.com"]) {
-            challengeCookies[cookie.name.lowercased()] = (cookie.expiresDate ?? .distantFuture) > Date() ? cookie.value : nil
+        guard !path.isEmpty, let url = URL(string: path, relativeTo: URL(string: Self.passport + "/"))?.absoluteURL
+        else { throw LiveProviderError.invalidResponse }
+        let bytes = try await loginHTTP.loginResponse(at: url, hosts: Self.loginHosts, query: query,
+            headers: ["Referer": Self.passport + "/", "Origin": Self.passport, "User-Agent": Self.userAgent],
+            form: form, cookie: { self.cookieHeader(self.challengeCookies) }) { response in
+            guard self.challengeID == id else { throw CancellationError() }
+            let now = Date()
+            for item in receivedCookies(response, allowedDomains: Self.loginCookieDomains) {
+                let active = !item.value.isEmpty && (item.expiresDate ?? .distantFuture) > now
+                self.challengeCookies[item.name.lowercased()] = active ? item.value : nil
+            }
+            return false
         }
         if let result = try? JSONObject.decode(bytes) { return result }
         guard let source = String(data: bytes, encoding: .utf8),

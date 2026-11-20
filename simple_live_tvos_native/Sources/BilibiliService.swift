@@ -7,6 +7,10 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
     private static let web = "https://api.bilibili.com"
     private static let live = "https://api.live.bilibili.com"
     private static let passport = "https://passport.bilibili.com/x/passport-login/web/qrcode"
+    private static let loginHosts: Set<String> = [
+        "passport.bilibili.com", "passport.biligame.com", "account.bilibili.com", "www.bilibili.com",
+    ]
+    private static let loginCookieDomains = loginHosts.union(["bilibili.com", "biligame.com"])
     private static let mediaHeaders = [
         "Referer": "https://live.bilibili.com/",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -17,13 +21,15 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
     ]
 
     private let http = ProviderHTTP()
+    private let loginHTTP: ProviderHTTP
     private let accounts: AccountRequestCredentials
     private var cookie: String? { accounts.credential(for: .bilibili)?.cookie }
     private var deviceCookies: [String] = []
     private var mixin: (key: String, expiration: Date, cookie: String?)?
 
-    init(accounts: AccountRequestCredentials = AccountRequestCredentials()) {
+    init(accounts: AccountRequestCredentials = AccountRequestCredentials(), loginHTTP: ProviderHTTP = .login) {
         self.accounts = accounts
+        self.loginHTTP = loginHTTP
     }
 
     func validate(_ cookie: String) async throws -> String {
@@ -50,7 +56,7 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
 
     func pollLogin(_ challenge: LoginChallenge) async throws -> LoginResult {
         guard challenge.expiration > Date() else { throw LiveProviderError.expired }
-        let (body, response) = try await http.response(
+        let (body, response) = try await loginHTTP.response(
             Self.passport + "/poll", query: ["qrcode_key": challenge.key], headers: Self.mediaHeaders
         )
         let data = try Self.payload(JSONObject.decode(body))
@@ -59,13 +65,29 @@ actor BilibiliService: LiveProviderService, ProviderSessionService, DanmakuServi
         case 86090: return .scanned
         case 86038: throw LiveProviderError.expired
         case 0:
-            let cookies = receivedCookies(response, allowedDomains: ["bilibili.com", "passport.bilibili.com", "account.bilibili.com"])
-            guard cookies.contains(where: { $0.name == "SESSDATA" && !$0.value.isEmpty }) else {
-                throw LiveProviderError.authenticationRequired
-            }
-            return .authorized(cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; "))
+            return .authorized(try await loginCookie(from: response, callback: data.text("url")))
         default: throw LiveProviderError.invalidResponse
         }
+    }
+
+    private func loginCookie(from response: HTTPURLResponse, callback: String) async throws -> String {
+        var cookies: [String: HTTPCookie] = [:]
+        func collect(_ response: HTTPURLResponse) -> Bool {
+            let now = Date()
+            for item in receivedCookies(response, allowedDomains: Self.loginCookieDomains) {
+                let active = !item.value.isEmpty && (item.expiresDate ?? .distantFuture) > now
+                cookies[item.name.lowercased()] = active ? item : nil
+            }
+            return cookies["sessdata"] != nil
+        }
+        if !collect(response), !callback.isEmpty, let url = URL(string: callback) {
+            var headers = Self.mediaHeaders
+            headers["Referer"] = "https://passport.bilibili.com/"
+            _ = try await loginHTTP.loginResponse(at: url, hosts: Self.loginHosts, headers: headers, receive: collect)
+        }
+        guard cookies["sessdata"] != nil else { throw LiveProviderError.authenticationRequired }
+        let header = cookies.values.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+        return try AccountCookie(header).header
     }
 
     func categories() async throws -> [CategoryDescriptor] {

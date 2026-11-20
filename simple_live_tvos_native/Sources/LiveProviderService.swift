@@ -142,11 +142,12 @@ final class ProviderHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     private let redirectHosts: Set<String>
     private let followsRedirects: Bool
     static let publicShare = ProviderHTTP(followsRedirects: false)
+    static let login = ProviderHTTP(followsRedirects: false)
 
-    init(redirectHosts: Set<String> = [], followsRedirects: Bool = true) {
+    init(redirectHosts: Set<String> = [], followsRedirects: Bool = true,
+         configuration: URLSessionConfiguration = .ephemeral) {
         self.followsRedirects = followsRedirects
         self.redirectHosts = redirectHosts
-        let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
         configuration.httpCookieStorage = nil
         configuration.timeoutIntervalForRequest = 15
@@ -204,6 +205,37 @@ final class ProviderHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
         return destination
     }
 
+    // Inspect each response before requesting the next URL so redirect cookies are available to the login flow.
+    func loginResponse(at initialURL: URL, hosts: Set<String>, query: [String: String] = [:],
+                       headers: [String: String], form: [String: String]? = nil,
+                       isolation: isolated (any Actor)? = #isolation,
+                       cookie: () -> String? = { nil },
+                       receive: (HTTPURLResponse) throws -> Bool) async throws -> Data {
+        var url = initialURL
+        var requestForm = form
+        for hop in 0..<5 {
+            try Task.checkCancellation()
+            guard url.scheme == "https", let host = url.host?.lowercased(), hosts.contains(host),
+                  url.user == nil, url.password == nil, url.port == nil || url.port == 443 else {
+                throw LiveProviderError.invalidResponse
+            }
+            var requestHeaders = headers
+            if let value = cookie() { requestHeaders["Cookie"] = value }
+            let (data, response) = try await self.response(url.absoluteString, query: hop == 0 ? query : [:],
+                                                           headers: requestHeaders, form: requestForm)
+            try Task.checkCancellation()
+            if try receive(response) || (200..<300).contains(response.statusCode) { return data }
+            guard [301, 302, 303, 307, 308].contains(response.statusCode),
+                  let location = response.value(forHTTPHeaderField: "Location"),
+                  let destination = URL(string: location, relativeTo: response.url)?.absoluteURL else {
+                throw LiveProviderError.invalidResponse
+            }
+            url = destination
+            if response.statusCode != 307 && response.statusCode != 308 { requestForm = nil }
+        }
+        throw LiveProviderError.invalidResponse
+    }
+
     func json(_ endpoint: String, query: [String: String] = [:], headers: [String: String] = [:],
               form: [String: String]? = nil) async throws -> JSONObject {
         let (data, _) = try await response(endpoint, query: query, headers: headers, form: form)
@@ -230,11 +262,10 @@ final class ProviderHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
 }
 
 func receivedCookies(_ response: HTTPURLResponse, allowedDomains: Set<String>) -> [HTTPCookie] {
-    guard let origin = response.url else { return [] }
-    let fields = response.allHeaderFields.reduce(into: [String: String]()) { output, field in
-        if let key = field.key as? String, let value = field.value as? String { output[key] = value }
-    }
-    return HTTPCookie.cookies(withResponseHeaderFields: fields, for: origin).filter {
+    guard let origin = response.url, let header = response.value(forHTTPHeaderField: "Set-Cookie") else { return [] }
+    // Foundation expects a space between combined cookies. A comma in Expires is followed by a date.
+    let combined = header.replacingOccurrences(of: #",(?=[^\s;,=]+=)"#, with: ", ", options: .regularExpression)
+    return HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": combined], for: origin).filter {
         let domain = $0.domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))
         return allowedDomains.contains(domain.lowercased()) && $0.value.rangeOfCharacter(from: .newlines) == nil
     }
