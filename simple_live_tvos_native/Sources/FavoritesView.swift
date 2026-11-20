@@ -29,6 +29,21 @@ enum FavoriteLayout: String, CaseIterable, Identifiable {
     }
 }
 
+private enum FavoriteFilter: Equatable {
+    case status(FavoritePresence?)
+    case platform(String?)
+
+    var filtersByStatus: Bool {
+        if case .status = self { return true }
+        return false
+    }
+
+    var selectedStatus: FavoritePresence? {
+        if case let .status(presence) = self { return presence }
+        return nil
+    }
+}
+
 struct FavoritesView: View {
     @EnvironmentObject private var core: NativeCoreClient
     @EnvironmentObject private var library: LibraryStore
@@ -40,7 +55,7 @@ struct FavoritesView: View {
     @AppStorage(FavoritePreferences.refreshOnEnter) private var refreshOnEnter = false
     @AppStorage(FavoritePreferences.refreshMinutes) private var refreshMinutes = 0
     @AppStorage(FavoritePreferences.showLiveCover) private var showLiveCover = false
-    @State private var provider: String?
+    @State private var selectedFilter: FavoriteFilter?
     @State private var priorityOnly = false
     @State private var page = 0
     @State private var manage = false
@@ -69,9 +84,8 @@ struct FavoritesView: View {
                 if !preview && pageCount > 1 { pager(currentPage, of: pageCount) }
             }
         }
-        .onChange(of: provider) { _, _ in page = 0 }
+        .onChange(of: filter) { _, _ in page = 0 }
         .onChange(of: priorityOnly) { _, _ in page = 0 }
-        .onChange(of: onlyLive) { _, _ in page = 0 }
         .onChange(of: pageSize) { _, _ in page = 0 }
         .task(id: refreshRequest) {
             guard let request = refreshRequest else { return }
@@ -93,29 +107,37 @@ struct FavoritesView: View {
 
     private var limit: Int { preview ? 6 : min(max(2, pageSize), 400) }
 
+    private var filter: FavoriteFilter {
+        selectedFilter ?? .status(!preview && onlyLive ? .live : nil)
+    }
+
     private var shouldRefreshOnEntry: Bool {
-        scenePhase == .active && (preview || refreshOnEnter || onlyLive || (showLiveCover && layout != .compact))
+        scenePhase == .active && (preview || refreshOnEnter || filter.selectedStatus != nil || (showLiveCover && layout != .compact))
     }
 
     @ViewBuilder
     private var emptyState: some View {
         if library.favoriteEntries.isEmpty {
             ContentUnavailableView("还没有关注", systemImage: "star")
-        } else if !preview && onlyLive {
-            if status.isRefreshing {
-                ProgressView("正在查询开播状态")
-            } else {
-                ContentUnavailableView("暂无已确认开播的关注", systemImage: "dot.radiowaves.left.and.right")
-            }
+        } else if filter.selectedStatus != nil && status.isRefreshing {
+            ProgressView("正在查询开播状态")
+        } else if filter.selectedStatus == .live {
+            ContentUnavailableView("暂无已确认开播的关注", systemImage: "dot.radiowaves.left.and.right")
         } else {
             ContentUnavailableView("没有符合条件的关注", systemImage: "star")
         }
     }
 
     private var filteredEntries: [FavoriteEntry] {
+        let filter = filter
         let entries = library.favoriteEntries.filter { entry in
-            (provider == nil || entry.room.provider == provider) && (!priorityOnly || entry.isPriority)
-                && (preview || !onlyLive || status.presence(for: entry.room) == .live)
+            guard !priorityOnly || entry.isPriority else { return false }
+            switch filter {
+            case let .status(presence):
+                return presence == nil || status.presence(for: entry.room) == presence
+            case let .platform(provider):
+                return provider == nil || entry.room.provider == provider
+            }
         }
         return status.sortedEntries(entries)
     }
@@ -142,15 +164,35 @@ struct FavoritesView: View {
     }
 
     private var filters: some View {
-        HStack(spacing: 13) {
-            chip("全平台", selected: provider == nil) { provider = nil }
-            ForEach(core.providers) { option in
-                chip(option.title, selected: provider == option.id) { provider = option.id }
+        let filter = filter
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 13) {
+                chip("按状态", selected: filter.filtersByStatus) {
+                    if !filter.filtersByStatus { selectedFilter = .status(nil) }
+                }
+                chip("按平台", selected: !filter.filtersByStatus) {
+                    if filter.filtersByStatus { selectedFilter = .platform(nil) }
+                }
+                Spacer()
+                chip("特别关注", selected: priorityOnly) { priorityOnly.toggle() }
             }
-            chip("特别关注", selected: priorityOnly) { priorityOnly.toggle() }
-            chip("只看开播", selected: onlyLive) { onlyLive.toggle() }
+            .focusSection()
+
+            HStack(spacing: 13) {
+                let all: FavoriteFilter = filter.filtersByStatus ? .status(nil) : .platform(nil)
+                chip("全部", selected: filter == all) { selectedFilter = all }
+                if filter.filtersByStatus {
+                    ForEach(FavoritePresence.allCases, id: \.self) { presence in
+                        chip(presence.title, selected: filter == .status(presence)) { selectedFilter = .status(presence) }
+                    }
+                } else {
+                    ForEach(core.providers) { provider in
+                        chip(provider.title, selected: filter == .platform(provider.id)) { selectedFilter = .platform(provider.id) }
+                    }
+                }
+            }
+            .focusSection()
         }
-        .focusSection()
     }
 
     private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -246,12 +288,12 @@ struct FavoriteSettingsView: View {
                 Picker("每页数量", selection: $pageSize) {
                     ForEach([12, 24, 48, 100, 200, 400].includingSelection(pageSize), id: \.self) { Text("\($0) 个").tag($0) }
                 }
-                Toggle("只显示开播关注", isOn: $onlyLive)
+                Toggle("默认只显示开播关注", isOn: $onlyLive)
                 Toggle("显示直播封面", isOn: $showLiveCover)
             } header: {
                 Text("关注列表")
             } footer: {
-                Text("每页数量和开播筛选适用于完整「关注」页。直播封面会在默认或大卡片布局中显示，紧凑布局只显示文字。")
+                Text("每页数量和默认开播筛选适用于完整「关注」页。直播封面会在默认或大卡片布局中显示，紧凑布局只显示文字。")
             }
             Section {
                 Toggle("进入关注页时刷新", isOn: $refreshOnEnter)
@@ -263,7 +305,7 @@ struct FavoriteSettingsView: View {
             } header: {
                 Text("状态刷新")
             } footer: {
-                Text("定时刷新在应用处于前台并显示首页或关注页时运行。开启开播筛选或直播封面时，关注页会主动查询开播状态。")
+                Text("定时刷新在应用处于前台并显示首页或关注页时运行。选择具体状态或显示直播封面时，关注页会主动查询开播状态。")
             }
         }
         .pickerStyle(.navigationLink)

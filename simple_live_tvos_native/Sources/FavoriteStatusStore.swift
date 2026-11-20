@@ -16,7 +16,7 @@ enum FavoritePresence: String, CaseIterable, Sendable {
         switch self {
         case .live: "直播中"
         case .offline: "未开播"
-        case .unknown: "状态未知"
+        case .unknown: "未确认"
         }
     }
 }
