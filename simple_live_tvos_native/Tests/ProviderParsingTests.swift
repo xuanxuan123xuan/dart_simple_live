@@ -42,6 +42,19 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertTrue(state["body"].fields["missing"] is NSNull)
     }
 
+    func testHuyaCoverUsesHTTPSForSavedAndRefreshedURLs() {
+        let saved = RoomDescriptor(provider: "huya", roomId: "123", title: "直播",
+                                   cover: "http://live-cover.msstatic.com/huyalive/cover.jpg", userName: "主播")
+        XCTAssertEqual(saved.coverURL(override: "")?.absoluteString, "https://live-cover.msstatic.com/huyalive/cover.jpg")
+        let refreshed = "http://tx-live-cover.msstatic.com/huyalive/cover.jpg?sign=a+b%2Fc%3D"
+        XCTAssertEqual(saved.coverURL(override: refreshed)?.absoluteString,
+                       "https://tx-live-cover.msstatic.com/huyalive/cover.jpg?sign=a+b%2Fc%3D")
+        XCTAssertEqual(saved.coverURL(override: "//live-cover.msstatic.com/cover.jpg")?.absoluteString,
+                       "https://live-cover.msstatic.com/cover.jpg")
+        let other = RoomDescriptor(provider: "douyu", roomId: "123", title: "直播", cover: refreshed, userName: "主播")
+        XCTAssertEqual(other.coverURL()?.absoluteString, refreshed)
+    }
+
     func testLiveRoomInputRoutesShareTextAndBareRoomNumbers() async throws {
         let parser = LiveRoomInput { _ in throw LiveProviderError.invalidRoom }
         let fixtures = [

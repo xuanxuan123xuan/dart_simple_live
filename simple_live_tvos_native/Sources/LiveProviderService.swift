@@ -40,6 +40,18 @@ struct RoomDescriptor: Identifiable, Hashable, Codable, Sendable {
     var id: String { key }
     var key: String { "\(provider):\(roomId)" }
 
+    func coverURL(override: String? = nil) -> URL? {
+        let source = override.flatMap { $0.isEmpty ? nil : $0 } ?? cover
+        guard !source.isEmpty else { return nil }
+        guard provider == "huya", var components = URLComponents(string: normalizedImage(source)) else {
+            return URL(string: source)
+        }
+        if components.scheme?.lowercased() == "http" {
+            components.scheme = "https"
+        }
+        return components.url
+    }
+
     static func anchor(provider: String, id: String, name: String, avatar: String, isLive: Bool?) -> Self? {
         let id = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !id.isEmpty, id != "null" else { return nil }

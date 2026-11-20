@@ -572,7 +572,7 @@ struct RoomTile: View {
                 .aspectRatio(16.0 / 9, contentMode: .fit)
                 .overlay {
                     GeometryReader { proxy in
-                        AsyncImage(url: URL(string: coverOverride.flatMap { $0.isEmpty ? nil : $0 } ?? room.cover)) { phase in
+                        AsyncImage(url: room.coverURL(override: coverOverride)) { phase in
                             if let image = phase.image {
                                 image.resizable().scaledToFill()
                             } else {
