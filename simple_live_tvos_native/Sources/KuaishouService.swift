@@ -65,7 +65,7 @@ actor KuaishouService: LiveProviderService, DanmakuService {
             items = data.objects("list")
             more = data.integer("hasMore").map { $0 == 1 } ?? (items.count >= 20)
         }
-        return RoomPage(rooms: items.compactMap(Self.room), hasMore: more)
+        return RoomPage(rooms: items.compactMap(Self.parseRoom), hasMore: more)
     }
 
     private func searchAnchors(_ keyword: String, page: Int) async throws -> RoomPage {
@@ -100,7 +100,7 @@ actor KuaishouService: LiveProviderService, DanmakuService {
 
     func resolveRoom(_ input: String) async throws -> RoomDescriptor {
         let id = try normalizedRoomID(input, hosts: ["live.kuaishou.com"])
-        guard let room = Self.room(try await detail(id)) else { throw LiveProviderError.invalidRoom }
+        guard let room = Self.parseRoom(try await detail(id)) else { throw LiveProviderError.invalidRoom }
         return room
     }
 
@@ -176,7 +176,7 @@ actor KuaishouService: LiveProviderService, DanmakuService {
 
     private func danmakuConnection(_ id: String, account: AccountCredential?) async throws -> DanmakuConnection {
         let room = try await detail(id, account: account)
-        let live = room["liveStream"]
+        let live = Self.liveStream(in: room)
         let stream = live.text("id")
         guard !stream.isEmpty else { throw LiveProviderError.authenticationRequired }
         let info = try await request("/live_api/liveroom/websocketinfo", ["liveStreamId": stream], account: account, room: id)
@@ -203,16 +203,22 @@ actor KuaishouService: LiveProviderService, DanmakuService {
         }
     }
 
-    private static func room(_ item: JSONObject) -> RoomDescriptor? {
+    private static func liveStream(in room: JSONObject) -> JSONObject {
+        let stream = room["liveStream"]
+        return stream.fields.isEmpty ? room : stream
+    }
+
+    static func parseRoom(_ item: JSONObject) -> RoomDescriptor? {
         let author = item["author"]
-        let stream = item["liveStream"]
+        let stream = liveStream(in: item)
         let id = [author.text("id"), item.text("authorId"), item.text("userId")].first { !$0.isEmpty }
         guard let id else { return nil }
         let title = [item.text("caption"), stream.text("caption"), item.text("title"), author.text("name")].first { !$0.isEmpty } ?? id
         let cover = [stream.text("poster"), item.text("poster"), item.text("coverUrl"), item["gameInfo"].text("poster")].first { !$0.isEmpty } ?? ""
         let flags = [item.bool("isLiving"), item.bool("living"), stream.bool("isLiving"), stream.bool("living")]
         let isLive: Bool?
-        if !stream.text("id").isEmpty || flags.contains(true) {
+        if !stream.text("id").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            flags.contains(true) || !playableVariants(in: item).isEmpty {
             isLive = true
         } else if !item["errorType"].fields.isEmpty || item.integer("errorType").map({ $0 != 0 }) == true {
             isLive = nil
@@ -224,8 +230,14 @@ actor KuaishouService: LiveProviderService, DanmakuService {
     }
 
     private func variants(_ id: String) async throws -> [MediaVariant] {
-        let detail = try await detail(id)
-        let playURLs = detail["liveStream"].fields["playUrls"] ?? detail.fields["playUrls"]
+        let variants = Self.playableVariants(in: try await detail(id))
+        guard !variants.isEmpty else { throw LiveProviderError.noPlayback }
+        return variants
+    }
+
+    private static func playableVariants(in room: JSONObject) -> [MediaVariant] {
+        let nestedURLs = room["liveStream"].fields["playUrls"]
+        let playURLs = nestedURLs.flatMap { $0 is NSNull ? nil : $0 } ?? room.fields["playUrls"]
         let preferred = (playURLs as? [String: Any])?["h264"] ?? playURLs
         var byQuality: [LiveQuality: [(URL, StreamProtocol)]] = [:]
         var seen = Set<URL>()
@@ -250,7 +262,6 @@ actor KuaishouService: LiveProviderService, DanmakuService {
         }
         collect(preferred, name: "默认", level: "0")
         if byQuality.isEmpty { collect(playURLs, name: "默认", level: "0") }
-        guard !byQuality.isEmpty else { throw LiveProviderError.noPlayback }
         return byQuality.keys.sorted {
             let a = Int($0.id.split(separator: ":").first ?? "") ?? 0
             let b = Int($1.id.split(separator: ":").first ?? "") ?? 0

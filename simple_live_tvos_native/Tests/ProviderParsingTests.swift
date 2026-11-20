@@ -55,6 +55,29 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertEqual(other.coverURL()?.absoluteString, refreshed)
     }
 
+    func testKuaishouLiveStreamIDOverridesFalseListingFlag() throws {
+        let data = try JSONObject.decode(Data(#"{"id":"stream-1","living":false,"author":{"id":"host-1","name":"主播"}}"#.utf8))
+        let room = try XCTUnwrap(KuaishouService.parseRoom(data))
+        XCTAssertEqual(room.roomId, "host-1")
+        XCTAssertEqual(room.isLive, true)
+    }
+
+    func testKuaishouRoomStatusUsesStreamEvidenceAndPreservesUnknown() throws {
+        let fixtures: [(String, Bool?)] = [
+            (#"{"liveStream":{"id":"stream-2"},"isLiving":false}"#, true),
+            (#"{"liveStream":{"playUrls":null},"playUrls":[{"url":"https://example.com/live.flv"}],"living":false}"#, true),
+            (#"{"liveStream":null,"isLiving":false}"#, false),
+            (#"{"isLiving":false,"errorType":{"type":2}}"#, nil),
+            (#"{"playUrls":[{"url":"https://example.com/cover.jpg"}]}"#, nil),
+        ]
+        for (payload, expected) in fixtures {
+            var fields = try JSONObject.decode(Data(payload.utf8)).fields
+            fields["authorId"] = "host-1"
+            let room = try XCTUnwrap(KuaishouService.parseRoom(JSONObject(fields)))
+            XCTAssertEqual(room.isLive, expected, payload)
+        }
+    }
+
     func testLiveRoomInputRoutesShareTextAndBareRoomNumbers() async throws {
         let parser = LiveRoomInput { _ in throw LiveProviderError.invalidRoom }
         let fixtures = [
@@ -300,7 +323,15 @@ final class ProviderSmokeTests: XCTestCase {
     }
 
     func testKuaishouLiveRoomPlayback() async throws {
-        try await verifyLiveRoom(using: KuaishouService())
+        try requireNetwork()
+        let service = KuaishouService()
+        let listing = try await service.rooms(in: .recommended, page: 1)
+        let room = try XCTUnwrap(listing.rooms.first)
+        XCTAssertEqual(room.isLive, true)
+        let detail = try await service.resolveRoom(room.roomId)
+        XCTAssertEqual(detail.roomId, room.roomId)
+        XCTAssertEqual(detail.isLive, true)
+        try await verifyPlayback(in: detail, using: service)
     }
 
     @MainActor
