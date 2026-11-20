@@ -32,6 +32,7 @@ struct HistoryView: View {
             .focusSection()
             if library.historyEntries.isEmpty {
                 ContentUnavailableView("暂无观看历史", systemImage: "clock")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 historyGrid(library.historyEntries)
             }

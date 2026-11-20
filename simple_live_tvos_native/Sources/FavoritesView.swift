@@ -63,6 +63,7 @@ struct FavoritesView: View {
             }
             if visible.isEmpty {
                 emptyState
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 grid(visible, queue: entries.map(\.room))
                 if !preview && pageCount > 1 { pager(currentPage, of: pageCount) }
@@ -103,7 +104,6 @@ struct FavoritesView: View {
         } else if !preview && onlyLive {
             if status.isRefreshing {
                 ProgressView("正在查询开播状态")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView("暂无已确认开播的关注", systemImage: "dot.radiowaves.left.and.right")
             }
