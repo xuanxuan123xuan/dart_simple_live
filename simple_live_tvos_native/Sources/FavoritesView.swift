@@ -112,7 +112,7 @@ struct FavoritesView: View {
     }
 
     private var shouldRefreshOnEntry: Bool {
-        scenePhase == .active && (preview || refreshOnEnter || filter.selectedStatus != nil || (showLiveCover && layout != .compact))
+        scenePhase == .active && (preview || refreshOnEnter || filter.selectedStatus != nil || showLiveCover)
     }
 
     @ViewBuilder
@@ -236,7 +236,7 @@ struct FavoritesView: View {
         let platform = core.providers.first(where: { $0.id == entry.room.provider })?.title ?? entry.room.provider
         let title = entry.isPriority ? "★ \(entry.displayName)" : entry.displayName
         return RoomTile(room: entry.room, heading: title, caption: "\(platform) · \(presence.title)",
-                        showCover: layout != .compact && (preview || (showLiveCover && presence == .live)),
+                        showCover: showLiveCover && presence == .live,
                         coverOverride: presence == .live ? status.snapshots[entry.id]?.cover : nil)
     }
 
@@ -293,7 +293,7 @@ struct FavoriteSettingsView: View {
             } header: {
                 Text("关注列表")
             } footer: {
-                Text("每页数量和默认开播筛选适用于完整「关注」页。直播封面会在默认或大卡片布局中显示，紧凑布局只显示文字。")
+                Text("每页数量和默认开播筛选适用于完整「关注」页。直播封面设置也适用于首页的关注卡片。")
             }
             Section {
                 Toggle("进入关注页时刷新", isOn: $refreshOnEnter)
