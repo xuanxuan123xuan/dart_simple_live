@@ -268,6 +268,7 @@ struct FavoriteSettingsView: View {
                 Text("定时刷新在应用处于前台并显示首页或关注页时运行。开启开播筛选或直播封面时，关注页会主动查询开播状态。")
             }
         }
+        .pickerStyle(.navigationLink)
         .navigationTitle("关注设置")
     }
 }

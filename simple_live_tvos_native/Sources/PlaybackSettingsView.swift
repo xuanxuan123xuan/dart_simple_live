@@ -115,7 +115,7 @@ struct PlaybackSettingsView: View {
             } header: {
                 Text("默认播放")
             } footer: {
-                Text("画面比例也应用于多屏。默认清晰度和初始音量在打开新的直播间时生效，清晰度依据平台提供的档位选择。")
+                Text("「适应」保留完整画面，「铺满」可能裁切边缘，「拉伸」会让画面填满可用空间，可能改变原比例。画面比例也应用于多屏。默认清晰度和初始音量在打开新的直播间时生效，清晰度依据平台提供的档位选择。")
             }
             Section {
                 Toggle("KSPlayer 硬件解码", isOn: $hardwareDecode)
@@ -125,7 +125,7 @@ struct PlaybackSettingsView: View {
             } header: {
                 Text("原生播放引擎")
             } footer: {
-                Text("缓冲和解码在下次连接时生效。硬件解码开关仅控制 KSPlayer，AVPlayer 由系统决定解码方式。")
+                Text("较低延迟减少等待，较稳定增加预缓冲。缓冲和解码在下次连接时生效。硬件解码开关仅控制 KSPlayer，AVPlayer 由系统决定解码方式。")
             }
             Button("恢复默认播放设置") {
                 autoQuality = true
@@ -136,6 +136,7 @@ struct PlaybackSettingsView: View {
                 aspect = .fit
             }
         }
+        .pickerStyle(.navigationLink)
         .navigationTitle("播放设置")
     }
 

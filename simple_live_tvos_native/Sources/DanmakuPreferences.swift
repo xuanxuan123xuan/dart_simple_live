@@ -62,27 +62,27 @@ struct DanmakuSettingsView: View {
             Section {
                 Toggle("显示直播弹幕", isOn: $enabled)
                 Toggle("显示图片表情", isOn: storage.$renderStickers)
-                Picker("弹幕大小", selection: storage.$fontSize) {
+                Picker("弹幕字号", selection: storage.$fontSize) {
                     ForEach([24.0, 30, 36, 42, 48, 56, 64], id: \.self) { Text("\(Int($0))").tag($0) }
                 }
-                Picker("弹幕速度", selection: storage.$crossingSeconds) {
+                Picker("滚动速度", selection: storage.$crossingSeconds) {
                     ForEach([15.0, 12, 9, 6, 4], id: \.self) { Text("\(Int($0)) 秒横穿画面").tag($0) }
                 }
-                Picker("不透明度", selection: storage.$opacity) {
+                Picker("弹幕不透明度", selection: storage.$opacity) {
                     ForEach((1...10).map { Double($0) / 10 }.includingSelection(storage.opacity), id: \.self) { value in
                         Text(value, format: .percent.precision(.fractionLength(0...2))).tag(value)
                     }
                 }
-                Picker("描边宽度", selection: storage.$outlineWidth) {
+                Picker("文字描边宽度", selection: storage.$outlineWidth) {
                     ForEach(Array(stride(from: 0, through: 16, by: 2)), id: \.self) { Text("\($0)").tag(Double($0)) }
                 }
             } header: {
                 Text("显示")
             } footer: {
-                Text("关闭直播弹幕会同时隐藏滚动弹幕和重点动态。多屏可单独设置是否开启弹幕，图片表情需平台提供。")
+                Text("横穿画面用时越短，弹幕滚动越快。关闭直播弹幕会同时隐藏滚动弹幕和重点动态。多屏可单独设置是否开启弹幕，图片表情需平台提供。")
             }
             Section {
-                Picker("范围模式", selection: storage.$layout) {
+                Picker("范围设置方式", selection: storage.$layout) {
                     ForEach(DanmakuLayout.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 if storage.layout == .lines {
@@ -109,17 +109,17 @@ struct DanmakuSettingsView: View {
                 Toggle("显示重点动态", isOn: highlightStorage.$enabled)
                 if highlightStorage.enabled {
                     Toggle("隐藏控制面板时显示", isOn: highlightStorage.$fullScreen)
-                    Picker("统计跨度", selection: highlightStorage.$window) {
+                    Picker("重复弹幕统计时长", selection: highlightStorage.$window) {
                         ForEach([5, 10, 15, 30, 60, 120].includingSelection(highlightStorage.window), id: \.self) {
                             Text("\($0) 秒").tag($0)
                         }
                     }
-                    Picker("展示时间", selection: highlightStorage.$displayTime) {
+                    Picker("重点动态停留时间", selection: highlightStorage.$displayTime) {
                         ForEach([3, 5, 10, 15, 30, 60].includingSelection(highlightStorage.displayTime), id: \.self) {
                             Text("\($0) 秒").tag($0)
                         }
                     }
-                    Picker("起显次数", selection: highlightStorage.$minimumCount) {
+                    Picker("触发重点动态的最少次数", selection: highlightStorage.$minimumCount) {
                         ForEach([2, 3, 5, 8, 10, 20].includingSelection(highlightStorage.minimumCount), id: \.self) {
                             Text("\($0) 次").tag($0)
                         }
@@ -136,24 +136,25 @@ struct DanmakuSettingsView: View {
                     ForEach(DanmakuDedupeMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 if filtering.mode != .off {
-                    Picker("过滤窗口", selection: filtering.$window) {
+                    Picker("比较最近多少条弹幕", selection: filtering.$window) {
                         let presets = filtering.mode == .allSenders ? [5, 10, 20, 30, 50, 100] : [1, 5, 10, 20, 30, 50, 100]
                         ForEach(presets.includingSelection(filtering.window), id: \.self) {
                             Text("\($0) 条").tag($0)
                         }
                     }
                     if filtering.mode == .sameSender {
-                        Picker("过滤步长", selection: filtering.$step) {
-                            ForEach([1, 2, 3, 5].includingSelection(filtering.step), id: \.self) { Text("\($0)").tag($0) }
+                        Picker("每隔多少条清理过滤记录", selection: filtering.$step) {
+                            ForEach([1, 2, 3, 5].includingSelection(filtering.step), id: \.self) { Text("\($0) 条").tag($0) }
                         }
                     }
                 }
             } header: {
                 Text("过滤")
             } footer: {
-                Text("过滤窗口决定向前比较多少条弹幕。同一用户模式下，过滤步长决定每处理几条弹幕清理一次记录。")
+                Text("重复过滤按弹幕条数向前比较。同一用户模式下，会定期清理过滤记录。")
             }
         }
+        .pickerStyle(.navigationLink)
         .onChange(of: filtering.mode) { _, mode in
             if mode == .allSenders { filtering.window = max(5, filtering.window) }
         }

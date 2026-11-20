@@ -27,6 +27,7 @@ struct MultiRoomSettingsView: View {
                 Text("这些选项在新开多屏时生效。「单路有声」默认使用第一个房间的声音。从单屏转入时，原房间保留当前的弹幕和音量。")
             }
         }
+        .pickerStyle(.navigationLink)
         .navigationTitle("多屏设置")
     }
 }
