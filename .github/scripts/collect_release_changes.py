@@ -15,7 +15,7 @@ SHARED_ROOTS = (
 )
 PRODUCT_ROOTS = {
     'App': ('simple_live_app/', 'third_party/dart_quickjs_compat/') + SHARED_ROOTS,
-    'TV': ('simple_live_tv_app/',) + SHARED_ROOTS,
+    'TV': ('simple_live_tv_app/', 'simple_live_tvos_native/', 'simple_live_tvos_core/') + SHARED_ROOTS,
 }
 MAINTENANCE_DIRS = {
     'test', 'tests', 'test_live', 'integration_test', 'test_driver',
@@ -58,7 +58,7 @@ def is_product_path(path, audience):
             return False
     return (
         path.startswith(PRODUCT_ROOTS[audience])
-        and not MAINTENANCE_DIRS.intersection(parts)
+        and not MAINTENANCE_DIRS.intersection(part.lower() for part in parts)
         and path not in VERSION_FILES
         and not path.lower().endswith(('.md', '.rst', '.lock', '_test.dart'))
         and PurePosixPath(path).name not in {

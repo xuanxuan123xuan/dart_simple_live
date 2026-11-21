@@ -41,7 +41,8 @@ class ReleaseNotesTest(unittest.TestCase):
         value = {key: [] for key in SECTIONS}
         value['fixes'] = ['修复快手 Cookie 播放问题。']
         value['improvements'] = ['优化 HLS 直播链接切换。']
-        value['engineering'] = ['完善 Windows 与 Android 适配。']
+        value['engineering'] = ['完善 Windows 与 Android 适配。', '优化 Apple TV 的遥控器焦点。',
+                                '改善 tvOS 播放相容性。']
         validate(value)
 
     def test_accepts_wrapped_and_structured_response_content(self):
@@ -94,7 +95,7 @@ class ReleaseNotesTest(unittest.TestCase):
         context.__exit__ = Mock(return_value=False)
         evidence = '[{"files": ["scoped/path.dart"], "patch": "scoped evidence"}]'
         for audience, target in [('App', '普通版，面向手机和桌面平台'),
-                                 ('TV', 'TV 版，面向 Android TV 与 Windows TV')]:
+                                 ('TV', 'TV 版，面向 Android TV、Windows TV 和 Apple TV')]:
             with self.subTest(audience=audience), patch(
                 'release_notes.urllib.request.urlopen', return_value=context,
             ) as urlopen:

@@ -58,6 +58,20 @@ class CollectReleaseChangesTest(unittest.TestCase):
         self.assertEqual([r['commit'] for r in self.records('App')], [app])
         self.assertEqual([r['commit'] for r in self.records('TV')], [tv])
 
+    def test_native_tvos_changes_belong_to_tv_release(self):
+        self.baseline()
+        paths = {
+            'simple_live_tvos_native/Sources/Player.swift': 'native player\n',
+            'simple_live_tvos_native/Tests/PlayerTests.swift': 'player tests\n',
+            'simple_live_tvos_core/Sources/Playback.swift': 'playback core\n',
+        }
+        self.commit(paths, 'Update Apple TV playback')
+        self.assertEqual(self.records('App'), [])
+        self.assertEqual(set(self.records('TV')[0]['files']), {
+            'simple_live_tvos_native/Sources/Player.swift',
+            'simple_live_tvos_core/Sources/Playback.swift',
+        })
+
     def test_shared_and_platform_specific_dependency_paths(self):
         self.baseline()
         shared = {
