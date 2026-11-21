@@ -378,7 +378,7 @@ private struct HomeRoomResults: View {
             .frame(maxWidth: .infinity)
             .focusSection()
         } else {
-            RoomGrid(rooms: results.rooms) { pageFooter(query) }
+            RoomGrid(rooms: results.rooms, showsLiveStatus: showsLiveStatus) { pageFooter(query) }
         }
     }
 
@@ -409,6 +409,11 @@ private struct HomeRoomResults: View {
     private var emptyTitle: LocalizedStringKey {
         if case let .search(_, mode) = listing { return mode == .anchors ? "未找到相关主播" : "未找到相关直播间" }
         return "暂无直播间"
+    }
+
+    private var showsLiveStatus: Bool {
+        if case .search = listing { return true }
+        return false
     }
 
     private struct Pagination: Equatable {
@@ -480,6 +485,7 @@ private struct RoomGrid<Footer: View>: View {
     @FocusState private var focusedRoom: String?
     @State private var lastFocusedRoom: String?
     let rooms: [RoomDescriptor]
+    let showsLiveStatus: Bool
     @ViewBuilder let footer: () -> Footer
 
     var body: some View {
@@ -490,7 +496,7 @@ private struct RoomGrid<Footer: View>: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 24)], spacing: 24) {
                     ForEach(rooms) { room in
                         NavigationLink(value: HomeRoute.room(room, queue: rooms)) {
-                            RoomTile(room: room)
+                            RoomTile(room: room, showsLiveStatus: showsLiveStatus)
                         }
                         .buttonStyle(HomeButtonStyle())
                         .focusEffectDisabled()
@@ -530,6 +536,7 @@ struct RoomTile: View {
     let room: RoomDescriptor
     var heading: String? = nil
     var caption: String? = nil
+    var showsLiveStatus = false
     var showCover = true
     var coverOverride: String? = nil
 
@@ -543,7 +550,7 @@ struct RoomTile: View {
                     .lineLimit(1)
                 if let caption {
                     Text(caption).font(.system(size: 20)).foregroundStyle(.secondary).lineLimit(1)
-                } else if let isLive = room.isLive {
+                } else if showsLiveStatus, let isLive = room.isLive {
                     Label(isLive ? "直播中" : "未开播", systemImage: isLive ? "dot.radiowaves.left.and.right" : "moon")
                         .font(.system(size: 20))
                         .foregroundStyle(isLive ? Color.green : Color.white.opacity(0.64))
