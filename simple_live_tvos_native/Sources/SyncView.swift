@@ -81,9 +81,6 @@ struct SyncCategoryControls: View {
 
 struct SyncReviewModifier: ViewModifier {
     @ObservedObject var receiver: SyncReceiver
-    @FocusState private var focused: Action?
-
-    private enum Action: Hashable { case cancel, confirm }
 
     func body(content: Content) -> some View {
         content
@@ -91,67 +88,17 @@ struct SyncReviewModifier: ViewModifier {
             .accessibilityHidden(receiver.review != nil)
             .overlay {
                 if let review = receiver.review {
-                    ZStack {
-                        Color.black.opacity(0.7).ignoresSafeArea()
-                        VStack(spacing: 24) {
-                            Text(review.overwrite ? "确认覆盖所选数据？" : "确认导入账号？")
-                                .font(.title2.bold())
-                                .accessibilityAddTraits(.isHeader)
-                            Text(review.summary).foregroundStyle(.secondary)
-                            HStack(spacing: 24) {
-                                Button("取消") { receiver.answer(false, id: review.id) }
-                                    .focused($focused, equals: .cancel)
-                                confirmButton(for: review)
-                            }
-                        }
-                        .padding(44)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 30))
-                        .focusSection()
+                    TVConfirmation(title: review.overwrite ? "确认覆盖所选数据？" : "确认导入账号？",
+                                   message: review.summary,
+                                   confirmTitle: review.overwrite ? "覆盖导入" : "导入",
+                                   isDestructive: review.overwrite,
+                                   confirmIdentifier: "sync-review-confirm",
+                                   cancel: { receiver.answer(false, id: review.id) }) {
+                        receiver.answer(true, id: review.id)
                     }
-                    .defaultFocus($focused, .cancel)
-                    .task(id: review.id) { focused = .cancel }
-                    .onExitCommand { receiver.answer(false, id: review.id) }
+                    .id(review.id)
                 }
             }
-    }
-
-    @ViewBuilder
-    private func confirmButton(for review: SyncReceiver.Review) -> some View {
-        let button = Button(review.overwrite ? "覆盖导入" : "导入",
-                            role: review.overwrite ? .destructive : nil) {
-            receiver.answer(true, id: review.id)
-        }
-        .focused($focused, equals: .confirm)
-        .accessibilityIdentifier("sync-review-confirm")
-
-        if review.overwrite {
-            button
-                .buttonStyle(SyncOverwriteButtonStyle(isFocused: focused == .confirm))
-                .focusEffectDisabled()
-        } else {
-            button
-        }
-    }
-}
-
-private struct SyncOverwriteButtonStyle: ButtonStyle {
-    let isFocused: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        let fill = isFocused ? Color(red: 0.65, green: 0.15, blue: 0.20)
-                             : Color(red: 0.52, green: 0.11, blue: 0.16)
-
-        configuration.label
-            .font(.body.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 30)
-            .frame(minHeight: 66)
-            .background(fill, in: Capsule())
-            .overlay {
-                Capsule().strokeBorder(isFocused ? .white : .clear, lineWidth: 2)
-            }
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.easeOut(duration: 0.15), value: isFocused)
     }
 }
 
