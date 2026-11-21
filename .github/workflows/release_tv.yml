@@ -126,6 +126,41 @@ jobs:
             echo "sha=$sha"
           } >> "$GITHUB_OUTPUT"
 
+  tag:
+    name: 预建 TV 发布 tag
+    needs: prepare
+    if: ${{ needs.prepare.outputs.publish_release == 'true' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    # GITHUB_TOKEN 缺少 workflows 权限：构建期间分支若前进且改过 .github/workflows，
+    # 再给旧提交建 tag/release 会被拒（403 Resource not accessible by integration）。
+    # 因此在构建开始、sha 仍是分支头时先固定 tag。
+    permissions:
+      contents: write
+    steps:
+      - name: 固定 tag 到构建提交
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if current="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null)"; then
+            if [[ "$current" == "$SHA" ]]; then
+              echo "tag $TAG 已指向 $SHA，跳过"
+              exit 0
+            fi
+            echo "tag $TAG 由 $current 更新到 $SHA"
+            gh api -X PATCH "repos/$REPO/git/refs/tags/$TAG" \
+              -f sha="$SHA" -F force=true >/dev/null
+          else
+            echo "创建 tag $TAG -> $SHA"
+            gh api -X POST "repos/$REPO/git/refs" \
+              -f ref="refs/tags/$TAG" -f sha="$SHA" >/dev/null
+          fi
+
   android:
     name: Android TV Universal APK
     needs: prepare
@@ -321,7 +356,7 @@ jobs:
 
   release:
     name: 发布 TV GitHub Release
-    needs: [prepare, android, windows, tvos]
+    needs: [prepare, tag, android, windows, tvos]
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -334,8 +369,14 @@ jobs:
           ANDROID_RESULT: ${{ needs.android.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
           TVOS_RESULT: ${{ needs.tvos.result }}
+          PUBLISH_RELEASE: ${{ needs.prepare.outputs.publish_release }}
+          TAG_RESULT: ${{ needs.tag.result }}
         run: |
           set -euo pipefail
+          if [[ "$PUBLISH_RELEASE" == "true" && "$TAG_RESULT" != "success" ]]; then
+            echo "::error::预建发布 tag 失败（$TAG_RESULT），无法发布 Release。" >&2
+            exit 1
+          fi
           for pair in "Android TV:$ANDROID_RESULT" "Windows TV:$WINDOWS_RESULT" "Swift tvOS:$TVOS_RESULT"; do
             name="${pair%%:*}"
             result="${pair#*:}"

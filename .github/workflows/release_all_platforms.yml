@@ -167,6 +167,41 @@ jobs:
             echo "tag=$tag"
           } >> "$GITHUB_OUTPUT"
 
+  tag:
+    name: 预建发布 tag
+    needs: prepare
+    if: ${{ needs.prepare.outputs.publish_release == 'true' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    # GITHUB_TOKEN 缺少 workflows 权限：一旦分支在构建期间前进且改过 .github/workflows，
+    # 再给旧提交建 tag/release 会被 GitHub 拒绝（403 Resource not accessible by integration）。
+    # 所以必须在构建开始、sha 仍是分支头时就把 tag 固定下来。
+    permissions:
+      contents: write
+    steps:
+      - name: 固定 tag 到构建提交
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if current="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null)"; then
+            if [[ "$current" == "$SHA" ]]; then
+              echo "tag $TAG 已指向 $SHA，跳过"
+              exit 0
+            fi
+            echo "tag $TAG 由 $current 更新到 $SHA"
+            gh api -X PATCH "repos/$REPO/git/refs/tags/$TAG" \
+              -f sha="$SHA" -F force=true >/dev/null
+          else
+            echo "创建 tag $TAG -> $SHA"
+            gh api -X POST "repos/$REPO/git/refs" \
+              -f ref="refs/tags/$TAG" -f sha="$SHA" >/dev/null
+          fi
+
   android:
     name: Android APK 与 AAB
     needs: prepare
@@ -796,7 +831,7 @@ jobs:
 
   release:
     name: 发布 GitHub Release
-    needs: [prepare, android, ios, macos, windows, linux, ohos]
+    needs: [prepare, tag, android, ios, macos, windows, linux, ohos]
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -815,7 +850,13 @@ jobs:
           LINUX_RESULT: ${{ needs.linux.result }}
           OHOS_RESULT: ${{ needs.ohos.result }}
           INCLUDE_OHOS: ${{ needs.prepare.outputs.include_ohos }}
+          PUBLISH_RELEASE: ${{ needs.prepare.outputs.publish_release }}
+          TAG_RESULT: ${{ needs.tag.result }}
         run: |
+          if [[ "$PUBLISH_RELEASE" == "true" && "$TAG_RESULT" != "success" ]]; then
+            echo "::error::预建发布 tag 失败（$TAG_RESULT），无法发布 Release。" >&2
+            exit 1
+          fi
           for pair in \
             "Android:$ANDROID_RESULT" \
             "iOS:$IOS_RESULT" \
