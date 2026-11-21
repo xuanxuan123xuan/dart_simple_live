@@ -87,6 +87,26 @@ final class ProviderParsingTests: XCTestCase {
         }
     }
 
+    func testKuaishouUsesRecentPublicRoomWhileDetailIsRateLimited() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KuaishouRoomURLProtocol.self]
+        let service = KuaishouService(http: ProviderHTTP(configuration: configuration))
+        _ = try await service.rooms(in: .recommended, page: 1)
+
+        let detail = try await service.resolveRoom("host-1")
+        XCTAssertEqual(detail.roomId, "host-1")
+        XCTAssertEqual(detail.isLive, true)
+        let qualities = try await service.qualities(roomId: detail.roomId)
+        let quality = try XCTUnwrap(qualities.first)
+        let resources = try await service.playback(roomId: detail.roomId, quality: quality)
+        XCTAssertEqual(resources.map { $0.url.absoluteString }, ["https://example.com/stream.flv"])
+
+        do {
+            _ = try await service.resolveRoom("unlisted")
+            XCTFail("Expected rate limit for an author outside the public list")
+        } catch LiveProviderError.rateLimited {}
+    }
+
     func testLiveRoomInputRoutesShareTextAndBareRoomNumbers() async throws {
         let parser = LiveRoomInput { _ in throw LiveProviderError.invalidRoom }
         let fixtures = [
@@ -285,6 +305,39 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertEqual(payload.text(2), "stream-id")
         XCTAssertEqual(payload.values(5).count, 0)
     }
+}
+
+private final class KuaishouRoomURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        let body: String
+        let status: Int
+        switch url.path {
+        case "/live_api/home/list":
+            body = #"""
+                {"data":{"list":[{"gameLiveInfo":[{"liveInfo":[{
+                    "id":"stream-1","living":false,"author":{"id":"host-1"},
+                    "playUrls":[{"url":"https://example.com/stream.flv","level":50,"name":"超清"}]
+                }]}]}]}}
+                """#
+            status = 200
+        case "/u/host-1":
+            body = #"<script>window.__INITIAL_STATE__={"liveroom":{"playList":[{"isLiving":false,"errorType":{"type":2}}]}};</script>"#
+            status = 200
+        default:
+            body = ""
+            status = 500
+        }
+        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 final class ProviderSmokeTests: XCTestCase {

@@ -7,11 +7,14 @@ actor KuaishouService: LiveProviderService, DanmakuService {
         "Referer": origin + "/",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
     ]
-    private let http = ProviderHTTP()
+    private let http: ProviderHTTP
     private let accounts: AccountRequestCredentials
+    private var recentPublicRooms: [String: (item: JSONObject, expires: ContinuousClock.Instant)] = [:]
+    private var roomPageRetryAt: ContinuousClock.Instant?
 
-    init(accounts: AccountRequestCredentials = AccountRequestCredentials()) {
+    init(accounts: AccountRequestCredentials = AccountRequestCredentials(), http: ProviderHTTP = ProviderHTTP()) {
         self.accounts = accounts
+        self.http = http
     }
 
     func categories() async throws -> [CategoryDescriptor] {
@@ -41,11 +44,20 @@ actor KuaishouService: LiveProviderService, DanmakuService {
     }
 
     func rooms(in listing: RoomListing, page: Int) async throws -> RoomPage {
+        if case let .search(keyword, .anchors) = listing {
+            return try await searchAnchors(keyword, page: page)
+        }
+        return try await accounts.withKuaishouAccount { account in
+            try await rooms(in: listing, page: page, account: account)
+        }
+    }
+
+    private func rooms(in listing: RoomListing, page: Int, account: AccountCredential?) async throws -> RoomPage {
         let items: [JSONObject]
         let more: Bool
         switch listing {
         case .recommended:
-            let data = try await request("/live_api/home/list")
+            let data = try await request("/live_api/home/list", [:], account: account)
             items = data.objects("list").flatMap { $0.objects("gameLiveInfo") }.flatMap { $0.objects("liveInfo") }
             more = false
         case let .category(category):
@@ -53,19 +65,27 @@ actor KuaishouService: LiveProviderService, DanmakuService {
             let board = parent <= 5 ? "gameboard" : "non-gameboard"
             let data = try await request("/live_api/\(board)/list", [
                 "filterType": "0", "pageSize": "20", "gameId": category.categoryId, "page": String(page),
-            ])
+            ], account: account)
             items = data.objects("list")
             more = data.integer("hasMore") == 1
-        case let .search(keyword, mode):
-            if mode == .anchors { return try await searchAnchors(keyword, page: page) }
+        case let .search(keyword, _):
             let data = try await request("/live_api/search/liveStream", [
                 "keyword": keyword, "page": String(page), "count": "20", "ussid": "",
-            ])
+            ], account: account)
             guard data.integer("result") == 1, data.fields["list"] is [Any] else { throw LiveProviderError.authenticationRequired }
             items = data.objects("list")
             more = data.integer("hasMore").map { $0 == 1 } ?? (items.count >= 20)
         }
-        return RoomPage(rooms: items.compactMap(Self.parseRoom), hasMore: more)
+        let now = ContinuousClock.now
+        if account == nil { recentPublicRooms = recentPublicRooms.filter { $0.value.expires > now } }
+        let rooms = items.compactMap { item -> RoomDescriptor? in
+            guard let room = Self.parseRoom(item) else { return nil }
+            if account == nil, room.isLive == true {
+                recentPublicRooms[room.roomId] = (item, now.advanced(by: .seconds(60)))
+            }
+            return room
+        }
+        return RoomPage(rooms: rooms, hasMore: more)
     }
 
     private func searchAnchors(_ keyword: String, page: Int) async throws -> RoomPage {
@@ -138,21 +158,36 @@ actor KuaishouService: LiveProviderService, DanmakuService {
     }
 
     private func detail(_ id: String) async throws -> JSONObject {
-        try await accounts.withKuaishouAccount { account in
-            try await detail(id, account: account)
+        do {
+            return try await accounts.withKuaishouAccount { account in
+                try await detail(id, account: account)
+            }
+        } catch LiveProviderError.rateLimited {
+            try Task.checkCancellation()
+            guard let snapshot = recentPublicRooms[id], snapshot.expires > .now,
+                  !Self.playableVariants(in: snapshot.item).isEmpty else {
+                throw LiveProviderError.rateLimited
+            }
+            return snapshot.item
         }
     }
 
     private func detail(_ id: String, account: AccountCredential?) async throws -> JSONObject {
         let verified = try normalizedRoomID(id, hosts: [])
+        if let roomPageRetryAt, roomPageRetryAt > .now { throw LiveProviderError.rateLimited }
         var headers = Self.headers
         headers["Cookie"] = account?.cookie
-        let (data, _) = try await http.response(Self.origin + "/u/" + verified, headers: headers)
-        let html = String(decoding: data, as: UTF8.self)
-        if !html.contains("__INITIAL_STATE__"), Self.requiresLogin(html) {
-            throw LiveProviderError.authenticationRequired
+        do {
+            let (data, _) = try await http.response(Self.origin + "/u/" + verified, headers: headers)
+            let html = String(decoding: data, as: UTF8.self)
+            if !html.contains("__INITIAL_STATE__"), Self.requiresLogin(html) {
+                throw LiveProviderError.authenticationRequired
+            }
+            return try Self.parseRoomPage(html, id: verified)
+        } catch LiveProviderError.rateLimited {
+            roomPageRetryAt = .now.advanced(by: .seconds(30))
+            throw LiveProviderError.rateLimited
         }
-        return try Self.parseRoomPage(html, id: verified)
     }
 
     static func parseRoomPage(_ html: String, id: String) throws -> JSONObject {
