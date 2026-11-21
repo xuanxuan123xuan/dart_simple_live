@@ -310,9 +310,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  tvos:
+    name: Swift tvOS IPA
+    needs: prepare
+    uses: ./.github/workflows/build_tvos_native.yml
+    with:
+      sha: ${{ needs.prepare.outputs.sha }}
+      version: ${{ needs.prepare.outputs.version }}
+      build_number: ${{ needs.prepare.outputs.build_number }}
+
   release:
     name: 发布 TV GitHub Release
-    needs: [prepare, android, windows]
+    needs: [prepare, android, windows, tvos]
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -324,9 +333,10 @@ jobs:
         env:
           ANDROID_RESULT: ${{ needs.android.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
+          TVOS_RESULT: ${{ needs.tvos.result }}
         run: |
           set -euo pipefail
-          for pair in "Android TV:$ANDROID_RESULT" "Windows TV:$WINDOWS_RESULT"; do
+          for pair in "Android TV:$ANDROID_RESULT" "Windows TV:$WINDOWS_RESULT" "Swift tvOS:$TVOS_RESULT"; do
             name="${pair%%:*}"
             result="${pair#*:}"
             if [[ "$result" != "success" ]]; then
@@ -351,6 +361,7 @@ jobs:
       - name: 生成 Release 简介
         shell: bash
         env:
+          VERSION: ${{ needs.prepare.outputs.version }}
           FULL_VERSION: ${{ needs.prepare.outputs.full_version }}
           SHA: ${{ needs.prepare.outputs.sha }}
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -359,12 +370,16 @@ jobs:
         run: |
           set -euo pipefail
           cd release-assets
+          tvos_ipa="simple-live-tv-$VERSION-tvos-swift-unsigned.ipa"
+          if [[ ! -s "$tvos_ipa" ]]; then
+            echo "::error::缺少 Swift tvOS 发布产物：$tvos_ipa" >&2
+            exit 1
+          fi
           mapfile -t files < <(find . -maxdepth 1 -type f ! -name 'SHA256SUMS-*' -printf '%f\n' | sort)
-          ((${#files[@]} > 0))
           for file in "${files[@]}"; do
             case "$file" in
-              simple-live-tv-*.apk|simple-live-tv-*.exe) ;;
-              *) echo "::error::TV Release 包含非 TV 安装包：$file" >&2; exit 1 ;;
+              simple-live-tv-*.apk|simple-live-tv-*.exe|"$tvos_ipa") ;;
+              *) echo "::error::TV Release 包含非预期产物：$file" >&2; exit 1 ;;
             esac
           done
           sha256sum -- "${files[@]}" > "$RUNNER_TEMP/sha256.txt"
@@ -380,6 +395,8 @@ jobs:
           {
             echo "版本：\`$FULL_VERSION\`"
             echo "提交：\`$SHA\`"
+            echo ""
+            echo "Swift tvOS IPA 需完成 Apple 签名后才能安装到 Apple TV。"
             echo ""
             echo "### SHA-256 校验"
             echo '```'

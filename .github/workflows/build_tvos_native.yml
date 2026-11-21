@@ -1,0 +1,80 @@
+name: 构建 Swift tvOS IPA
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      sha:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      build_number:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Swift tvOS 未签名 IPA
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: 准备 Xcode 构建工具
+        shell: bash
+        run: |
+          xcodebuild -version
+          command -v xcodegen || brew install xcodegen
+          if ! xcrun metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          echo "TVOS_DERIVED_DATA=$RUNNER_TEMP/swift-tvos-derived-data" >> "$GITHUB_ENV"
+
+      - name: 缓存播放器依赖
+        uses: actions/cache@v4
+        with:
+          path: simple_live_tvos_native/build/vendor
+          key: tvos-native-player-${{ hashFiles('tool/build_tvos_native.sh') }}
+
+      - name: 构建 Swift tvOS 真机应用
+        shell: bash
+        env:
+          TV_VERSION: ${{ inputs.version }}
+          TV_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          set -- -configuration Release -destination 'generic/platform=tvOS' CODE_SIGNING_ALLOWED=NO
+          if [[ -n "$TV_VERSION" ]]; then
+            set -- "$@" "MARKETING_VERSION=$TV_VERSION" "CURRENT_PROJECT_VERSION=$TV_BUILD_NUMBER"
+          fi
+          tool/build_tvos_native.sh "$@" build
+
+      - name: 打包 Swift tvOS 未签名 IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$TVOS_DERIVED_DATA/Build/Products/Release-appletvos/SimpleLiveTVOS.app"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          payload="$RUNNER_TEMP/swift-tvos-package/Payload"
+          out="$RUNNER_TEMP/release-tv-tvos"
+          mkdir -p "$payload" "$out"
+          ditto "$app" "$payload/SimpleLiveTVOS.app"
+          ipa="simple-live-tv-$version-tvos-swift-unsigned.ipa"
+          ditto -c -k --norsrc --keepParent "$payload" "$out/$ipa"
+          (cd "$out" && shasum -a 256 -- "$ipa" > SHA256SUMS-tv-tvos.txt)
+          echo 'Swift tvOS IPA 已打包。需完成 Apple 签名后才能安装到 Apple TV。' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-tv-tvos
+          path: ${{ runner.temp }}/release-tv-tvos/*
+          if-no-files-found: error
+          retention-days: 14

@@ -11,6 +11,7 @@ void main() {
               as YamlMap;
       final jobs = workflow['jobs'] as YamlMap;
       for (final job in jobs.values.cast<YamlMap>()) {
+        if (job['uses'] != null) continue;
         for (final step in (job['steps'] as YamlList).cast<YamlMap>()) {
           final script = step['run'];
           if (script is! String) continue;

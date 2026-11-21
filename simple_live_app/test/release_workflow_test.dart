@@ -4,13 +4,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yaml/yaml.dart';
 
 void main() {
-  for (final file in ['release_all_platforms.yml', 'release_tv.yml']) {
+  for (final file in [
+    'release_all_platforms.yml',
+    'release_tv.yml',
+    'build_tvos_native.yml',
+  ]) {
     test('$file parses and shell scripts have valid syntax', () async {
       final workflow =
           loadYaml(File('../.github/workflows/$file').readAsStringSync())
               as YamlMap;
       final jobs = workflow['jobs'] as YamlMap;
       for (final job in jobs.values.cast<YamlMap>()) {
+        if (job['uses'] != null) continue;
         for (final step in (job['steps'] as YamlList).cast<YamlMap>()) {
           final script = step['run'];
           if (script is! String) continue;
@@ -27,12 +32,16 @@ void main() {
           expect(await process.exitCode, 0, reason: '$file: ${step['name']}');
         }
       }
+      if (!jobs.containsKey('release')) return;
       final steps =
           (jobs['release']['steps'] as YamlList).cast<YamlMap>().toList();
       final notes = steps.firstWhere(
           (s) => s['run']?.toString().contains('release_notes.py') ?? false);
       expect(notes['run'], isNot(contains('sed -E')));
       if (file == 'release_tv.yml') {
+        expect(jobs['tvos']['uses'], './.github/workflows/build_tvos_native.yml');
+        expect(jobs['release']['needs'], contains('tvos'));
+        expect(notes['run'], contains('-tvos-swift-unsigned.ipa'));
         final publish = steps
             .indexWhere((s) => s['uses'] == 'softprops/action-gh-release@v2');
         final sync =
