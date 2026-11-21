@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/modules/sync/local_sync/local_sync_controller.dart';
+import 'package:simple_live_app/modules/sync/local_sync/xiaohongshu_discovery_relay_page.dart';
 import 'package:simple_live_app/services/sync_service.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
@@ -69,6 +70,20 @@ class LocalSyncPage extends GetView<LocalSyncController> {
               ),
             ),
           ),
+          if (Platform.isAndroid || Platform.isIOS) ...[
+            AppStyle.vGap12,
+            SettingsCard(
+              child: ListTile(
+                leading: const Icon(Icons.live_tv_outlined),
+                title: const Text('小红书直播发现'),
+                subtitle: const Text('让电视从手机读取小红书公开直播分类和房间列表'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Get.to(() => const XiaohongshuDiscoveryRelayPage());
+                },
+              ),
+            ),
+          ],
           AppStyle.vGap12,
           ListTile(
             title: Obx(

@@ -14,6 +14,8 @@ import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/xiaohongshu_account_service.dart';
+import 'package:simple_live_app/services/xiaohongshu_discovery_lan_relay.dart';
+import 'package:simple_live_app/services/xiaohongshu_web_session_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -33,6 +35,22 @@ class SyncService extends GetxService {
   DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
   NetworkInfo networkInfo = NetworkInfo();
   HttpServer? server;
+  late final XiaohongshuDiscoveryLanRelay _xiaohongshuDiscoveryRelay =
+      XiaohongshuDiscoveryLanRelay(
+    requestDiscovery: ({required String path, Map<String, dynamic> query = const {}}) {
+      if (!Get.isRegistered<XiaohongshuWebSessionService>()) {
+        throw StateError('小红书发现会话不可用');
+      }
+      return XiaohongshuWebSessionService.instance.requestDiscovery(
+        path: path,
+        query: query,
+      );
+    },
+    isAvailable: () =>
+        httpRunning.value &&
+        Get.isRegistered<XiaohongshuWebSessionService>() &&
+        XiaohongshuWebSessionService.isSupported,
+  );
   var ipAddress = "".obs;
   var httpRunning = false.obs;
   var httpErrorMsg = "".obs;
@@ -213,6 +231,68 @@ class SyncService extends GetxService {
     return ip ?? "";
   }
 
+  Future<List<String>> getLanIPv4Addresses() async {
+    final addresses = <String>{};
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+        includeLinkLocal: false,
+      );
+      for (final interface in interfaces) {
+        for (final address in interface.addresses) {
+          if (_isPrivateLanIPv4(address.address) &&
+              !address.isMulticast &&
+              !address.isLoopback) {
+            addresses.add(address.address);
+          }
+        }
+      }
+    } catch (_) {
+      for (final address in ipAddress.value.split(';')) {
+        final candidate = address.trim();
+        if (_isPrivateLanIPv4(candidate)) addresses.add(candidate);
+      }
+    }
+    if (addresses.isEmpty) {
+      try {
+        final wifiAddress = await networkInfo.getWifiIP();
+        if (wifiAddress != null && _isPrivateLanIPv4(wifiAddress)) {
+          addresses.add(wifiAddress);
+        }
+      } catch (_) {
+        // Address discovery is best-effort; the screen explains an empty list.
+      }
+    }
+    final result = addresses.toList()..sort();
+    return result;
+  }
+
+  static bool _isPrivateLanIPv4(String address) {
+    final parts = address.split('.');
+    if (parts.length != 4) return false;
+    final octets = parts.map(int.tryParse).toList();
+    if (octets.any((value) => value == null || value < 0 || value > 255)) {
+      return false;
+    }
+    final first = octets[0]!;
+    final second = octets[1]!;
+    return first == 10 ||
+        (first == 172 && second >= 16 && second <= 31) ||
+        (first == 192 && second == 168);
+  }
+
+  String startXiaohongshuDiscoveryRelay() =>
+      _xiaohongshuDiscoveryRelay.start();
+
+  void setXiaohongshuDiscoveryPageVisible(bool visible) =>
+      _xiaohongshuDiscoveryRelay.setPageVisible(visible);
+
+  void setXiaohongshuDiscoveryForeground(bool foreground) =>
+      _xiaohongshuDiscoveryRelay.setForeground(foreground);
+
+  void stopXiaohongshuDiscoveryRelay() => _xiaohongshuDiscoveryRelay.stop();
+
   /// 初始化HTTP服务
   void initServer() async {
     try {
@@ -231,7 +311,16 @@ class SyncService extends GetxService {
         '/sync/account/xiaohongshu',
         _syncXiaohongshuAccountRequest,
       );
-
+      if (Platform.isAndroid || Platform.isIOS) {
+        serverRouter.get(
+          XiaohongshuDiscoveryLanRelay.categoriesPath,
+          _xiaohongshuDiscoveryRelay.categoriesRequest,
+        );
+        serverRouter.get(
+          XiaohongshuDiscoveryLanRelay.roomsPath,
+          _xiaohongshuDiscoveryRelay.roomsRequest,
+        );
+      }
       server = await shelf_io.serve(
         serverRouter,
         InternetAddress.anyIPv4,
@@ -672,6 +761,7 @@ class SyncService extends GetxService {
   @override
   void onClose() {
     Log.d('SyncService close');
+    _xiaohongshuDiscoveryRelay.stop();
     udp?.close();
     udpRunning.value = false;
     server?.close(force: true);
