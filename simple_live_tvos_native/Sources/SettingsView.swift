@@ -1,10 +1,15 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @FocusState private var focusedRow: String?
+    private let playbackRow = "settings-playback"
+
     var body: some View {
         List {
             NavigationLink("播放设置") { PlaybackSettingsView() }
-                .accessibilityIdentifier("settings-playback")
+                .focused($focusedRow, equals: playbackRow)
+                .id(HomeContentAnchor.top)
+                .accessibilityIdentifier(playbackRow)
             NavigationLink("弹幕设置") { DanmakuSettingsView() }
             NavigationLink("关注设置") { FavoriteSettingsView() }
             NavigationLink("多屏设置") { MultiRoomSettingsView() }
@@ -13,6 +18,7 @@ struct SettingsView: View {
             NavigationLink("关于") { AboutUpdateView() }
         }
         .listStyle(.plain)
+        .focusFirstItemFromBottomBar(playbackRow, focus: $focusedRow)
     }
 }
 

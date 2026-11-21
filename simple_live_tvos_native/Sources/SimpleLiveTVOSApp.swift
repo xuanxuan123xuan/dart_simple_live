@@ -8,10 +8,13 @@ struct SimpleLiveTVOSApp: App {
     var body: some Scene {
         WindowGroup {
             if acceptedNoticeVersion >= UsageNoticeView.version {
-                HomeView()
-                    .environmentObject(core)
-                    .toggleStyle(ChineseStatusToggleStyle())
-                    .task { await core.start() }
+                HomeFocusHost { focusCoordinator in
+                    HomeView(focusCoordinator: focusCoordinator)
+                        .environmentObject(core)
+                        .toggleStyle(ChineseStatusToggleStyle())
+                        .task { await core.start() }
+                }
+                .ignoresSafeArea()
             } else {
                 UsageNoticeView {
                     acceptedNoticeVersion = UsageNoticeView.version

@@ -1,4 +1,6 @@
+import Combine
 import SwiftUI
+import UIKit
 
 enum HomeSection: String, CaseIterable, Identifiable {
     case home, live, search, favorites, history, settings
@@ -116,6 +118,114 @@ struct HomeBottomBar: View {
         }
         .frame(maxWidth: .infinity)
         .focusSection()
+    }
+}
+
+@MainActor
+final class HomeFocusCoordinator {
+    var bottomBarIsFocused = false
+    var entryID: UUID?
+    let entryRequests = PassthroughSubject<UUID, Never>()
+
+    func moveUpFromBottomBar() -> Bool {
+        guard bottomBarIsFocused, let entryID else { return false }
+        Task { @MainActor in
+            guard bottomBarIsFocused, self.entryID == entryID else { return }
+            entryRequests.send(entryID)
+        }
+        return true
+    }
+}
+
+struct HomeFocusHost<Content: View>: UIViewControllerRepresentable {
+    @ViewBuilder let content: (HomeFocusCoordinator) -> Content
+
+    func makeUIViewController(context: Context) -> HomeFocusHostingController<Content> {
+        HomeFocusHostingController(content: content)
+    }
+
+    func updateUIViewController(_ controller: HomeFocusHostingController<Content>, context: Context) {
+        controller.rootView = content(controller.focusCoordinator)
+    }
+}
+
+final class HomeFocusHostingController<Content: View>: UIHostingController<Content> {
+    let focusCoordinator: HomeFocusCoordinator
+
+    init(content: (HomeFocusCoordinator) -> Content) {
+        let coordinator = HomeFocusCoordinator()
+        focusCoordinator = coordinator
+        super.init(rootView: content(coordinator))
+    }
+
+    @MainActor required dynamic init?(coder: NSCoder) { nil }
+
+    override func shouldUpdateFocus(in context: UIFocusUpdateContext) -> Bool {
+        // Stop the directional update before tvOS can focus a lower row.
+        if context.focusHeading.contains(.up), focusCoordinator.moveUpFromBottomBar() {
+            return false
+        }
+        return super.shouldUpdateFocus(in: context)
+    }
+}
+
+private struct HomeFocusCoordinatorKey: EnvironmentKey {
+    static let defaultValue: HomeFocusCoordinator? = nil
+}
+
+extension EnvironmentValues {
+    var homeFocusCoordinator: HomeFocusCoordinator? {
+        get { self[HomeFocusCoordinatorKey.self] }
+        set { self[HomeFocusCoordinatorKey.self] = newValue }
+    }
+}
+
+enum HomeContentAnchor: Hashable {
+    case top
+}
+
+private struct HomeContentFocus<Item: Hashable>: ViewModifier {
+    @Environment(\.homeFocusCoordinator) private var coordinator
+    @State private var id = UUID()
+    @State private var pendingItem: Item?
+    let firstItem: Item?
+    let focus: FocusState<Item?>.Binding
+
+    func body(content: Content) -> some View {
+        if let coordinator {
+            ScrollViewReader { scroll in
+                content
+                    .onAppear {
+                        if firstItem != nil { coordinator.entryID = id }
+                    }
+                    .onDisappear {
+                        if coordinator.entryID == id { coordinator.entryID = nil }
+                    }
+                    .onReceive(coordinator.entryRequests) { entryID in
+                        guard entryID == id, let firstItem else { return }
+                        scroll.scrollTo(HomeContentAnchor.top, anchor: .top)
+                        pendingItem = firstItem
+                    }
+                    .task(id: pendingItem) {
+                        guard let pendingItem else { return }
+                        // A lazy grid can instantiate the first row after the scroll.
+                        await Task.yield()
+                        guard !Task.isCancelled else { return }
+                        if coordinator.entryID == id, coordinator.bottomBarIsFocused {
+                            focus.wrappedValue = pendingItem
+                        }
+                        self.pendingItem = nil
+                    }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func focusFirstItemFromBottomBar<Item: Hashable>(_ firstItem: Item?, focus: FocusState<Item?>.Binding) -> some View {
+        modifier(HomeContentFocus(firstItem: firstItem, focus: focus))
     }
 }
 

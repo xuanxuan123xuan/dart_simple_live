@@ -60,12 +60,14 @@ struct HistoryView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 12)
+            .id(HomeContentAnchor.top)
         }
         .defaultFocus($focusedRoom, entries.contains(where: { $0.id == lastFocusedRoom }) ? lastFocusedRoom : entries.first?.id)
         .onChange(of: focusedRoom) { _, value in
             if let value { lastFocusedRoom = value }
         }
         .focusSection()
+        .focusFirstItemFromBottomBar(entries.first?.id, focus: $focusedRoom)
     }
 
     private func card(_ entry: HistoryEntry) -> some View {

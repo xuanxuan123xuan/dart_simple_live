@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var core: NativeCoreClient
+    let focusCoordinator: HomeFocusCoordinator
     @StateObject private var library = LibraryStore()
     @StateObject private var favoriteStatus = FavoriteStatusStore()
     @State private var section: HomeSection = .home
@@ -21,6 +22,7 @@ struct HomeView: View {
 
                 sectionContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .environment(\.homeFocusCoordinator, focusCoordinator)
 
                 HomeBottomBar(selection: section, focus: $focusedSection) { section = $0 }
             }
@@ -28,6 +30,9 @@ struct HomeView: View {
             .background { HomeBackdrop() }
             .environment(\.colorScheme, .dark)
             .toolbar(.hidden, for: .navigationBar)
+            .onChange(of: focusedSection != nil, initial: true) { _, isFocused in
+                focusCoordinator.bottomBarIsFocused = isFocused
+            }
             .onExitCommand(perform: focusedSection == nil ? { focusedSection = section } : nil)
             .navigationDestination(for: HomeRoute.self) { route in
                 switch route {
@@ -509,6 +514,7 @@ private struct RoomGrid<Footer: View>: View {
                 .padding(.horizontal, 9)
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity)
+                .id(HomeContentAnchor.top)
                 .focusSection()
                 VStack(spacing: 12) { footer() }
                     .frame(maxWidth: .infinity)
@@ -527,6 +533,7 @@ private struct RoomGrid<Footer: View>: View {
                 if let value { lastFocusedRoom = value }
             }
             .focusSection()
+            .focusFirstItemFromBottomBar(rooms.first?.key, focus: $focusedRoom)
         }
     }
 }
