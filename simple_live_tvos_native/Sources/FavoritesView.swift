@@ -165,7 +165,7 @@ struct FavoritesView: View {
 
     private var filters: some View {
         let filter = filter
-        VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 13) {
                 chip("按状态", selected: filter.filtersByStatus) {
                     if !filter.filtersByStatus { selectedFilter = .status(nil) }
