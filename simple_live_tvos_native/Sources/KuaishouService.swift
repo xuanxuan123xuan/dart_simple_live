@@ -152,12 +152,22 @@ actor KuaishouService: LiveProviderService, DanmakuService {
         if !html.contains("__INITIAL_STATE__"), Self.requiresLogin(html) {
             throw LiveProviderError.authenticationRequired
         }
+        return try Self.parseRoomPage(html, id: verified)
+    }
+
+    static func parseRoomPage(_ html: String, id: String) throws -> JSONObject {
         let state = try EmbeddedPageData.initialState(in: html)
         let rooms = state["liveroom"].objects("playList")
-        guard let room = rooms.first(where: { [$0["author"].text("id"), $0.text("authorId"), $0.text("userId")].contains(id) }) else {
+        let match = rooms.first { [$0["author"].text("id"), $0.text("authorId"), $0.text("userId")].contains(id) }
+        if (match.map { [$0] } ?? rooms).contains(where: {
+            $0["errorType"].integer("type") == 2 || $0.integer("errorType") == 2
+        }) {
+            throw LiveProviderError.rateLimited
+        }
+        guard let match else {
             throw LiveProviderError.invalidRoom
         }
-        return room
+        return match
     }
 
     nonisolated func danmaku(roomId: String) -> AsyncThrowingStream<DanmakuEvent, Error> {

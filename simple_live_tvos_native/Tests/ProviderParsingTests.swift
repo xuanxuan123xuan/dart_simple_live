@@ -78,6 +78,15 @@ final class ProviderParsingTests: XCTestCase {
         }
     }
 
+    func testKuaishouRoomPageReportsRateLimitWithoutAnAuthor() {
+        let html = #"<script>window.__INITIAL_STATE__={"liveroom":{"playList":[{"author":null,"isLiving":false,"errorType":{"type":2,"title":"请求过快，请稍后重试"}}]}};</script>"#
+        XCTAssertThrowsError(try KuaishouService.parseRoomPage(html, id: "host-1")) { error in
+            guard case LiveProviderError.rateLimited = error else {
+                return XCTFail("Expected rate limit, got \(error)")
+            }
+        }
+    }
+
     func testLiveRoomInputRoutesShareTextAndBareRoomNumbers() async throws {
         let parser = LiveRoomInput { _ in throw LiveProviderError.invalidRoom }
         let fixtures = [
