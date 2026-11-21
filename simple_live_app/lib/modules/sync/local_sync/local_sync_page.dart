@@ -70,13 +70,13 @@ class LocalSyncPage extends GetView<LocalSyncController> {
               ),
             ),
           ),
-          if (Platform.isAndroid || Platform.isIOS) ...[
+          if (SyncService.supportsXiaohongshuDiscoveryRelay) ...[
             AppStyle.vGap12,
             SettingsCard(
               child: ListTile(
                 leading: const Icon(Icons.live_tv_outlined),
                 title: const Text('小红书直播发现'),
-                subtitle: const Text('让电视从手机读取小红书公开直播分类和房间列表'),
+                subtitle: const Text('将本机的小红书公开直播列表提供给电视'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () {
                   Get.to(() => const XiaohongshuDiscoveryRelayPage());

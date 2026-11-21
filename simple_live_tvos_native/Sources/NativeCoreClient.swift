@@ -15,7 +15,7 @@ final class NativeCoreClient: ObservableObject {
         ProviderDescriptor(id: "douyu", title: "斗鱼", supportLabel: "扫码登录"),
         ProviderDescriptor(id: "douyin", title: "抖音", supportLabel: "Cookie 登录"),
         ProviderDescriptor(id: "kuaishou", title: "快手", supportLabel: "Cookie 登录"),
-        ProviderDescriptor(id: "xiaohongshu", title: "小红书", supportLabel: "手机列表 · 链接进房"),
+        ProviderDescriptor(id: "xiaohongshu", title: "小红书", supportLabel: "局域网列表 · 链接进房"),
     ]
 
     @Published private(set) var accountStatuses: [AccountSlot: AccountStatus] = [:]

@@ -135,9 +135,9 @@ struct HomeView: View {
             Group {
                 if needsXiaohongshuPhone {
                     ContentUnavailableView {
-                        Label("连接手机浏览小红书热门", systemImage: "iphone")
+                        Label("连接设备浏览小红书热门", systemImage: "network")
                     } description: {
-                        Text("通过同一局域网连接 iPhone 或安卓手机。")
+                        Text("通过同一局域网连接电脑或手机。")
                     } actions: {
                         xiaohongshuPhoneLink
                         openRoomLink
@@ -180,7 +180,7 @@ struct HomeView: View {
 
     private var xiaohongshuPhoneLink: some View {
         NavigationLink(value: HomeRoute.xiaohongshuPhone) {
-            HomePill(quiet: false) { Label("手机连接", systemImage: "iphone") }
+            HomePill(quiet: false) { Label("设备连接", systemImage: "network") }
         }
         .buttonStyle(HomeButtonStyle())
         .focusEffectDisabled()

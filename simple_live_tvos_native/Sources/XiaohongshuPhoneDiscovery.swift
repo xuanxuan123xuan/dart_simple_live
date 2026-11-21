@@ -10,12 +10,12 @@ enum XiaohongshuPhoneError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidAddress: "请输入手机显示的局域网 IPv4 地址。"
-        case .invalidCode: "请输入手机显示的六位连接码。"
-        case .disconnected: "请让手机和 Apple TV 保持在同一局域网，并打开手机上的「小红书直播发现」。"
-        case .rejectedCode: "连接码已失效，请用手机当前显示的连接码重新连接。"
+        case .invalidAddress: "请输入共享设备显示的局域网 IPv4 地址。"
+        case .invalidCode: "请输入共享设备显示的六位连接码。"
+        case .disconnected: "请在同一局域网的电脑或手机上打开「小红书直播发现」。"
+        case .rejectedCode: "连接码已失效，请用共享设备当前显示的连接码重新连接。"
         case .expiredList: "列表分页已失效，请刷新列表。"
-        case .upstreamUnavailable: "手机暂时无法读取小红书列表，请稍后重试。"
+        case .upstreamUnavailable: "共享设备暂时无法读取小红书列表，请稍后重试。"
         }
     }
 }

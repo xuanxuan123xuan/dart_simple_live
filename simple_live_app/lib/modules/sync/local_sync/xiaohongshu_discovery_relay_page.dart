@@ -19,7 +19,7 @@ class _XiaohongshuDiscoveryRelayPageState
   late final String _pairingCode;
   List<String> _addresses = const [];
   bool _loadingAddresses = true;
-  bool _foreground = false;
+  bool _sharingAllowed = false;
   bool _routeVisible = false;
 
   SyncService get _sync => SyncService.instance;
@@ -29,18 +29,24 @@ class _XiaohongshuDiscoveryRelayPageState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _pairingCode = _sync.startXiaohongshuDiscoveryRelay();
-    final lifecycleState = WidgetsBinding.instance.lifecycleState;
-    _foreground =
-        lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
-    _sync.setXiaohongshuDiscoveryForeground(_foreground);
+    _sharingAllowed = _allowsSharing(WidgetsBinding.instance.lifecycleState);
+    _sync.setXiaohongshuDiscoveryForeground(_sharingAllowed);
     unawaited(_refreshAddresses());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _foreground = state == AppLifecycleState.resumed;
-    _sync.setXiaohongshuDiscoveryForeground(_foreground);
+    final allowed = _allowsSharing(state);
+    if (_sharingAllowed == allowed) return;
+    _sharingAllowed = allowed;
+    _sync.setXiaohongshuDiscoveryForeground(allowed);
     if (mounted) setState(() {});
+  }
+
+  bool _allowsSharing(AppLifecycleState? state) {
+    // A desktop window can lose focus while its sharing page stays open.
+    if (GetPlatform.isDesktop) return state != AppLifecycleState.detached;
+    return state == null || state == AppLifecycleState.resumed;
   }
 
   @override
@@ -87,7 +93,7 @@ class _XiaohongshuDiscoveryRelayPageState
                   if (_loadingAddresses)
                     const Center(child: CircularProgressIndicator())
                   else if (_addresses.isEmpty)
-                    const Text('未检测到可连接的局域网 IPv4 地址，请确认手机已连接 Wi-Fi。')
+                    const Text('未检测到可连接的局域网 IPv4 地址，请确认本机已连接局域网。')
                   else
                     for (final address in _addresses)
                       SelectableText(
@@ -133,9 +139,9 @@ class _XiaohongshuDiscoveryRelayPageState
                       return Text(
                           error.isEmpty ? '局域网服务未启动，请重试或检查端口占用。' : error);
                     }
-                    final serving = _foreground && _routeVisible;
+                    final serving = _sharingAllowed && _routeVisible;
                     return Text(
-                      serving ? '手机连接已开启' : '手机连接暂不可用，请保持此页面在前台。',
+                      serving ? '直播列表共享已开启' : '直播列表共享暂不可用，请打开此页面。',
                       textAlign: TextAlign.center,
                     );
                   }),
@@ -144,10 +150,12 @@ class _XiaohongshuDiscoveryRelayPageState
             ),
           ),
           AppStyle.vGap12,
-          const Text(
-            '手机和电视需在同一局域网。离开此页面或将应用切到后台后，服务会暂停。',
+          Text(
+            GetPlatform.isDesktop
+                ? '电脑和电视需在同一局域网。保持此页面打开，电视即可刷新和翻页。'
+                : '手机和电视需在同一局域网。离开此页面或将应用切到后台后，服务会暂停。',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey, fontSize: 14),
+            style: const TextStyle(color: Colors.grey, fontSize: 14),
           ),
         ],
       ),

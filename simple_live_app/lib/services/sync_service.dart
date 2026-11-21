@@ -27,6 +27,9 @@ import 'package:uuid/uuid.dart';
 
 class SyncService extends GetxService {
   static SyncService get instance => Get.find<SyncService>();
+  static bool get supportsXiaohongshuDiscoveryRelay =>
+      (Platform.isAndroid || Platform.isIOS || GetPlatform.isDesktop) &&
+      XiaohongshuWebSessionService.isSupported;
 
   UDP? udp;
   RxList<SyncClinet> scanClients = <SyncClinet>[].obs;
@@ -49,7 +52,7 @@ class SyncService extends GetxService {
     isAvailable: () =>
         httpRunning.value &&
         Get.isRegistered<XiaohongshuWebSessionService>() &&
-        XiaohongshuWebSessionService.isSupported,
+        supportsXiaohongshuDiscoveryRelay,
   );
   var ipAddress = "".obs;
   var httpRunning = false.obs;
@@ -311,7 +314,7 @@ class SyncService extends GetxService {
         '/sync/account/xiaohongshu',
         _syncXiaohongshuAccountRequest,
       );
-      if (Platform.isAndroid || Platform.isIOS) {
+      if (supportsXiaohongshuDiscoveryRelay) {
         serverRouter.get(
           XiaohongshuDiscoveryLanRelay.categoriesPath,
           _xiaohongshuDiscoveryRelay.categoriesRequest,

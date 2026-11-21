@@ -10,9 +10,9 @@ struct XiaohongshuPhoneView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            Text("在手机的 Simple Live 打开「局域网数据同步」→「小红书直播发现」，保持该页面打开。")
+            Text("在电脑或手机的 Simple Live 打开「局域网数据同步」→「小红书直播发现」，保持该页面打开。")
                 .foregroundStyle(.secondary)
-            TextField("手机地址", text: $address, prompt: Text("例如 192.168.1.20:23234"))
+            TextField("共享设备地址", text: $address, prompt: Text("例如 192.168.1.20:23234"))
                 .autocorrectionDisabled()
                 .disabled(connecting)
                 .accessibilityIdentifier("xiaohongshu-phone-address")
@@ -34,7 +34,7 @@ struct XiaohongshuPhoneView: View {
             if let error { Text(error).foregroundStyle(.secondary) }
         }
         .frame(maxWidth: 980)
-        .navigationTitle("小红书手机连接")
+        .navigationTitle("小红书设备连接")
         .onAppear {
             if address.isEmpty { address = core.xiaohongshuPhone?.address ?? "" }
         }
