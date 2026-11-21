@@ -100,15 +100,16 @@ struct PlaybackSettingsView: View {
     var body: some View {
         List {
             Section {
-                Picker("画面比例", selection: $aspect) {
-                    ForEach(PlaybackAspect.allCases, id: \.self) { Text($0.title).tag($0) }
+                SettingsPicker("画面比例", selection: $aspect, options: PlaybackAspect.allCases) {
+                    Text($0.title)
                 }
                 .accessibilityIdentifier("playback-aspect")
-                Picker("默认清晰度", selection: $defaultQuality) {
-                    ForEach(PlaybackQualityPreference.allCases, id: \.self) { Text($0.title).tag($0) }
+                SettingsPicker("默认清晰度", selection: $defaultQuality, options: PlaybackQualityPreference.allCases) {
+                    Text($0.title)
                 }
-                Picker("初始音量", selection: Binding(get: { validVolume }, set: { initialVolume = $0 })) {
-                    ForEach(volumeChoices, id: \.self) { Text("\($0)%").tag($0) }
+                SettingsPicker("初始音量", selection: Binding(get: { validVolume }, set: { initialVolume = $0 }),
+                               options: volumeChoices) {
+                    Text("\($0)%")
                 }
                 Toggle("网络波动时自动降低清晰度", isOn: $autoQuality)
                 NavigationLink("频道轮播") { ChannelRotationSettingsView() }
@@ -119,8 +120,8 @@ struct PlaybackSettingsView: View {
             }
             Section {
                 Toggle("KSPlayer 硬件解码", isOn: $hardwareDecode)
-                Picker("播放缓冲", selection: $buffering) {
-                    ForEach(PlaybackBuffering.allCases, id: \.self) { Text($0.title).tag($0) }
+                SettingsPicker("播放缓冲", selection: $buffering, options: PlaybackBuffering.allCases) {
+                    Text($0.title)
                 }
             } header: {
                 Text("原生播放引擎")
@@ -136,7 +137,6 @@ struct PlaybackSettingsView: View {
                 aspect = .fit
             }
         }
-        .pickerStyle(.navigationLink)
         .navigationTitle("播放设置")
     }
 

@@ -282,11 +282,12 @@ struct FavoriteSettingsView: View {
     var body: some View {
         List {
             Section {
-                Picker("布局", selection: $layout) {
-                    ForEach(FavoriteLayout.allCases) { Text($0.title).tag($0) }
+                SettingsPicker("布局", selection: $layout, options: FavoriteLayout.allCases) {
+                    Text($0.title)
                 }
-                Picker("每页数量", selection: $pageSize) {
-                    ForEach([12, 24, 48, 100, 200, 400].includingSelection(pageSize), id: \.self) { Text("\($0) 个").tag($0) }
+                SettingsPicker("每页数量", selection: $pageSize,
+                               options: [12, 24, 48, 100, 200, 400].includingSelection(pageSize)) {
+                    Text("\($0) 个")
                 }
                 Toggle("默认只显示开播关注", isOn: $onlyLive)
                 Toggle("显示直播封面", isOn: $showLiveCover)
@@ -297,10 +298,9 @@ struct FavoriteSettingsView: View {
             }
             Section {
                 Toggle("进入关注页时刷新", isOn: $refreshOnEnter)
-                Picker("定时刷新", selection: $refreshMinutes) {
-                    ForEach([0, 5, 10, 15, 30, 60].includingSelection(refreshMinutes), id: \.self) { minutes in
-                        Text(minutes == 0 ? "关闭" : "每 \(minutes) 分钟").tag(minutes)
-                    }
+                SettingsPicker("定时刷新", selection: $refreshMinutes,
+                               options: [0, 5, 10, 15, 30, 60].includingSelection(refreshMinutes)) { minutes in
+                    Text(minutes == 0 ? "关闭" : "每 \(minutes) 分钟")
                 }
             } header: {
                 Text("状态刷新")
@@ -308,7 +308,6 @@ struct FavoriteSettingsView: View {
                 Text("定时刷新在应用处于前台并显示首页或关注页时运行。选择具体状态或显示直播封面时，关注页会主动查询开播状态。")
             }
         }
-        .pickerStyle(.navigationLink)
         .navigationTitle("关注设置")
     }
 }

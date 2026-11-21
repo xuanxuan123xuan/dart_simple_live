@@ -9,17 +9,17 @@ struct MultiRoomSettingsView: View {
     var body: some View {
         List {
             Section {
-                Picker("默认布局", selection: $layout) {
-                    ForEach(MultiRoomLayout.allCases, id: \.self) { Text($0.title).tag($0) }
+                SettingsPicker("默认布局", selection: $layout, options: MultiRoomLayout.allCases) {
+                    Text($0.title)
                 }
-                Picker("画面间距", selection: $spacing) {
-                    ForEach(MultiRoomSpacing.allCases, id: \.self) { Text($0.title).tag($0) }
+                SettingsPicker("画面间距", selection: $spacing, options: MultiRoomSpacing.allCases) {
+                    Text($0.title)
                 }
-                Picker("默认声音", selection: $audio) {
-                    ForEach(MultiRoomAudioMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                SettingsPicker("默认声音", selection: $audio, options: MultiRoomAudioMode.allCases) {
+                    Text($0.title)
                 }
-                Picker("默认弹幕", selection: $danmaku) {
-                    ForEach(MultiRoomDanmaku.allCases, id: \.self) { Text($0.title).tag($0) }
+                SettingsPicker("默认弹幕", selection: $danmaku, options: MultiRoomDanmaku.allCases) {
+                    Text($0.title)
                 }
             } header: {
                 Text("新建多屏")
@@ -27,7 +27,6 @@ struct MultiRoomSettingsView: View {
                 Text("这些选项在新开多屏时生效。「单路有声」默认使用第一个房间的声音。从单屏转入时，原房间保留当前的弹幕和音量。")
             }
         }
-        .pickerStyle(.navigationLink)
         .navigationTitle("多屏设置")
     }
 }
