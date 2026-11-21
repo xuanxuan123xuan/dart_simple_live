@@ -1,7 +1,7 @@
 {
-  "version": "26.4.4",
-  "version_num": 26404,
-  "version_desc": "多房间可设置进入时自动开启全部房间声音\n直播页短按菜单键刷新，长按打开多房间选择\n新增单房间流畅与实时模式，改善启动渲染\n从分类、关注、历史进入直播后切换房间保留列表\n单房间启动时弹幕分批渲染，减少卡顿\n录制导出弹幕按导出帧率插值，运动更平滑\n热门直播页面恢复正常显示与打开\n多房间播放保留表情弹幕图文顺序与兜底文字\n斗鱼直播鉴权兼容更多参数，减少进入异常\nWindows 版切换直播视频时更稳定，减少黑屏与崩溃",
-  "download_url": "https://github.com/xuanxuan123xuan/dart_simple_live/releases/tag/tv_v26.4.4-dev",
+  "version": "1.8.0",
+  "version_num": 10800,
+  "version_desc": "Apple TV 可连接电脑或手机浏览小红书热门。\n关注页支持按开播状态与平台筛选。\n关注列表按直播状态和名称排序。\n设置页选择项、开关与说明更清晰。\n多屏添加房间时标注搜索或房间平台。\n关注与历史页面空状态和顶部对齐更规整。\n取消关注和删除历史记录增加确认。\n底部栏向上焦点直达内容首行。\n快手限流时复用近期直播流。\n播放画面不再出现焦点遮挡浮层。\n虎牙房间封面通过安全地址加载。\n扫码登录在跳转后仍可完成。\n多屏播放适配画面比例设置。\n危险操作确认适配电视遥控器。",
+  "download_url": "https://github.com/xuanxuan123xuan/dart_simple_live/releases/tag/tv_v1.8.0-dev",
   "prerelease": false
 }
