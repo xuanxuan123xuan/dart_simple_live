@@ -38,7 +38,10 @@ struct WebDAVSyncView: View {
                 TextField("用户名", text: $credentials.user).autocorrectionDisabled()
                 SecureField("密码", text: $credentials.password)
                 Button("验证并保存连接") { job = Job(action: .connect) }
-                if saved != nil { Button("移除保存的连接", role: .destructive, action: clear) }
+                if saved != nil {
+                    Button("移除保存的连接", role: .destructive, action: clear)
+                        .destructiveButtonStyle()
+                }
             }
             .disabled(job != nil)
             SyncCategoryControls(fixed: category, allowSettings: true, selection: $selection)
@@ -60,9 +63,10 @@ struct WebDAVSyncView: View {
         }
         .navigationTitle("WebDAV 备份与恢复")
         .modifier(SyncReviewModifier(receiver: receiver))
-        .confirmationDialog("上传并替换云端备份？", isPresented: $confirmUpload, titleVisibility: .visible) {
-            Button("上传备份", role: .destructive) { job = Job(action: .upload) }
-            Button("取消", role: .cancel) {}
+        .fullScreenCover(isPresented: $confirmUpload) {
+            DestructiveConfirmation(title: "上传并替换云端备份？", confirmTitle: "上传备份") {
+                job = Job(action: .upload)
+            }
         }
         .task {
             guard !loaded else { return }

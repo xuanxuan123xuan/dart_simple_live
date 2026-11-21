@@ -56,14 +56,15 @@ private struct AccountDetailsView: View {
             }
             if status != .signedOut {
                 Button(removeTitle, role: .destructive) { confirmSignOut = true }
+                    .destructiveButtonStyle()
                     .accessibilityIdentifier("account.remove")
             }
             if let error { Text(error).foregroundStyle(.red) }
         }
         .listStyle(.plain)
         .navigationTitle(slot.title)
-        .confirmationDialog("确定要\(removeTitle)？", isPresented: $confirmSignOut, titleVisibility: .visible) {
-            Button(removeTitle, role: .destructive) {
+        .fullScreenCover(isPresented: $confirmSignOut) {
+            DestructiveConfirmation(title: "确定要\(removeTitle)？", confirmTitle: removeTitle) {
                 do {
                     try core.signOut(slot)
                     error = nil
@@ -71,7 +72,6 @@ private struct AccountDetailsView: View {
                     self.error = error.localizedDescription
                 }
             }
-            Button("取消", role: .cancel) {}
         }
         .task(id: retry) {
             if retry > 0 { await core.restoreAccount(slot) }
