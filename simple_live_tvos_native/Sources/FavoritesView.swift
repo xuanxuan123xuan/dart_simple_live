@@ -59,6 +59,7 @@ struct FavoritesView: View {
     @State private var priorityOnly = false
     @State private var page = 0
     @State private var manage = false
+    @State private var pendingUnfollow: FavoriteEntry?
     @State private var refreshRequest: RefreshRequest?
     @FocusState private var focusedRoom: String?
     @State private var lastFocusedRoom: String?
@@ -82,6 +83,11 @@ struct FavoritesView: View {
             } else {
                 grid(visible, queue: entries.map(\.room))
                 if !preview && pageCount > 1 { pager(currentPage, of: pageCount) }
+            }
+        }
+        .fullScreenCover(item: $pendingUnfollow) { entry in
+            DestructiveConfirmation(title: "取消关注？", message: entry.displayName, confirmTitle: "取消关注") {
+                if library.isFavorite(entry.room) { library.toggleFavorite(entry.room) }
             }
         }
         .onChange(of: filter) { _, _ in page = 0 }
@@ -247,7 +253,7 @@ struct FavoritesView: View {
         Button(entry.isPriority ? "取消特别关注" : "设为特别关注") {
             library.setPriority(!entry.isPriority, room: entry.room)
         }
-        Button("取消关注", role: .destructive) { library.toggleFavorite(entry.room) }
+        Button("取消关注…") { pendingUnfollow = entry }
     }
 
     private func pager(_ index: Int, of count: Int) -> some View {

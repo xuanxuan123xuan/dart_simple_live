@@ -2,10 +2,22 @@ import SwiftUI
 
 struct HistoryView: View {
     @EnvironmentObject private var library: LibraryStore
-    @State private var confirmClear = false
+    @State private var removal: Removal?
     @State private var manage = false
     @FocusState private var focusedRoom: String?
     @State private var lastFocusedRoom: String?
+
+    private enum Removal: Identifiable {
+        case all
+        case entry(HistoryEntry)
+
+        var id: String {
+            switch self {
+            case .all: "all"
+            case let .entry(entry): "entry:\(entry.id)"
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -16,18 +28,10 @@ struct HistoryView: View {
                     .accessibilityIdentifier("history-import")
                 Button(manage ? "完成管理" : "管理") { manage.toggle() }
                     .disabled(library.historyEntries.isEmpty)
-                Button("清空记录", role: .destructive) { confirmClear = true }
+                Button("清空记录", role: .destructive) { removal = .all }
+                    .destructiveButtonStyle()
                     .disabled(library.historyEntries.isEmpty)
                     .accessibilityIdentifier("history-clear")
-                    .confirmationDialog("清空观看历史？", isPresented: $confirmClear, titleVisibility: .visible) {
-                        Button("清空", role: .destructive) {
-                            library.clearRecent()
-                            manage = false
-                        }
-                        Button("取消", role: .cancel) {}
-                    } message: {
-                        Text("此操作会删除此设备上的全部观看记录。")
-                    }
             }
             .focusSection()
             if library.historyEntries.isEmpty {
@@ -38,6 +42,21 @@ struct HistoryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .fullScreenCover(item: $removal) { removal in
+            switch removal {
+            case .all:
+                DestructiveConfirmation(title: "清空观看历史？", message: "此操作会删除此设备上的全部观看记录。",
+                                        confirmTitle: "清空") {
+                    library.clearRecent()
+                    manage = false
+                }
+            case let .entry(entry):
+                DestructiveConfirmation(title: "删除此记录？", message: entry.room.title,
+                                        confirmTitle: "删除此记录") {
+                    library.removeVisit(entry.room)
+                }
+            }
+        }
     }
 
     private func historyGrid(_ entries: [HistoryEntry]) -> some View {
@@ -47,10 +66,12 @@ struct HistoryView: View {
                 ForEach(entries) { entry in
                     Group {
                         if manage {
-                            Menu { remove(entry) } label: { card(entry) }
+                            Button { removal = .entry(entry) } label: { card(entry) }
                         } else {
                             NavigationLink(value: HomeRoute.room(entry.room, queue: source)) { card(entry) }
-                                .contextMenu { remove(entry) }
+                                .contextMenu {
+                                    Button("删除此记录…") { removal = .entry(entry) }
+                                }
                         }
                     }
                     .buttonStyle(HomeButtonStyle())
@@ -73,9 +94,5 @@ struct HistoryView: View {
     private func card(_ entry: HistoryEntry) -> some View {
         let time = entry.watchedAt?.formatted(date: .abbreviated, time: .shortened) ?? "观看时间未知"
         return RoomTile(room: entry.room, caption: time)
-    }
-
-    private func remove(_ entry: HistoryEntry) -> some View {
-        Button("删除此记录", role: .destructive) { library.removeVisit(entry.room) }
     }
 }
