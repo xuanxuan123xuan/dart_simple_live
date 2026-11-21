@@ -20,7 +20,7 @@ reasonix.toml
 artifacts/
 release/
 signing-backup/
-models/
+/models/
 issue_logs/
 experience/
 graphify-out/
