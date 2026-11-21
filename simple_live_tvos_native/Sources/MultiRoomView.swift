@@ -219,6 +219,7 @@ struct MultiRoomView: View {
                 pendingExit = .back
                 sheet = nil
             }
+            .destructiveButtonStyle()
         }
     }
 
@@ -331,7 +332,9 @@ private struct MultiRoomPaneControls: View {
                 Button("设为主画面") { group.makePrimary(session.room.key) }
                 Button("转为单路播放", action: openSingle)
                     .accessibilityIdentifier("multi-room-open-single")
-                Button("移除此路", role: .destructive, action: remove).disabled(group.sessions.count <= 2)
+                Button("移除此路", role: .destructive, action: remove)
+                    .destructiveButtonStyle()
+                    .disabled(group.sessions.count <= 2)
             }
         }
     }
