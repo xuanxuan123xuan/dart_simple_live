@@ -12,9 +12,13 @@ actor XiaohongshuService: LiveProviderService, DanmakuService {
     ]
     private let http = ProviderHTTP(redirectHosts: roomHosts.union(shortLinkHosts))
     private let accounts: AccountRequestCredentials
+    private let phone: XiaohongshuPhoneDiscovery?
+    private var categorySessions: [String: UUID] = [:]
 
-    init(accounts: AccountRequestCredentials = AccountRequestCredentials()) {
+    init(accounts: AccountRequestCredentials = AccountRequestCredentials(),
+         phone: XiaohongshuPhoneDiscovery? = nil) {
         self.accounts = accounts
+        self.phone = phone
     }
 
     private var accountHeaders: [String: String] {
@@ -23,10 +27,31 @@ actor XiaohongshuService: LiveProviderService, DanmakuService {
         return headers
     }
 
-    func categories() async throws -> [CategoryDescriptor] { [] }
+    func categories() async throws -> [CategoryDescriptor] {
+        guard let phone else { throw XiaohongshuPhoneError.disconnected }
+        return try await phone.categories()
+    }
 
     func rooms(in listing: RoomListing, page: Int) async throws -> RoomPage {
-        throw LiveProviderError.remote("小红书暂可用直播链接进房")
+        let category = try categoryID(for: listing)
+        guard let phone else { throw XiaohongshuPhoneError.disconnected }
+        if page == 1 { categorySessions[category] = UUID() }
+        guard let session = categorySessions[category] else { throw XiaohongshuPhoneError.expiredList }
+        return try await phone.rooms(category: category, page: page, browseSession: session)
+    }
+
+    func rooms(in listing: RoomListing, page: Int, browseSession: UUID) async throws -> RoomPage {
+        let category = try categoryID(for: listing)
+        guard let phone else { throw XiaohongshuPhoneError.disconnected }
+        return try await phone.rooms(category: category, page: page, browseSession: browseSession)
+    }
+
+    private func categoryID(for listing: RoomListing) throws -> String {
+        switch listing {
+        case .recommended: "0"
+        case let .category(category): category.categoryId
+        case .search: throw LiveProviderError.remote("小红书支持通过直播链接进房")
+        }
     }
 
     func resolveRoom(_ input: String) async throws -> RoomDescriptor {

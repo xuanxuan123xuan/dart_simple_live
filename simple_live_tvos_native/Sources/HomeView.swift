@@ -49,6 +49,8 @@ struct HomeView: View {
                     ChannelPlayerView(room: room, rooms: rooms, openMultiRoom: openMultiRoom)
                 case let .sync(category):
                     SyncView(category: category)
+                case .xiaohongshuPhone:
+                    XiaohongshuPhoneView()
                 case .selectMultiRoom:
                     MultiRoomPickerView { rooms in
                         guard path.last == .selectMultiRoom else { return }
@@ -92,7 +94,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 22) {
             HStack(spacing: 16) {
                 dashboardShortcut("热门直播", icon: "flame") { section = .live }
-                NavigationLink(value: HomeRoute.categories(provider == "xiaohongshu" ? "bilibili" : provider)) {
+                NavigationLink(value: needsXiaohongshuPhone ? HomeRoute.xiaohongshuPhone : .categories(provider)) {
                     HomePill(quiet: false) { Label("直播类目", systemImage: "square.grid.2x2") }
                 }
                 .buttonStyle(HomeButtonStyle())
@@ -131,16 +133,18 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 10) {
             browseTools
             Group {
-                if provider == "xiaohongshu" {
+                if needsXiaohongshuPhone {
                     ContentUnavailableView {
-                        Label("小红书直播发现暂不可用", systemImage: "link")
+                        Label("连接手机浏览小红书热门", systemImage: "iphone")
                     } description: {
-                        Text("仍可通过直播链接或房间号进入。")
+                        Text("通过同一局域网连接 iPhone 或安卓手机。")
                     } actions: {
+                        xiaohongshuPhoneLink
                         openRoomLink
                     }
                 } else {
                     HomeRoomResults(provider: provider, listing: .recommended)
+                        .id(provider == "xiaohongshu" ? core.xiaohongshuPhone?.id : nil)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -152,7 +156,8 @@ struct HomeView: View {
             pageTitle("推荐直播")
             Spacer()
 
-            if provider != "xiaohongshu" {
+            if !needsXiaohongshuPhone {
+                if provider == "xiaohongshu" { xiaohongshuPhoneLink }
                 NavigationLink(value: HomeRoute.categories(provider)) {
                     HomePill(quiet: false) {
                         Label("直播类目", systemImage: "square.grid.2x2")
@@ -167,6 +172,19 @@ struct HomeView: View {
             }
         }
         .focusSection()
+    }
+
+    private var needsXiaohongshuPhone: Bool {
+        provider == "xiaohongshu" && core.xiaohongshuPhone == nil
+    }
+
+    private var xiaohongshuPhoneLink: some View {
+        NavigationLink(value: HomeRoute.xiaohongshuPhone) {
+            HomePill(quiet: false) { Label("手机连接", systemImage: "iphone") }
+        }
+        .buttonStyle(HomeButtonStyle())
+        .focusEffectDisabled()
+        .accessibilityIdentifier("xiaohongshu-phone")
     }
 
     private var search: some View {
@@ -249,6 +267,7 @@ enum HomeRoute: Hashable {
     case openRoom(String)
     case room(RoomDescriptor, queue: [RoomDescriptor] = [])
     case sync(SyncCategory?)
+    case xiaohongshuPhone
     case selectMultiRoom
     case multiRoom([RoomDescriptor], seed: RoomPlaybackHandoff?)
     case singleFromMulti(RoomPlaybackHandoff, queue: [RoomDescriptor])
@@ -339,6 +358,7 @@ private struct HomeRoomResults: View {
     @StateObject private var results = RoomResultsStore()
     @State private var retry = 0
     @State private var pagination: Pagination?
+    @State private var browseSession = UUID()
     let provider: String
     let listing: RoomListing
 
@@ -373,7 +393,15 @@ private struct HomeRoomResults: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .focusSection()
             case .loaded:
-                ContentUnavailableView(emptyTitle, systemImage: "tv")
+                if provider == "xiaohongshu" {
+                    VStack(spacing: 18) {
+                        ContentUnavailableView(emptyTitle, systemImage: "tv")
+                        Button("刷新列表") { retry += 1 }
+                    }
+                    .focusSection()
+                } else {
+                    ContentUnavailableView(emptyTitle, systemImage: "tv")
+                }
             }
         } else if results.rooms.isEmpty {
             VStack(spacing: 18) {
@@ -393,6 +421,7 @@ private struct HomeRoomResults: View {
         case let .failed(message):
             Text(message).foregroundStyle(.secondary)
             Button("重试加载更多") { pagination = Pagination(query: query) }
+            if provider == "xiaohongshu" { Button("刷新列表") { retry += 1 } }
         case .loading:
             ProgressView("正在加载更多")
         case .idle, .loaded:
@@ -401,13 +430,19 @@ private struct HomeRoomResults: View {
             } else {
                 Text("已到底").foregroundStyle(.secondary)
             }
+            if provider == "xiaohongshu" { Button("刷新列表") { retry += 1 } }
         }
     }
 
     private func load(_ query: RoomResultsStore.Query, next: Bool) async {
         await results.load(query, next: next) { page in
             if case .search = query.listing, !next { try await Task.sleep(for: .milliseconds(350)) }
-            return try await core.service(query.provider).rooms(in: query.listing, page: page)
+            let service = try core.service(query.provider)
+            if let xiaohongshu = service as? XiaohongshuService {
+                if page == 1 { browseSession = UUID() }
+                return try await xiaohongshu.rooms(in: query.listing, page: page, browseSession: browseSession)
+            }
+            return try await service.rooms(in: query.listing, page: page)
         }
     }
 

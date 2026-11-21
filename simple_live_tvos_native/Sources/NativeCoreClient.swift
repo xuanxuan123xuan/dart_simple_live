@@ -4,23 +4,29 @@ import SimpleLiveTVOSCore
 
 @MainActor
 final class NativeCoreClient: ObservableObject {
+    struct PhoneConnection {
+        let id = UUID()
+        let address: String
+    }
+
     let providers = [
         ProviderDescriptor(id: "bilibili", title: "哔哩哔哩", supportLabel: "扫码登录"),
         ProviderDescriptor(id: "huya", title: "虎牙", supportLabel: "游客观看"),
         ProviderDescriptor(id: "douyu", title: "斗鱼", supportLabel: "扫码登录"),
         ProviderDescriptor(id: "douyin", title: "抖音", supportLabel: "Cookie 登录"),
         ProviderDescriptor(id: "kuaishou", title: "快手", supportLabel: "Cookie 登录"),
-        ProviderDescriptor(id: "xiaohongshu", title: "小红书", supportLabel: "链接进房"),
+        ProviderDescriptor(id: "xiaohongshu", title: "小红书", supportLabel: "手机列表 · 链接进房"),
     ]
 
     @Published private(set) var accountStatuses: [AccountSlot: AccountStatus] = [:]
+    @Published private(set) var xiaohongshuPhone: PhoneConnection?
 
     private let bilibili: BilibiliService
     private let huya = HuyaService()
     private let douyu: DouyuService
     private let douyin: DouyinService
     private let kuaishou: KuaishouService
-    private let xiaohongshu: XiaohongshuService
+    private var xiaohongshu: XiaohongshuService
     private let accountStore: any AccountSessionStore
     private let requestCredentials: AccountRequestCredentials
     private let validateForTesting: ((AccountSlot, AccountCredential) async throws -> AccountCredential)?
@@ -106,6 +112,19 @@ final class NativeCoreClient: ObservableObject {
         case .xiaohongshu: xiaohongshu
         default: throw LiveProviderError.unsupported
         }
+    }
+
+    func connectXiaohongshuPhone(address: String, code: String) async throws {
+        let phone = try XiaohongshuPhoneDiscovery(address: address, code: code)
+        _ = try await phone.categories()
+        try Task.checkCancellation()
+        xiaohongshu = XiaohongshuService(accounts: requestCredentials, phone: phone)
+        xiaohongshuPhone = PhoneConnection(address: phone.address)
+    }
+
+    func disconnectXiaohongshuPhone() {
+        xiaohongshu = XiaohongshuService(accounts: requestCredentials)
+        xiaohongshuPhone = nil
     }
 
     func resolveRoomInput(_ input: String, provider: String) async throws -> RoomDescriptor {
