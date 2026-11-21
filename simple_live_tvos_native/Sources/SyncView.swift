@@ -101,12 +101,7 @@ struct SyncReviewModifier: ViewModifier {
                             HStack(spacing: 24) {
                                 Button("取消") { receiver.answer(false, id: review.id) }
                                     .focused($focused, equals: .cancel)
-                                Button(review.overwrite ? "覆盖导入" : "导入",
-                                       role: review.overwrite ? .destructive : nil) {
-                                    receiver.answer(true, id: review.id)
-                                }
-                                .focused($focused, equals: .confirm)
-                                .accessibilityIdentifier("sync-review-confirm")
+                                confirmButton(for: review)
                             }
                         }
                         .padding(44)
@@ -118,6 +113,45 @@ struct SyncReviewModifier: ViewModifier {
                     .onExitCommand { receiver.answer(false, id: review.id) }
                 }
             }
+    }
+
+    @ViewBuilder
+    private func confirmButton(for review: SyncReceiver.Review) -> some View {
+        let button = Button(review.overwrite ? "覆盖导入" : "导入",
+                            role: review.overwrite ? .destructive : nil) {
+            receiver.answer(true, id: review.id)
+        }
+        .focused($focused, equals: .confirm)
+        .accessibilityIdentifier("sync-review-confirm")
+
+        if review.overwrite {
+            button
+                .buttonStyle(SyncOverwriteButtonStyle(isFocused: focused == .confirm))
+                .focusEffectDisabled()
+        } else {
+            button
+        }
+    }
+}
+
+private struct SyncOverwriteButtonStyle: ButtonStyle {
+    let isFocused: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let fill = isFocused ? Color(red: 0.65, green: 0.15, blue: 0.20)
+                             : Color(red: 0.52, green: 0.11, blue: 0.16)
+
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 30)
+            .frame(minHeight: 66)
+            .background(fill, in: Capsule())
+            .overlay {
+                Capsule().strokeBorder(isFocused ? .white : .clear, lineWidth: 2)
+            }
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.15), value: isFocused)
     }
 }
 
